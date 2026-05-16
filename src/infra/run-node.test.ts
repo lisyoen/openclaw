@@ -1408,7 +1408,7 @@ describe("run-node script", () => {
       const stderr = {
         isTTY: true,
         write: vi.fn((chunk: string) => {
-          stderrChunks.push(String(chunk));
+          stderrChunks.push(chunk);
           return true;
         }),
       } as unknown as NodeJS.WriteStream;
