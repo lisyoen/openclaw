@@ -70,6 +70,15 @@ export type GetReplyOptions = {
   hasRepliedRef?: { value: boolean };
   /** Override agent timeout in seconds (0 = no timeout). Threads through to resolveAgentTimeoutMs. */
   timeoutOverrideSeconds?: number;
+  /** P2.26 (2026-05-25): fired once per agent turn after run completes, before payloads dispatch.
+   *  Surfaces stopReason + payload signal so the dispatcher can detect empty-response failures
+   *  (Gemma 4 NVFP4 tool_call_parser intermittent failure pattern: content=[] + stopReason="toolUse"). */
+  onAgentRunEnd?: (info: {
+    runId: string;
+    stopReason?: string;
+    payloadCount: number;
+    totalTextLength: number;
+  }) => void | Promise<void>;
 };
 
 export type ReplyPayload = {

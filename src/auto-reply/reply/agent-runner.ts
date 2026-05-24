@@ -407,6 +407,23 @@ export async function runReplyAgent(params: {
 
     const payloadArray = runResult.payloads ?? [];
 
+    if (opts?.onAgentRunEnd) {
+      const totalTextLength = payloadArray.reduce(
+        (acc, p) => acc + (typeof p.text === "string" ? p.text.trim().length : 0),
+        0,
+      );
+      try {
+        await opts.onAgentRunEnd({
+          runId,
+          stopReason: runResult.meta?.stopReason,
+          payloadCount: payloadArray.length,
+          totalTextLength,
+        });
+      } catch (err) {
+        defaultRuntime.error(`onAgentRunEnd hook failed: ${String(err)}`);
+      }
+    }
+
     if (blockReplyPipeline) {
       await blockReplyPipeline.flush({ force: true });
       blockReplyPipeline.stop();

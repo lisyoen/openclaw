@@ -23,6 +23,7 @@ import {
   logSessionStateChange,
 } from "../../logging/diagnostic.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import { defaultRuntime } from "../../runtime.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { maybeApplyTtsToPayload, normalizeTtsAutoMode, resolveTtsConfig } from "../../tts/tts.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
@@ -413,67 +414,96 @@ export async function dispatchReplyFromConfig(params: {
       systemEvent: shouldRouteToOriginating,
     });
 
-    const replyResult = await (params.replyResolver ?? getReplyFromConfig)(
+    // P2.26 (2026-05-25): capture agent-turn signal for empty-response retry guard.
+    // Pattern: Gemma 4 NVFP4 tool_call_parser intermittently drops tool_use blocks,
+    // yielding payloadCount=0 + stopReason="toolUse" (no payloads dispatched, user sees silence).
+    let p226RunSignal:
+      | { runId: string; stopReason?: string; payloadCount: number; totalTextLength: number }
+      | undefined;
+    const captureP226Signal = (info: {
+      runId: string;
+      stopReason?: string;
+      payloadCount: number;
+      totalTextLength: number;
+    }) => {
+      p226RunSignal = info;
+    };
+    const onToolResultHandler = (payload: ReplyPayload) => {
+      const run = async () => {
+        const ttsPayload = await maybeApplyTtsToPayload({
+          payload,
+          cfg,
+          channel: ttsChannel,
+          kind: "tool",
+          inboundAudio,
+          ttsAuto: sessionTtsAuto,
+        });
+        const deliveryPayload = resolveToolDeliveryPayload(ttsPayload);
+        if (!deliveryPayload) {
+          return;
+        }
+        if (shouldRouteToOriginating) {
+          await sendPayloadAsync(deliveryPayload, undefined, false);
+        } else {
+          dispatcher.sendToolResult(deliveryPayload);
+        }
+      };
+      return run();
+    };
+    const onBlockReplyHandler = (
+      payload: ReplyPayload,
+      context?: { abortSignal?: AbortSignal },
+    ) => {
+      const run = async () => {
+        // Suppress reasoning payloads — channels using this generic dispatch
+        // path (WhatsApp, web, etc.) do not have a dedicated reasoning lane.
+        // Telegram has its own dispatch path that handles reasoning splitting.
+        if (shouldSuppressReasoningPayload(payload)) {
+          return;
+        }
+        // Accumulate block text for TTS generation after streaming
+        if (payload.text) {
+          if (accumulatedBlockText.length > 0) {
+            accumulatedBlockText += "\n";
+          }
+          accumulatedBlockText += payload.text;
+          blockCount++;
+        }
+        const ttsPayload = await maybeApplyTtsToPayload({
+          payload,
+          cfg,
+          channel: ttsChannel,
+          kind: "block",
+          inboundAudio,
+          ttsAuto: sessionTtsAuto,
+        });
+        if (shouldRouteToOriginating) {
+          await sendPayloadAsync(ttsPayload, context?.abortSignal, false);
+        } else {
+          dispatcher.sendBlockReply(ttsPayload);
+        }
+      };
+      return run();
+    };
+    const buildReplyResolverOptions = (
+      onAgentRunEnd: (info: {
+        runId: string;
+        stopReason?: string;
+        payloadCount: number;
+        totalTextLength: number;
+      }) => void,
+    ): GetReplyOptions => ({
+      ...params.replyOptions,
+      typingPolicy: typing.typingPolicy,
+      suppressTyping: typing.suppressTyping,
+      onToolResult: onToolResultHandler,
+      onBlockReply: onBlockReplyHandler,
+      onAgentRunEnd,
+    });
+    const replyResolverFn = params.replyResolver ?? getReplyFromConfig;
+    const replyResult = await replyResolverFn(
       ctx,
-      {
-        ...params.replyOptions,
-        typingPolicy: typing.typingPolicy,
-        suppressTyping: typing.suppressTyping,
-        onToolResult: (payload: ReplyPayload) => {
-          const run = async () => {
-            const ttsPayload = await maybeApplyTtsToPayload({
-              payload,
-              cfg,
-              channel: ttsChannel,
-              kind: "tool",
-              inboundAudio,
-              ttsAuto: sessionTtsAuto,
-            });
-            const deliveryPayload = resolveToolDeliveryPayload(ttsPayload);
-            if (!deliveryPayload) {
-              return;
-            }
-            if (shouldRouteToOriginating) {
-              await sendPayloadAsync(deliveryPayload, undefined, false);
-            } else {
-              dispatcher.sendToolResult(deliveryPayload);
-            }
-          };
-          return run();
-        },
-        onBlockReply: (payload: ReplyPayload, context) => {
-          const run = async () => {
-            // Suppress reasoning payloads — channels using this generic dispatch
-            // path (WhatsApp, web, etc.) do not have a dedicated reasoning lane.
-            // Telegram has its own dispatch path that handles reasoning splitting.
-            if (shouldSuppressReasoningPayload(payload)) {
-              return;
-            }
-            // Accumulate block text for TTS generation after streaming
-            if (payload.text) {
-              if (accumulatedBlockText.length > 0) {
-                accumulatedBlockText += "\n";
-              }
-              accumulatedBlockText += payload.text;
-              blockCount++;
-            }
-            const ttsPayload = await maybeApplyTtsToPayload({
-              payload,
-              cfg,
-              channel: ttsChannel,
-              kind: "block",
-              inboundAudio,
-              ttsAuto: sessionTtsAuto,
-            });
-            if (shouldRouteToOriginating) {
-              await sendPayloadAsync(ttsPayload, context?.abortSignal, false);
-            } else {
-              dispatcher.sendBlockReply(ttsPayload);
-            }
-          };
-          return run();
-        },
-      },
+      buildReplyResolverOptions(captureP226Signal),
       cfg,
     );
 
@@ -503,7 +533,58 @@ export async function dispatchReplyFromConfig(params: {
       }
     }
 
-    const replies = replyResult ? (Array.isArray(replyResult) ? replyResult : [replyResult]) : [];
+    let replies: ReplyPayload[] = replyResult
+      ? Array.isArray(replyResult)
+        ? replyResult
+        : [replyResult]
+      : [];
+
+    // P2.26 (2026-05-25): empty-response retry guard.
+    // Trigger: payloadCount=0 + totalTextLength=0 + stopReason="toolUse" (Gemma 4 NVFP4 parser drop).
+    // Action: retry once with identical resolver args; if still empty, send Korean fallback.
+    const isP226EmptyResponse =
+      replies.length === 0 &&
+      !!p226RunSignal &&
+      p226RunSignal.stopReason === "toolUse" &&
+      p226RunSignal.payloadCount === 0 &&
+      p226RunSignal.totalTextLength === 0;
+    if (isP226EmptyResponse && p226RunSignal) {
+      defaultRuntime.error(
+        `[p2-26] empty-response detected sessionKey=${sessionKey ?? "?"} runId=${p226RunSignal.runId} stopReason=toolUse retry=1`,
+      );
+      let retrySignal:
+        | { runId: string; stopReason?: string; payloadCount: number; totalTextLength: number }
+        | undefined;
+      const retryReplyResult = await replyResolverFn(
+        ctx,
+        buildReplyResolverOptions((info) => {
+          retrySignal = info;
+        }),
+        cfg,
+      );
+      const retryReplies: ReplyPayload[] = retryReplyResult
+        ? Array.isArray(retryReplyResult)
+          ? retryReplyResult
+          : [retryReplyResult]
+        : [];
+      const retryStillEmpty =
+        retryReplies.length === 0 &&
+        !!retrySignal &&
+        retrySignal.stopReason === "toolUse" &&
+        retrySignal.payloadCount === 0 &&
+        retrySignal.totalTextLength === 0;
+      if (retryStillEmpty) {
+        defaultRuntime.error(
+          `[p2-26] retry still empty, sending fallback sessionKey=${sessionKey ?? "?"} runId=${retrySignal?.runId ?? "?"}`,
+        );
+        replies = [{ text: "응답이 비어서 한 번 더 시도했어. 다시 말해줄래?" }];
+      } else {
+        defaultRuntime.error(
+          `[p2-26] retry succeeded sessionKey=${sessionKey ?? "?"} runId=${retrySignal?.runId ?? "?"} payloads=${retryReplies.length} stopReason=${retrySignal?.stopReason ?? "?"}`,
+        );
+        replies = retryReplies;
+      }
+    }
 
     let queuedFinal = false;
     let routedFinalCount = 0;
