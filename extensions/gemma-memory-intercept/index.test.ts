@@ -7,9 +7,18 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { __test__ } from "./index.ts";
+import pluginDefault, { __test__ } from "./index.ts";
 
-const { looksLikeNaturalMemoRequest, detectForbiddenCall, buildBlockReason } = __test__;
+const {
+  looksLikeNaturalMemoRequest,
+  detectForbiddenCall,
+  buildBlockReason,
+  buildPrependContext,
+  executeRecallSync,
+  cacheKey,
+  sessionKeyToConversationId,
+  cache,
+} = __test__;
 
 // ---------------------------------------------------------------------------
 // looksLikeNaturalMemoRequest — POSITIVE cases (must return true)
@@ -183,4 +192,182 @@ test("buildBlockReason embeds escaped double quotes from user text", () => {
   assert.match(reason, /방이동/);
   // Escaped form must be present (the sample is wrapped in escaped quotes).
   assert.ok(reason.includes('\\"방이동\\"'), 'should escape inner quotes as \\"');
+});
+
+// ---------------------------------------------------------------------------
+// P2.28 hook preinject — buildPrependContext + executeRecallSync + key alignment
+// ---------------------------------------------------------------------------
+
+test("buildPrependContext: contains P2.28 marker and the raw recall body", () => {
+  const recall = "[메모리 회상] 오로라랑 정한 계획: 방이동 점심 오늘 12시";
+  const ctx = buildPrependContext(recall);
+  assert.match(ctx, /P2\.28 plugin 선주입/, "should advertise P2.28 origin");
+  assert.ok(ctx.includes(recall), "should embed raw recall body verbatim");
+  assert.match(ctx, /추가 도구 호출.*없이/, "should instruct no further tool calls");
+});
+
+test("buildPrependContext: instructs fallback message when recall is empty", () => {
+  const ctx = buildPrependContext("");
+  assert.match(ctx, /비어 있거나 부족하면/, "should include empty-recall fallback hint");
+});
+
+test("executeRecallSync: empty input returns ok:false reason=empty-input", () => {
+  const r = executeRecallSync("");
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.equal(r.reason, "empty-input");
+  }
+});
+
+test("executeRecallSync: whitespace-only input treated as empty", () => {
+  const r = executeRecallSync("   \n\t  ");
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.equal(r.reason, "empty-input");
+  }
+});
+
+// Cache key alignment — message_received writes the key, before_prompt_build
+// reads it. Both must agree on the conversation id derived from sessionKey.
+test("cacheKey + sessionKeyToConversationId: telegram direct DM aligns", () => {
+  const sk = "agent:gemma:telegram:direct:56682682";
+  const cid = sessionKeyToConversationId(sk);
+  assert.equal(cid, "56682682");
+  assert.equal(cacheKey("gemma", cid), "gemma|56682682");
+});
+
+test("cacheKey + sessionKeyToConversationId: telegram group with negative chat id", () => {
+  const sk = "agent:gemma:telegram:group:-1003821022499";
+  const cid = sessionKeyToConversationId(sk);
+  assert.equal(cid, "-1003821022499");
+  assert.equal(cacheKey("gemma", cid), "gemma|-1003821022499");
+});
+
+test("sessionKeyToConversationId: undefined / malformed → undefined", () => {
+  assert.equal(sessionKeyToConversationId(undefined), undefined);
+  assert.equal(sessionKeyToConversationId(""), undefined);
+  assert.equal(sessionKeyToConversationId("not-a-session-key"), undefined);
+  // Non-direct/group bucket falls through.
+  assert.equal(sessionKeyToConversationId("agent:gemma:telegram:other:12345"), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// P2.28 integration — register hooks via mock api and exercise the
+// before_prompt_build path end-to-end (cache seed → inject → 1-shot consume).
+// ---------------------------------------------------------------------------
+
+type HookRegistry = Map<string, (event: unknown, ctx: unknown) => unknown>;
+
+function installPlugin(): HookRegistry {
+  const handlers: HookRegistry = new Map();
+  const api = {
+    id: "gemma-memory-intercept",
+    name: "gemma-memory-intercept",
+    source: "test",
+    config: {},
+    runtime: {},
+    logger: {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    },
+    on: (name: string, h: (event: unknown, ctx: unknown) => unknown) => {
+      handlers.set(name, h);
+    },
+    registerTool: () => {},
+    registerHook: () => {},
+    registerHttpRoute: () => {},
+    registerChannel: () => {},
+    registerGatewayMethod: () => {},
+    registerCli: () => {},
+    registerService: () => {},
+    registerProvider: () => {},
+    registerCommand: () => {},
+    registerContextEngine: () => {},
+    resolvePath: (p: string) => p,
+  };
+  // biome-ignore lint/suspicious/noExplicitAny: mock api for test only
+  pluginDefault(api as any);
+  return handlers;
+}
+
+test("P2.28 hook flow: cached recall result is injected once via prependContext, then consumed", () => {
+  const handlers = installPlugin();
+  const hook = handlers.get("before_prompt_build");
+  assert.ok(hook, "plugin must register before_prompt_build");
+
+  const sk = "agent:gemma:telegram:direct:99991";
+  const key = cacheKey("gemma", sessionKeyToConversationId(sk));
+  cache.set(key, {
+    text: "어제 메모 보여줘",
+    firstToolCallSeen: false,
+    ts: Date.now(),
+    recallResult: "RESULT: OK\n--- BEGIN CONTENT ---\nmemo body\n--- END CONTENT ---",
+  });
+
+  const r1 = hook!({ prompt: "x", messages: [] }, { agentId: "gemma", sessionKey: sk }) as
+    | { prependContext?: string }
+    | undefined;
+  assert.ok(r1 && r1.prependContext, "first call should return prependContext");
+  assert.match(r1.prependContext!, /P2\.28 plugin 선주입/);
+  assert.match(r1.prependContext!, /memo body/);
+
+  const r2 = hook!({ prompt: "x", messages: [] }, { agentId: "gemma", sessionKey: sk });
+  assert.equal(r2, undefined, "second call should not inject (1-shot consumed)");
+
+  cache.delete(key);
+});
+
+test("P2.28 hook flow: non-gemma agent gets no injection even with cached entry", () => {
+  const handlers = installPlugin();
+  const hook = handlers.get("before_prompt_build");
+  assert.ok(hook);
+
+  const sk = "agent:gemma:telegram:direct:99992";
+  const key = cacheKey("gemma", sessionKeyToConversationId(sk));
+  cache.set(key, {
+    text: "어제 메모 보여줘",
+    firstToolCallSeen: false,
+    ts: Date.now(),
+    recallResult: "RESULT: OK\nx",
+  });
+
+  const r = hook!({ prompt: "x", messages: [] }, { agentId: "main", sessionKey: sk });
+  assert.equal(r, undefined, "main agent should pass through");
+
+  cache.delete(key);
+});
+
+test("P2.28 hook flow: no cached entry → no injection (pass-through)", () => {
+  const handlers = installPlugin();
+  const hook = handlers.get("before_prompt_build");
+  assert.ok(hook);
+
+  const sk = "agent:gemma:telegram:direct:99993";
+  // Ensure no leftover from prior tests for this conv id.
+  cache.delete(cacheKey("gemma", sessionKeyToConversationId(sk)));
+
+  const r = hook!({ prompt: "x", messages: [] }, { agentId: "gemma", sessionKey: sk });
+  assert.equal(r, undefined);
+});
+
+test("P2.28 hook flow: cached entry without recallResult → no injection", () => {
+  const handlers = installPlugin();
+  const hook = handlers.get("before_prompt_build");
+  assert.ok(hook);
+
+  const sk = "agent:gemma:telegram:direct:99994";
+  const key = cacheKey("gemma", sessionKeyToConversationId(sk));
+  cache.set(key, {
+    text: "방이동 어디",
+    firstToolCallSeen: false,
+    ts: Date.now(),
+    // recallResult intentionally omitted (recall preexec failed or empty).
+  });
+
+  const r = hook!({ prompt: "x", messages: [] }, { agentId: "gemma", sessionKey: sk });
+  assert.equal(r, undefined, "missing recallResult → fall through, no injection");
+
+  cache.delete(key);
 });

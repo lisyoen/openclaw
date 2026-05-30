@@ -1,6 +1,6 @@
 // extensions/gemma-memory-intercept/index.ts
 //
-// gemma-memory P2.25c option F: plugin-level toolCall intercept.
+// gemma-memory P2.25c option F + P2.28 hook preinject (2026-05-30).
 //
 // When a user sends a natural-language memo / recall / journal request to
 // agentId="gemma" via Telegram (DM or group), the model has a strong prior
@@ -9,16 +9,27 @@
 // docs forbid those paths and require `bash scripts/recall.sh "<원문>"` instead.
 // Prompt-level enforcement (P2.25a/b/c) was insufficient on DM channel.
 //
+// 2026-05-30 P2.28 추가 진단: Gemma 4 26B NVFP4 가 도구 호출 의도 시 빈 content
+// (content=[] + stop=toolUse) 만 송출 → toolCall 미성립 → before_tool_call hook
+// 미발화 → 회상 실패 + P2.26 빈응답 fallback. 본질 변경 Step 3 = plugin 의미
+// 파싱 전환: inbound 단계에서 recall.sh 를 선실행하고 그 결과를 prependContext
+// 로 주입(before_prompt_build), Gemma4 의 toolCall 의존 제거.
+//
 // This plugin enforces the rule at the OpenClaw hook level:
 //   1. message_received -> cache user text per (sessionKey,sessionId,runId),
-//      if it matches the natural-language memo signal.
-//   2. before_tool_call -> if the cached message exists and the first toolCall
-//      matches a forbidden pattern, block it with a reason that steers the
-//      model to bash scripts/recall.sh.
+//      if it matches the natural-language memo signal, AND synchronously
+//      execute recall.sh to cache the recall result (P2.28).
+//   2. before_prompt_build -> if a recall result is cached, prepend it to
+//      the agent context so the model can answer from it without needing a
+//      toolCall (P2.28).
+//   3. before_tool_call -> if the cached message exists and the first toolCall
+//      matches a forbidden pattern, block/reroute it (kept as safety net for
+//      cases where the model still emits a toolCall).
 //
 // Scope: agentId === "gemma" ONLY. Other agents (main/Claw, gemma-kevin,
 // luna) are not affected.
 
+import { spawnSync } from "node:child_process";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 // ---------------------------------------------------------------------------
@@ -33,12 +44,12 @@ const INTENT_PATTERNS: RegExp[] = [
   /고쳐줘|수정해|바꿔줘|바꿔/,
   // WRITE
   /적어둬|적어줘|메모해둬|메모해|기록해둬|기록해줘|기록해|저장해|남겨둬|남겨줘/,
-  // SEARCH
-  /찾아줘|어디에\s*있어|어디에\s*있더라|어디\s*갔지/,
+  // SEARCH (2026-05-29: 찾아봐/검색 계열 보강 — '안미라 누군지 찾아봐' 미스 수정)
+  /찾아줘|찾아봐|찾아보자|찾아본|찾아|검색해줘|검색해|검색|어디에\s*있어|어디에\s*있더라|어디\s*갔지/,
   // READ / RECALL
   /보여줘|보여줄래|알려줘|다시\s*봐|다시\s*보자|어떻게\s*됐어|얼마였더라|뭐였더라|봐줘|봐\s*줘|보자|기억나|기억해|기억\s*안\s*나|기억이\s*안/,
-  // PERSON-RECALL (2026-05-24 P2.25c route 1 fix): "누구" 류 인물 회상
-  /누구지|누구야|누구더라|누구였더라|누구였지|누구냐|누구였\b/,
+  // PERSON-RECALL (2026-05-24 P2.25c; 2026-05-29 누군지/누군가 축약형 보강): "누구" 류 인물 회상
+  /누구지|누군지|누구인지|누구인가|누군가|누구임|누구야|누구더라|누구였더라|누구였지|누구냐|누구였\b/,
 ];
 
 const TIME_PATTERNS: RegExp[] = [
@@ -132,6 +143,16 @@ function truncate(s: string, n: number): string {
   return s.slice(0, n) + "...";
 }
 
+// Shell single-quote escaping for safe recall.sh argument passing.
+function shSingleQuote(v: string): string {
+  return "'" + v.replace(/'/g, "'\\''") + "'";
+}
+
+// Build the canonical recall.sh invocation from the cached natural-language text.
+function buildRecallCommand(userText: string): string {
+  return `bash scripts/recall.sh ${shSingleQuote(userText.trim())}`;
+}
+
 // ---------------------------------------------------------------------------
 // Block reason text — what the model sees and learns from.
 // ---------------------------------------------------------------------------
@@ -155,6 +176,9 @@ type CacheEntry = {
   text: string;
   firstToolCallSeen: boolean;
   ts: number;
+  // P2.28: recall.sh 선실행 결과 + before_prompt_build 1회용 소비 flag
+  recallResult?: string;
+  recallInjected?: boolean;
 };
 
 const userTextCache = new Map<string, CacheEntry>();
@@ -206,10 +230,15 @@ const counters = {
   naturalMemoMatched: 0,
   toolCallsInspected: 0,
   blocked: 0,
+  rerouted: 0,
   skippedNotGemma: 0,
   skippedNotFirstCall: 0,
   skippedNoMatch: 0,
   skippedAllowed: 0,
+  // P2.28 hook preinject counters
+  recallPreexecOk: 0,
+  recallPreexecFail: 0,
+  recallInjected: 0,
 };
 
 export function __dumpCounters(): Record<string, number> {
@@ -220,6 +249,75 @@ export function __dumpCounters(): Record<string, number> {
 // Helpers for extracting user text from message_received events. The shape
 // can vary by channel; this is best-effort.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// P2.28: recall.sh 동기 선실행 + 주입 텍스트 빌더
+// ---------------------------------------------------------------------------
+
+// 환경변수로 override 가능. 기본은 gemma 워크스페이스 절대 경로 (recall.sh 가
+// cd 없이 호출되도록 cwd 를 워크스페이스로 고정).
+const RECALL_PREINJECT_WORKSPACE =
+  process.env.RECALL_PREINJECT_WORKSPACE || "/home/lisyoen/.openclaw/agents/gemma/workspace";
+const RECALL_PREINJECT_TIMEOUT_MS = Number.parseInt(
+  process.env.RECALL_PREINJECT_TIMEOUT_MS || "30000",
+  10,
+);
+const RECALL_PREINJECT_MAX_OUTPUT = Number.parseInt(
+  process.env.RECALL_PREINJECT_MAX_OUTPUT || "4194304",
+  10,
+);
+const RECALL_PREINJECT_DISABLE = process.env.RECALL_PREINJECT_DISABLE === "1";
+
+type RecallPreexecResult =
+  | { ok: true; stdout: string; durationMs: number }
+  | { ok: false; reason: string; durationMs: number };
+
+export function executeRecallSync(userText: string): RecallPreexecResult {
+  const t0 = Date.now();
+  if (RECALL_PREINJECT_DISABLE) {
+    return { ok: false, reason: "disabled-by-env", durationMs: 0 };
+  }
+  const arg = (userText ?? "").trim();
+  if (!arg) return { ok: false, reason: "empty-input", durationMs: 0 };
+  try {
+    const result = spawnSync("bash", ["scripts/recall.sh", arg], {
+      cwd: RECALL_PREINJECT_WORKSPACE,
+      encoding: "utf8",
+      timeout: RECALL_PREINJECT_TIMEOUT_MS,
+      maxBuffer: RECALL_PREINJECT_MAX_OUTPUT,
+      env: process.env,
+    });
+    const durationMs = Date.now() - t0;
+    if (result.error) {
+      return { ok: false, reason: `error:${result.error.message}`, durationMs };
+    }
+    if (typeof result.status === "number" && result.status !== 0) {
+      return { ok: false, reason: `nonzero-exit:${result.status}`, durationMs };
+    }
+    const stdout = (result.stdout || "").trim();
+    if (!stdout) return { ok: false, reason: "empty-stdout", durationMs };
+    return { ok: true, stdout, durationMs };
+  } catch (e) {
+    const durationMs = Date.now() - t0;
+    return {
+      ok: false,
+      reason: `exception:${e instanceof Error ? e.message : String(e)}`,
+      durationMs,
+    };
+  }
+}
+
+// before_prompt_build prependContext 본문 — Gemma4 가 toolCall 없이도 회상
+// 결과를 근거 인용할 수 있도록 명시적 안내문을 둘러친다.
+export function buildPrependContext(recallResult: string): string {
+  return (
+    `[메모리 회상 결과 (P2.28 plugin 선주입)]\n` +
+    `${recallResult}\n` +
+    `— 위 회상 결과를 근거로 사용자 질문에 답하라. ` +
+    `추가 도구 호출(read/exec/find/grep/cat 등) 없이 위 본문만으로 응답한다. ` +
+    `회상 결과가 비어 있거나 부족하면 그 사실을 사용자에게 한 문장으로 알려라.\n`
+  );
+}
 
 function extractUserText(event: unknown): string {
   if (!event || typeof event !== "object") return "";
@@ -287,12 +385,54 @@ export default (api: OpenClawPluginApi) => {
     counters.naturalMemoMatched++;
 
     const key = cacheKey(agentId, conversationId);
-    userTextCache.set(key, { text, firstToolCallSeen: false, ts: Date.now() });
+    const entry: CacheEntry = { text, firstToolCallSeen: false, ts: Date.now() };
+    userTextCache.set(key, entry);
     pruneCache();
 
     logger.info(
       `[gemma-memory-intercept] natural-memo cached: key=${key} sample="${truncate(text, 80)}"`,
     );
+
+    // P2.28: recall.sh 동기 선실행 → 결과 캐시 적재. 실패/빈 결과/timeout 이면
+    // recallResult 미설정 (모델 기존 흐름 유지, P2.26 가드가 빈응답 fallback).
+    const preexec = executeRecallSync(text);
+    if (preexec.ok) {
+      entry.recallResult = preexec.stdout;
+      counters.recallPreexecOk++;
+      logger.info(
+        `[gemma-memory-intercept] recall preexec OK: key=${key} ` +
+          `bytes=${preexec.stdout.length} durMs=${preexec.durationMs}`,
+      );
+    } else {
+      counters.recallPreexecFail++;
+      logger.warn(
+        `[gemma-memory-intercept] recall preexec FAIL: key=${key} ` +
+          `reason=${preexec.reason} durMs=${preexec.durationMs}`,
+      );
+    }
+  });
+
+  // P2.28: before_prompt_build — 캐시 recallResult 가 있으면 prependContext 로
+  // 주입하고 1회용 소비. 비-gemma agent / 미매치 / 이미 주입 / 빈 결과는 패스.
+  // ctx 는 PluginHookAgentContext (agentId, sessionKey, ...) 를 제공한다.
+  api.on("before_prompt_build", (_event, ctx) => {
+    const agentId = ctx.agentId;
+    if (agentId !== "gemma") return;
+    const sessionKey = ctx.sessionKey;
+    const conversationId = sessionKeyToConversationId(sessionKey);
+    const key = cacheKey(agentId, conversationId);
+    const entry = userTextCache.get(key);
+    if (!entry) return;
+    if (!entry.recallResult) return;
+    if (entry.recallInjected) return;
+    entry.recallInjected = true;
+    counters.recallInjected++;
+    const prependContext = buildPrependContext(entry.recallResult);
+    logger.info(
+      `[gemma-memory-intercept] recall preinject: key=${key} ` +
+        `sessionKey=${sessionKey ?? ""} bytes=${entry.recallResult.length}`,
+    );
+    return { prependContext };
   });
 
   api.on("before_tool_call", (event, ctx) => {
@@ -328,10 +468,39 @@ export default (api: OpenClawPluginApi) => {
     }
     entry.firstToolCallSeen = true;
 
+    // 2026-05-29 force-route: Gemma 4 26B NVFP4 는 도구 호출 인자를 자주
+    // 비워(exec({})) 보내거나 누락한다. 차단 후 모델 재시도에 의존하는 대신,
+    // exec/bash 호출이면 params 를 recall.sh 로 재작성(adjust)하여 결정적으로
+    // 라우팅한다. recall.sh 자체 호출은 통과. read(SKILL.md/profile md) 등
+    // 비-exec 금지 호출은 기존대로 block + 안내.
+    const toolNameLc = String(event.toolName ?? "").toLowerCase();
+    const params = (event.params ?? {}) as Record<string, unknown>;
+
+    if (toolNameLc === "exec" || toolNameLc === "bash") {
+      const cmdRaw = String(
+        (params as { command?: unknown }).command ??
+          (params as { cmd?: unknown }).cmd ??
+          (params as { script?: unknown }).script ??
+          "",
+      );
+      if (RECALL_SH_RE.test(cmdRaw)) {
+        counters.skippedAllowed++;
+        return; // already recall.sh — let it through
+      }
+      const recallCmd = buildRecallCommand(entry.text);
+      counters.rerouted++;
+      logger.warn(
+        `[gemma-memory-intercept] REROUTED ${toolNameLc} -> recall.sh: key=${key} ` +
+          `origCmd="${truncate(cmdRaw, 60).replace(/"/g, '\\"')}" ` +
+          `text="${truncate(entry.text, 60).replace(/"/g, '\\"')}"`,
+      );
+      return { params: { ...params, command: recallCmd } };
+    }
+
     const forbidden = detectForbiddenCall(event.toolName, event.params);
     if (!forbidden) {
       counters.skippedAllowed++;
-      return; // model already chose recall.sh or something benign
+      return; // benign non-exec call
     }
 
     counters.blocked++;
@@ -354,6 +523,10 @@ export const __test__ = {
   looksLikeNaturalMemoRequest,
   detectForbiddenCall,
   buildBlockReason,
+  buildPrependContext,
+  executeRecallSync,
+  cacheKey,
+  sessionKeyToConversationId,
   cache: userTextCache,
   counters,
 };
