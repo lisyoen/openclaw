@@ -17,6 +17,10 @@ const {
   executeRecallSync,
   cacheKey,
   sessionKeyToConversationId,
+  extractSenderUserId,
+  isOwnerAudience,
+  audienceLabel,
+  OWNER_USER_IDS,
   cache,
 } = __test__;
 
@@ -350,6 +354,67 @@ test("P2.28 hook flow: no cached entry → no injection (pass-through)", () => {
 
   const r = hook!({ prompt: "x", messages: [] }, { agentId: "gemma", sessionKey: sk });
   assert.equal(r, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// P2.29 audience visibility filter
+// ---------------------------------------------------------------------------
+
+test("P2.29 OWNER_USER_IDS contains 이창연 (56682682) only", () => {
+  assert.equal(OWNER_USER_IDS.size, 1);
+  assert.ok(OWNER_USER_IDS.has("56682682"));
+});
+
+test("P2.29 isOwnerAudience: 56682682 → true", () => {
+  assert.equal(isOwnerAudience("56682682"), true);
+});
+
+test("P2.29 isOwnerAudience: 다른 user id → false", () => {
+  assert.equal(isOwnerAudience("12345"), false);
+  assert.equal(isOwnerAudience("8871636927"), false);
+  assert.equal(isOwnerAudience(undefined), false);
+  assert.equal(isOwnerAudience(""), false);
+});
+
+test("P2.29 audienceLabel: owner / guest 매핑", () => {
+  assert.equal(audienceLabel("56682682"), "owner");
+  assert.equal(audienceLabel("12345"), "guest");
+  assert.equal(audienceLabel(undefined), "guest");
+});
+
+test("P2.29 extractSenderUserId: event.metadata.senderId 우선", () => {
+  const ev = { metadata: { senderId: "56682682" } };
+  const ctx = { sessionKey: "agent:gemma:telegram:group:-1003821022499" };
+  assert.equal(extractSenderUserId(ev, ctx), "56682682");
+  assert.equal(audienceLabel(extractSenderUserId(ev, ctx)), "owner");
+});
+
+test("P2.29 extractSenderUserId: 그룹 발화에서 owner 외 senderId → guest", () => {
+  const ev = { metadata: { senderId: "12345" } };
+  const ctx = { sessionKey: "agent:gemma:telegram:group:-1003821022499" };
+  assert.equal(extractSenderUserId(ev, ctx), "12345");
+  assert.equal(audienceLabel(extractSenderUserId(ev, ctx)), "guest");
+});
+
+test("P2.29 extractSenderUserId: metadata 없을 때 sessionKey direct:<id> 폴백", () => {
+  const ev = {};
+  const ctx = { sessionKey: "agent:gemma:telegram:direct:56682682" };
+  assert.equal(extractSenderUserId(ev, ctx), "56682682");
+  assert.equal(audienceLabel(extractSenderUserId(ev, ctx)), "owner");
+});
+
+test("P2.29 extractSenderUserId: group sessionKey 만 (metadata 없음) → undefined → guest", () => {
+  // 그룹 sessionKey 는 chat_id 이지 sender id 가 아니므로 폴백 안 됨.
+  const ev = {};
+  const ctx = { sessionKey: "agent:gemma:telegram:group:-1003821022499" };
+  assert.equal(extractSenderUserId(ev, ctx), undefined);
+  assert.equal(audienceLabel(extractSenderUserId(ev, ctx)), "guest");
+});
+
+test("P2.29 extractSenderUserId: numeric metadata.senderId 도 문자열로 정규화", () => {
+  const ev = { metadata: { senderId: 56682682 } };
+  const ctx = { sessionKey: "" };
+  assert.equal(extractSenderUserId(ev, ctx), "56682682");
 });
 
 test("P2.28 hook flow: cached entry without recallResult → no injection", () => {

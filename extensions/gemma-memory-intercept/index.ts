@@ -66,6 +66,45 @@ const RECALL_SH_RE = /\bscripts\/recall\.sh\b/;
 // "...SKILL.md", "memory-search/SKILL.md", "skill-creator/SKILL.md", etc.
 const SKILL_MD_PATH_RE = /SKILL\.md\s*$/i;
 
+// P2.29 audience visibility filter
+// owner user id 집합. 그 외 발화자(그룹에 합류한 다른 사람)는 guest 로 분류되어
+// recall.sh 에서 visibility != shared 카드는 결과에서 제외된다.
+const OWNER_USER_IDS: ReadonlySet<string> = new Set(["56682682"]);
+
+export type Audience = "owner" | "guest";
+
+// PluginHookMessageReceivedEvent 의 metadata.senderId 가 telegram user id 다
+// (src/hooks/message-hook-mappers.ts:184-199 → toPluginMessageReceivedEvent).
+// metadata 가 없거나 senderId 가 비어 있으면 sessionKey 의 direct:<id> 패턴을
+// 폴백으로 사용한다 (그룹에선 chat_id 가 잡혀 owner 매칭이 실패 → guest).
+export function extractSenderUserId(
+  event: { metadata?: Record<string, unknown> } | undefined | null,
+  ctx: { sessionKey?: string } | undefined | null,
+): string | undefined {
+  const meta = event && typeof event === "object" ? event.metadata : undefined;
+  if (meta && typeof meta === "object") {
+    const sid = (meta as { senderId?: unknown }).senderId;
+    if (typeof sid === "string" && sid) return sid;
+    if (typeof sid === "number" && Number.isFinite(sid)) return String(sid);
+  }
+  // Fallback: sessionKey direct:<id> 패턴 (DM 에선 sender = chat 이므로 안전)
+  const sk = ctx && typeof ctx === "object" ? ctx.sessionKey : undefined;
+  if (typeof sk === "string" && sk) {
+    const m = /^agent:[^:]+:[^:]+:direct:(.+)$/.exec(sk);
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
+export function isOwnerAudience(userId: string | undefined): boolean {
+  if (!userId) return false;
+  return OWNER_USER_IDS.has(userId);
+}
+
+export function audienceLabel(userId: string | undefined): Audience {
+  return isOwnerAudience(userId) ? "owner" : "guest";
+}
+
 // MD profile files inside agent workspace that the model often "reads"
 // instead of calling recall.sh. read({path:"SOUL.md"}), MEMORY.md, USER.md,
 // TOOLS.md, AGENTS.md etc. — these are already in systemPrompt; opening them
@@ -239,6 +278,9 @@ const counters = {
   recallPreexecOk: 0,
   recallPreexecFail: 0,
   recallInjected: 0,
+  // P2.29 audience filter counters
+  audienceOwner: 0,
+  audienceGuest: 0,
 };
 
 export function __dumpCounters(): Record<string, number> {
@@ -272,7 +314,10 @@ type RecallPreexecResult =
   | { ok: true; stdout: string; durationMs: number }
   | { ok: false; reason: string; durationMs: number };
 
-export function executeRecallSync(userText: string): RecallPreexecResult {
+export function executeRecallSync(
+  userText: string,
+  audience: Audience = "owner",
+): RecallPreexecResult {
   const t0 = Date.now();
   if (RECALL_PREINJECT_DISABLE) {
     return { ok: false, reason: "disabled-by-env", durationMs: 0 };
@@ -280,12 +325,15 @@ export function executeRecallSync(userText: string): RecallPreexecResult {
   const arg = (userText ?? "").trim();
   if (!arg) return { ok: false, reason: "empty-input", durationMs: 0 };
   try {
+    // P2.29: RECALL_AUDIENCE 환경변수 주입 (owner|guest). recall.sh 가 visibility
+    // 필터 + write/edit/delete 거부 게이트에 사용.
+    const env = { ...process.env, RECALL_AUDIENCE: audience };
     const result = spawnSync("bash", ["scripts/recall.sh", arg], {
       cwd: RECALL_PREINJECT_WORKSPACE,
       encoding: "utf8",
       timeout: RECALL_PREINJECT_TIMEOUT_MS,
       maxBuffer: RECALL_PREINJECT_MAX_OUTPUT,
-      env: process.env,
+      env,
     });
     const durationMs = Date.now() - t0;
     if (result.error) {
@@ -373,9 +421,13 @@ export default (api: OpenClawPluginApi) => {
 
     const text = extractUserText(event);
     const matched = text ? looksLikeNaturalMemoRequest(text) : false;
+    // P2.29: audience 추출 (event.metadata.senderId 우선, sessionKey direct: 폴백).
+    const senderUserId = extractSenderUserId(event, ctx);
+    const audience: Audience = audienceLabel(senderUserId);
     logger.info(
       `[gemma-memory-intercept] message_received agent=${agentId} ` +
         `sessionKey=${sessionKey ?? ""} convId=${conversationId ?? ""} ` +
+        `userId=${senderUserId ?? "?"} audience=${audience} ` +
         `textLen=${text?.length ?? 0} matched=${matched} ` +
         `sample="${truncate(text || "", 60).replace(/"/g, '\\"')}"`,
     );
@@ -383,6 +435,8 @@ export default (api: OpenClawPluginApi) => {
     if (!matched) return;
 
     counters.naturalMemoMatched++;
+    if (audience === "owner") counters.audienceOwner++;
+    else counters.audienceGuest++;
 
     const key = cacheKey(agentId, conversationId);
     const entry: CacheEntry = { text, firstToolCallSeen: false, ts: Date.now() };
@@ -390,12 +444,14 @@ export default (api: OpenClawPluginApi) => {
     pruneCache();
 
     logger.info(
-      `[gemma-memory-intercept] natural-memo cached: key=${key} sample="${truncate(text, 80)}"`,
+      `[gemma-memory-intercept] natural-memo cached: key=${key} audience=${audience} ` +
+        `sample="${truncate(text, 80)}"`,
     );
 
     // P2.28: recall.sh 동기 선실행 → 결과 캐시 적재. 실패/빈 결과/timeout 이면
     // recallResult 미설정 (모델 기존 흐름 유지, P2.26 가드가 빈응답 fallback).
-    const preexec = executeRecallSync(text);
+    // P2.29: audience 전달 → recall.sh 가 visibility 필터 적용.
+    const preexec = executeRecallSync(text, audience);
     if (preexec.ok) {
       entry.recallResult = preexec.stdout;
       counters.recallPreexecOk++;
@@ -527,6 +583,11 @@ export const __test__ = {
   executeRecallSync,
   cacheKey,
   sessionKeyToConversationId,
+  // P2.29 audience surface
+  extractSenderUserId,
+  isOwnerAudience,
+  audienceLabel,
+  OWNER_USER_IDS,
   cache: userTextCache,
   counters,
 };
