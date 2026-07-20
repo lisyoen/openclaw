@@ -24,6 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Select latest Xcode (Swift 6.2 필요)
+        run: |
+          ls -d /Applications/Xcode*.app | sort -V
+          LATEST=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          echo "selecting $LATEST"
+          sudo xcode-select -s "$LATEST"
+
       - name: Xcode version
         run: xcodebuild -version && xcrun simctl list devices available | head -20
 
