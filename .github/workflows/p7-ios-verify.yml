@@ -1,0 +1,66 @@
+# P7 T-Native 전용 검증: macOS runner에서 unsigned iOS 테스트/빌드.
+# 기존 macOS/OpenClaw release workflow와 독립. 비밀·서명·배포 없음.
+name: p7-ios-verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [p7-tnative]
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/p7-ios-verify.yml'
+
+concurrency:
+  group: p7-ios-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-unsigned:
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version && xcrun simctl list devices available | head -20
+
+      - name: Install tools (XcodeGen, SwiftFormat, SwiftLint)
+        run: brew install xcodegen swiftformat swiftlint
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -project OpenClaw.xcodeproj -scheme OpenClaw
+
+      - name: iOS unit tests (simulator, unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project OpenClaw.xcodeproj \
+            -scheme OpenClaw \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            | tail -200
+
+      - name: Simulator unsigned build (Release config off, Debug)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project OpenClaw.xcodeproj \
+            -scheme OpenClaw \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            | tail -80
+
+      - name: Upload test results (진단용, 비밀 없음)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p7-ios-test-results
+          path: apps/ios/TestResults.xcresult
+          retention-days: 7

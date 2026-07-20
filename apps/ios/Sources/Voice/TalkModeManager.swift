@@ -99,6 +99,17 @@ final class TalkModeManager: NSObject {
 
     private let allowSimulatorCapture: Bool
 
+    // P7-a: 사용자가 명시적으로 시작한 활성 세션의 백그라운드 유지 상태
+    var backgroundKeepAliveEnabled = false
+    private(set) var userInitiatedSessionActive = false
+    private(set) var flowState: TalkFlowState = .idle
+    var backgroundContinuationActive: Bool {
+        TalkBackgroundPolicy.shouldMaintainInBackground(
+            backgroundEnabled: self.backgroundKeepAliveEnabled,
+            talkEnabled: self.isEnabled,
+            userInitiatedActive: self.userInitiatedSessionActive)
+    }
+
     private let audioEngine = AVAudioEngine()
     private var inputTapInstalled = false
     private var audioTapDiagnostics: AudioTapDiagnostics?
@@ -268,7 +279,7 @@ final class TalkModeManager: NSObject {
                 + "listening=\(self.isListening) gatewayConnected=\(self.gatewayConnected)")
         guard self.isEnabled else { return }
         guard self.captureMode != .pushToTalk else { return }
-        guard self.foregroundAudioCaptureAllowed else {
+        guard TalkBackgroundPolicy.allowsNewTalkStart(foregroundAllowed: self.foregroundAudioCaptureAllowed) else {
             self.statusText = "Paused"
             GatewayDiagnostics.log("talk start ignored: app backgrounded")
             return
@@ -285,6 +296,8 @@ final class TalkModeManager: NSObject {
         }
 
         self.isStarting = true
+        self.userInitiatedSessionActive = true
+        self.flowState = self.flowState.transitioned(on: .startRequested)
         self.startAttemptID += 1
         let attemptID = self.startAttemptID
         defer {
@@ -394,6 +407,8 @@ final class TalkModeManager: NSObject {
     }
 
     func stop() {
+        self.userInitiatedSessionActive = false
+        self.flowState = .idle
         self.isEnabled = false
         self.cancelPendingStart()
         self.isListening = false
@@ -451,6 +466,8 @@ final class TalkModeManager: NSObject {
         self.isListening = false
         self.isPushToTalkActive = false
         self.captureMode = .idle
+        self.userInitiatedSessionActive = false
+        self.flowState = .idle
         self.statusText = "Paused"
         self.gatewayTalkActiveModeTitle = "Paused"
         self.gatewayTalkActiveModeSubtitle = nil
@@ -1129,7 +1146,10 @@ final class TalkModeManager: NSObject {
         guard let gateway else {
             return .unavailable(self.realtimeIssue(message: "Gateway not connected", phase: "start"))
         }
-        guard self.foregroundAudioCaptureAllowed else {
+        guard TalkBackgroundPolicy.allowsRealtimeStart(
+            foregroundAllowed: self.foregroundAudioCaptureAllowed,
+            maintainingBackground: self.backgroundContinuationActive)
+        else {
             self.statusText = "Paused"
             GatewayDiagnostics.log("talk realtime ignored: app backgrounded")
             return .ignored
@@ -2441,6 +2461,7 @@ extension TalkModeManager {
             self.isSpeaking = false
             self.isUserSpeechDetected = false
         }
+        self.flowState = TalkFlowState.fromRelayStatus(status, current: self.flowState)
     }
 
     private func prepareRealtimeRelayStart() {

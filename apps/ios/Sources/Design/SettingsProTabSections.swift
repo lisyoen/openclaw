@@ -802,6 +802,11 @@ extension SettingsProTab {
                 self.settingsToggle("Voice Wake", isOn: self.$voiceWakeEnabled) { enabled in
                     self.appModel.setVoiceWakeEnabled(enabled)
                 }
+                self.settingsToggle(
+                    "Talk in Background",
+                    isOn: Binding(
+                        get: { UserDefaults.standard.bool(forKey: "talk.background.enabled") },
+                        set: { UserDefaults.standard.set($0, forKey: "talk.background.enabled") })) { _ in }
                 self.settingsToggle("Talk Mode", isOn: self.$talkEnabled) { enabled in
                     guard !self.appModel.isAppleReviewDemoModeEnabled else {
                         self.talkEnabled = false

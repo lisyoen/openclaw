@@ -406,17 +406,27 @@ final class NodeAppModel {
         switch phase {
         case .background:
             self.isBackgrounded = true
-            self.stopGatewayHealthMonitor()
             self.backgroundedAt = Date()
             self.reconnectAfterBackgroundArmed = true
-            self.beginBackgroundConnectionGracePeriod()
             // Release voice wake mic in background.
             self.backgroundVoiceWakeSuspended = self.voiceWake.suspendForExternalAudioCapture()
-            let shouldKeepTalkActive = keepTalkActive && self.talkMode.isEnabled
+            self.talkMode.backgroundKeepAliveEnabled = keepTalkActive
+            // P7-a: 사용자가 명시적으로 시작한 활성 Talk 세션만 백그라운드에서 유지
+            let shouldKeepTalkActive = TalkBackgroundPolicy.shouldMaintainInBackground(
+                backgroundEnabled: keepTalkActive,
+                talkEnabled: self.talkMode.isEnabled,
+                userInitiatedActive: self.talkMode.userInitiatedSessionActive)
+            if shouldKeepTalkActive {
+                GatewayDiagnostics.log("node app model: keeping active talk session alive in background")
+            } else {
+                self.stopGatewayHealthMonitor()
+                self.beginBackgroundConnectionGracePeriod()
+            }
             self.backgroundTalkKeptActive = shouldKeepTalkActive
             self.backgroundTalkSuspended = self.talkMode.suspendForBackground(keepActive: shouldKeepTalkActive)
         case .active, .inactive:
             self.isBackgrounded = false
+            self.talkMode.backgroundKeepAliveEnabled = keepTalkActive
             self.endBackgroundConnectionGracePeriod(reason: "scene_foreground")
             self.clearBackgroundReconnectSuppression(reason: "scene_foreground")
             var shouldStartGatewayHealthMonitor = self.operatorConnected
