@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/googlechat",
-  "version": "2026.7.2",
+  "version": "2026.6.8",
   "description": "OpenClaw Google Chat channel plugin for spaces and direct messages.",
   "repository": {
     "type": "git",
@@ -8,15 +8,16 @@
   },
   "type": "module",
   "dependencies": {
-    "google-auth-library": "10.9.0",
+    "gaxios": "7.1.4",
+    "google-auth-library": "10.6.2",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@openclaw/plugin-sdk": "workspace:*",
-    "openclaw": "workspace:*"
+    "openclaw": "2026.5.28"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.7.2"
+    "openclaw": ">=2026.6.8"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -30,15 +31,6 @@
     "setupEntry": "./setup-entry.ts",
     "channel": {
       "id": "googlechat",
-      "configuredState": {
-        "env": {
-          "anyOf": [
-            "GOOGLE_CHAT_SERVICE_ACCOUNT",
-            "GOOGLE_CHAT_SERVICE_ACCOUNT_FILE"
-          ]
-        }
-      },
-      "approvalFlags": ["native"],
       "label": "Google Chat",
       "selectionLabel": "Google Chat (Chat API)",
       "detailLabel": "Google Chat",
@@ -83,10 +75,10 @@
       "minHostVersion": ">=2026.4.10"
     },
     "compat": {
-      "pluginApi": ">=2026.7.2"
+      "pluginApi": ">=2026.6.8"
     },
     "build": {
-      "openclawVersion": "2026.7.2"
+      "openclawVersion": "2026.6.8"
     },
     "release": {
       "publishToClawHub": true,

@@ -11,9 +11,7 @@ import {
   resolveChannelStreamingChunkMode,
   resolveChannelPreviewStreamMode,
   type StreamingMode,
-  type TextChunkMode,
 } from "openclaw/plugin-sdk/channel-outbound";
-import type { BlockStreamingCoalesceConfig } from "openclaw/plugin-sdk/config-contracts";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { normalizeResolvedSecretInputString, normalizeSecretInputString } from "../secret-input.js";
 import type {
@@ -41,10 +39,10 @@ export type ResolvedMattermostAccount = {
   oncharPrefixes?: string[];
   requireMention?: boolean;
   textChunkLimit?: number;
-  chunkMode?: TextChunkMode;
+  chunkMode?: MattermostAccountConfig["chunkMode"];
   streamingMode: StreamingMode;
   blockStreaming?: boolean;
-  blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
+  blockStreamingCoalesce?: MattermostAccountConfig["blockStreamingCoalesce"];
 };
 
 const mattermostAccountHelpers = createAccountListHelpers("mattermost", {
@@ -136,25 +134,22 @@ export function resolveMattermostAccount(params: {
     oncharPrefixes: merged.oncharPrefixes,
     requireMention,
     textChunkLimit: merged.textChunkLimit,
-    chunkMode: resolveChannelStreamingChunkMode(merged),
+    chunkMode: resolveChannelStreamingChunkMode(merged) ?? merged.chunkMode,
     streamingMode: resolveChannelPreviewStreamMode(merged, "partial"),
-    blockStreaming: resolveChannelStreamingBlockEnabled(merged),
-    blockStreamingCoalesce: resolveChannelStreamingBlockCoalesce(merged),
+    blockStreaming: resolveChannelStreamingBlockEnabled(merged) ?? merged.blockStreaming,
+    blockStreamingCoalesce:
+      resolveChannelStreamingBlockCoalesce(merged) ?? merged.blockStreamingCoalesce,
   };
 }
 
 /**
  * Resolve the effective replyToMode for a given chat type.
- * Direct messages stay flat unless explicitly opted into a per-chat-type mode.
+ * Mattermost auto-threading only applies to channel and group messages.
  */
 export function resolveMattermostReplyToMode(
   account: ResolvedMattermostAccount,
   kind: MattermostChatTypeKey,
 ): MattermostReplyToMode {
-  const scopedMode = account.config.replyToModeByChatType?.[kind];
-  if (scopedMode !== undefined) {
-    return scopedMode;
-  }
   if (kind === "direct") {
     return "off";
   }

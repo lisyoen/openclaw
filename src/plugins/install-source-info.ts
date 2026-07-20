@@ -5,7 +5,7 @@ import { parseRegistryNpmSpec, type ParsedRegistryNpmSpec } from "../infra/npm-r
 import type { PluginPackageInstall } from "./manifest.js";
 
 /** Warning emitted while describing plugin package install source metadata. */
-type PluginInstallSourceWarning =
+export type PluginInstallSourceWarning =
   | "invalid-clawhub-spec"
   | "invalid-npm-spec"
   | "invalid-default-choice"
@@ -17,14 +17,14 @@ type PluginInstallSourceWarning =
   | "npm-spec-package-name-mismatch";
 
 /** Pinning state for npm plugin install metadata. */
-type PluginInstallNpmPinState =
+export type PluginInstallNpmPinState =
   | "exact-with-integrity"
   | "exact-without-integrity"
   | "floating-with-integrity"
   | "floating-without-integrity";
 
 /** Parsed npm install source metadata for a plugin package. */
-type PluginInstallNpmSourceInfo = {
+export type PluginInstallNpmSourceInfo = {
   spec: string;
   packageName: string;
   expectedPackageName?: string;
@@ -36,12 +36,12 @@ type PluginInstallNpmSourceInfo = {
 };
 
 /** Parsed local install source metadata for a plugin package. */
-type PluginInstallLocalSourceInfo = {
+export type PluginInstallLocalSourceInfo = {
   path: string;
 };
 
 /** Parsed ClawHub install source metadata for a plugin package. */
-type PluginInstallClawHubSourceInfo = {
+export type PluginInstallClawHubSourceInfo = {
   spec: string;
   packageName: string;
   version?: string;
@@ -58,7 +58,7 @@ export type PluginInstallSourceInfo = {
 };
 
 /** Options for describing expected plugin install source metadata. */
-type DescribePluginInstallSourceOptions = {
+export type DescribePluginInstallSourceOptions = {
   expectedPackageName?: string | null;
 };
 

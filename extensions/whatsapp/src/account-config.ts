@@ -6,6 +6,10 @@ import {
   resolveMergedAccountConfig,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/account-core";
+import {
+  resolveChannelStreamingBlockEnabled,
+  resolveChannelStreamingChunkMode,
+} from "openclaw/plugin-sdk/channel-outbound";
 import type { WhatsAppAccountConfig } from "./account-types.js";
 
 function resolveWhatsAppDefaultAccountSharedConfig(
@@ -65,5 +69,10 @@ export function resolveMergedWhatsAppAccountConfig(params: {
     accountId === DEFAULT_ACCOUNT_ID
       ? base
       : resolveMergedNamedWhatsAppAccountConfig({ cfg: params.cfg, accountId });
-  return { accountId, ...merged };
+  return {
+    accountId,
+    ...merged,
+    chunkMode: resolveChannelStreamingChunkMode(merged) ?? merged.chunkMode,
+    blockStreaming: resolveChannelStreamingBlockEnabled(merged) ?? merged.blockStreaming,
+  };
 }

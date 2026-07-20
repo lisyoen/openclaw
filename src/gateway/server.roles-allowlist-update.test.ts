@@ -10,10 +10,9 @@ import type { DeviceIdentity } from "../infra/device-identity.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 import { approveDevicePairing, listDevicePairing } from "../infra/device-pairing.js";
 import { approveNodePairing, requestNodePairing } from "../infra/node-pairing.js";
-import { readRestartSentinel } from "../infra/restart-sentinel.js";
+import { resolveRestartSentinelPath } from "../infra/restart-sentinel.js";
 import { SUPERVISOR_HINT_ENV_VARS } from "../infra/supervisor-markers.js";
 import { getActiveRuntimePluginRegistry } from "../plugins/active-runtime-registry.js";
-import { captureEnv, deleteTestEnvValue } from "../test-utils/env.js";
 import {
   GATEWAY_CLIENT_MODES,
   GATEWAY_CLIENT_NAMES,
@@ -50,15 +49,22 @@ let ws: WebSocket;
 let port: number;
 
 async function withoutSupervisorHints<T>(fn: () => Promise<T>): Promise<T> {
-  const envSnapshot = captureEnv([...SUPERVISOR_HINT_ENV_VARS]);
+  const previousEnv = new Map<string, string | undefined>();
   for (const key of SUPERVISOR_HINT_ENV_VARS) {
-    deleteTestEnvValue(key);
+    previousEnv.set(key, process.env[key]);
+    delete process.env[key];
   }
 
   try {
     return await fn();
   } finally {
-    envSnapshot.restore();
+    for (const [key, value] of previousEnv) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
   }
 }
 
@@ -78,10 +84,13 @@ function installCanvasNodePolicyForTest() {
     throw new Error("active plugin registry is required for canvas node command tests");
   }
   if (
-    registry.nodeInvokePolicies.some((entry) => entry.policy.commands.includes("canvas.snapshot"))
+    (registry.nodeInvokePolicies ?? []).some((entry) =>
+      entry.policy.commands.includes("canvas.snapshot"),
+    )
   ) {
     return;
   }
+  registry.nodeInvokePolicies ??= [];
   registry.nodeInvokePolicies.push({
     pluginId: "canvas",
     pluginName: "Canvas",
@@ -339,12 +348,9 @@ async function respondToInvoke(
 }
 
 function createDeviceIdentityForTest(prefix: string) {
-  return loadOrCreateDeviceIdentity({
-    path: path.join(
-      os.tmpdir(),
-      `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`,
-    ),
-  });
+  return loadOrCreateDeviceIdentity(
+    path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`),
+  );
 }
 
 describe("gateway role enforcement", () => {
@@ -411,9 +417,13 @@ describe("gateway update.run", () => {
         }, FAST_WAIT_OPTS);
         expect(sigusr1).toHaveBeenCalled();
 
-        const sentinel = await readRestartSentinel();
-        expect(sentinel?.payload.kind).toBe("update");
-        expect(sentinel?.payload.stats?.mode).toBe("git");
+        const sentinelPath = resolveRestartSentinelPath();
+        const raw = await fs.readFile(sentinelPath, "utf-8");
+        const parsed = JSON.parse(raw) as {
+          payload?: { kind?: string; stats?: { mode?: string } };
+        };
+        expect(parsed.payload?.kind).toBe("update");
+        expect(parsed.payload?.stats?.mode).toBe("git");
       } finally {
         process.off("SIGUSR1", sigusr1);
       }
@@ -447,9 +457,6 @@ describe("gateway update.run", () => {
         expect(res.ok).toBe(true);
         await vi.waitFor(() => {
           expect(updateMock).toHaveBeenCalledOnce();
-        }, FAST_WAIT_OPTS);
-        await vi.waitFor(() => {
-          expect(sigusr1).toHaveBeenCalled();
         }, FAST_WAIT_OPTS);
       } finally {
         process.off("SIGUSR1", sigusr1);
@@ -489,18 +496,15 @@ describe("gateway node command allowlist", () => {
     const invokeCapture = createInvokeCapture();
 
     try {
-      const systemDeviceIdentity = loadOrCreateDeviceIdentity({
-        path: path.join(
-          os.tmpdir(),
-          `openclaw-node-system-run-${Date.now()}-${Math.random()}.sqlite`,
-        ),
-      });
-      const emptyDeviceIdentity = loadOrCreateDeviceIdentity({
-        path: path.join(os.tmpdir(), `openclaw-node-empty-${Date.now()}-${Math.random()}.sqlite`),
-      });
-      const allowedDeviceIdentity = loadOrCreateDeviceIdentity({
-        path: path.join(os.tmpdir(), `openclaw-node-allowed-${Date.now()}-${Math.random()}.sqlite`),
-      });
+      const systemDeviceIdentity = loadOrCreateDeviceIdentity(
+        path.join(os.tmpdir(), `openclaw-node-system-run-${Date.now()}-${Math.random()}.json`),
+      );
+      const emptyDeviceIdentity = loadOrCreateDeviceIdentity(
+        path.join(os.tmpdir(), `openclaw-node-empty-${Date.now()}-${Math.random()}.json`),
+      );
+      const allowedDeviceIdentity = loadOrCreateDeviceIdentity(
+        path.join(os.tmpdir(), `openclaw-node-allowed-${Date.now()}-${Math.random()}.json`),
+      );
 
       systemClient = await connectNodeClientWithPairing({
         port,

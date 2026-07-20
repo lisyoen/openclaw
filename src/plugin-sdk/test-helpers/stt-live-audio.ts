@@ -71,9 +71,6 @@ export async function synthesizeElevenLabsLiveSpeech(params: {
       signal: controller.signal,
     });
     if (!response.ok) {
-      // Error payloads are not used by the live fixture. Cancel instead of buffering an
-      // untrusted or unbounded body so Undici can release the connection promptly.
-      await response.body?.cancel().catch(() => undefined);
       throw new Error(`ElevenLabs live TTS failed (${response.status})`);
     }
     return Buffer.from(await response.arrayBuffer());

@@ -1,4 +1,3 @@
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 /**
  * Lazy-loaded dependency bundle for remote-profile tab operation tests.
  */
@@ -20,9 +19,11 @@ export type RemoteProfileTestDeps = {
   originalFetch: typeof import("./server-context.remote-tab-ops.harness.js").originalFetch;
 };
 
+let remoteProfileTestDepsPromise: Promise<RemoteProfileTestDeps> | undefined;
+
 /** Loads remote-profile tab operation dependencies after Chrome mocks are installed. */
-const loadRemoteProfileTestDepsOnce = createLazyRuntimeModule(() =>
-  (async () => {
+export async function loadRemoteProfileTestDeps(): Promise<RemoteProfileTestDeps> {
+  remoteProfileTestDepsPromise ??= (async () => {
     await import("./server-context.chrome-test-harness.js");
     const cdpModule = await import("./cdp.js");
     const chromeModule = await import("./chrome.js");
@@ -52,10 +53,9 @@ const loadRemoteProfileTestDepsOnce = createLazyRuntimeModule(() =>
       makeState,
       originalFetch,
     };
-  })(),
-);
-
-export const loadRemoteProfileTestDeps = loadRemoteProfileTestDepsOnce;
+  })();
+  return await remoteProfileTestDepsPromise;
+}
 
 /** Installs per-test mock reset and Playwright connection cleanup. */
 export function installRemoteProfileTestLifecycle(deps: RemoteProfileTestDeps): void {

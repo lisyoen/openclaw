@@ -1,15 +1,11 @@
 // Coverage for terminal attempt trajectory status classification.
 import { describe, expect, it } from "vitest";
 import {
+  NON_DELIVERABLE_TERMINAL_TURN_REASON,
   resolveAttemptTrajectoryTerminal,
   resolveTerminalAssistantTexts,
+  type ResolveAttemptTrajectoryTerminalParams,
 } from "./attempt-trajectory-status.js";
-
-const NON_DELIVERABLE_TERMINAL_TURN_REASON = "non_deliverable_terminal_turn";
-
-type ResolveAttemptTrajectoryTerminalParams = Parameters<
-  typeof resolveAttemptTrajectoryTerminal
->[0];
 
 function baseParams(
   overrides: Partial<ResolveAttemptTrajectoryTerminalParams> = {},
@@ -47,62 +43,12 @@ describe("attempt trajectory status", () => {
     ).toEqual({ status: "success" });
   });
 
-  it("marks length-limited visible text as non-deliverable without terminal output", () => {
-    expect(
-      resolveAttemptTrajectoryTerminal(
-        baseParams({
-          assistantTexts: ["Partial answer."],
-          lastAssistantStopReason: "length",
-        }),
-      ),
-    ).toEqual({
-      status: "error",
-      terminalError: NON_DELIVERABLE_TERMINAL_TURN_REASON,
-    });
-  });
-
-  it("does not treat streamed partial payloads as completed length-limited output", () => {
-    expect(
-      resolveAttemptTrajectoryTerminal(
-        baseParams({
-          assistantTexts: ["Partial answer."],
-          synthesizedPayloadCount: 1,
-          lastAssistantStopReason: "length",
-        }),
-      ),
-    ).toEqual({
-      status: "error",
-      terminalError: NON_DELIVERABLE_TERMINAL_TURN_REASON,
-    });
-  });
-
-  it("keeps length-limited turns successful when terminal output was delivered", () => {
-    expect(
-      resolveAttemptTrajectoryTerminal(
-        baseParams({
-          assistantTexts: [],
-          lastAssistantStopReason: "length",
-          hasTerminalOutput: true,
-        }),
-      ),
-    ).toEqual({ status: "success" });
-  });
-
   it("keeps committed messaging tool delivery as success even without assistant text", () => {
     expect(
       resolveAttemptTrajectoryTerminal(
         baseParams({
           didSendViaMessagingTool: true,
           messagingToolSentTargets: [{ channel: "telegram" }],
-        }),
-      ),
-    ).toEqual({ status: "success" });
-    expect(
-      resolveAttemptTrajectoryTerminal(
-        baseParams({
-          didSendViaMessagingTool: true,
-          messagingToolSentTargets: [{ channel: "telegram" }],
-          lastAssistantStopReason: "length",
         }),
       ),
     ).toEqual({ status: "success" });

@@ -5,11 +5,9 @@ import { connect, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { describe, expect, test } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
-import { withTimeout } from "../utils/with-timeout.js";
 import { createAuthRateLimiter } from "./auth-rate-limit.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import { PLUGIN_NODE_CAPABILITY_PATH_PREFIX } from "./plugin-node-capability.js";
-import { MAX_PREAUTH_PAYLOAD_BYTES } from "./server-constants.js";
 import { attachGatewayUpgradeHandler, createGatewayHttpServer } from "./server-http.js";
 import { createPreauthConnectionBudget } from "./server/preauth-connection-budget.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
@@ -55,6 +53,22 @@ async function fetchCanvas(input: string, init?: RequestInit): Promise<Response>
   throw new Error("unreachable");
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function listen(
   server: ReturnType<typeof createGatewayHttpServer>,
   host = "127.0.0.1",
@@ -87,7 +101,7 @@ async function listen(
           server.close((err) => (err ? reject(err) : resolve()));
         }),
         SERVER_CLOSE_TIMEOUT_MS,
-        { message: "gateway test server close timed out" },
+        "gateway test server close",
       );
     },
   };
@@ -302,10 +316,7 @@ async function withCanvasGatewayHarness(params: {
   }) => Promise<void>;
 }) {
   const clients = new Set<GatewayWsClient>();
-  const canvasWss = new WebSocketServer({
-    noServer: true,
-    maxPayload: MAX_PREAUTH_PAYLOAD_BYTES,
-  });
+  const canvasWss = new WebSocketServer({ noServer: true });
   const canvasHandler: CanvasHostHandler = {
     rootDir: "test",
     basePath: "/canvas",
@@ -347,10 +358,7 @@ async function withCanvasGatewayHarness(params: {
     rateLimiter: params.rateLimiter,
   });
 
-  const wss = new WebSocketServer({
-    noServer: true,
-    maxPayload: MAX_PREAUTH_PAYLOAD_BYTES,
-  });
+  const wss = new WebSocketServer({ noServer: true });
   attachGatewayUpgradeHandler({
     httpServer,
     wss,

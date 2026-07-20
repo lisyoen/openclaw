@@ -1,14 +1,8 @@
 /** Prepares queued follow-up payloads for source-channel delivery. */
-import { hasOutboundReplyContent } from "openclaw/plugin-sdk/reply-payload";
 import type { MessagingToolSend } from "../../agents/embedded-agent-messaging.types.js";
-import type { ReplyToMode } from "../../config/types.base.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
-import {
-  copyReplyPayloadMetadata,
-  getReplyPayloadMetadata,
-  setReplyPayloadMetadata,
-} from "../reply-payload.js";
+import { copyReplyPayloadMetadata } from "../reply-payload.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
 import {
@@ -22,9 +16,16 @@ import {
   filterMessagingToolMediaDuplicates,
   resolveMessagingToolPayloadDedupe,
 } from "./reply-payloads.js";
-import { createReplyDeliveryContext, resolveReplyToMode } from "./reply-threading.js";
+import { resolveReplyToMode } from "./reply-threading.js";
 
-/** Strips empty/heartbeat payloads, applies threading, and dedupes message-tool sends. */
+function hasReplyPayloadMedia(payload: ReplyPayload): boolean {
+  if (typeof payload.mediaUrl === "string" && payload.mediaUrl.trim().length > 0) {
+    return true;
+  }
+  return Array.isArray(payload.mediaUrls) && payload.mediaUrls.some((url) => url.trim().length > 0);
+}
+
+/** Strips heartbeat tokens, applies threading, and dedupes message-tool sends. */
 export function resolveFollowupDeliveryPayloads(params: {
   cfg: OpenClawConfig;
   payloads: ReplyPayload[];
@@ -32,11 +33,7 @@ export function resolveFollowupDeliveryPayloads(params: {
   originatingAccountId?: string;
   originatingChannel?: string;
   originatingChatType?: string | null;
-  originatingReplyToMode?: ReplyToMode;
   originatingTo?: string;
-  originatingThreadId?: string | number;
-  reasoningPayloadsEnabled?: boolean;
-  commentaryPayloadsEnabled?: boolean;
   sentMediaUrls?: string[];
   sentTargets?: MessagingToolSend[];
   sentTexts?: string[];
@@ -46,98 +43,72 @@ export function resolveFollowupDeliveryPayloads(params: {
     provider: params.messageProvider,
   });
   const replyToChannel = replyMessageProvider as OriginatingChannelType | undefined;
-  const replyToMode =
-    params.originatingReplyToMode ??
-    resolveReplyToMode(
-      params.cfg,
-      replyToChannel,
-      params.originatingAccountId,
-      params.originatingChatType,
-    );
-  const accountId = resolveOriginAccountId({
-    originatingAccountId: params.originatingAccountId,
-  });
-  const replyDelivery = createReplyDeliveryContext(replyToMode, params.originatingChatType);
-  const replyDeliverySource = replyMessageProvider
-    ? {
-        channel: replyMessageProvider,
-        ...(accountId ? { accountId } : {}),
-      }
-    : undefined;
-  const deliverablePayloads = params.payloads.filter(
-    (payload) =>
-      !(payload.isReasoning === true && params.reasoningPayloadsEnabled !== true) &&
-      !(payload.isCommentary === true && params.commentaryPayloadsEnabled !== true),
+  const replyToMode = resolveReplyToMode(
+    params.cfg,
+    replyToChannel,
+    params.originatingAccountId,
+    params.originatingChatType,
   );
   const sanitizedPayloads: ReplyPayload[] = [];
-  for (const payload of deliverablePayloads) {
+  for (const payload of params.payloads) {
     const text = payload.text;
-    const sanitized =
-      text?.includes("HEARTBEAT_OK") === true
-        ? copyReplyPayloadMetadata(payload, {
-            ...payload,
-            text: stripHeartbeatToken(text, { mode: "message" }).text,
-          })
-        : payload;
-    // Normalize before callers decide whether the run was empty. Otherwise a
-    // whitespace-only model payload can suppress the interactive fallback.
-    if (hasOutboundReplyContent(sanitized, { trimText: true })) {
-      sanitizedPayloads.push(sanitized);
+    if (!text || !text.includes("HEARTBEAT_OK")) {
+      sanitizedPayloads.push(payload);
+      continue;
     }
+    const stripped = stripHeartbeatToken(text, { mode: "message" });
+    const hasMedia = hasReplyPayloadMedia(payload);
+    if (stripped.shouldSkip && !hasMedia) {
+      continue;
+    }
+    sanitizedPayloads.push(copyReplyPayloadMetadata(payload, { ...payload, text: stripped.text }));
   }
   const replyTaggedPayloads = applyReplyThreading({
     payloads: sanitizedPayloads,
     replyToMode,
     replyToChannel,
-  }).map((payload) =>
-    setReplyPayloadMetadata(payload, {
-      replyDelivery,
-      ...(replyDeliverySource ? { replyDeliverySource } : {}),
+  });
+  const messagingToolPayloadDedupe = resolveMessagingToolPayloadDedupe({
+    messageProvider: replyMessageProvider,
+    messagingToolSentTargets: params.sentTargets,
+    originatingTo: resolveOriginMessageTo({
+      originatingTo: params.originatingTo,
     }),
-  );
+    accountId: resolveOriginAccountId({
+      originatingAccountId: params.originatingAccountId,
+    }),
+  });
   const sentMediaUrlFallback = params.sentMediaUrls ?? [];
   const sentTextFallback = params.sentTexts ?? [];
-  const originatingTo = resolveOriginMessageTo({
-    originatingTo: params.originatingTo,
-  });
-  const dedupedPayloads: ReplyPayload[] = [];
-  for (const payload of replyTaggedPayloads) {
-    const decision = resolveMessagingToolPayloadDedupe({
-      config: params.cfg,
-      messageProvider: replyMessageProvider,
-      messagingToolSentTargets: params.sentTargets,
-      originatingTo,
-      originatingThreadId: params.originatingThreadId,
-      replyToId: payload.replyToId,
-      replyToIsExplicit: Boolean(
-        getReplyPayloadMetadata(payload)?.replyToIdExplicit ||
-        payload.replyToTag ||
-        payload.replyToCurrent,
-      ),
-      replyDelivery: getReplyPayloadMetadata(payload)?.replyDelivery,
-      accountId,
-    });
-    if (!decision.shouldDedupePayloads) {
-      dedupedPayloads.push(payload);
-      continue;
-    }
-    const sentMediaUrls =
-      decision.matchingRoute && !decision.useGlobalSentMediaUrlEvidenceFallback
-        ? decision.routeSentMediaUrls
-        : sentMediaUrlFallback;
-    const sentTexts =
-      decision.matchingRoute && !decision.useGlobalSentTextEvidenceFallback
-        ? decision.routeSentTexts
-        : sentTextFallback;
-    const mediaFiltered = filterMessagingToolMediaDuplicates({
-      payloads: [payload],
-      sentMediaUrls,
-    });
-    const textFiltered = filterMessagingToolDuplicates({
-      payloads: mediaFiltered,
-      sentTexts,
-    });
-    dedupedPayloads.push(...textFiltered);
-  }
+  const shouldUseGlobalSentMediaUrlEvidence =
+    messagingToolPayloadDedupe.matchingRoute &&
+    messagingToolPayloadDedupe.routeSentMediaUrls.length === 0 &&
+    messagingToolPayloadDedupe.useGlobalSentMediaUrlEvidenceFallback;
+  const shouldUseGlobalSentTextEvidence =
+    messagingToolPayloadDedupe.matchingRoute &&
+    messagingToolPayloadDedupe.routeSentTexts.length === 0 &&
+    messagingToolPayloadDedupe.useGlobalSentTextEvidenceFallback;
+  const sentMediaUrlsForDedupe = messagingToolPayloadDedupe.matchingRoute
+    ? shouldUseGlobalSentMediaUrlEvidence
+      ? sentMediaUrlFallback
+      : messagingToolPayloadDedupe.routeSentMediaUrls
+    : sentMediaUrlFallback;
+  const sentTextsForDedupe = messagingToolPayloadDedupe.matchingRoute
+    ? shouldUseGlobalSentTextEvidence
+      ? sentTextFallback
+      : messagingToolPayloadDedupe.routeSentTexts
+    : sentTextFallback;
+  const mediaFilteredPayloads = messagingToolPayloadDedupe.shouldDedupePayloads
+    ? filterMessagingToolMediaDuplicates({
+        payloads: replyTaggedPayloads,
+        sentMediaUrls: sentMediaUrlsForDedupe,
+      })
+    : replyTaggedPayloads;
+  const dedupedPayloads = messagingToolPayloadDedupe.shouldDedupePayloads
+    ? filterMessagingToolDuplicates({
+        payloads: mediaFilteredPayloads,
+        sentTexts: sentTextsForDedupe,
+      })
+    : mediaFilteredPayloads;
   return dedupedPayloads;
 }

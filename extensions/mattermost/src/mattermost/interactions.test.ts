@@ -6,48 +6,22 @@ import { setMattermostRuntime } from "../runtime.js";
 import { resolveMattermostAccount } from "./accounts.js";
 import type { MattermostClient, MattermostPost } from "./client.js";
 import {
-  buildButtonProps,
+  buildButtonAttachments,
   computeInteractionCallbackUrl,
   createMattermostInteractionHandler,
+  generateInteractionToken,
+  getInteractionCallbackUrl,
+  getInteractionSecret,
   resolveInteractionCallbackPath,
   resolveInteractionCallbackUrl,
   setInteractionCallbackUrl,
   setInteractionSecret,
+  verifyInteractionToken,
 } from "./interactions.js";
 
-type ButtonAction = {
-  id: string;
-  type: "button";
-  name: string;
-  style?: "default" | "primary" | "danger";
-  integration: { url: string; context: Record<string, unknown> };
-};
-type ButtonAttachment = { text: string; actions?: ButtonAction[] };
-type ButtonAttachments = ButtonAttachment[];
-type ButtonPropsInput = {
-  callbackUrl: string;
-  accountId?: string;
-  buttons: Array<{
-    id: string;
-    name: string;
-    style?: "default" | "primary" | "danger";
-    context?: Record<string, unknown>;
-  }>;
-  text?: string;
-};
-
-function buildButtonAttachmentsForTest(params: ButtonPropsInput): ButtonAttachments {
-  const signedChannelId = params.buttons[0]?.context?.["__openclaw_channel_id"];
-  const props = buildButtonProps({
-    ...params,
-    channelId: typeof signedChannelId === "string" ? signedChannelId : "test-channel",
-  });
-  const attachments = props?.attachments;
-  if (!Array.isArray(attachments)) {
-    throw new Error("Expected button attachments");
-  }
-  return attachments as ButtonAttachments;
-}
+type ButtonAttachments = ReturnType<typeof buildButtonAttachments>;
+type ButtonAttachment = ButtonAttachments[number];
+type ButtonAction = NonNullable<ButtonAttachment["actions"]>[number];
 
 function requireFirstAttachment(attachments: ButtonAttachments): ButtonAttachment {
   const [attachment] = attachments;
@@ -71,28 +45,6 @@ function requireAction(attachments: ButtonAttachments, index = 0): ButtonAction 
     throw new Error(`Expected button attachment action at index ${index}`);
   }
   return action;
-}
-
-function generateInteractionToken(context: Record<string, unknown>, accountId?: string): string {
-  const actionId = typeof context.action_id === "string" ? context.action_id : "test";
-  const attachments = buildButtonAttachmentsForTest({
-    callbackUrl: "https://gateway.example.com/mattermost/interactions/test",
-    accountId,
-    buttons: [{ id: actionId, name: "Test", context }],
-  });
-  return String(requireAction(attachments).integration.context["_token"]);
-}
-
-function getInteractionSecret(): string {
-  return generateInteractionToken({ action_id: "secret-probe" });
-}
-
-function verifyInteractionToken(
-  context: Record<string, unknown>,
-  token: string,
-  accountId?: string,
-): boolean {
-  return generateInteractionToken(context, accountId) === token;
 }
 
 // ── HMAC token management ────────────────────────────────────────────
@@ -245,6 +197,21 @@ describe("generateInteractionToken / verifyInteractionToken", () => {
   });
 });
 
+// ── Callback URL registry ────────────────────────────────────────────
+
+describe("callback URL registry", () => {
+  it("stores and retrieves callback URLs", () => {
+    setInteractionCallbackUrl("acct1", "http://localhost:18789/mattermost/interactions/acct1");
+    expect(getInteractionCallbackUrl("acct1")).toBe(
+      "http://localhost:18789/mattermost/interactions/acct1",
+    );
+  });
+
+  it("returns undefined for unknown account", () => {
+    expect(getInteractionCallbackUrl("nonexistent-account-id")).toBeUndefined();
+  });
+});
+
 describe("resolveInteractionCallbackUrl", () => {
   afterEach(() => {
     for (const accountId of ["cached", "default", "acct", "myaccount"]) {
@@ -353,15 +320,15 @@ describe("resolveInteractionCallbackPath", () => {
   });
 });
 
-// ── buildButtonProps attachments ────────────────────────────────────
+// ── buildButtonAttachments ───────────────────────────────────────────
 
-describe("buildButtonProps attachments", () => {
+describe("buildButtonAttachments", () => {
   beforeEach(() => {
     setInteractionSecret("test-bot-token");
   });
 
   it("returns an array with one attachment containing all buttons", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost:18789/mattermost/interactions/default",
       buttons: [
         { id: "btn1", name: "Click Me" },
@@ -374,7 +341,7 @@ describe("buildButtonProps attachments", () => {
   });
 
   it("sets type to 'button' on every action", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost:18789/cb",
       buttons: [{ id: "a", name: "A" }],
     });
@@ -383,7 +350,7 @@ describe("buildButtonProps attachments", () => {
   });
 
   it("includes HMAC _token in integration context", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost:18789/cb",
       buttons: [{ id: "test", name: "Test" }],
     });
@@ -393,7 +360,7 @@ describe("buildButtonProps attachments", () => {
   });
 
   it("includes sanitized action_id in integration context", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost:18789/cb",
       buttons: [{ id: "my_action", name: "Do It" }],
     });
@@ -405,7 +372,7 @@ describe("buildButtonProps attachments", () => {
   });
 
   it("merges custom context into integration context", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost:18789/cb",
       buttons: [{ id: "btn", name: "Go", context: { tweet_id: "123", batch: true } }],
     });
@@ -419,7 +386,7 @@ describe("buildButtonProps attachments", () => {
 
   it("passes callback URL to each button integration", () => {
     const url = "http://localhost:18789/mattermost/interactions/default";
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: url,
       buttons: [
         { id: "a", name: "A" },
@@ -433,7 +400,7 @@ describe("buildButtonProps attachments", () => {
   });
 
   it("preserves button style", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost/cb",
       buttons: [
         { id: "ok", name: "OK", style: "primary" },
@@ -446,7 +413,7 @@ describe("buildButtonProps attachments", () => {
   });
 
   it("uses provided text for the attachment", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost/cb",
       buttons: [{ id: "x", name: "X" }],
       text: "Choose an action:",
@@ -456,7 +423,7 @@ describe("buildButtonProps attachments", () => {
   });
 
   it("defaults to empty string text when not provided", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost/cb",
       buttons: [{ id: "x", name: "X" }],
     });
@@ -465,7 +432,7 @@ describe("buildButtonProps attachments", () => {
   });
 
   it("generates verifiable tokens", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost/cb",
       buttons: [{ id: "verify_me", name: "V", context: { extra: "data" } }],
     });
@@ -477,7 +444,7 @@ describe("buildButtonProps attachments", () => {
   });
 
   it("generates tokens that verify even when Mattermost reorders context keys", () => {
-    const result = buildButtonAttachmentsForTest({
+    const result = buildButtonAttachments({
       callbackUrl: "http://localhost/cb",
       buttons: [{ id: "do_action", name: "Do", context: { tweet_id: "42", category: "ai" } }],
     });

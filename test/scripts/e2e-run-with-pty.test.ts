@@ -1,6 +1,5 @@
 // E2E Run With Pty tests cover e2e run with pty script behavior.
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -128,23 +127,15 @@ describe("run-with-pty", () => {
   posixIt("escalates forwarded termination signals for PTY commands that ignore them", async () => {
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), "openclaw-run-with-pty-"));
     const logPath = path.join(tempRoot, "pty.log");
-    const descendantPidPath = path.join(tempRoot, "descendant.pid");
-    let descendantPid: number | null = null;
-    const probeCode = `
-const { spawn } = require("node:child_process");
-const fs = require("node:fs");
-process.on("SIGTERM", () => process.exit(0));
-const descendant = spawn(process.execPath, [
-  "-e",
-  "process.on('SIGTERM',()=>{});process.on('SIGHUP',()=>{});setInterval(()=>{},1000);",
-], { stdio: "ignore" });
-fs.writeFileSync(${JSON.stringify(descendantPidPath)}, String(descendant.pid));
-console.log("ready");
-setInterval(() => {}, 1000);
-`;
     const child = spawn(
       process.execPath,
-      [scriptPath, logPath, process.execPath, "-e", probeCode],
+      [
+        scriptPath,
+        logPath,
+        process.execPath,
+        "-e",
+        "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);",
+      ],
       {
         env: {
           ...process.env,
@@ -165,8 +156,7 @@ setInterval(() => {}, 1000);
     });
 
     try {
-      await waitFor(() => stdout.text().includes("ready") && existsSync(descendantPidPath));
-      descendantPid = Number(await readFile(descendantPidPath, "utf8"));
+      await waitFor(() => stdout.text().includes("ready"));
       child.kill("SIGTERM");
       const result = await waitForClose(child, 5_000);
       const log = await readFile(logPath, "utf8");
@@ -174,11 +164,7 @@ setInterval(() => {}, 1000);
       expect(result).toEqual({ code: 143, signal: null });
       expect(stderr.text()).toBe("");
       expect(log).toContain("ready");
-      expect(isProcessAlive(descendantPid)).toBe(false);
     } finally {
-      if (descendantPid && isProcessAlive(descendantPid)) {
-        process.kill(descendantPid, "SIGKILL");
-      }
       if (child.pid && isProcessAlive(child.pid)) {
         child.kill("SIGKILL");
       }
@@ -194,7 +180,7 @@ async function waitFor(condition: () => boolean, timeoutMs = 3_000) {
       throw new Error("timed out waiting for condition");
     }
     await new Promise((resolve) => {
-      setTimeout(resolve, 5);
+      setTimeout(resolve, 25);
     });
   }
 }

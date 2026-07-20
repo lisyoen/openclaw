@@ -1,14 +1,13 @@
 // Msteams tests cover user agent plugin behavior.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const runtimeMockState = vi.hoisted(() => ({
-  getMSTeamsRuntime: vi.fn(),
-  runtime: { version: "2026.3.19" },
-}));
-const mockRuntime = runtimeMockState.runtime;
+// Mock the runtime before importing buildUserAgent
+const mockRuntime = {
+  version: "2026.3.19",
+};
 
 vi.mock("./runtime.js", () => ({
-  getMSTeamsRuntime: runtimeMockState.getMSTeamsRuntime,
+  getMSTeamsRuntime: vi.fn(() => mockRuntime),
 }));
 
 vi.mock("../runtime-api.js", async (importOriginal) => {
@@ -25,9 +24,7 @@ vi.mock("../runtime-api.js", async (importOriginal) => {
 
 import { fetchGraphJson } from "./graph.js";
 import { getMSTeamsRuntime } from "./runtime.js";
-
-let buildUserAgent: typeof import("./user-agent.js").buildUserAgent;
-let ensureUserAgentHeader: typeof import("./user-agent.js").ensureUserAgentHeader;
+import { buildUserAgent, ensureUserAgentHeader, resetUserAgentCache } from "./user-agent.js";
 
 function readFirstFetchInit(mockFetch: { mock: { calls: unknown[][] } }): {
   headers: Record<string, string>;
@@ -50,9 +47,8 @@ function readFirstFetchInit(mockFetch: { mock: { calls: unknown[][] } }): {
 }
 
 describe("buildUserAgent", () => {
-  beforeEach(async () => {
-    vi.resetModules();
-    ({ buildUserAgent, ensureUserAgentHeader } = await import("./user-agent.js"));
+  beforeEach(() => {
+    resetUserAgentCache();
     vi.mocked(getMSTeamsRuntime).mockReturnValue(mockRuntime as never);
   });
 

@@ -45,10 +45,8 @@ export function normalizeLowercaseStringOrEmpty(value: unknown): string {
   return normalizeOptionalLowercaseString(value) ?? "";
 }
 
-export type FastMode = boolean | "auto";
-
 /** Parses loose boolean/fast-mode flags from strings or booleans. */
-export function normalizeFastMode(raw?: unknown): FastMode | undefined {
+export function normalizeFastMode(raw?: string | boolean | null): boolean | undefined {
   if (typeof raw === "boolean") {
     return raw;
   }
@@ -61,9 +59,6 @@ export function normalizeFastMode(raw?: unknown): FastMode | undefined {
   }
   if (["on", "true", "yes", "1", "enable", "enabled", "fast"].includes(key)) {
     return true;
-  }
-  if (["auto", "automatic"].includes(key)) {
-    return "auto";
   }
   return undefined;
 }

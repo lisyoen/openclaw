@@ -2,8 +2,11 @@
 import { resolveAcpSessionCwd } from "@openclaw/acp-core/runtime/session-identifiers";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { persistAcpTurnTranscript } from "../../agents/command/attempt-execution.js";
-import { resolveStorePath } from "../../config/sessions.js";
-import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
+import {
+  loadSessionStore,
+  resolveSessionStoreEntry,
+  resolveStorePath,
+} from "../../config/sessions.js";
 import type { SessionAcpMeta } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 
@@ -28,11 +31,11 @@ export async function persistAcpDispatchTranscript(params: {
   const storePath = resolveStorePath(params.cfg.session?.store, {
     agentId: sessionAgentId,
   });
-  const sessionEntry = loadSessionEntry({
-    agentId: sessionAgentId,
+  const sessionStore = loadSessionStore(storePath, { skipCache: true });
+  const sessionEntry = resolveSessionStoreEntry({
+    store: sessionStore,
     sessionKey: params.sessionKey,
-    storePath,
-  });
+  }).existing;
   const sessionId = sessionEntry?.sessionId;
   if (!sessionId) {
     throw new Error(`unknown ACP session key: ${params.sessionKey}`);
@@ -45,6 +48,7 @@ export async function persistAcpDispatchTranscript(params: {
     sessionId,
     sessionKey: params.sessionKey,
     sessionEntry,
+    sessionStore,
     storePath,
     sessionAgentId,
     threadId: params.threadId,

@@ -32,3 +32,4 @@ export const testing = {
     ACP_SESSION_MANAGER_SINGLETON = manager as AcpSessionManager | null;
   },
 };
+export { testing as __testing };

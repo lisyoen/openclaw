@@ -54,3 +54,8 @@ export function requireUnifiedTalkSessionConn(
   }
   return connId;
 }
+
+/** Clears process-local Talk session mappings between tests. */
+export function clearUnifiedTalkSessionsForTest(): void {
+  unifiedTalkSessions.clear();
+}

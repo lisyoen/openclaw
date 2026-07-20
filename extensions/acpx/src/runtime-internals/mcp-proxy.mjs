@@ -104,48 +104,21 @@ function main() {
   }
 
   const input = createInterface({ input: process.stdin });
-  let exiting = false;
-
-  const exitWithError = (error) => {
-    if (exiting) {
-      return;
-    }
-    exiting = true;
-    input.close();
-    child.kill();
-    process.stderr.write(`${formatErrorMessage(error)}\n`);
-    process.exit(1);
-  };
-
-  child.stdin.on("error", exitWithError);
-  process.stdout.on("error", exitWithError);
-
   input.on("line", (line) => {
-    if (exiting) {
-      return;
-    }
-    child.stdin.write(`${rewriteLine(line, mcpServers)}\n`, (error) => {
-      if (error) {
-        exitWithError(error);
-      }
-    });
+    child.stdin.write(`${rewriteLine(line, mcpServers)}\n`);
   });
   input.on("close", () => {
-    if (exiting || child.stdin.destroyed || child.stdin.writableEnded) {
-      return;
-    }
     child.stdin.end();
   });
 
   child.stdout.pipe(process.stdout);
 
-  child.on("error", exitWithError);
+  child.on("error", (error) => {
+    process.stderr.write(`${formatErrorMessage(error)}\n`);
+    process.exit(1);
+  });
 
   child.on("close", (code, signal) => {
-    if (exiting) {
-      return;
-    }
-    exiting = true;
     if (signal) {
       process.kill(process.pid, signal);
       return;

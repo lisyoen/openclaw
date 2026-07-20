@@ -14,7 +14,7 @@ const POOL_DISPOSED_MESSAGE = "[copilot-pool] pool disposed";
 export interface PoolKey {
   readonly agentId: string;
   readonly copilotHome: string;
-  readonly authMode: "useLoggedInUser" | "gitHubToken" | "byok";
+  readonly authMode: "useLoggedInUser" | "gitHubToken";
   readonly authProfileId?: string;
   readonly authProfileVersion?: string;
 }

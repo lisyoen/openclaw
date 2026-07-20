@@ -230,25 +230,11 @@ function tailFileLines(
       const readSize = Math.min(CHUNK_SIZE, position);
       position -= readSize;
       const buf = Buffer.alloc(readSize);
-      let actualRead = 0;
-      while (actualRead < readSize) {
-        const justRead = fs.readSync(
-          fd,
-          buf,
-          actualRead,
-          readSize - actualRead,
-          position + actualRead,
-        );
-        if (justRead === 0) {
-          throw new Error(`Could not complete log read for ${filePath}`);
-        }
-        actualRead += justRead;
-      }
-
+      fs.readSync(fd, buf, 0, readSize, position);
       chunks.unshift(buf);
-      bytesRead += actualRead;
+      bytesRead += readSize;
 
-      for (let i = 0; i < actualRead; i++) {
+      for (let i = 0; i < readSize; i++) {
         if (buf[i] === 0x0a) {
           newlineCount++;
         }

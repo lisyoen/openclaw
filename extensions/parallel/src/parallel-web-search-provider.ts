@@ -1,4 +1,3 @@
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import type { WebSearchProviderPlugin } from "openclaw/plugin-sdk/provider-web-search-contract";
 import { createParallelWebSearchProviderBase } from "./parallel-web-search-provider.shared.js";
 
@@ -9,9 +8,14 @@ const PARALLEL_MAX_OBJECTIVE_CHARS = 5000;
 const PARALLEL_MAX_SESSION_ID_CHARS = 1000;
 const PARALLEL_MAX_CLIENT_MODEL_CHARS = 100;
 
-const loadParallelWebSearchRuntime = createLazyRuntimeModule(
-  () => import("./parallel-web-search-provider.runtime.js"),
-);
+type ParallelWebSearchRuntime = typeof import("./parallel-web-search-provider.runtime.js");
+
+let parallelWebSearchRuntimePromise: Promise<ParallelWebSearchRuntime> | undefined;
+
+function loadParallelWebSearchRuntime(): Promise<ParallelWebSearchRuntime> {
+  parallelWebSearchRuntimePromise ??= import("./parallel-web-search-provider.runtime.js");
+  return parallelWebSearchRuntimePromise;
+}
 
 // Mirrors Parallel's recommended search tool schema:
 // https://docs.parallel.ai/search/best-practices#search-tool-definition
@@ -47,7 +51,7 @@ export const ParallelSearchSchema = {
     client_model: {
       type: "string",
       description:
-        "The identifier of the LLM model making this tool call (e.g. 'claude-opus-4-7', 'gpt-5.6-sol', 'gemini-3.1-pro'). Pass the exact active model slug verbatim; never shorten or substitute a family alias like 'gpt-5'. Lets Parallel tailor default settings for your model's capabilities.",
+        "The identifier of the LLM model making this tool call (e.g. 'claude-opus-4-7', 'gpt-5.5', 'gemini-3.1-pro'). Pass the exact active model slug verbatim; never shorten or substitute a family alias like 'gpt-5'. Lets Parallel tailor default settings for your model's capabilities.",
       maxLength: PARALLEL_MAX_CLIENT_MODEL_CHARS,
     },
   },

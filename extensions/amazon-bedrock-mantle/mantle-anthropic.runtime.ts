@@ -4,25 +4,15 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
-import {
-  stream,
-  type Model,
-  type SimpleStreamOptions,
-  type ThinkingLevel,
-} from "openclaw/plugin-sdk/llm";
-import {
-  requiresClaudeDefaultSampling,
-  resolveClaudeMythos5ModelIdentity,
-  resolveClaudeSonnet5ModelIdentity,
-} from "openclaw/plugin-sdk/provider-model-shared";
-import { buildGuardedModelFetch } from "openclaw/plugin-sdk/provider-transport-runtime";
+import { stream, type Model, type SimpleStreamOptions } from "openclaw/plugin-sdk/llm";
 
 const MANTLE_ANTHROPIC_BETA = "fine-grained-tool-streaming-2025-05-14";
 type AnthropicOptions = ConstructorParameters<typeof Anthropic>[0];
 type MantleAnthropicStream = typeof stream;
+type AnthropicStreamClient = Anthropic;
 
 /** Resolve the Anthropic-compatible Mantle base URL from a provider base URL. */
-function resolveMantleAnthropicBaseUrl(baseUrl: string): string {
+export function resolveMantleAnthropicBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, "");
   if (trimmed.endsWith("/anthropic")) {
     return trimmed;
@@ -33,12 +23,8 @@ function resolveMantleAnthropicBaseUrl(baseUrl: string): string {
   return `${trimmed}/anthropic`;
 }
 
-function isClaudeSonnet5Model(model: Model): boolean {
-  return resolveClaudeSonnet5ModelIdentity(model) !== undefined;
-}
-
-function requiresDefaultSampling(model: Model): boolean {
-  return requiresClaudeDefaultSampling(model);
+function requiresDefaultSampling(modelId: string): boolean {
+  return modelId.includes("claude-opus-4-7");
 }
 
 function isClaudeMythosPreviewModel(model: Model): boolean {
@@ -54,47 +40,21 @@ function isClaudeMythosPreviewModel(model: Model): boolean {
     );
 }
 
-function isClaudeMythos5Model(model: Model): boolean {
-  return resolveClaudeMythos5ModelIdentity(model) !== undefined;
-}
-
-function requiresClaudeMythosAdaptiveThinking(model: Model): boolean {
-  return isClaudeMythos5Model(model) || isClaudeMythosPreviewModel(model);
-}
-
 function resolveMantleReasoning(
   model: Model,
   options: SimpleStreamOptions | undefined,
 ): NonNullable<SimpleStreamOptions["reasoning"]> | undefined {
-  if (model.id.includes("claude-opus-4-7")) {
+  if (requiresDefaultSampling(model.id)) {
     return undefined;
   }
-  const sonnet5 = isClaudeSonnet5Model(model);
-  const mythosPreview = isClaudeMythosPreviewModel(model);
-  const mandatoryMythos = isClaudeMythos5Model(model) || mythosPreview;
-  const reasoning = options?.reasoning ?? (mandatoryMythos || sonnet5 ? "high" : undefined);
-  if (sonnet5) {
-    return reasoning === "off" || reasoning === "minimal" ? "low" : reasoning;
-  }
-  if (!mandatoryMythos) {
+  const reasoning = options?.reasoning ?? (isClaudeMythosPreviewModel(model) ? "high" : undefined);
+  if (!isClaudeMythosPreviewModel(model)) {
     return reasoning;
   }
-  if (reasoning === "off" || reasoning === "minimal") {
+  if (reasoning === "minimal") {
     return "low";
   }
-  return mythosPreview && (reasoning === "xhigh" || reasoning === "max") ? "high" : reasoning;
-}
-
-function mapSonnet5Effort(
-  reasoning: NonNullable<SimpleStreamOptions["reasoning"]>,
-): "low" | "medium" | "high" | "xhigh" | "max" {
-  if (reasoning === "minimal" || reasoning === "low") {
-    return "low";
-  }
-  if (reasoning === "medium" || reasoning === "xhigh" || reasoning === "max") {
-    return reasoning;
-  }
-  return "high";
+  return reasoning === "xhigh" || reasoning === "max" ? "high" : reasoning;
 }
 
 function mergeHeaders(
@@ -115,12 +75,8 @@ function buildMantleAnthropicBaseOptions(
   apiKey: string,
 ) {
   return {
-    ...(requiresDefaultSampling(model) ? {} : { temperature: options?.temperature }),
-    maxTokens:
-      options?.maxTokens ||
-      (isClaudeSonnet5Model(model) || isClaudeMythos5Model(model)
-        ? model.maxTokens
-        : Math.min(model.maxTokens, 32_000)),
+    temperature: requiresDefaultSampling(model.id) ? undefined : options?.temperature,
+    maxTokens: options?.maxTokens || Math.min(model.maxTokens, 32_000),
     signal: options?.signal,
     apiKey,
     cacheRetention: options?.cacheRetention,
@@ -134,7 +90,7 @@ function buildMantleAnthropicBaseOptions(
 function adjustMaxTokensForThinking(
   baseMaxTokens: number,
   modelMaxTokens: number,
-  reasoningLevel: ThinkingLevel,
+  reasoningLevel: NonNullable<SimpleStreamOptions["reasoning"]>,
   customBudgets?: SimpleStreamOptions["thinkingBudgets"],
 ): { maxTokens: number; thinkingBudget: number } {
   const defaultBudgets = {
@@ -178,29 +134,17 @@ export function createMantleAnthropicStreamFn(deps?: {
         model.headers,
         options?.headers,
       ),
-      fetch: buildGuardedModelFetch(model),
     });
     const base = buildMantleAnthropicBaseOptions(model, options, apiKey);
     // Plugin package deps can give this plugin a distinct physical SDK copy.
     // The client API is the same, but the SDK class private field makes types nominal.
-    const streamClient = client as unknown as Anthropic;
+    const streamClient = client as unknown as AnthropicStreamClient;
     const reasoning = resolveMantleReasoning(model, options);
-    const sonnet5 = isClaudeSonnet5Model(model);
-    const mythos5 = isClaudeMythos5Model(model);
-    if (!reasoning || reasoning === "off") {
+    if (!reasoning) {
       return streamFn(model as Model<"anthropic-messages">, context, {
         ...base,
         client: streamClient,
         thinkingEnabled: false,
-      });
-    }
-
-    if (sonnet5 || mythos5) {
-      return streamFn(model as Model<"anthropic-messages">, context, {
-        ...base,
-        client: streamClient,
-        thinkingEnabled: true,
-        effort: sonnet5 ? mapSonnet5Effort(reasoning) : reasoning,
       });
     }
 
@@ -210,18 +154,13 @@ export function createMantleAnthropicStreamFn(deps?: {
       reasoning,
       options?.thinkingBudgets,
     );
-    const adaptiveThinking = requiresClaudeMythosAdaptiveThinking(model);
-    const thinkingEnabled = adaptiveThinking || adjusted.thinkingBudget >= 1024;
     return streamFn(model as Model<"anthropic-messages">, context, {
       ...base,
       client: streamClient,
       maxTokens: adjusted.maxTokens,
-      thinkingEnabled,
-      ...(adaptiveThinking
-        ? { effort: reasoning }
-        : thinkingEnabled
-          ? { thinkingBudgetTokens: adjusted.thinkingBudget }
-          : {}),
+      thinkingEnabled: true,
+      ...(isClaudeMythosPreviewModel(model) ? { effort: reasoning } : {}),
+      thinkingBudgetTokens: adjusted.thinkingBudget,
     });
   };
 }

@@ -8,7 +8,7 @@ import {
   shouldUseSyntheticOllamaAuth,
   type OllamaPluginConfig,
 } from "./src/discovery-shared.js";
-import { buildOllamaProvider, capLocalOllamaProviderContext } from "./src/provider-models.js";
+import { buildOllamaProvider } from "./src/provider-models.js";
 
 type OllamaProviderPlugin = {
   id: string;
@@ -41,8 +41,7 @@ async function runOllamaDiscovery(ctx: ProviderCatalogContext) {
   return await resolveOllamaDiscoveryResult({
     ctx,
     pluginConfig: resolveOllamaPluginConfig(ctx),
-    buildProvider: async (...args) =>
-      capLocalOllamaProviderContext(await buildOllamaProvider(...args)),
+    buildProvider: buildOllamaProvider,
   });
 }
 

@@ -1,7 +1,7 @@
 // Implements MCP server command parsing and persisted enablement settings.
 import { parseStandardSetUnsetSlashCommand } from "./commands-setunset-standard.js";
 
-type McpCommand =
+export type McpCommand =
   | { action: "show"; name?: string }
   | { action: "set"; name: string; value: unknown }
   | { action: "unset"; name: string }

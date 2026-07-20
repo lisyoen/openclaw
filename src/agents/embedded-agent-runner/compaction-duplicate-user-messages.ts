@@ -10,7 +10,6 @@ type MessageLike = {
   role?: unknown;
   content?: unknown;
   timestamp?: unknown;
-  __openclaw?: unknown;
 };
 
 type EntryLike = {
@@ -53,13 +52,8 @@ function duplicateSignature(message: unknown): { key: string; timestamp: number 
   if (!text || text.length < MIN_DUPLICATE_USER_MESSAGE_CHARS) {
     return undefined;
   }
-  // Persisted sender identity keeps distinct participants separate while senderless legacy
-  // turns retain the old retry behavior. A JSON tuple avoids sender/text delimiter collisions.
-  const metadata = message["__openclaw"];
-  const senderId =
-    isRecord(metadata) && typeof metadata.senderId === "string" ? metadata.senderId : "";
   return {
-    key: JSON.stringify([senderId, text.normalize("NFC").toLowerCase()]),
+    key: text.normalize("NFC").toLowerCase(),
     timestamp: message.timestamp,
   };
 }

@@ -1,7 +1,7 @@
 // Qa Lab plugin module implements node exec behavior.
+import { execFile } from "node:child_process";
 import path from "node:path";
-import { runExec } from "openclaw/plugin-sdk/process-runtime";
-import { resolveQaWindowsSystem32ExePath } from "./windows-system-tools.js";
+import { promisify } from "node:util";
 
 type ExecFileAsync = (
   file: string,
@@ -9,18 +9,10 @@ type ExecFileAsync = (
   options: {
     encoding: "utf8";
     env?: NodeJS.ProcessEnv;
-    timeoutMs: number;
   },
 ) => Promise<{ stdout: string; stderr: string }>;
 
-const NODE_BINARY_LOOKUP_TIMEOUT_MS = 5_000;
-
-const execFileAsync: ExecFileAsync = async (file, args, options) =>
-  await runExec(file, [...args], {
-    baseEnv: options.env,
-    logOutput: false,
-    timeoutMs: options.timeoutMs,
-  });
+const execFileAsync = promisify(execFile) as unknown as ExecFileAsync;
 
 function isNodeExecPath(execPath: string, platform: NodeJS.Platform): boolean {
   const pathModule = platform === "win32" ? path.win32 : path.posix;
@@ -47,15 +39,13 @@ export async function resolveQaNodeExecPath(params?: {
     return execPath;
   }
 
-  const locator =
-    platform === "win32" ? resolveQaWindowsSystem32ExePath("where.exe", params?.env) : "which";
+  const locator = platform === "win32" ? "where" : "which";
   const execFileImpl = params?.execFileImpl ?? execFileAsync;
   let stdout;
   try {
     ({ stdout } = await execFileImpl(locator, ["node"], {
       encoding: "utf8",
       env: params?.env,
-      timeoutMs: NODE_BINARY_LOOKUP_TIMEOUT_MS,
     }));
   } catch {
     throw new Error(

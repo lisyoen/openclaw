@@ -1,6 +1,5 @@
 // Creates reusable import-boundary guards for bundled extension source trees.
 import { promises as fs } from "node:fs";
-import pMap from "p-map";
 import { BUNDLED_PLUGIN_PATH_PREFIX } from "./bundled-plugin-paths.mjs";
 import {
   collectModuleReferencesFromSource,
@@ -10,6 +9,7 @@ import {
   resolveRepoSpecifier,
   writeLine,
 } from "./guard-inventory-utils.mjs";
+import { mapWithConcurrency } from "./source-file-scan-cache.mjs";
 import {
   collectTypeScriptFilesFromRoots,
   resolveRepoRoot,
@@ -101,25 +101,21 @@ export function createExtensionImportBoundaryChecker(params) {
       .toSorted((left, right) =>
         normalizeRepoPath(repoRoot, left).localeCompare(normalizeRepoPath(repoRoot, right)),
       );
-    const entriesByFile = await pMap(
-      files,
-      async (filePath) => {
-        const source = await readBoundedSourceFile(filePath, maxSourceBytes);
-        if (
-          params.skipSourcesWithoutBundledPluginPrefix &&
-          !source.includes(BUNDLED_PLUGIN_PATH_PREFIX)
-        ) {
-          return [];
-        }
-        return scanImportBoundaryViolations(
-          source,
-          filePath,
-          params.boundaryLabel,
-          params.allowResolvedPath,
-        );
-      },
-      { concurrency: 32, stopOnError: true },
-    );
+    const entriesByFile = await mapWithConcurrency(files, undefined, async (filePath) => {
+      const source = await readBoundedSourceFile(filePath, maxSourceBytes);
+      if (
+        params.skipSourcesWithoutBundledPluginPrefix &&
+        !source.includes(BUNDLED_PLUGIN_PATH_PREFIX)
+      ) {
+        return [];
+      }
+      return scanImportBoundaryViolations(
+        source,
+        filePath,
+        params.boundaryLabel,
+        params.allowResolvedPath,
+      );
+    });
     const inventory = entriesByFile.flat();
     return inventory.toSorted(compareEntries);
   });

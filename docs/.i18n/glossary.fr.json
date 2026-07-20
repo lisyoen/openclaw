@@ -78,13 +78,5 @@
   {
     "source": "Webhook",
     "target": "Webhook"
-  },
-  {
-    "source": "Pull request review flow",
-    "target": "Flux de revue des pull requests"
-  },
-  {
-    "source": "CI pipeline",
-    "target": "Pipeline CI"
   }
 ]

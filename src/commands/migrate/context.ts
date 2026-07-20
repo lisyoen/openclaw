@@ -35,8 +35,6 @@ export function buildMigrationReportDir(
 /** Builds the provider-facing migration context from CLI options and runtime state. */
 export function buildMigrationContext(params: {
   source?: string;
-  targetAgentId?: string;
-  itemKinds?: readonly string[];
   includeSecrets?: boolean;
   overwrite?: boolean;
   providerOptions?: Record<string, unknown>;
@@ -51,8 +49,6 @@ export function buildMigrationContext(params: {
   return {
     config,
     stateDir,
-    targetAgentId: params.targetAgentId,
-    itemKinds: params.itemKinds,
     source: params.source,
     includeSecrets: Boolean(params.includeSecrets),
     overwrite: Boolean(params.overwrite),

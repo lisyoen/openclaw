@@ -47,20 +47,15 @@ function extractMessageSenderLabel(entry: Record<string, unknown>): string | nul
 // inbound envelopes while assistant/tool content may carry internal metadata.
 function stripEnvelopeFromContentWithRole(
   content: unknown[],
-  role: string,
+  stripUserEnvelope: boolean,
 ): { content: unknown[]; changed: boolean } {
-  const stripUserEnvelope = role === "user";
   let changed = false;
   const next = content.map((item) => {
     if (!item || typeof item !== "object") {
       return item;
     }
     const entry = item as Record<string, unknown>;
-    const isRoleTextBlock =
-      entry.type === "text" ||
-      (role === "user" && entry.type === "input_text") ||
-      (role === "assistant" && (entry.type === "input_text" || entry.type === "output_text"));
-    if (!isRoleTextBlock || typeof entry.text !== "string") {
+    if (entry.type !== "text" || typeof entry.text !== "string") {
       return item;
     }
     const stripped = stripUserEnvelope
@@ -104,7 +99,7 @@ export function stripEnvelopeFromMessage(message: unknown): unknown {
       changed = true;
     }
   } else if (Array.isArray(entry.content)) {
-    const updated = stripEnvelopeFromContentWithRole(entry.content, role);
+    const updated = stripEnvelopeFromContentWithRole(entry.content, stripUserEnvelope);
     if (updated.changed) {
       next.content = updated.content;
       changed = true;

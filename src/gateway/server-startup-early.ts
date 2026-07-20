@@ -2,6 +2,7 @@
 // Starts discovery, remote skills, task maintenance, and delayed maintenance setup.
 import type { GatewayTailscaleMode } from "../config/types.gateway.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveCronJobsStorePath } from "../cron/store.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
 
 type Awaitable<T> = T | Promise<T>;
@@ -94,7 +95,6 @@ export async function startGatewayEarlyRuntime(params: {
   logHealth: GatewayMaintenanceParams["logHealth"];
   dedupe: GatewayMaintenanceParams["dedupe"];
   chatAbortControllers: GatewayMaintenanceParams["chatAbortControllers"];
-  chatQueuedTurns: GatewayMaintenanceParams["chatQueuedTurns"];
   restartRecoveryCandidates: GatewayMaintenanceParams["restartRecoveryCandidates"];
   chatRunState: GatewayMaintenanceParams["chatRunState"];
   chatRunBuffers: GatewayMaintenanceParams["chatRunBuffers"];
@@ -110,12 +110,6 @@ export async function startGatewayEarlyRuntime(params: {
   getRuntimeConfig: () => OpenClawConfig;
   startupTrace?: GatewayStartupTrace;
 }) {
-  if (!params.minimalTestGateway) {
-    await measureStartup(params.startupTrace, "runtime.early.task-state", async () => {
-      const { ensureTaskRuntimeStateReady } = await import("../tasks/runtime-internal.js");
-      ensureTaskRuntimeStateReady();
-    });
-  }
   const bonjourStop = await measureStartup(params.startupTrace, "runtime.early.discovery", () =>
     startGatewayPluginDiscovery(params),
   );
@@ -132,8 +126,9 @@ export async function startGatewayEarlyRuntime(params: {
     setSkillsRemoteRegistry(params.nodeRegistry);
     void primeRemoteSkillsCache();
     // Task registry maintenance is authoritative in the Gateway process so
-    // restart-blocker counts reflect the same live cron runtime.
+    // restart-blocker counts reflect the same cron store as runtime execution.
     taskRegistryMaintenance.configureTaskRegistryMaintenance({
+      cronStorePath: resolveCronJobsStorePath(params.cfgAtStart.cron?.store),
       runtimeAuthoritative: true,
     });
     taskRegistryMaintenance.startTaskRegistryMaintenance();
@@ -184,7 +179,6 @@ export async function startGatewayEarlyRuntime(params: {
         logHealth: params.logHealth,
         dedupe: params.dedupe,
         chatAbortControllers: params.chatAbortControllers,
-        chatQueuedTurns: params.chatQueuedTurns,
         restartRecoveryCandidates: params.restartRecoveryCandidates,
         chatRunState: params.chatRunState,
         chatRunBuffers: params.chatRunBuffers,
@@ -193,8 +187,6 @@ export async function startGatewayEarlyRuntime(params: {
         removeChatRun: params.removeChatRun,
         agentRunSeq: params.agentRunSeq,
         nodeSendToSession: params.nodeSendToSession,
-        getRuntimeConfig: params.getRuntimeConfig,
-        enableSkillCurator: true,
         ...(typeof params.mediaCleanupTtlMs === "number"
           ? { mediaCleanupTtlMs: params.mediaCleanupTtlMs }
           : {}),

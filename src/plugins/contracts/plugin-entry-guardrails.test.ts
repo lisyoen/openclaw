@@ -305,7 +305,7 @@ describe("plugin entry guardrails", () => {
         import "./setup.js";
         export { x };
         export * from "./barrel.js";
-        import { y } from "openclaw/plugin-sdk/core";
+        import { y } from "openclaw/plugin-sdk/testing";
       `,
       }).relativeSpecifiers.toSorted(),
     ).toEqual(["./barrel.js", "./safe.js", "./setup.js"]);

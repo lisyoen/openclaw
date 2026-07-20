@@ -10,20 +10,18 @@ import type { TelegramBotDeps } from "./bot-deps.js";
 
 type AnyMock = ReturnType<typeof vi.fn>;
 type AnyAsyncMock = ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
-type TelegramBotRuntimeForTest = typeof import("./bot.runtime.js");
 type GetRuntimeConfigFn =
   typeof import("openclaw/plugin-sdk/runtime-config-snapshot").getRuntimeConfig;
-type GetSessionEntryFn = typeof import("openclaw/plugin-sdk/session-store-runtime").getSessionEntry;
-type ListSessionEntriesFn =
-  typeof import("openclaw/plugin-sdk/session-store-runtime").listSessionEntries;
+type LoadSessionStoreFn =
+  typeof import("openclaw/plugin-sdk/session-store-runtime").loadSessionStore;
 type ResolveStorePathFn =
   typeof import("openclaw/plugin-sdk/session-store-runtime").resolveStorePath;
 type ReadSessionUpdatedAtFn =
   typeof import("openclaw/plugin-sdk/session-store-runtime").readSessionUpdatedAt;
-type SessionEntry = import("openclaw/plugin-sdk/session-store-runtime").SessionEntry;
-type SessionStore = Record<string, SessionEntry>;
-type LoadSessionStoreFn = (storePath?: string, opts?: unknown) => SessionStore;
-type ResolveTelegramApprovalForTest = NonNullable<TelegramBotDeps["resolveApproval"]>;
+type SessionStore = ReturnType<LoadSessionStoreFn>;
+type TelegramBotRuntimeForTest = NonNullable<
+  Parameters<typeof import("./bot.js").setTelegramBotRuntimeForTest>[0]
+>;
 type DispatchReplyWithBufferedBlockDispatcherFn =
   typeof import("openclaw/plugin-sdk/reply-dispatch-runtime").dispatchReplyWithBufferedBlockDispatcher;
 type DispatchReplyWithBufferedBlockDispatcherResult = Awaited<
@@ -63,9 +61,7 @@ vi.mock("openclaw/plugin-sdk/web-media", () => ({
 }));
 
 const {
-  getSessionEntryMock,
   getRuntimeConfig,
-  listSessionEntriesMock,
   loadSessionStoreMock,
   readSessionUpdatedAtMock,
   recordInboundSessionMock,
@@ -73,9 +69,7 @@ const {
   sessionStoreEntries,
 } = vi.hoisted(
   (): {
-    getSessionEntryMock: MockFn<GetSessionEntryFn>;
     getRuntimeConfig: MockFn<GetRuntimeConfigFn>;
-    listSessionEntriesMock: MockFn<ListSessionEntriesFn>;
     loadSessionStoreMock: MockFn<LoadSessionStoreFn>;
     readSessionUpdatedAtMock: MockFn<ReadSessionUpdatedAtFn>;
     recordInboundSessionMock: MockFn<NonNullable<TelegramBotDeps["recordInboundSession"]>>;
@@ -83,23 +77,12 @@ const {
     sessionStoreEntries: { value: SessionStore };
   } => ({
     getRuntimeConfig: vi.fn<GetRuntimeConfigFn>(() => ({})),
-    resolveStorePathMock: vi.fn<ResolveStorePathFn>(
-      (storePath?: string) => storePath ?? sessionStorePath,
-    ),
     loadSessionStoreMock: vi.fn<LoadSessionStoreFn>(
       (_storePath, _opts) => sessionStoreEntries.value,
     ),
-    getSessionEntryMock: vi.fn<GetSessionEntryFn>(({ storePath, sessionKey, agentId }) => {
-      const resolvedStorePath = storePath ?? resolveStorePathMock(undefined, { agentId });
-      return loadSessionStoreMock(resolvedStorePath)[sessionKey];
-    }),
-    listSessionEntriesMock: vi.fn<ListSessionEntriesFn>(({ storePath, agentId } = {}) => {
-      const resolvedStorePath = storePath ?? resolveStorePathMock(undefined, { agentId });
-      return Object.entries(loadSessionStoreMock(resolvedStorePath)).map(([sessionKey, entry]) => ({
-        sessionKey,
-        entry,
-      }));
-    }),
+    resolveStorePathMock: vi.fn<ResolveStorePathFn>(
+      (storePath?: string) => storePath ?? sessionStorePath,
+    ),
     readSessionUpdatedAtMock: vi.fn<ReadSessionUpdatedAtFn>(() => undefined),
     recordInboundSessionMock: vi.fn(async () => undefined),
     sessionStoreEntries: { value: {} as SessionStore },
@@ -208,10 +191,6 @@ const dispatchReplyHoisted = vi.hoisted(() => ({
       }),
   ),
 }));
-vi.mock("../../../src/auto-reply/reply/provider-dispatcher.js", () => ({
-  dispatchReplyWithBufferedBlockDispatcher:
-    dispatchReplyHoisted.dispatchReplyWithBufferedBlockDispatcher,
-}));
 export const listSkillCommandsForAgents = skillCommandListHoisted.listSkillCommandsForAgents;
 const buildModelsProviderData = modelProviderDataHoisted.buildModelsProviderData;
 export const replySpy = replySpyHoisted.replySpy;
@@ -222,7 +201,7 @@ const menuSyncHoisted = vi.hoisted(() => ({
     await bot.api.setMyCommands(commandsToRegister);
   }),
 }));
-const syncTelegramMenuCommands = menuSyncHoisted.syncTelegramMenuCommands;
+export const syncTelegramMenuCommands = menuSyncHoisted.syncTelegramMenuCommands;
 
 function parseModelRef(raw: string): { provider?: string; model: string } {
   const trimmed = raw.trim();
@@ -293,30 +272,10 @@ const systemEventsHoisted = vi.hoisted(() => ({
 }));
 export const enqueueSystemEventSpy: MockFn<TelegramBotDeps["enqueueSystemEvent"]> =
   systemEventsHoisted.enqueueSystemEventSpy;
-const execApprovalHoisted = vi.hoisted(
-  (): { resolveExecApprovalSpy: MockFn<ResolveTelegramApprovalForTest> } => ({
-    resolveExecApprovalSpy: vi.fn<ResolveTelegramApprovalForTest>(async () => ({
-      applied: true,
-      approval: {
-        id: "test-approval",
-        urlPath: "/approve/test-approval",
-        createdAtMs: 1,
-        expiresAtMs: 60_000,
-        resolvedAtMs: 2,
-        reason: "user",
-        status: "allowed",
-        decision: "allow-once",
-        presentation: {
-          kind: "exec",
-          commandText: "echo test",
-          allowedDecisions: ["allow-once", "deny"],
-        },
-      },
-    })),
-  }),
-);
-export const resolveExecApprovalSpy: MockFn<ResolveTelegramApprovalForTest> =
-  execApprovalHoisted.resolveExecApprovalSpy;
+const execApprovalHoisted = vi.hoisted(() => ({
+  resolveExecApprovalSpy: vi.fn(async () => undefined),
+}));
+export const resolveExecApprovalSpy = execApprovalHoisted.resolveExecApprovalSpy;
 
 const sentMessageCacheHoisted = vi.hoisted(() => ({
   wasSentByBot: vi.fn(() => false),
@@ -326,6 +285,7 @@ export const wasSentByBot = sentMessageCacheHoisted.wasSentByBot;
 vi.doMock("./sent-message-cache.js", () => ({
   wasSentByBot: sentMessageCacheHoisted.wasSentByBot,
   recordSentMessage: vi.fn(),
+  clearSentMessageCache: vi.fn(),
 }));
 
 // All spy variables used inside vi.mock("grammy", ...) must be created via
@@ -361,7 +321,7 @@ const grammySpies = vi.hoisted(() => ({
 export const useSpy: MockFn<(arg: unknown) => void> = grammySpies.useSpy;
 export const middlewareUseSpy: AnyMock = grammySpies.middlewareUseSpy;
 export const onSpy: AnyMock = grammySpies.onSpy;
-const stopSpy: AnyMock = grammySpies.stopSpy;
+export const stopSpy: AnyMock = grammySpies.stopSpy;
 export const commandSpy: AnyMock = grammySpies.commandSpy;
 export const botCtorSpy: MockFn<
   (token: string, options?: { client?: { fetch?: typeof fetch }; botInfo?: unknown }) => void
@@ -373,6 +333,7 @@ export const editMessageReplyMarkupSpy: AnyAsyncMock = grammySpies.editMessageRe
 export const deleteMessageSpy: AnyAsyncMock = grammySpies.deleteMessageSpy;
 export const setMessageReactionSpy: AnyAsyncMock = grammySpies.setMessageReactionSpy;
 export const setMyCommandsSpy: AnyAsyncMock = grammySpies.setMyCommandsSpy;
+export const getMeSpy: AnyAsyncMock = grammySpies.getMeSpy;
 export const getChatSpy: AnyAsyncMock = grammySpies.getChatSpy;
 export const sendMessageSpy: AnyAsyncMock = grammySpies.sendMessageSpy;
 export const sendAnimationSpy: AnyAsyncMock = grammySpies.sendAnimationSpy;
@@ -383,7 +344,6 @@ type RichMessageParams = {
   chat_id?: string | number;
   message_id?: number;
   rich_message?: {
-    blocks?: Array<{ type?: string; text?: unknown }>;
     markdown?: string;
     html?: string;
   };
@@ -391,22 +351,7 @@ type RichMessageParams = {
 };
 
 function getRichMessageText(params: RichMessageParams): string {
-  const rich = params.rich_message;
-  if (!rich) {
-    return "";
-  }
-  if (rich.blocks) {
-    // Test harness only needs a readable plain-ish projection for assertions.
-    return rich.blocks
-      .map((block) => {
-        if (typeof block.text === "string") {
-          return block.text;
-        }
-        return JSON.stringify(block.text ?? "");
-      })
-      .join("\n");
-  }
-  return rich.markdown ?? rich.html ?? "";
+  return params.rich_message?.markdown ?? params.rich_message?.html ?? "";
 }
 
 function toLegacyMessageParams(params: RichMessageParams): Record<string, unknown> {
@@ -437,7 +382,7 @@ const runnerHoisted = vi.hoisted(() => ({
 export const sequentializeSpy: AnyMock = runnerHoisted.sequentializeSpy;
 export let sequentializeKey: ((ctx: unknown) => string) | undefined;
 export const throttlerSpy: AnyMock = runnerHoisted.throttlerSpy;
-const telegramBotRuntimeForTest = {
+export const telegramBotRuntimeForTest: TelegramBotRuntimeForTest = {
   Bot: class {
     api = {
       config: { use: grammySpies.useSpy },
@@ -500,8 +445,7 @@ const telegramBotRuntimeForTest = {
 };
 export const telegramBotDepsForTest: TelegramBotDeps = {
   getRuntimeConfig,
-  getSessionEntry: getSessionEntryMock,
-  listSessionEntries: listSessionEntriesMock,
+  loadSessionStore: loadSessionStoreMock as TelegramBotDeps["loadSessionStore"],
   resolveStorePath: resolveStorePathMock,
   readSessionUpdatedAt: readSessionUpdatedAtMock,
   recordInboundSession: recordInboundSessionMock as TelegramBotDeps["recordInboundSession"],
@@ -522,10 +466,9 @@ export const telegramBotDepsForTest: TelegramBotDeps = {
     listSkillCommandsForAgents as TelegramBotDeps["listSkillCommandsForAgents"],
   syncTelegramMenuCommands: syncTelegramMenuCommands as TelegramBotDeps["syncTelegramMenuCommands"],
   wasSentByBot: wasSentByBot as TelegramBotDeps["wasSentByBot"],
-  resolveApproval: resolveExecApprovalSpy,
-  resolveLegacyApproval: async (params) => {
-    await resolveExecApprovalSpy(params);
-  },
+  resolveExecApproval: resolveExecApprovalSpy as NonNullable<
+    TelegramBotDeps["resolveExecApproval"]
+  >,
 };
 
 vi.doMock("./bot.runtime.js", () => telegramBotRuntimeForTest);
@@ -549,7 +492,7 @@ const DEFAULT_TELEGRAM_TEST_CONFIG: OpenClawConfig = {
   },
 };
 
-function makeTelegramMessageCtx(params: {
+export function makeTelegramMessageCtx(params: {
   chat: {
     id: number;
     type: string;
@@ -622,19 +565,6 @@ beforeEach(() => {
   loadSessionStoreMock.mockImplementation(() => sessionStoreEntries.value);
   resolveStorePathMock.mockReset();
   resolveStorePathMock.mockImplementation((storePath?: string) => storePath ?? sessionStorePath);
-  getSessionEntryMock.mockReset();
-  getSessionEntryMock.mockImplementation(({ storePath, sessionKey, agentId }) => {
-    const resolvedStorePath = storePath ?? resolveStorePathMock(undefined, { agentId });
-    return loadSessionStoreMock(resolvedStorePath)[sessionKey];
-  });
-  listSessionEntriesMock.mockReset();
-  listSessionEntriesMock.mockImplementation(({ storePath, agentId } = {}) => {
-    const resolvedStorePath = storePath ?? resolveStorePathMock(undefined, { agentId });
-    return Object.entries(loadSessionStoreMock(resolvedStorePath)).map(([sessionKey, entry]) => ({
-      sessionKey,
-      entry,
-    }));
-  });
   readSessionUpdatedAtMock.mockReset();
   readSessionUpdatedAtMock.mockReturnValue(undefined);
   recordInboundSessionMock.mockReset();
@@ -654,24 +584,7 @@ beforeEach(() => {
     return undefined;
   });
   resolveExecApprovalSpy.mockReset();
-  resolveExecApprovalSpy.mockResolvedValue({
-    applied: true,
-    approval: {
-      id: "test-approval",
-      urlPath: "/approve/test-approval",
-      createdAtMs: 1,
-      expiresAtMs: 60_000,
-      resolvedAtMs: 2,
-      reason: "user",
-      status: "allowed",
-      decision: "allow-once",
-      presentation: {
-        kind: "exec",
-        commandText: "echo test",
-        allowedDecisions: ["allow-once", "deny"],
-      },
-    },
-  });
+  resolveExecApprovalSpy.mockResolvedValue(undefined);
   dispatchReplyWithBufferedBlockDispatcher.mockReset();
   dispatchReplyWithBufferedBlockDispatcher.mockImplementation(
     async (params: DispatchReplyHarnessParams) =>
@@ -703,8 +616,8 @@ beforeEach(() => {
   setMyCommandsSpy.mockResolvedValue(undefined);
   getChatSpy.mockReset();
   getChatSpy.mockResolvedValue(undefined);
-  grammySpies.getMeSpy.mockReset();
-  grammySpies.getMeSpy.mockResolvedValue({
+  getMeSpy.mockReset();
+  getMeSpy.mockResolvedValue({
     username: "openclaw_bot",
     has_topics_enabled: true,
   });

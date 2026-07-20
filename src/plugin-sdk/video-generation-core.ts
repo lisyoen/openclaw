@@ -5,7 +5,6 @@ export type { FallbackAttempt } from "../agents/model-fallback.types.js";
 export type { VideoGenerationProviderPlugin } from "../plugins/types.js";
 export type {
   GeneratedVideoAsset,
-  VideoGenerationCatalogModelEntry,
   VideoGenerationIgnoredOverride,
   VideoGenerationMode,
   VideoGenerationModeCapabilities,

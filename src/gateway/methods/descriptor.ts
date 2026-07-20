@@ -20,7 +20,7 @@ export type GatewayMethodOwner =
   | { kind: "aux"; area: string };
 
 /** Startup availability flag exposed to clients as retryable startup-unavailable errors. */
-type GatewayMethodStartupAvailability = "available" | "unavailable-until-sidecars";
+export type GatewayMethodStartupAvailability = "available" | "unavailable-until-sidecars";
 
 export type GatewayMethodHandler = (opts: never) => unknown;
 
@@ -30,7 +30,6 @@ export type GatewayMethodDescriptor = {
   handler: GatewayMethodHandler;
   scope: GatewayMethodScope;
   owner: GatewayMethodOwner;
-  since?: string;
   startup?: GatewayMethodStartupAvailability;
   controlPlaneWrite?: boolean;
   advertise?: boolean;

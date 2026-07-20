@@ -32,12 +32,12 @@ export type ConfigureCandidate = {
 };
 
 /** Configure candidate after the operator chooses the SecretRef to write. */
-type ConfigureSelectedTarget = ConfigureCandidate & {
+export type ConfigureSelectedTarget = ConfigureCandidate & {
   ref: SecretRef;
 };
 
 /** Provider config mutations collected while building a secrets configure plan. */
-type ConfigureProviderChanges = {
+export type ConfigureProviderChanges = {
   upserts: Record<string, SecretProviderConfig>;
   deletes: string[];
 };
@@ -47,6 +47,11 @@ function getSecretProviders(config: OpenClawConfig): Record<string, SecretProvid
     return {};
   }
   return config.secrets.providers;
+}
+
+/** Builds configure candidates for the current OpenClaw config only. */
+export function buildConfigureCandidates(config: OpenClawConfig): ConfigureCandidate[] {
+  return buildConfigureCandidatesForScope({ config });
 }
 
 function configureCandidateSortKey(candidate: ConfigureCandidate): string {

@@ -55,9 +55,8 @@ function resolveUiDistDir(overrideDir?: string | null, repoRoot = process.cwd())
   if (overrideDir?.trim()) {
     return overrideDir;
   }
-  const sourceDistDir = path.resolve(repoRoot, "extensions/qa-lab/web/dist");
   const candidates = [
-    sourceDistDir,
+    path.resolve(repoRoot, "extensions/qa-lab/web/dist"),
     path.resolve(repoRoot, "dist/extensions/qa-lab/web/dist"),
     fileURLToPath(new URL("../web/dist", import.meta.url)),
   ];
@@ -68,7 +67,7 @@ function resolveUiDistDir(overrideDir?: string | null, repoRoot = process.cwd())
       }
       const indexPath = path.join(candidate, "index.html");
       return fs.existsSync(indexPath) && fs.statSync(indexPath).isFile();
-    }) ?? sourceDistDir
+    }) ?? candidates[0]
   );
 }
 
@@ -91,12 +90,9 @@ function listUiAssetFiles(rootDir: string, currentDir = rootDir): string[] {
   return files;
 }
 
-export function resolveUiAssetVersion(
-  overrideDir?: string | null,
-  repoRoot = process.cwd(),
-): string | null {
+export function resolveUiAssetVersion(overrideDir?: string | null): string | null {
   try {
-    const distDir = resolveUiDistDir(overrideDir, repoRoot);
+    const distDir = resolveUiDistDir(overrideDir);
     const indexPath = path.join(distDir, "index.html");
     if (!fs.existsSync(indexPath) || !fs.statSync(indexPath).isFile()) {
       return null;

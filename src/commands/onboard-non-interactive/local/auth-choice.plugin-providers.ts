@@ -16,10 +16,6 @@ import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { enablePluginInConfig } from "../../../plugins/enable.js";
 import { resolvePreferredProviderForAuthChoice } from "../../../plugins/provider-auth-choice-preference.js";
 import { resolveManifestProviderAuthChoice } from "../../../plugins/provider-auth-choices.js";
-import {
-  resolveDeprecatedProviderInstallCatalogEntry,
-  resolveProviderInstallCatalogEntry,
-} from "../../../plugins/provider-install-catalog.js";
 import type {
   ProviderAuthOptionBag,
   ProviderNonInteractiveApiKeyCredentialParams,
@@ -66,7 +62,6 @@ export async function applyNonInteractivePluginProviderChoice(params: {
   const agentDir = resolveAgentDir(params.nextConfig, agentId);
   const workspaceDir =
     resolveAgentWorkspaceDir(params.nextConfig, agentId) ?? resolveDefaultAgentWorkspaceDir();
-  let nextConfig = params.nextConfig;
   const prefixedProviderId = params.authChoice.startsWith(PROVIDER_PLUGIN_CHOICE_PREFIX)
     ? params.authChoice.slice(PROVIDER_PLUGIN_CHOICE_PREFIX.length).split(":", 1)[0]?.trim()
     : undefined;
@@ -74,7 +69,7 @@ export async function applyNonInteractivePluginProviderChoice(params: {
     prefixedProviderId ||
     (await resolvePreferredProviderForAuthChoice({
       choice: params.authChoice,
-      config: nextConfig,
+      config: params.nextConfig,
       workspaceDir,
       includeUntrustedWorkspacePlugins: false,
     }));
@@ -88,13 +83,13 @@ export async function applyNonInteractivePluginProviderChoice(params: {
   const owningPluginIds = preferredProviderId
     ? resolveOwningPluginIdsForProviderRef({
         provider: preferredProviderId,
-        config: nextConfig,
+        config: params.nextConfig,
         workspaceDir,
       })
     : undefined;
-  let providerChoice = resolveProviderPluginChoice({
+  const providerChoice = resolveProviderPluginChoice({
     providers: resolvePluginProviders({
-      config: nextConfig,
+      config: params.nextConfig,
       workspaceDir,
       onlyPluginIds: owningPluginIds,
       mode: "setup",
@@ -117,14 +112,14 @@ export async function applyNonInteractivePluginProviderChoice(params: {
     }
     // Keep mismatch diagnostics metadata-only so untrusted workspace plugins are not loaded.
     const trustedManifestMatch = resolveManifestProviderAuthChoice(params.authChoice, {
-      config: nextConfig,
+      config: params.nextConfig,
       workspaceDir,
       includeUntrustedWorkspacePlugins: false,
     });
     const untrustedOnlyManifestMatch =
       !trustedManifestMatch &&
       resolveManifestProviderAuthChoice(params.authChoice, {
-        config: nextConfig,
+        config: params.nextConfig,
         workspaceDir,
         includeUntrustedWorkspacePlugins: true,
       });
@@ -140,77 +135,11 @@ export async function applyNonInteractivePluginProviderChoice(params: {
       params.runtime.exit(1);
       return null;
     }
-    const installCatalogParams = {
-      config: nextConfig,
-      workspaceDir,
-      includeUntrustedWorkspacePlugins: false,
-    };
-    const deprecatedInstallCatalogEntry = resolveDeprecatedProviderInstallCatalogEntry(
-      params.authChoice,
-      installCatalogParams,
-    );
-    if (deprecatedInstallCatalogEntry) {
-      params.runtime.error(
-        `${JSON.stringify(params.authChoice)} is no longer supported. Use --auth-choice ${JSON.stringify(deprecatedInstallCatalogEntry.choiceId)} instead.`,
-      );
-      params.runtime.exit(1);
-      return null;
-    }
-    const installCatalogEntry = resolveProviderInstallCatalogEntry(
-      params.authChoice,
-      installCatalogParams,
-    );
-    if (!installCatalogEntry) {
-      return undefined;
-    }
-    const { ensureOnboardingPluginInstalled } = await import("../../onboarding-plugin-install.js");
-    const installResult = await ensureOnboardingPluginInstalled({
-      cfg: nextConfig,
-      entry: {
-        pluginId: installCatalogEntry.pluginId,
-        label: installCatalogEntry.label,
-        install: installCatalogEntry.install,
-        ...(installCatalogEntry.origin === "bundled"
-          ? { trustedSourceLinkedOfficialInstall: true }
-          : {}),
-      },
-      prompter: createNonInteractiveLoggingPrompter(
-        params.runtime,
-        (message) => `Non-interactive setup cannot prompt for plugin install: ${message}`,
-      ),
-      runtime: params.runtime,
-      workspaceDir,
-      promptInstall: false,
-    });
-    if (!installResult.installed) {
-      params.runtime.error(
-        `Unable to install the ${installCatalogEntry.label} plugin for non-interactive setup.`,
-      );
-      params.runtime.exit(1);
-      return null;
-    }
-    nextConfig = installResult.cfg;
-    providerChoice = resolveProviderPluginChoice({
-      providers: resolvePluginProviders({
-        config: nextConfig,
-        workspaceDir,
-        onlyPluginIds: [installCatalogEntry.pluginId],
-        mode: "setup",
-        includeUntrustedWorkspacePlugins: false,
-      }),
-      choice: params.authChoice,
-    });
-    if (!providerChoice) {
-      params.runtime.error(
-        `Installed plugin "${installCatalogEntry.label}" did not expose auth choice "${params.authChoice}".`,
-      );
-      params.runtime.exit(1);
-      return null;
-    }
+    return undefined;
   }
 
   const enableResult = enablePluginInConfig(
-    nextConfig,
+    params.nextConfig,
     providerChoice.provider.pluginId ?? providerChoice.provider.id,
   );
   if (!enableResult.enabled) {

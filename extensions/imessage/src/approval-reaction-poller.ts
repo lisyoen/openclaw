@@ -21,6 +21,10 @@ const OBSERVED_APPROVAL_PROMPT_TARGET_TTL_MS = 5 * 60 * 1000;
 
 const accountIdsWithCompletedNoTargetDiscovery = new Set<string>();
 
+export function clearIMessageApprovalReactionPollerStateForTest(): void {
+  accountIdsWithCompletedNoTargetDiscovery.clear();
+}
+
 type ChatListEntry = {
   id?: number | null;
 };
@@ -182,7 +186,6 @@ function bindObservedConversation(params: {
       conversation,
       messageId,
       approvalId: params.target.approvalId,
-      approvalKind: params.target.approvalKind,
       allowedDecisions: params.target.allowedDecisions,
       ttlMs,
     });
@@ -214,7 +217,6 @@ function bindObservedApprovalPrompt(params: {
     conversation,
     messageId,
     approvalId: binding.approvalId,
-    approvalKind: binding.approvalKind,
     allowedDecisions: binding.allowedDecisions,
     expiresAtMs,
   };

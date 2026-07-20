@@ -6,7 +6,6 @@ import {
   materializeBundleMcpToolsForRun,
 } from "./agent-bundle-mcp-materialize.js";
 import type { McpCatalogTool, SessionMcpRuntime } from "./agent-bundle-mcp-types.js";
-import { resolveConversationCapabilityProfile } from "./conversation-capability-profile.js";
 import { applyFinalEffectiveToolPolicy } from "./embedded-agent-runner/effective-tool-policy.js";
 import { splitSdkTools } from "./embedded-agent-runner/tool-split.js";
 
@@ -88,7 +87,6 @@ async function buildConfiguredMcpToolNamesAtRequestBoundary(params: {
   const filtered = applyFinalEffectiveToolPolicy({
     bundledTools: runtime.tools,
     config: params.cfg,
-    conversationCapabilityProfile: resolveConversationCapabilityProfile({ config: params.cfg }),
     warn: () => {},
   });
   const { customTools } = splitSdkTools({ tools: filtered, sandboxEnabled: false });
@@ -174,11 +172,9 @@ describe("configured MCP tools reach the request boundary (#76063)", () => {
         toolNames: ["zeta_tool", "alpha_tool", "mu_tool"],
       }),
     });
-    const cfg: OpenClawConfig = { tools: { profile: "coding" } };
     const filtered = applyFinalEffectiveToolPolicy({
       bundledTools: runtime.tools,
-      config: cfg,
-      conversationCapabilityProfile: resolveConversationCapabilityProfile({ config: cfg }),
+      config: { tools: { profile: "coding" } },
       warn: () => {},
     });
     const { customTools } = splitSdkTools({ tools: filtered, sandboxEnabled: false });

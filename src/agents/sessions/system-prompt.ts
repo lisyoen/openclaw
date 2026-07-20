@@ -4,7 +4,6 @@
 
 import { formatSkillsForPrompt, type Skill } from "../../skills/loading/session.js";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
-import { buildPromisedWorkPromptSection } from "../promised-work-prompt.js";
 
 export interface BuildSystemPromptOptions {
   /** Custom system prompt (replaces default). */
@@ -143,8 +142,6 @@ In addition to the tools above, you may have access to other custom tools depend
 
 Guidelines:
 ${guidelines}
-
-${buildPromisedWorkPromptSection().join("\n")}
 
 Embedded agent documentation (read only when the user asks about the embedded agent SDK, extensions, themes, skills, or TUI):
 - Main documentation: ${readmePath}

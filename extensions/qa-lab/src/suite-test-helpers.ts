@@ -1,5 +1,4 @@
 // Qa Lab helper module supports suite test helpers behavior.
-import type { QaTransportPolicy } from "./qa-transport.js";
 import { readQaBootstrapScenarioCatalog } from "./scenario-catalog.js";
 
 type QaSuiteTestScenario = ReturnType<typeof readQaBootstrapScenarioCatalog>["scenarios"][number];
@@ -7,15 +6,12 @@ type QaSuiteTestScenario = ReturnType<typeof readQaBootstrapScenarioCatalog>["sc
 export function makeQaSuiteTestScenario(
   id: string,
   params: {
-    channel?: string;
     config?: Record<string, unknown>;
     plugins?: string[];
     gatewayConfigPatch?: Record<string, unknown>;
-    gatewayRuntime?: { forwardHostHome?: boolean; preserveDebugArtifacts?: boolean };
+    gatewayRuntime?: { forwardHostHome?: boolean };
     runtimeParityTier?: QaSuiteTestScenario["runtimeParityTier"];
-    suiteIsolation?: "isolated";
     surface?: string;
-    transportPolicy?: QaTransportPolicy;
   } = {},
 ): QaSuiteTestScenario {
   return {
@@ -28,12 +24,9 @@ export function makeQaSuiteTestScenario(
     ...(params.plugins ? { plugins: params.plugins } : {}),
     ...(params.gatewayConfigPatch ? { gatewayConfigPatch: params.gatewayConfigPatch } : {}),
     ...(params.gatewayRuntime ? { gatewayRuntime: params.gatewayRuntime } : {}),
-    sourcePath: `qa/scenarios/${id}.yaml`,
+    sourcePath: `qa/scenarios/${id}.md`,
     execution: {
       kind: "flow",
-      ...(params.channel ? { channel: params.channel } : {}),
-      ...(params.suiteIsolation ? { suiteIsolation: params.suiteIsolation } : {}),
-      ...(params.transportPolicy ? { transportPolicy: params.transportPolicy } : {}),
       ...(params.config ? { config: params.config } : {}),
       flow: { steps: [{ name: "noop", actions: [{ assert: "true" }] }] },
     },

@@ -27,7 +27,6 @@ const ISSUE_FILE_COUNTS = [
 const ISSUE_MEMORY_FILE_COUNT = ISSUE_FILE_COUNTS.reduce((sum, [, count]) => sum + count, 0);
 const DEFAULT_FILE_COUNT = 512;
 const DEFAULT_MAX_WORKSPACE_REG_FDS = process.platform === "darwin" ? 8 : 64;
-const MAX_TIMER_TIMEOUT_MS = 2_147_000_000;
 /**
  * Maximum gateway-ready output tail retained while waiting for startup.
  */
@@ -135,24 +134,6 @@ function readPositiveNumberEnv(name, fallback) {
   return raw == null || raw.trim() === "" ? fallback : readPositiveNumber(raw, name);
 }
 
-function clampTimerTimeoutMs(valueMs, minMs = 1) {
-  const min = Math.max(0, Math.floor(minMs));
-  const value = Number.isFinite(valueMs) ? valueMs : min;
-  return Math.min(Math.max(Math.floor(value), min), MAX_TIMER_TIMEOUT_MS);
-}
-
-function readTimerTimeoutNumber(value, label, minMs = 1) {
-  const parsed = minMs > 0 ? readPositiveNumber(value, label) : readNumber(value, label);
-  return clampTimerTimeoutMs(parsed, minMs);
-}
-
-function readTimerTimeoutNumberEnv(name, fallback, minMs = 1) {
-  const raw = process.env[name];
-  return raw == null || raw.trim() === ""
-    ? clampTimerTimeoutMs(fallback, minMs)
-    : readTimerTimeoutNumber(raw, name, minMs);
-}
-
 /**
  * Parses memory FD repro CLI arguments and environment fallbacks.
  */
@@ -176,7 +157,7 @@ export function parseArgs(argv) {
     const arg = args[i];
     const next = args[i + 1];
     const readValue = () => {
-      if (!next || next.startsWith("-")) {
+      if (!next) {
         throw new Error(`Missing value for ${arg}`);
       }
       i += 1;
@@ -211,13 +192,13 @@ export function parseArgs(argv) {
         options.minLeakedFds = readPositiveNumber(readValue(), "--min-leaked-fds");
         break;
       case "--invoke-timeout-ms":
-        options.invokeTimeoutMs = readTimerTimeoutNumber(readValue(), "--invoke-timeout-ms");
+        options.invokeTimeoutMs = readPositiveNumber(readValue(), "--invoke-timeout-ms");
         break;
       case "--sample-delay-ms":
-        options.sampleDelayMs = readTimerTimeoutNumber(readValue(), "--sample-delay-ms", 0);
+        options.sampleDelayMs = readNumber(readValue(), "--sample-delay-ms");
         break;
       case "--settle-delay-ms":
-        options.settleDelayMs = readTimerTimeoutNumber(readValue(), "--settle-delay-ms", 0);
+        options.settleDelayMs = readNumber(readValue(), "--settle-delay-ms");
         break;
       case "--output-dir":
         options.outputDir = path.resolve(readValue());
@@ -241,20 +222,9 @@ export function parseArgs(argv) {
     "OPENCLAW_MEMORY_FD_REPRO_MAX_WORKSPACE_REG_FDS",
     DEFAULT_MAX_WORKSPACE_REG_FDS,
   );
-  options.invokeTimeoutMs ??= readTimerTimeoutNumberEnv(
-    "OPENCLAW_MEMORY_FD_REPRO_TIMEOUT_MS",
-    30_000,
-  );
-  options.sampleDelayMs ??= readTimerTimeoutNumberEnv(
-    "OPENCLAW_MEMORY_FD_REPRO_SAMPLE_DELAY_MS",
-    1_000,
-    0,
-  );
-  options.settleDelayMs ??= readTimerTimeoutNumberEnv(
-    "OPENCLAW_MEMORY_FD_REPRO_SETTLE_DELAY_MS",
-    5_000,
-    0,
-  );
+  options.invokeTimeoutMs ??= readPositiveNumberEnv("OPENCLAW_MEMORY_FD_REPRO_TIMEOUT_MS", 30_000);
+  options.sampleDelayMs ??= readNumberEnv("OPENCLAW_MEMORY_FD_REPRO_SAMPLE_DELAY_MS", 1_000);
+  options.settleDelayMs ??= readNumberEnv("OPENCLAW_MEMORY_FD_REPRO_SETTLE_DELAY_MS", 5_000);
   if (!Number.isFinite(options.fileCount) || options.fileCount <= 0) {
     throw new Error("file count must be greater than 0");
   }
@@ -273,7 +243,7 @@ function logStep(message) {
 
 function sleep(ms) {
   return new Promise((resolve) => {
-    setTimeout(resolve, clampTimerTimeoutMs(ms, 0));
+    setTimeout(resolve, ms);
   });
 }
 
@@ -334,6 +304,7 @@ export function writeConfig({ homeDir, workspaceDir, port, token }) {
   const configDir = path.join(homeDir, ".openclaw");
   fs.mkdirSync(configDir, { recursive: true });
   const configPath = path.join(configDir, "openclaw.json");
+  const indexPath = path.join(configDir, "memory", "main.sqlite");
   const config = {
     agents: {
       defaults: {
@@ -342,6 +313,7 @@ export function writeConfig({ homeDir, workspaceDir, port, token }) {
           provider: "none",
           model: "",
           store: {
+            path: indexPath,
             vector: { enabled: false },
           },
           sync: {
@@ -704,10 +676,9 @@ export function classifyMemorySearchInvokeResponse({ httpOk, status, bodyText })
   };
 }
 
-export async function invokeMemorySearch({ port, token, timeoutMs }) {
-  const resolvedTimeoutMs = clampTimerTimeoutMs(timeoutMs);
+async function invokeMemorySearch({ port, token, timeoutMs }) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), resolvedTimeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
   try {
     const res = await fetch(`http://127.0.0.1:${port}/tools/invoke`, {

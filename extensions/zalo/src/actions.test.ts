@@ -29,7 +29,5 @@ describe("zaloMessageActions.describeMessageTool", () => {
       actions: ["send"],
       capabilities: [],
     });
-    expect(zaloMessageActions.supportsAction?.({ action: "send" })).toBe(true);
-    expect(zaloMessageActions.supportsAction?.({ action: "react" })).toBe(false);
   });
 });

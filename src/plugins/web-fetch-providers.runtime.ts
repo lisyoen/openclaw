@@ -7,10 +7,7 @@ import {
   resolveBundledWebFetchResolutionConfig,
   sortWebFetchProviders,
 } from "./web-fetch-providers.shared.js";
-import {
-  resolveBundledRuntimeWebFetchProvidersFromPublicArtifacts,
-  resolveBundledWebFetchProvidersFromPublicArtifacts,
-} from "./web-provider-public-artifacts.js";
+import { resolveBundledWebFetchProvidersFromPublicArtifacts } from "./web-provider-public-artifacts.js";
 import {
   mapRegistryProviders,
   resolveManifestDeclaredWebProviderCandidatePluginIds,
@@ -26,7 +23,6 @@ function resolveWebFetchCandidatePluginIds(params: {
   env?: PluginLoadOptions["env"];
   onlyPluginIds?: readonly string[];
   origin?: PluginManifestRecord["origin"];
-  sandboxed?: boolean;
 }): string[] | undefined {
   return resolveManifestDeclaredWebProviderCandidatePluginIds({
     contract: "webFetchProviders",
@@ -36,7 +32,6 @@ function resolveWebFetchCandidatePluginIds(params: {
     env: params.env,
     onlyPluginIds: params.onlyPluginIds,
     origin: params.origin,
-    sandboxed: params.sandboxed,
   });
 }
 
@@ -61,15 +56,12 @@ export function resolvePluginWebFetchProviders(params: {
   cache?: boolean;
   mode?: "runtime" | "setup";
   origin?: PluginManifestRecord["origin"];
-  sandboxed?: boolean;
 }): PluginWebFetchProviderEntry[] {
   return resolvePluginWebProviders(params, {
     resolveBundledResolutionConfig: resolveBundledWebFetchResolutionConfig,
     resolveCandidatePluginIds: resolveWebFetchCandidatePluginIds,
     mapRegistryProviders: mapRegistryWebFetchProviders,
     resolveBundledPublicArtifactProviders: resolveBundledWebFetchProvidersFromPublicArtifacts,
-    resolveBundledRuntimeArtifactProviders:
-      resolveBundledRuntimeWebFetchProvidersFromPublicArtifacts,
   });
 }
 
@@ -85,7 +77,5 @@ export function resolveRuntimeWebFetchProviders(params: {
     resolveBundledResolutionConfig: resolveBundledWebFetchResolutionConfig,
     resolveCandidatePluginIds: resolveWebFetchCandidatePluginIds,
     mapRegistryProviders: mapRegistryWebFetchProviders,
-    resolveBundledRuntimeArtifactProviders:
-      resolveBundledRuntimeWebFetchProvidersFromPublicArtifacts,
   });
 }

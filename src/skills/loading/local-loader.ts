@@ -12,11 +12,6 @@ type LoadedLocalSkill = {
   frontmatter: ParsedSkillFrontmatter;
 };
 
-export type LocalSkillLoadDiagnostic = {
-  path: string;
-  message: string;
-};
-
 // Read SKILL.md through the root boundary helper so symlinks cannot escape the skill root.
 function readSkillFileSync(params: {
   rootRealPath: string;
@@ -45,7 +40,6 @@ function loadSingleSkillDirectory(params: {
   source: string;
   rootRealPath: string;
   maxBytes?: number;
-  onDiagnostic?: (diagnostic: LocalSkillLoadDiagnostic) => void;
 }): LoadedLocalSkill | null {
   const skillFilePath = path.join(params.skillDir, "SKILL.md");
   const raw = readSkillFileSync({
@@ -60,9 +54,7 @@ function loadSingleSkillDirectory(params: {
   let frontmatter: Record<string, string>;
   try {
     frontmatter = parseFrontmatter(raw);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "failed to parse skill frontmatter";
-    params.onDiagnostic?.({ path: skillFilePath, message });
+  } catch {
     return null;
   }
 
@@ -112,12 +104,7 @@ function listCandidateSkillDirs(dir: string): string[] {
 }
 
 /** Loads skills from a local directory while turning read/parse failures into diagnostics. */
-export function loadSkillsFromDirSafe(params: {
-  dir: string;
-  source: string;
-  maxBytes?: number;
-  onDiagnostic?: (diagnostic: LocalSkillLoadDiagnostic) => void;
-}): {
+export function loadSkillsFromDirSafe(params: { dir: string; source: string; maxBytes?: number }): {
   skills: Skill[];
   frontmatterByFilePath: ReadonlyMap<string, ParsedSkillFrontmatter>;
 } {
@@ -134,7 +121,6 @@ export function loadSkillsFromDirSafe(params: {
     source: params.source,
     rootRealPath,
     maxBytes: params.maxBytes,
-    onDiagnostic: params.onDiagnostic,
   });
   if (rootSkill) {
     return {
@@ -150,7 +136,6 @@ export function loadSkillsFromDirSafe(params: {
         source: params.source,
         rootRealPath,
         maxBytes: params.maxBytes,
-        onDiagnostic: params.onDiagnostic,
       }),
     )
     .filter((skill): skill is LoadedLocalSkill => skill !== null);

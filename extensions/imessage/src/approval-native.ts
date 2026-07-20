@@ -1,5 +1,8 @@
 // Imessage plugin module implements approval native behavior.
-import { createChannelApprovalCapability } from "openclaw/plugin-sdk/approval-delivery-runtime";
+import {
+  createChannelApprovalCapability,
+  splitChannelApprovalCapability,
+} from "openclaw/plugin-sdk/approval-delivery-runtime";
 import { createLazyChannelApprovalNativeRuntimeAdapter } from "openclaw/plugin-sdk/approval-handler-adapter-runtime";
 import type { ChannelApprovalNativeRuntimeAdapter } from "openclaw/plugin-sdk/approval-handler-runtime";
 import {
@@ -10,10 +13,8 @@ import {
   shouldSuppressLocalNativeExecApprovalPrompt,
 } from "openclaw/plugin-sdk/approval-native-runtime";
 import {
-  buildTypedExecApprovalPendingReplyPayload,
-  buildTypedPluginApprovalPendingReplyPayload,
-} from "openclaw/plugin-sdk/approval-reply-runtime";
-import {
+  buildExecApprovalPendingReplyPayload,
+  buildPluginApprovalPendingReplyPayload,
   getExecApprovalReplyMetadata,
   resolveExecApprovalCommandDisplay,
   resolveExecApprovalRequestAllowedDecisions,
@@ -305,7 +306,7 @@ function appendIMessageReactionHint(params: {
 function buildIMessageExecPendingPayload(params: { request: ExecApprovalRequest; nowMs: number }) {
   const allowedDecisions = resolveExecApprovalRequestAllowedDecisions(params.request.request);
   const command = resolveExecApprovalCommandDisplay(params.request.request).commandText;
-  const payload = buildTypedExecApprovalPendingReplyPayload({
+  const payload = buildExecApprovalPendingReplyPayload({
     approvalId: params.request.id,
     approvalSlug: params.request.id.slice(0, 8),
     approvalCommandId: params.request.id,
@@ -339,7 +340,7 @@ function buildIMessagePluginPendingPayload(params: {
     configuredDecisions && configuredDecisions.length > 0
       ? configuredDecisions
       : DEFAULT_PLUGIN_APPROVAL_DECISIONS;
-  const payload = buildTypedPluginApprovalPendingReplyPayload({
+  const payload = buildPluginApprovalPendingReplyPayload({
     request: params.request,
     nowMs: params.nowMs,
     allowedDecisions,
@@ -436,11 +437,14 @@ export const imessageApprovalCapability: ChannelApprovalCapability =
           accountId,
           nativeSessionOnly: true,
         }),
-      shouldHandle: ({ cfg, accountId, context, approvalKind, request }) =>
-        Boolean(context) &&
-        shouldHandleIMessageApprovalRequest({ cfg, accountId, approvalKind, request }),
+      shouldHandle: ({ cfg, accountId, context, request }) =>
+        Boolean(context) && shouldHandleIMessageApprovalRequest({ cfg, accountId, request }),
       load: async () =>
         (await import("./approval-handler.runtime.js"))
           .imessageApprovalNativeRuntime as unknown as ChannelApprovalNativeRuntimeAdapter,
     }),
   });
+
+export const imessageNativeApprovalAdapter = splitChannelApprovalCapability(
+  imessageApprovalCapability,
+);

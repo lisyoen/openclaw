@@ -1,9 +1,14 @@
 // Whatsapp plugin module implements approval auth behavior.
-import { createChannelApprovalAuth } from "openclaw/plugin-sdk/approval-auth-runtime";
+import {
+  createResolvedApproverActionAuthAdapter,
+  resolveApprovalApprovers,
+} from "openclaw/plugin-sdk/approval-auth-runtime";
 import { resolveWhatsAppAccount } from "./accounts.js";
 import { normalizeWhatsAppTarget } from "./normalize.js";
 
-function normalizeWhatsAppApproverId(value: string | number): string | undefined {
+type ApprovalKind = "exec" | "plugin";
+
+export function normalizeWhatsAppApproverId(value: string | number): string | undefined {
   const normalized = normalizeWhatsAppTarget(String(value));
   if (!normalized || normalized.endsWith("@g.us")) {
     return undefined;
@@ -15,16 +20,45 @@ function normalizeWhatsAppApproverEntry(value: string | number): string | undefi
   return String(value).trim() === "*" ? "*" : normalizeWhatsAppApproverId(value);
 }
 
-const whatsappApproval = createChannelApprovalAuth({
+export function getWhatsAppApprovalApprovers(params: {
+  cfg: Parameters<typeof resolveWhatsAppAccount>[0]["cfg"];
+  accountId?: string | null;
+}): string[] {
+  const account = resolveWhatsAppAccount({ cfg: params.cfg, accountId: params.accountId });
+  return resolveApprovalApprovers({
+    allowFrom: account.allowFrom,
+    normalizeApprover: normalizeWhatsAppApproverEntry,
+  });
+}
+
+const whatsappResolvedApproverAuth = createResolvedApproverActionAuthAdapter({
   channelLabel: "WhatsApp",
-  resolveInputs: ({ cfg, accountId }) => {
-    const account = resolveWhatsAppAccount({ cfg, accountId });
-    return { allowFrom: account.allowFrom };
-  },
-  normalizeApprover: normalizeWhatsAppApproverEntry,
-  normalizeSenderId: normalizeWhatsAppApproverId,
-  isWildcardAuthorized: ({ purpose, approvers }) => purpose === "action" && approvers.includes("*"),
+  resolveApprovers: ({ cfg, accountId }) => getWhatsAppApprovalApprovers({ cfg, accountId }),
+  normalizeSenderId: (value) => normalizeWhatsAppApproverId(value),
 });
 
-export const getWhatsAppApprovalApprovers = whatsappApproval.resolveApprovers;
-export const whatsappApprovalAuth = whatsappApproval.approvalAuth;
+export const whatsappApprovalAuth = {
+  authorizeActorAction({
+    cfg,
+    accountId,
+    senderId,
+    approvalKind,
+  }: {
+    cfg: Parameters<typeof resolveWhatsAppAccount>[0]["cfg"];
+    accountId?: string | null;
+    senderId?: string | null;
+    action: "approve";
+    approvalKind: ApprovalKind;
+  }) {
+    if (getWhatsAppApprovalApprovers({ cfg, accountId }).includes("*")) {
+      return { authorized: true } as const;
+    }
+    return whatsappResolvedApproverAuth.authorizeActorAction({
+      cfg,
+      accountId,
+      senderId,
+      action: "approve",
+      approvalKind,
+    });
+  },
+};

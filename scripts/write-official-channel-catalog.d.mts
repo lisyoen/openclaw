@@ -5,9 +5,7 @@ export function buildOfficialChannelCatalog(params?: { repoRoot?: string; cwd?: 
     name: string;
     version?: string;
     description?: string;
-    source?: string;
     openclaw: {
-      plugin?: Record<string, unknown>;
       channel: Record<string, unknown>;
       install: {
         clawhubSpec?: string;

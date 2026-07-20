@@ -1,7 +1,7 @@
 /** Tests media-note behavior as it appears through reply prompt assembly. */
 import { describe, expect, it } from "vitest";
 import { finalizeInboundContext } from "./reply/inbound-context.js";
-import { buildReplyPromptEnvelope } from "./reply/prompt-prelude.js";
+import { buildReplyPromptBodies } from "./reply/prompt-prelude.js";
 
 describe("getReplyFromConfig media note plumbing", () => {
   it("includes all MediaPaths in the agent prompt", () => {
@@ -13,14 +13,10 @@ describe("getReplyFromConfig media note plumbing", () => {
       MediaPaths: ["/tmp/a.png", "/tmp/b.png"],
       MediaUrls: ["/tmp/a.png", "/tmp/b.png"],
     });
-    const prompt = buildReplyPromptEnvelope({
+    const prompt = buildReplyPromptBodies({
       ctx: sessionCtx,
       sessionCtx,
-      baseBody: sessionCtx.BodyForAgent,
-      hasUserBody: true,
-      inboundUserContext: "",
-      isBareSessionReset: false,
-      startupAction: "new",
+      effectiveBaseBody: sessionCtx.BodyForAgent,
       prefixedBody: sessionCtx.BodyForAgent,
     }).prefixedCommandBody;
 
@@ -58,14 +54,10 @@ describe("getReplyFromConfig media note plumbing", () => {
         },
       ],
     });
-    const prompt = buildReplyPromptEnvelope({
+    const prompt = buildReplyPromptBodies({
       ctx: sessionCtx,
       sessionCtx,
-      baseBody: sessionCtx.BodyForAgent,
-      hasUserBody: true,
-      inboundUserContext: "",
-      isBareSessionReset: false,
-      startupAction: "new",
+      effectiveBaseBody: sessionCtx.BodyForAgent,
       prefixedBody: sessionCtx.BodyForAgent,
     }).prefixedCommandBody;
 

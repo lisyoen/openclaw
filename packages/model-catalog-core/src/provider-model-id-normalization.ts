@@ -1,5 +1,4 @@
 // Model Catalog Core module implements provider model id normalization behavior.
-import { parseModelCatalogRef } from "./model-catalog-refs.js";
 import { normalizeLowercaseStringOrEmpty } from "./provider-id.js";
 import {
   normalizeGooglePreviewModelId,
@@ -53,7 +52,7 @@ export function setCurrentManifestModelIdNormalizationRecords(
 }
 
 /** Return the current process-local manifest normalization policy snapshot. */
-function getCurrentManifestModelIdNormalizationPolicies():
+export function getCurrentManifestModelIdNormalizationPolicies():
   | ReadonlyMap<string, ManifestModelIdNormalizationProvider>
   | undefined {
   return currentManifestModelIdNormalizationPolicies;
@@ -99,7 +98,7 @@ export function normalizeProviderModelIdWithPolicies(params: {
   for (const prefix of policy.stripPrefixes ?? []) {
     const normalizedPrefix = normalizeLowercaseStringOrEmpty(prefix);
     if (normalizedPrefix && normalizeLowercaseStringOrEmpty(modelId).startsWith(normalizedPrefix)) {
-      modelId = modelId.slice(normalizedPrefix.length);
+      modelId = modelId.slice(prefix.length);
       break;
     }
   }
@@ -139,8 +138,6 @@ export function normalizeBuiltInProviderModelId(provider: string, model: string)
       "opus-4.8": "claude-opus-4-8",
       opus: "claude-opus-4-8",
       "opus-4.6": "claude-opus-4-6",
-      "sonnet-5": "claude-sonnet-5",
-      sonnet: "claude-sonnet-5",
       "sonnet-4.6": "claude-sonnet-4-6",
     };
     const anthropicPrefix = "anthropic/";
@@ -153,8 +150,6 @@ export function normalizeBuiltInProviderModelId(provider: string, model: string)
   if (normalizedProvider === "vercel-ai-gateway") {
     const vercelAliases: Record<string, string> = {
       "opus-4.6": "claude-opus-4-6",
-      "sonnet-5": "claude-sonnet-5",
-      sonnet: "claude-sonnet-4-6",
       "sonnet-4.6": "claude-sonnet-4-6",
     };
     const aliased = vercelAliases[normalizeLowercaseStringOrEmpty(model)] ?? model;
@@ -174,11 +169,12 @@ export function normalizeBuiltInProviderModelId(provider: string, model: string)
   }
   if (normalizedProvider === "xai") {
     const xaiAliases: Record<string, string> = {
-      "grok-4.3-latest": "grok-4.3",
-      "grok-4.5-latest": "grok-4.5",
-      "grok-build-latest": "grok-4.5",
       "grok-4-fast-reasoning": "grok-4-fast",
       "grok-4-1-fast-reasoning": "grok-4-1-fast",
+      "grok-4.20-experimental-beta-0304-reasoning": "grok-4.20-beta-latest-reasoning",
+      "grok-4.20-experimental-beta-0304-non-reasoning": "grok-4.20-beta-latest-non-reasoning",
+      "grok-4.20-reasoning": "grok-4.20-beta-latest-reasoning",
+      "grok-4.20-non-reasoning": "grok-4.20-beta-latest-non-reasoning",
     };
     return xaiAliases[normalizeLowercaseStringOrEmpty(model)] ?? model;
   }
@@ -224,17 +220,17 @@ export function normalizeConfiguredProviderCatalogModelId(
 export function normalizeConfiguredProviderCatalogModelRef(providerModel: string): string {
   const googlePrefix = "google/";
   if (!providerModel.startsWith(googlePrefix)) {
-    const parsed = parseModelCatalogRef(providerModel);
-    if (!parsed) {
+    const slash = providerModel.indexOf("/");
+    if (slash <= 0 || slash >= providerModel.length - 1) {
       return providerModel;
     }
-    if (!parsed.modelId.startsWith(googlePrefix)) {
+    const prefix = providerModel.slice(0, slash + 1);
+    const suffix = providerModel.slice(slash + 1);
+    if (!suffix.startsWith(googlePrefix)) {
       return providerModel;
     }
-    const normalizedModelId = normalizeGooglePreviewModelId(parsed.modelId);
-    return normalizedModelId === parsed.modelId
-      ? providerModel
-      : `${parsed.provider}/${normalizedModelId}`;
+    const normalizedSuffix = normalizeGooglePreviewModelId(suffix);
+    return normalizedSuffix === suffix ? providerModel : `${prefix}${normalizedSuffix}`;
   }
   const modelId = providerModel.slice(googlePrefix.length);
   const normalizedModelId = normalizeGooglePreviewModelId(modelId);

@@ -31,8 +31,6 @@ export const bundledPluginDependentUnitTestFiles = [
 
 export const unitTestAdditionalExcludePatterns = [
   "src/gateway/**",
-  "packages/gateway-client/**",
-  "packages/gateway-protocol/**",
   "src/hooks/**",
   "src/infra/**",
   `${BUNDLED_PLUGIN_ROOT_DIR}/**`,

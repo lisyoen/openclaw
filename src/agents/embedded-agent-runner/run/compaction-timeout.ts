@@ -4,7 +4,7 @@
 import type { AgentMessage } from "../../runtime/index.js";
 
 /** Timeout state used to distinguish normal run deadlines from compaction stalls. */
-type CompactionTimeoutSignal = {
+export type CompactionTimeoutSignal = {
   isTimeout: boolean;
   isCompactionPendingOrRetrying: boolean;
   isCompactionInFlight: boolean;
@@ -34,8 +34,16 @@ export function resolveRunTimeoutDuringCompaction(params: {
   return params.graceAlreadyUsed ? "abort" : "extend";
 }
 
+/** Effective run timeout after adding the one-time compaction grace budget. */
+export function resolveRunTimeoutWithCompactionGraceMs(params: {
+  runTimeoutMs: number;
+  compactionTimeoutMs: number;
+}): number {
+  return params.runTimeoutMs + params.compactionTimeoutMs;
+}
+
 /** Candidate transcript snapshots available when a timeout fires during compaction. */
-type SnapshotSelectionParams = {
+export type SnapshotSelectionParams = {
   timedOutDuringCompaction: boolean;
   preCompactionSnapshot: AgentMessage[] | null;
   preCompactionSessionId: string;
@@ -44,13 +52,13 @@ type SnapshotSelectionParams = {
 };
 
 /** Snapshot chosen for retry/replay after a compaction-related timeout. */
-type SnapshotSelection = {
+export type SnapshotSelection = {
   messagesSnapshot: AgentMessage[];
   sessionIdUsed: string;
   source: "pre-compaction" | "current";
 };
 
-export function canContinueFromMessage(message: AgentMessage | undefined): boolean {
+function canContinueFromMessage(message: AgentMessage | undefined): boolean {
   switch (message?.role) {
     case "user":
     case "toolResult":
@@ -68,7 +76,7 @@ export function canContinueFromMessage(message: AgentMessage | undefined): boole
 // Drop trailing assistant/tool-call-only fragments before retrying. Those tails
 // are not safe continuation points because replay could resume after an
 // incomplete action instead of a user, tool-result, or summary boundary.
-export function trimToContinuableTail(messages: AgentMessage[]): AgentMessage[] | null {
+function trimToContinuableTail(messages: AgentMessage[]): AgentMessage[] | null {
   let end = messages.length;
   while (end > 0 && !canContinueFromMessage(messages[end - 1])) {
     end -= 1;

@@ -1,15 +1,9 @@
 // Github Copilot tests cover connection bound ids plugin behavior.
-import {
-  stream as streamModel,
-  type AssistantMessage,
-  type Context,
-  type Model,
-  type Tool,
-} from "openclaw/plugin-sdk/llm";
-import { Type } from "typebox";
+import { stream as streamModel, type AssistantMessage, type Model } from "openclaw/plugin-sdk/llm";
 import { describe, expect, it } from "vitest";
 import { resolveFirstGithubToken } from "./auth.js";
-import { wrapCopilotProviderStream } from "./stream.js";
+import { buildCopilotDynamicHeaders } from "./stream.js";
+import { wrapCopilotOpenAIResponsesStream } from "./stream.js";
 import { resolveCopilotApiToken } from "./token.js";
 
 const LIVE =
@@ -24,7 +18,6 @@ const ENV_GITHUB_TOKEN =
   "";
 const LIVE_MODEL_ID = process.env.OPENCLAW_LIVE_GITHUB_COPILOT_MODEL?.trim() || "gpt-5.4";
 const describeLive = LIVE ? describe : describe.skip;
-const TOOL_ARGUMENT_MARKER = `copilot-stream-arguments-${"x".repeat(128)}`;
 
 type CopilotApiToken = {
   token: string;
@@ -136,8 +129,25 @@ async function resolveGithubTokenCandidates(): Promise<Array<{ source: string; t
   return candidates;
 }
 
+function extractText(response: unknown): string {
+  const content = (response as { content?: Array<{ type?: string; text?: string }> }).content;
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  const text: string[] = [];
+  for (const block of content) {
+    if (block.type === "text") {
+      const trimmed = block.text?.trim() ?? "";
+      if (trimmed.length > 0) {
+        text.push(trimmed);
+      }
+    }
+  }
+  return text.join(" ");
+}
+
 describeLive("github-copilot connection-bound Responses IDs live", () => {
-  it("rewrites replayed item IDs and preserves streamed tool arguments", async () => {
+  it("rewrites replayed connection-bound item IDs before sending to Copilot", async () => {
     logProgress("start");
     const candidates = await resolveGithubTokenCandidates();
     if (candidates.length === 0) {
@@ -174,31 +184,19 @@ describeLive("github-copilot connection-bound Responses IDs live", () => {
 
     const model = buildModel(token.baseUrl);
     const staleId = Buffer.from(`copilot-${"x".repeat(24)}`).toString("base64");
-    const tool: Tool = {
-      name: "capture_probe",
-      description: "Capture the supplied path and marker exactly.",
-      parameters: Type.Object(
-        {
-          path: Type.String(),
-          marker: Type.String(),
-        },
-        { additionalProperties: false },
-      ),
-    };
-    const context: Context = {
+    const context = {
       messages: [
         buildReplayAssistantMessage(staleId),
         {
           role: "user" as const,
-          content: `Call capture_probe with path README.md and marker ${TOOL_ARGUMENT_MARKER}. Do not answer directly.`,
+          content: "Reply with exactly: COPILOT_LIVE_OK",
           timestamp: Date.now(),
         },
       ],
-      tools: [tool],
     };
     let capturedPayload: Record<string, unknown> | undefined;
 
-    const wrappedStream = wrapCopilotProviderStream({ streamFn: streamModel } as never);
+    const wrappedStream = wrapCopilotOpenAIResponsesStream(streamModel as never);
     if (!wrappedStream) {
       throw new Error("expected Copilot Responses stream wrapper");
     }
@@ -207,20 +205,20 @@ describeLive("github-copilot connection-bound Responses IDs live", () => {
       context as never,
       {
         apiKey: token.token,
-        maxTokens: 256,
+        headers: buildCopilotDynamicHeaders({
+          messages: context.messages,
+          hasImages: false,
+        }),
+        maxTokens: 32,
         onPayload: (payload: unknown) => {
-          capturedPayload = {
-            ...(payload as Record<string, unknown>),
-            tool_choice: { type: "function", name: tool.name },
-          };
-          return capturedPayload;
+          capturedPayload = payload as Record<string, unknown>;
         },
       } as never,
     ) as { result(): Promise<unknown> };
 
-    logProgress("sending tool-call Responses request");
-    const result = (await stream.result()) as AssistantMessage;
-    logProgress("tool-call Responses request completed");
+    logProgress("sending Responses request");
+    const result = await stream.result();
+    logProgress("Responses request completed");
     const input = Array.isArray(capturedPayload?.input) ? capturedPayload.input : [];
     const replayedAssistant = input.find(
       (item): item is Record<string, unknown> =>
@@ -231,14 +229,6 @@ describeLive("github-copilot connection-bound Responses IDs live", () => {
 
     expect(replayedAssistant?.id).toMatch(/^msg_[a-f0-9]{16}$/);
     expect(replayedAssistant?.id).not.toBe(staleId);
-    const toolCall = result.content.find((block) => block.type === "toolCall");
-    if (!toolCall || toolCall.type !== "toolCall") {
-      throw new Error(`Copilot did not call capture_probe: ${result.stopReason}`);
-    }
-    expect(toolCall.name).toBe("capture_probe");
-    expect(toolCall.arguments).toEqual({
-      path: "README.md",
-      marker: TOOL_ARGUMENT_MARKER,
-    });
-  }, 120_000);
+    expect(extractText(result)).toMatch(/^COPILOT_LIVE_OK[.!]?$/i);
+  }, 60_000);
 });

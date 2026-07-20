@@ -70,6 +70,7 @@ describe("legacy migrate provider-shaped config", () => {
         brain: "agent-consult",
         model: "gpt-realtime",
         speakerVoice: "alloy",
+        voice: "alloy",
       },
     });
   });
@@ -101,8 +102,8 @@ describe("legacy migrate provider-shaped config", () => {
     });
   });
 
-  it("preserves an existing realtime speaker voice without triggering provider repair", () => {
-    const input = {
+  it("does not treat an existing realtime voice alias as Talk provider repair", () => {
+    const input: OpenClawConfig = {
       talk: {
         provider: "elevenlabs",
         providers: {
@@ -118,39 +119,19 @@ describe("legacy migrate provider-shaped config", () => {
             },
           },
           model: "gpt-realtime",
-          speakerVoice: "cedar",
+          voice: "cedar",
           mode: "realtime",
           transport: "gateway-relay",
           brain: "agent-consult",
         },
       },
-    } as unknown as OpenClawConfig;
+    };
     const changes: string[] = [];
 
     const migrated = normalizeLegacyTalkConfig(input, changes);
 
     expect(changes).toStrictEqual([]);
-    expect(migrated.talk).toEqual({
-      provider: "elevenlabs",
-      providers: {
-        elevenlabs: {
-          voiceId: "voice-1",
-        },
-      },
-      realtime: {
-        provider: "openai",
-        providers: {
-          openai: {
-            model: "gpt-realtime",
-          },
-        },
-        model: "gpt-realtime",
-        speakerVoice: "cedar",
-        mode: "realtime",
-        transport: "gateway-relay",
-        brain: "agent-consult",
-      },
-    });
+    expect(migrated).toEqual(input);
   });
 
   it("moves messages.tts.<provider> keys into messages.tts.providers", () => {

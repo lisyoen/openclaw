@@ -2,14 +2,10 @@
  * Tests core plugin SDK exports and channel plugin construction.
  */
 import { describe, expect, it, vi } from "vitest";
+import type { ChannelPlugin } from "../channels/plugins/types.plugin.js";
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import type { OpenClawPluginApi, PluginRegistrationMode } from "../plugins/types.js";
-import {
-  createChannelPluginBase,
-  createChatChannelPlugin,
-  defineChannelPluginEntry,
-  type ChannelPlugin,
-} from "./channel-core.js";
+import { createChannelPluginBase, defineChannelPluginEntry } from "./core.js";
 
 function createChannelPlugin(id: string): ChannelPlugin {
   return {
@@ -141,31 +137,5 @@ describe("createChannelPluginBase", () => {
     });
 
     expect(plugin.meta.id).toBe("metadata-id-channel");
-  });
-});
-
-describe("createChatChannelPlugin", () => {
-  it("preserves account-scoped current-conversation binding support", () => {
-    const conversationBindings: NonNullable<ChannelPlugin["conversationBindings"]> = {
-      isCurrentConversationBindingSupported: ({ accountId }) => accountId !== "enterprise",
-    };
-    const plugin = createChatChannelPlugin({
-      base: {
-        ...createChannelPlugin("account-scoped-bindings"),
-        conversationBindings,
-      },
-    });
-
-    expect(plugin.conversationBindings?.supportsCurrentConversationBinding).toBe(true);
-    expect(
-      plugin.conversationBindings?.isCurrentConversationBindingSupported?.({
-        accountId: "workspace",
-      }),
-    ).toBe(true);
-    expect(
-      plugin.conversationBindings?.isCurrentConversationBindingSupported?.({
-        accountId: "enterprise",
-      }),
-    ).toBe(false);
   });
 });

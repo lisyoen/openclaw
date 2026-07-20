@@ -9,10 +9,15 @@ import { resolveSecretInputRef } from "../config/types.secrets.js";
 import { resolveGatewayCredentialsFromValues } from "./credentials.js";
 
 /** Authentication modes after config, override, and credential inputs are combined. */
-type ResolvedGatewayAuthMode = "none" | "token" | "password" | "trusted-proxy";
+export type ResolvedGatewayAuthMode = "none" | "token" | "password" | "trusted-proxy";
 
 /** Records which input selected the effective Gateway auth mode. */
-type ResolvedGatewayAuthModeSource = "override" | "config" | "password" | "token" | "default";
+export type ResolvedGatewayAuthModeSource =
+  | "override"
+  | "config"
+  | "password"
+  | "token"
+  | "default";
 
 /** Fully resolved Gateway auth policy before startup validates required secrets. */
 export type ResolvedGatewayAuth = {
@@ -25,7 +30,7 @@ export type ResolvedGatewayAuth = {
 };
 
 /** Shared-secret auth shape exposed to Gateway clients that support a single bearer secret. */
-type EffectiveSharedGatewayAuth = {
+export type EffectiveSharedGatewayAuth = {
   mode: "token" | "password";
   secret: string | undefined;
 };

@@ -19,7 +19,7 @@ Recommended: use the built-in uninstaller:
 openclaw uninstall
 ```
 
-State removal preserves configured workspace directories unless you also select `--workspace`.
+When using the CLI, state removal preserves configured workspace directories unless you also select `--workspace`.
 
 Preview what will be removed (safe):
 
@@ -33,8 +33,6 @@ Non-interactive (automation / npx). Use with caution and only after confirming s
 openclaw uninstall --all --yes --non-interactive
 npx -y openclaw uninstall --all --yes --non-interactive
 ```
-
-Flags: `--service`, `--state`, `--workspace`, `--app` select individual scopes; `--all` selects all four.
 
 Manual steps (same result):
 
@@ -90,18 +88,18 @@ Use this if the gateway service keeps running but `openclaw` is missing.
 
 ### macOS (launchd)
 
-Default label is `ai.openclaw.gateway` (or `ai.openclaw.<profile>` with a profile):
+Default label is `ai.openclaw.gateway` (or `ai.openclaw.<profile>`; legacy `com.openclaw.*` may still exist):
 
 ```bash
 launchctl bootout gui/$UID/ai.openclaw.gateway
 rm -f ~/Library/LaunchAgents/ai.openclaw.gateway.plist
 ```
 
-If you used a profile, replace the label and plist name with `ai.openclaw.<profile>`.
+If you used a profile, replace the label and plist name with `ai.openclaw.<profile>`. Remove any legacy `com.openclaw.*` plists if present.
 
 ### Linux (systemd user unit)
 
-Default unit name is `openclaw-gateway.service` (or `openclaw-gateway-<profile>.service`). A pre-rename `clawdbot-gateway.service` unit may still exist on machines upgraded from very old installs; `openclaw uninstall` / `openclaw gateway uninstall` detects and removes it automatically.
+Default unit name is `openclaw-gateway.service` (or `openclaw-gateway-<profile>.service`):
 
 ```bash
 systemctl --user disable --now openclaw-gateway.service
@@ -112,17 +110,14 @@ systemctl --user daemon-reload
 ### Windows (Scheduled Task)
 
 Default task name is `OpenClaw Gateway` (or `OpenClaw Gateway (<profile>)`).
-The task launches a windowless `gateway.vbs` script under your state dir, which in turn
-runs `gateway.cmd`; remove both.
+The task script lives under your state dir.
 
 ```powershell
 schtasks /Delete /F /TN "OpenClaw Gateway"
-Remove-Item -Force "$env:USERPROFILE\.openclaw\gateway.cmd" -ErrorAction SilentlyContinue
-Remove-Item -Force "$env:USERPROFILE\.openclaw\gateway.vbs" -ErrorAction SilentlyContinue
+Remove-Item -Force "$env:USERPROFILE\.openclaw\gateway.cmd"
 ```
 
-If you used a profile, delete the matching task name and the `gateway.cmd` /
-`gateway.vbs` files under `~\.openclaw-<profile>`.
+If you used a profile, delete the matching task name and `~\.openclaw-<profile>\gateway.cmd`.
 
 ## Normal install vs source checkout
 

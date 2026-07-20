@@ -10,7 +10,7 @@
 import type { ChatScope } from "../types.js";
 
 /** Structured reminder payload emitted by the model. */
-interface CronReminderPayload {
+export interface CronReminderPayload {
   type: "cron_reminder";
   content: string;
   targetType: ChatScope;

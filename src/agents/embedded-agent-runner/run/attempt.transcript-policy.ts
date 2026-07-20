@@ -6,7 +6,7 @@ import type { ProviderRuntimeModel } from "../../../plugins/provider-runtime-mod
 import type { AgentRuntimePlan } from "../../runtime-plan/types.js";
 import { resolveTranscriptPolicy, type TranscriptPolicy } from "../../transcript-policy.js";
 
-type AttemptRuntimeModelContext = NonNullable<
+export type AttemptRuntimeModelContext = NonNullable<
   Parameters<AgentRuntimePlan["transcript"]["resolvePolicy"]>[0]
 >;
 

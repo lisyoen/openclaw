@@ -15,10 +15,6 @@ describe("mapThinkingLevelToReasoningEffort", () => {
     expect(mapThinkingLevelToReasoningEffort("max")).toBe("xhigh");
   });
 
-  it('defensively maps logical "ultra" to the strongest generic wire effort', () => {
-    expect(mapThinkingLevelToReasoningEffort("ultra")).toBe("xhigh");
-  });
-
   it.each(["minimal", "low", "medium", "high", "xhigh"] as const)(
     "passes through %s unchanged",
     (level) => {

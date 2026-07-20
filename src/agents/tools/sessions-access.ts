@@ -11,8 +11,10 @@ import { resolveInternalSessionKey, resolveMainSessionAlias } from "./sessions-r
 
 export {
   createAgentToAgentPolicy,
+  createSessionVisibilityChecker,
   createSessionVisibilityGuard,
   createSessionVisibilityRowChecker,
+  listSpawnedSessionKeys,
   resolveEffectiveSessionToolsVisibility,
 } from "../../plugin-sdk/session-visibility.js";
 

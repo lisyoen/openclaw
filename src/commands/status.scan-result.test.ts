@@ -87,8 +87,8 @@ describe("buildStatusScanResult", () => {
     const pluginCompatibility = [
       {
         pluginId: "legacy",
-        code: "deprecated-memory-embedding-provider-api" as const,
-        compatCode: "deprecated-memory-embedding-provider-api" as const,
+        code: "legacy-before-agent-start" as const,
+        compatCode: "legacy-before-agent-start" as const,
         severity: "warn" as const,
         message: "warn",
       },

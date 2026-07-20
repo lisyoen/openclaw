@@ -1,12 +1,13 @@
 // Payload fallback tests cover fallback prompt payloads for isolated cron runs.
 import { describe, expect, it } from "vitest";
-import { makeIsolatedAgentJobFixture, makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
-import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 import {
-  classifyEmbeddedAgentRunResultForModelFallbackMock,
+  makeIsolatedAgentTurnJob,
+  makeIsolatedAgentTurnParams,
+  setupRunCronIsolatedAgentTurnSuite,
+} from "./run.suite-helpers.js";
+import {
   isCliProviderMock,
   loadRunCronIsolatedAgentTurn,
-  mergeEmbeddedAgentRunResultForModelFallbackExhaustionMock,
   mockRunCronFallbackPassthrough,
   resolveConfiguredModelRefMock,
   resolveCliRuntimeExecutionProviderMock,
@@ -19,20 +20,13 @@ import {
 const runCronIsolatedAgentTurn = await loadRunCronIsolatedAgentTurn();
 
 function requireModelFallbackRequest(): {
-  classifyResult?: (params: { provider: string; model: string; result: unknown }) => unknown;
   fallbacksOverride?: string[];
-  mergeExhaustedResult?: (params: { latestResult: unknown; preferredResult: unknown }) => unknown;
   provider?: string;
   model?: string;
 } {
   const request = runWithModelFallbackMock.mock.calls[0]?.[0] as
     | {
-        classifyResult?: (params: { provider: string; model: string; result: unknown }) => unknown;
         fallbacksOverride?: string[];
-        mergeExhaustedResult?: (params: {
-          latestResult: unknown;
-          preferredResult: unknown;
-        }) => unknown;
         provider?: string;
         model?: string;
       }
@@ -50,8 +44,8 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
     const dispatchMessage = "SERIALIZATION_PROBE should not be wrapped";
 
     const result = await runCronIsolatedAgentTurn(
-      makeIsolatedAgentParamsFixture({
-        job: makeIsolatedAgentJobFixture({
+      makeIsolatedAgentTurnParams({
+        job: makeIsolatedAgentTurnJob({
           payload: {
             kind: "agentTurn",
             message:
@@ -98,46 +92,14 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
     }
 
     const result = await runCronIsolatedAgentTurn(
-      makeIsolatedAgentParamsFixture({
-        job: makeIsolatedAgentJobFixture({ payload }),
+      makeIsolatedAgentTurnParams({
+        job: makeIsolatedAgentTurnJob({ payload }),
       }),
     );
 
     expect(result.status).toBe("ok");
     expect(runWithModelFallbackMock).toHaveBeenCalledOnce();
     expect(requireModelFallbackRequest().fallbacksOverride).toEqual(expectedFallbacks);
-  });
-
-  it("classifies isolated cron results for model fallback", async () => {
-    const classification = { reason: "format", code: "empty_result" };
-    classifyEmbeddedAgentRunResultForModelFallbackMock.mockReturnValue(classification);
-
-    const result = await runCronIsolatedAgentTurn(
-      makeIsolatedAgentParamsFixture({
-        job: makeIsolatedAgentJobFixture({
-          payload: { kind: "agentTurn", message: "test" },
-        }),
-      }),
-    );
-
-    expect(result.status).toBe("ok");
-    const fallbackRequest = requireModelFallbackRequest();
-    const embeddedResult = { payloads: [], meta: { agentMeta: {} } };
-    expect(
-      fallbackRequest.classifyResult?.({
-        provider: "anthropic",
-        model: "claude-sonnet-4-6",
-        result: embeddedResult,
-      }),
-    ).toBe(classification);
-    expect(classifyEmbeddedAgentRunResultForModelFallbackMock).toHaveBeenCalledWith({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      result: embeddedResult,
-    });
-    expect(fallbackRequest.mergeExhaustedResult).toBe(
-      mergeEmbeddedAgentRunResultForModelFallbackExhaustionMock,
-    );
   });
 
   it("plans Anthropic fallbacks canonically while executing compatible attempts through Claude CLI", async () => {
@@ -149,12 +111,9 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
       provider: "anthropic",
       model: "claude-opus-4-6",
     });
-    runCliAgentMock.mockImplementation(async (request) => {
-      request.userTurnTranscriptRecorder?.markBlocked();
-      return {
-        payloads: [{ text: "fallback ok" }],
-        meta: { agentMeta: {} },
-      };
+    runCliAgentMock.mockResolvedValue({
+      payloads: [{ text: "fallback ok" }],
+      meta: { agentMeta: {} },
     });
     runWithModelFallbackMock.mockImplementation(async ({ provider, model, run }) => {
       const firstResult = await run(provider, model);
@@ -168,7 +127,7 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
     });
 
     const result = await runCronIsolatedAgentTurn(
-      makeIsolatedAgentParamsFixture({
+      makeIsolatedAgentTurnParams({
         cfg: {
           agents: {
             defaults: {
@@ -191,31 +150,17 @@ describe("runCronIsolatedAgentTurn — payload.fallbacks", () => {
     const fallbackRequest = requireModelFallbackRequest();
     expect(fallbackRequest.provider).toBe("anthropic");
     expect(fallbackRequest.model).toBe("claude-opus-4-6");
-    expect(
-      runCliAgentMock.mock.calls.map((call) => [
-        call[0].provider,
-        call[0].modelProvider,
-        call[0].model,
-      ]),
-    ).toEqual([
-      ["claude-cli", "anthropic", "claude-opus-4-6"],
-      ["claude-cli", "anthropic", "claude-sonnet-4-6"],
+    expect(runCliAgentMock.mock.calls.map((call) => [call[0].provider, call[0].model])).toEqual([
+      ["claude-cli", "claude-opus-4-6"],
+      ["claude-cli", "claude-sonnet-4-6"],
     ]);
-    const firstCliRequest = runCliAgentMock.mock.calls[0]?.[0];
-    const secondCliRequest = runCliAgentMock.mock.calls[1]?.[0];
-    expect(firstCliRequest?.userTurnTranscriptRecorder).toBeDefined();
-    expect(secondCliRequest?.userTurnTranscriptRecorder).toBe(
-      firstCliRequest?.userTurnTranscriptRecorder,
-    );
-    expect(firstCliRequest?.suppressNextUserMessagePersistence).toBe(false);
-    expect(secondCliRequest?.suppressNextUserMessagePersistence).toBe(true);
   });
 
   it("forwards subagent fallbacks into the embedded runner for internal failover decisions", async () => {
     mockRunCronFallbackPassthrough();
 
     const result = await runCronIsolatedAgentTurn(
-      makeIsolatedAgentParamsFixture({
+      makeIsolatedAgentTurnParams({
         cfg: {
           agents: {
             defaults: {

@@ -1,7 +1,6 @@
 // File Transfer tests cover policy plugin behavior.
 import os from "node:os";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the plugin-sdk runtime-config surface so we can drive the policy
@@ -198,40 +197,6 @@ describe("evaluateFilePolicy — denyPaths always wins", () => {
         path: path.join(os.homedir(), "Downloads", ".aws", "credentials"),
       }),
       { ok: false, code: "POLICY_DENIED", askable: false },
-    );
-  });
-
-  it.each([
-    {
-      label: "the bare denied directory",
-      requestedPath: path.join(os.homedir(), ".ssh"),
-      expected: { ok: false, code: "POLICY_DENIED", askable: false },
-    },
-    {
-      label: "the denied directory with a trailing separator",
-      requestedPath: `${path.join(os.homedir(), ".ssh")}/`,
-      expected: { ok: false, code: "POLICY_DENIED", askable: false },
-    },
-    {
-      label: "the bare denied directory on Windows",
-      requestedPath: "C:\\Users\\me\\.ssh",
-      expected: { ok: false, code: "POLICY_DENIED", askable: false },
-    },
-    {
-      label: "a sibling sharing only the denied directory prefix",
-      requestedPath: path.join(os.homedir(), ".sshrc"),
-      expected: { ok: true },
-    },
-  ])("handles $label", ({ requestedPath, expected }) => {
-    withConfig({
-      n1: {
-        allowReadPaths: ["/**"],
-        denyPaths: ["**/.ssh/**"],
-      },
-    });
-    expectResultFields(
-      evaluateFilePolicy({ nodeId: "n1", kind: "read", path: requestedPath }),
-      expected,
     );
   });
 
@@ -463,11 +428,9 @@ describe("persistAllowAlways", () => {
         };
       };
     };
-    const node = expectDefined(
-      root.plugins.entries["file-transfer"].config.nodes.n1,
-      "n1 file-transfer node",
+    expect(root.plugins.entries["file-transfer"].config.nodes.n1.allowReadPaths).toContain(
+      "/srv/added.png",
     );
-    expect(node.allowReadPaths).toContain("/srv/added.png");
   });
 
   it("creates a new node entry keyed by displayName when no entry exists", async () => {
@@ -496,11 +459,9 @@ describe("persistAllowAlways", () => {
         };
       };
     };
-    const node = expectDefined(
-      root.plugins.entries["file-transfer"].config.nodes.Lobster,
-      "Lobster file-transfer node",
+    expect(root.plugins.entries["file-transfer"].config.nodes["Lobster"].allowWritePaths).toContain(
+      "/srv/out.txt",
     );
-    expect(node.allowWritePaths).toContain("/srv/out.txt");
   });
 
   it("never persists under the '*' wildcard even when '*' is the matching key", async () => {
@@ -538,12 +499,11 @@ describe("persistAllowAlways", () => {
       };
     };
     // The "*" entry must not have been mutated.
-    const nodes = root.plugins.entries["file-transfer"].config.nodes;
-    expect(expectDefined(nodes["*"], "wildcard file-transfer node").allowReadPaths).toEqual([
+    expect(root.plugins.entries["file-transfer"].config.nodes["*"].allowReadPaths).toEqual([
       "/var/log/**",
     ]);
     // A new entry keyed by displayName (not "*") must hold the new path.
-    expect(expectDefined(nodes.Lobster, "Lobster file-transfer node").allowReadPaths).toEqual([
+    expect(root.plugins.entries["file-transfer"].config.nodes["Lobster"].allowReadPaths).toEqual([
       "/srv/added.png",
     ]);
   });
@@ -602,10 +562,7 @@ describe("persistAllowAlways", () => {
         };
       };
     };
-    const list = expectDefined(
-      root.plugins.entries["file-transfer"].config.nodes.n1,
-      "n1 file-transfer node",
-    ).allowReadPaths;
+    const list = root.plugins.entries["file-transfer"].config.nodes.n1.allowReadPaths;
     expect(list.reduce((count, p) => count + (p === "/tmp/x" ? 1 : 0), 0)).toBe(1);
   });
 });

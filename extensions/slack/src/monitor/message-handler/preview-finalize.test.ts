@@ -10,6 +10,7 @@ vi.mock("../../actions.js", () => ({
 }));
 
 let finalizeSlackPreviewEdit: typeof import("./preview-finalize.js").finalizeSlackPreviewEdit;
+let testing: typeof import("./preview-finalize.js").testing;
 
 function createClient(overrides?: {
   historyMessages?: Array<Record<string, unknown>>;
@@ -25,7 +26,7 @@ function createClient(overrides?: {
 
 describe("finalizeSlackPreviewEdit", () => {
   beforeAll(async () => {
-    ({ finalizeSlackPreviewEdit } = await import("./preview-finalize.js"));
+    ({ finalizeSlackPreviewEdit, testing } = await import("./preview-finalize.js"));
   });
 
   beforeEach(() => {
@@ -97,73 +98,53 @@ describe("finalizeSlackPreviewEdit", () => {
     ).rejects.toThrow("socket closed");
   });
 
-  it("accepts native-data fallback blocks after an ambiguous retry response", async () => {
-    editSlackMessageMock.mockRejectedValueOnce(new Error("socket closed"));
-    const blocks = [
-      {
-        type: "data_visualization",
-        title: "Revenue mix",
-        chart: {
-          type: "pie",
-          segments: [
-            { label: "Product", value: 60 },
-            { label: "Services", value: 40 },
-          ],
-        },
-      },
-    ] as const;
-    const text = "Revenue mix (pie chart)\n- Product: 60\n- Services: 40";
-    const fallbackBlocks = [
-      {
-        type: "section",
-        text: { type: "mrkdwn", text, verbatim: true },
-      },
-    ];
-    const client = createClient({
-      historyMessages: [{ ts: "171234.567", text, blocks: fallbackBlocks }],
-    });
+  it("requires matching blocks when finalizing a blocks-only edit", () => {
+    const blocks = [{ type: "section", text: { type: "mrkdwn", text: "*Done*" } }] as const;
 
-    await expect(
-      finalizeSlackPreviewEdit({
-        client,
-        token: "xoxb-test",
-        channelId: "C123",
-        messageId: "171234.567",
+    expect(
+      testing.buildExpectedSlackEditText({
         text: "",
-        blocks: blocks as unknown as Parameters<typeof finalizeSlackPreviewEdit>[0]["blocks"],
+        blocks: blocks as unknown as Parameters<
+          typeof testing.buildExpectedSlackEditText
+        >[0]["blocks"],
       }),
-    ).resolves.toBeUndefined();
+    ).toBe("*Done*");
   });
 
-  it("accepts native-data text fallback without blocks after an ambiguous retry response", async () => {
-    editSlackMessageMock.mockRejectedValueOnce(new Error("socket closed"));
+  it("matches truncated fallback text for long blocks-only edit readback", async () => {
+    const longContextText = "a".repeat(3000);
     const blocks = [
       {
-        type: "data_visualization",
-        title: "Revenue mix",
-        chart: {
-          type: "pie",
-          segments: [
-            { label: "Product", value: 60 },
-            { label: "Services", value: 40 },
-          ],
-        },
+        type: "context",
+        elements: [
+          { type: "mrkdwn", text: longContextText },
+          { type: "mrkdwn", text: longContextText },
+          { type: "mrkdwn", text: longContextText },
+        ],
       },
     ] as const;
-    const text = "Revenue mix (pie chart)\n- Product: 60\n- Services: 40";
+    const expectedText = testing.buildExpectedSlackEditText({
+      text: "",
+      blocks: blocks as unknown as Parameters<
+        typeof testing.buildExpectedSlackEditText
+      >[0]["blocks"],
+    });
     const client = createClient({
-      historyMessages: [{ ts: "171234.567", text }],
+      historyMessages: [{ ts: "171234.567", text: expectedText, blocks }],
     });
 
+    expect(expectedText).toHaveLength(8000);
     await expect(
-      finalizeSlackPreviewEdit({
+      testing.didSlackPreviewEditApplyAfterError({
         client,
         token: "xoxb-test",
         channelId: "C123",
         messageId: "171234.567",
         text: "",
-        blocks: blocks as unknown as Parameters<typeof finalizeSlackPreviewEdit>[0]["blocks"],
+        blocks: blocks as unknown as Parameters<
+          typeof testing.didSlackPreviewEditApplyAfterError
+        >[0]["blocks"],
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(true);
   });
 });

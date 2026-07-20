@@ -72,6 +72,10 @@ function resolveSelfEntryPath(): string | null {
 
 function printSessionUpdate(notification: SessionNotification): void {
   const update = notification.update;
+  if (!("sessionUpdate" in update)) {
+    return;
+  }
+
   switch (update.sessionUpdate) {
     case "agent_message_chunk": {
       if (update.content?.type === "text") {

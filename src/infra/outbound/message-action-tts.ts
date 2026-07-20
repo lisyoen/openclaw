@@ -1,20 +1,25 @@
 // Message-action TTS helpers lazily apply session/config driven speech output
 // to send payloads without loading TTS providers for ordinary sends.
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
-import { resolveStorePath } from "../../config/sessions.js";
-import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
+import {
+  loadSessionStore,
+  resolveSessionStoreEntry,
+  resolveStorePath,
+} from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
-import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
 import { shouldAttemptTtsPayload } from "../../tts/tts-config.js";
 
-// Keep the TTS runtime lazy so ordinary message sends do not pay the provider import cost.
-const loadMessageActionTtsRuntime = createLazyRuntimeModule(
-  () => import("../../tts/tts.runtime.js"),
-);
+let ttsRuntimePromise: Promise<typeof import("../../tts/tts.runtime.js")> | null = null;
+
+function loadMessageActionTtsRuntime() {
+  // Keep the TTS runtime lazy so ordinary message sends do not pay the provider import cost.
+  ttsRuntimePromise ??= import("../../tts/tts.runtime.js");
+  return ttsRuntimePromise;
+}
 
 /** Reads the session-level TTS auto mode for a message-action send. */
-function resolveMessageActionSessionTtsAuto(params: {
+export function resolveMessageActionSessionTtsAuto(params: {
   cfg: OpenClawConfig;
   sessionKey?: string;
   agentId?: string;
@@ -25,11 +30,8 @@ function resolveMessageActionSessionTtsAuto(params: {
   }
   try {
     const storePath = resolveStorePath(params.cfg.session?.store, { agentId: params.agentId });
-    return loadSessionEntry({
-      agentId: params.agentId,
-      sessionKey,
-      storePath,
-    })?.ttsAuto;
+    const store = loadSessionStore(storePath);
+    return resolveSessionStoreEntry({ store, sessionKey }).existing?.ttsAuto;
   } catch {
     // Missing or unreadable session stores should not block message delivery.
     return undefined;

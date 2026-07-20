@@ -16,11 +16,7 @@ import {
   type JsonObject,
   type JsonValue,
 } from "./protocol.js";
-import {
-  readCodexRateLimitsRevision,
-  readRecentCodexRateLimits,
-  rememberCodexRateLimitsRead,
-} from "./rate-limit-cache.js";
+import { readRecentCodexRateLimits, rememberCodexRateLimits } from "./rate-limit-cache.js";
 import {
   formatCodexUsageLimitErrorMessage,
   resolveCodexUsageLimitResetAtMs,
@@ -40,14 +36,6 @@ type CodexUsageLimitErrorResult = {
   message: string;
   rateLimitsForProfile?: JsonValue;
 };
-
-export function createCodexUsageLimitPromptError(message: string): Error & { status: 429 } {
-  return Object.assign(new Error(message), { status: 429 as const });
-}
-
-export function isCodexUsageLimitPromptError(error: unknown): error is Error & { status: 429 } {
-  return error instanceof Error && "status" in error && error.status === 429;
-}
 
 /** Marks a Codex auth profile blocked until the reset time advertised by rate limits. */
 export async function markCodexAuthProfileBlockedFromRateLimits(params: {
@@ -85,19 +73,13 @@ export async function markCodexAuthProfileBlockedFromRateLimits(params: {
 export async function formatCodexTurnStartUsageLimitError(params: {
   client: CodexAppServerClient;
   error: unknown;
-  errorNotification?: CodexServerNotification;
-  rateLimitsRevisionBeforeTurnStart?: number;
+  pendingNotifications: CodexServerNotification[];
   timeoutMs?: number;
   signal?: AbortSignal;
 }): Promise<CodexUsageLimitErrorResult | undefined> {
   return refreshCodexUsageLimitError({
     client: params.client,
-    source: readCodexTurnStartUsageLimitErrorSource(
-      params.client,
-      params.error,
-      params.errorNotification,
-      params.rateLimitsRevisionBeforeTurnStart,
-    ),
+    source: readCodexTurnStartUsageLimitErrorSource(params.error, params.pendingNotifications),
     timeoutMs: params.timeoutMs,
     signal: params.signal,
   });
@@ -109,20 +91,22 @@ export async function refreshCodexUsageLimitPromptError(params: {
   message: string | undefined;
   timeoutMs?: number;
   signal?: AbortSignal;
-}): Promise<CodexUsageLimitErrorResult | undefined> {
+}): Promise<string | undefined> {
   if (!shouldRefreshCodexRateLimitsForUsageLimitMessage(params.message)) {
     return undefined;
   }
-  return refreshCodexUsageLimitError({
-    client: params.client,
-    source: {
-      message: params.message,
-      codexErrorInfo: "usageLimitExceeded",
-      rateLimits: readRecentCodexRateLimits(params.client),
-    },
-    timeoutMs: params.timeoutMs,
-    signal: params.signal,
-  });
+  return (
+    await refreshCodexUsageLimitError({
+      client: params.client,
+      source: {
+        message: params.message,
+        codexErrorInfo: "usageLimitExceeded",
+        rateLimits: readRecentCodexRateLimits(),
+      },
+      timeoutMs: params.timeoutMs,
+      signal: params.signal,
+    })
+  )?.message;
 }
 
 async function refreshCodexUsageLimitError(params: {
@@ -161,7 +145,6 @@ async function refreshCodexUsageLimitError(params: {
     message: params.source.message,
     codexErrorInfo: params.source.codexErrorInfo,
     rateLimits,
-    rateLimitsAuthoritative: true,
   });
   const message = refreshedMessage ?? initialMessage;
   return message ? { message, rateLimitsForProfile: rateLimits } : undefined;
@@ -180,7 +163,7 @@ async function readCodexRateLimitsFromAppServerForUsageLimitError(params: {
       timeoutMs: resolveCodexUsageLimitRateLimitRefreshTimeoutMs(params.timeoutMs),
       signal: params.signal,
     });
-    rememberCodexRateLimitsRead(params.client, rateLimits);
+    rememberCodexRateLimits(rateLimits);
     return rateLimits;
   } catch (error) {
     embeddedAgentLog.debug("codex app-server rate-limit refresh failed after usage-limit error", {
@@ -198,42 +181,54 @@ function resolveCodexUsageLimitRateLimitRefreshTimeoutMs(timeoutMs: number | und
 }
 
 function readCodexTurnStartUsageLimitErrorSource(
-  client: CodexAppServerClient,
   error: unknown,
-  errorNotification: CodexServerNotification | undefined,
-  rateLimitsRevisionBeforeTurnStart: number | undefined,
+  pendingNotifications: CodexServerNotification[],
 ): CodexUsageLimitErrorSource {
-  const notificationError = readCodexErrorNotification(errorNotification);
+  const notificationError = readLatestCodexErrorNotification(pendingNotifications);
+  const notificationRateLimits = readLatestRateLimitNotificationPayload(pendingNotifications);
   const errorPayload = readCodexErrorPayload(error);
-  const rateLimits = errorPayload.rateLimits ?? readRecentCodexRateLimits(client);
-  // The cached snapshot may predate this attempt or belong to another turn on
-  // the same process. Trust it for the auth profile only when this client saw
-  // a primary update after this turn's startup began.
-  const cacheUpdatedDuringTurnStart =
-    rateLimitsRevisionBeforeTurnStart !== undefined &&
-    readCodexRateLimitsRevision(client) > rateLimitsRevisionBeforeTurnStart;
+  const rateLimits =
+    notificationRateLimits ?? errorPayload.rateLimits ?? readRecentCodexRateLimits();
   return {
     message: notificationError?.message ?? errorPayload.message ?? formatErrorMessage(error),
     codexErrorInfo: notificationError?.codexErrorInfo ?? errorPayload.codexErrorInfo,
     rateLimits,
     rateLimitsTrustedForProfile:
-      errorPayload.rateLimits !== undefined || cacheUpdatedDuringTurnStart,
+      notificationRateLimits !== undefined || errorPayload.rateLimits !== undefined,
   };
 }
 
-function readCodexErrorNotification(
-  notification: CodexServerNotification | undefined,
-): { message?: string; codexErrorInfo?: JsonValue | null } | undefined {
-  if (notification?.method !== "error" || !isJsonObject(notification.params)) {
-    return undefined;
+function readLatestRateLimitNotificationPayload(
+  notifications: CodexServerNotification[],
+): JsonValue | undefined {
+  for (let index = notifications.length - 1; index >= 0; index -= 1) {
+    const notification = notifications[index];
+    if (notification?.method === "account/rateLimits/updated") {
+      rememberCodexRateLimits(notification.params);
+      return notification.params;
+    }
   }
-  const error = notification.params.error;
-  return isJsonObject(error)
-    ? {
-        message: readString(error, "message"),
-        codexErrorInfo: error.codexErrorInfo,
-      }
-    : undefined;
+  return undefined;
+}
+
+function readLatestCodexErrorNotification(
+  notifications: CodexServerNotification[],
+): { message?: string; codexErrorInfo?: JsonValue | null } | undefined {
+  for (let index = notifications.length - 1; index >= 0; index -= 1) {
+    const notification = notifications[index];
+    if (notification?.method !== "error" || !isJsonObject(notification.params)) {
+      continue;
+    }
+    const error = notification.params.error;
+    if (!isJsonObject(error)) {
+      continue;
+    }
+    return {
+      message: readString(error, "message"),
+      codexErrorInfo: error.codexErrorInfo,
+    };
+  }
+  return undefined;
 }
 
 function readCodexErrorPayload(error: unknown): {
@@ -251,6 +246,9 @@ function readCodexErrorPayload(error: unknown): {
   }
   const nestedError = isJsonObject(data.error) ? data.error : data;
   const rateLimits = nestedError.rateLimits ?? data.rateLimits;
+  if (rateLimits !== undefined) {
+    rememberCodexRateLimits(rateLimits);
+  }
   return {
     message: readString(nestedError, "message") ?? message,
     codexErrorInfo: nestedError.codexErrorInfo,

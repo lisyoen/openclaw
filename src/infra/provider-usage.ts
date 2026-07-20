@@ -7,7 +7,6 @@ export {
 export { loadProviderUsageSummary } from "./provider-usage.load.js";
 export { resolveUsageProviderId } from "./provider-usage.shared.js";
 export type {
-  ProviderUsageBilling,
   ProviderUsageSnapshot,
   UsageProviderId,
   UsageSummary,

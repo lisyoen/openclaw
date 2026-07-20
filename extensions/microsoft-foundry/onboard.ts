@@ -1,14 +1,11 @@
+// Microsoft Foundry setup module handles plugin onboarding behavior.
 import type { ProviderAuthContext } from "openclaw/plugin-sdk/core";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-// Microsoft Foundry setup module handles plugin onboarding behavior.
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
-import { readResponseTextLimited } from "openclaw/plugin-sdk/provider-http";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import {
   normalizeOptionalString,
   normalizeStringifiedOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import {
   azLoginDeviceCode,
   azLoginDeviceCodeWithOptions,
@@ -34,8 +31,6 @@ import {
   FOUNDRY_ANTHROPIC_SCOPE,
   usesFoundryResponsesByDefault,
 } from "./shared.js";
-
-const FOUNDRY_CONNECTION_TEST_ERROR_BODY_LIMIT_BYTES = 8 * 1024;
 
 export { listSubscriptions } from "./cli.js";
 
@@ -148,7 +143,7 @@ export async function selectFoundryResource(
     throw new Error(buildCreateFoundryHint(selectedSub));
   }
   if (resources.length === 1) {
-    const only = expectDefined(resources[0], "single Microsoft Foundry resource");
+    const only = resources[0];
     await ctx.prompter.note(
       `Using ${only.kind === "AIServices" ? "Azure AI Foundry" : "Azure OpenAI"} resource: ${only.accountName}`,
       "Foundry Resource",
@@ -168,10 +163,7 @@ export async function selectFoundryResource(
         .join(" | "),
     })),
   });
-  return (
-    resources.find((resource) => resource.id === selectedResourceId) ??
-    expectDefined(resources[0], "fallback Microsoft Foundry resource")
-  );
+  return resources.find((resource) => resource.id === selectedResourceId) ?? resources[0];
 }
 
 export async function selectFoundryDeployment(
@@ -189,7 +181,7 @@ export async function selectFoundryDeployment(
     );
   }
   if (supported.length === 1) {
-    const only = expectDefined(supported[0], "single Microsoft Foundry deployment");
+    const only = supported[0];
     await ctx.prompter.note(`Using deployment: ${only.name}`, "Model Deployment");
     return { selected: only, supported };
   }
@@ -204,8 +196,7 @@ export async function selectFoundryDeployment(
     })),
   });
   const selected =
-    supported.find((deployment) => deployment.name === selectedDeploymentName) ??
-    expectDefined(supported[0], "fallback Microsoft Foundry deployment");
+    supported.find((deployment) => deployment.name === selectedDeploymentName) ?? supported[0];
   return { selected, supported };
 }
 
@@ -426,7 +417,7 @@ export async function promptApiKeyEndpointAndModel(
   });
 }
 
-function buildFoundryConnectionTest(params: {
+export function buildFoundryConnectionTest(params: {
   endpoint: string;
   modelId: string;
   modelNameHint?: string | null;
@@ -489,7 +480,7 @@ function extractTenantSuggestions(rawMessage: string): Array<{ id: string; label
   return suggestions;
 }
 
-function isValidTenantIdentifier(value: string): boolean {
+export function isValidTenantIdentifier(value: string): boolean {
   const trimmed = normalizeOptionalString(value) ?? "";
   if (!trimmed) {
     return false;
@@ -501,12 +492,6 @@ function isValidTenantIdentifier(value: string): boolean {
       trimmed,
     );
   return isTenantUuid || isTenantDomain;
-}
-
-if (process.env.VITEST === "true") {
-  const key = Symbol.for("openclaw.microsoftFoundryTestApi");
-  const api = (Reflect.get(globalThis, key) as Record<string, unknown> | undefined) ?? {};
-  Reflect.set(globalThis, key, { ...api, buildFoundryConnectionTest, isValidTenantIdentifier });
 }
 
 export async function promptTenantId(
@@ -620,21 +605,15 @@ export async function testFoundryConnection(params: {
     });
     try {
       if (res.status === 400) {
-        const body = await readResponseTextLimited(
-          res,
-          FOUNDRY_CONNECTION_TEST_ERROR_BODY_LIMIT_BYTES,
-        ).catch(() => "");
+        const body = await res.text().catch(() => "");
         await params.ctx.prompter.note(
-          `Endpoint is reachable but returned 400 Bad Request - check your deployment name and API version.\n${truncateUtf16Safe(body, 200)}`,
+          `Endpoint is reachable but returned 400 Bad Request - check your deployment name and API version.\n${body.slice(0, 200)}`,
           "Connection Test",
         );
       } else if (!res.ok) {
-        const body = await readResponseTextLimited(
-          res,
-          FOUNDRY_CONNECTION_TEST_ERROR_BODY_LIMIT_BYTES,
-        ).catch(() => "");
+        const body = await res.text().catch(() => "");
         await params.ctx.prompter.note(
-          `Warning: test request returned ${res.status}. ${truncateUtf16Safe(body, 200)}\nProceeding anyway - you can fix the endpoint later.`,
+          `Warning: test request returned ${res.status}. ${body.slice(0, 200)}\nProceeding anyway - you can fix the endpoint later.`,
           "Connection Test",
         );
       } else {

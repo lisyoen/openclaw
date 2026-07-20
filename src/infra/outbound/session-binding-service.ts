@@ -26,15 +26,18 @@ import type {
 } from "./session-binding.types.js";
 
 export type {
+  BindingStatus,
   BindingTargetKind,
   ConversationRef,
   SessionBindingBindInput,
+  SessionBindingCapabilities,
+  SessionBindingErrorCode,
   SessionBindingPlacement,
   SessionBindingRecord,
   SessionBindingUnbindInput,
 } from "./session-binding.types.js";
 
-class SessionBindingError extends Error {
+export class SessionBindingError extends Error {
   constructor(
     public readonly code: SessionBindingErrorCode,
     message: string,
@@ -62,7 +65,7 @@ export type SessionBindingService = {
   unbind: (input: SessionBindingUnbindInput) => Promise<SessionBindingRecord[]>;
 };
 
-type SessionBindingAdapterCapabilities = {
+export type SessionBindingAdapterCapabilities = {
   placements?: SessionBindingPlacement[];
   bindSupported?: boolean;
   unbindSupported?: boolean;
@@ -407,3 +410,4 @@ export const testing = {
     return [...ADAPTERS_BY_CHANNEL_ACCOUNT.keys()];
   },
 };
+export { testing as __testing };

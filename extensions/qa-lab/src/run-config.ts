@@ -1,5 +1,4 @@
 // Qa Lab helper module supports run config behavior.
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { defaultQaModelForMode as defaultStaticQaModelForMode } from "./model-selection.js";
@@ -59,7 +58,7 @@ function qaLabFlowScenarioIds(scenarios: QaSeedScenario[]) {
     .map((scenario) => scenario.id);
 }
 
-function createDefaultQaRunSelection(
+export function createDefaultQaRunSelection(
   scenarios: QaSeedScenario[],
   options?: { resolveDefaultModel?: QaDefaultModelResolver },
 ): QaLabRunSelection {
@@ -133,5 +132,5 @@ export function createIdleQaRunnerSnapshot(scenarios: QaSeedScenario[]): QaLabRu
 
 export function createQaRunOutputDir(baseDir = process.cwd()) {
   const stamp = new Date().toISOString().replaceAll(":", "").replaceAll(".", "").replace("T", "-");
-  return path.join(baseDir, ".artifacts", "qa-e2e", `lab-${stamp}-${randomUUID().slice(0, 8)}`);
+  return path.join(baseDir, ".artifacts", "qa-e2e", `lab-${stamp}`);
 }

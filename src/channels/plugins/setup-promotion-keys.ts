@@ -5,8 +5,6 @@ const COMMON_SINGLE_ACCOUNT_PROMOTION_KEYS = [
   "name",
   "token",
   "tokenFile",
-  "botId",
-  "secret",
   "botToken",
   "appToken",
   "account",

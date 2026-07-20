@@ -2,9 +2,7 @@
  * Server channel approval bootstrap tests.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChannelId, ChannelPlugin } from "../channels/plugins/types.public.js";
-import { getGatewayNativeApprovalRuntime } from "../infra/approval-gateway-runtime-context.js";
-import type { GatewayNativeApprovalRuntime } from "../infra/approval-gateway-runtime.types.js";
+import type { ChannelId, ChannelPlugin } from "../channels/plugins/types.js";
 import {
   createSubsystemLogger,
   runtimeForLogger,
@@ -93,7 +91,6 @@ function createManager(
   createChannelManager: typeof import("./server-channels.js").createChannelManager,
   options?: {
     channelRuntime?: PluginRuntime["channel"];
-    nativeApprovalRuntime?: GatewayNativeApprovalRuntime;
   },
 ) {
   const log = createSubsystemLogger("gateway/server-channels-approval-bootstrap-test");
@@ -105,9 +102,6 @@ function createManager(
     channelLogs,
     channelRuntimeEnvs,
     ...(options?.channelRuntime ? { channelRuntime: options.channelRuntime } : {}),
-    ...(options?.nativeApprovalRuntime
-      ? { getNativeApprovalRuntime: () => options.nativeApprovalRuntime }
-      : {}),
   });
 }
 
@@ -131,12 +125,6 @@ describe("server-channels approval bootstrap", () => {
   it("starts and stops the shared approval bootstrap with the channel lifecycle", async () => {
     const channelRuntime = createRuntimeChannel();
     const stopApprovalBootstrap = vi.fn(async () => {});
-    const nativeApprovalRuntime = {
-      request: vi.fn(),
-      requestRoute: vi.fn(),
-      routeCoordinator: {} as never,
-      subscribe: vi.fn(),
-    } as GatewayNativeApprovalRuntime;
     hoisted.startChannelApprovalHandlerBootstrap.mockResolvedValue(stopApprovalBootstrap);
 
     const started = createDeferred();
@@ -146,7 +134,6 @@ describe("server-channels approval bootstrap", () => {
         abortSignal,
         channelRuntime: channelRuntimeLocal,
       }: Parameters<NonNullable<NonNullable<ChannelPlugin["gateway"]>["startAccount"]>>[0]) => {
-        expect(getGatewayNativeApprovalRuntime()).toBe(nativeApprovalRuntime);
         channelRuntimeLocal?.runtimeContexts.register({
           channelId: "discord",
           accountId: DEFAULT_ACCOUNT_ID,
@@ -168,10 +155,7 @@ describe("server-channels approval bootstrap", () => {
     );
 
     installTestRegistry(createTestPlugin({ startAccount }));
-    const manager = createManager(createChannelManager, {
-      channelRuntime,
-      nativeApprovalRuntime,
-    });
+    const manager = createManager(createChannelManager, { channelRuntime });
 
     await manager.startChannels();
     await started.promise;
@@ -184,7 +168,6 @@ describe("server-channels approval bootstrap", () => {
           cfg: unknown;
           accountId?: string;
           channelRuntime?: PluginRuntime["channel"];
-          gatewayRuntime?: GatewayNativeApprovalRuntime;
         },
       ]
     >;
@@ -192,7 +175,6 @@ describe("server-channels approval bootstrap", () => {
     expect(approvalBootstrapArg?.plugin.id).toBe("discord");
     expect(approvalBootstrapArg?.cfg).toEqual({});
     expect(approvalBootstrapArg?.accountId).toBe(DEFAULT_ACCOUNT_ID);
-    expect(approvalBootstrapArg?.gatewayRuntime).toBe(nativeApprovalRuntime);
     expect(typeof approvalBootstrapArg?.channelRuntime?.runtimeContexts.register).toBe("function");
     expect(typeof approvalBootstrapArg?.channelRuntime?.runtimeContexts.get).toBe("function");
     expect(typeof approvalBootstrapArg?.channelRuntime?.runtimeContexts.watch).toBe("function");

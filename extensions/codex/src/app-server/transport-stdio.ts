@@ -11,7 +11,6 @@ import type { CodexAppServerStartOptions } from "./config.js";
 import type { CodexAppServerTransport } from "./transport.js";
 
 const UNSAFE_ENVIRONMENT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-const QA_PARENT_PID_ENV = "OPENCLAW_QA_PARENT_PID";
 
 type CodexAppServerSpawnRuntime = {
   platform: NodeJS.Platform;
@@ -26,7 +25,7 @@ const DEFAULT_SPAWN_RUNTIME: CodexAppServerSpawnRuntime = {
 };
 
 /** Resolves the concrete command/argv/shell settings used to spawn Codex app-server. */
-function resolveCodexAppServerSpawnInvocation(
+export function resolveCodexAppServerSpawnInvocation(
   options: CodexAppServerStartOptions,
   runtime: CodexAppServerSpawnRuntime = DEFAULT_SPAWN_RUNTIME,
 ): { command: string; args: string[]; shell?: boolean; windowsHide?: boolean } {
@@ -74,14 +73,6 @@ export function resolveCodexAppServerSpawnEnv(
   return env;
 }
 
-/** Keeps QA-owned app-server processes inside the gateway process-group cleanup boundary. */
-function resolveCodexAppServerDetachedMode(
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform = process.platform,
-): boolean {
-  return platform !== "win32" && !env[QA_PARENT_PID_ENV]?.trim();
-}
-
 function normalizedEnvironmentKeys(rawKeys: readonly string[]): string[] {
   const keys: string[] = [];
   for (const rawKey of rawKeys) {
@@ -114,11 +105,8 @@ export function createStdioTransport(options: CodexAppServerStartOptions): Codex
     execPath: process.execPath,
   });
   return spawn(invocation.command, invocation.args, {
-    // Preserve the shipped Supervisor endpoint contract: relative commands and
-    // config discovery may depend on the endpoint's process working directory.
-    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
     env,
-    detached: resolveCodexAppServerDetachedMode(env),
+    detached: process.platform !== "win32",
     shell: invocation.shell,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: invocation.windowsHide,

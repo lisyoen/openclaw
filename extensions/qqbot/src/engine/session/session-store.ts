@@ -1,13 +1,20 @@
 /**
  * Gateway session persistence — SQLite KV-backed store.
+ *
+ * Legacy JSON session files are imported on first account access, then
+ * removed after SQLite has the canonical short-lived session entry.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { privateFileStoreSync } from "openclaw/plugin-sdk/security-runtime";
 import { formatErrorMessage } from "../utils/format.js";
 import { debugLog, debugError } from "../utils/log.js";
+import { getQQBotDataPath } from "../utils/platform.js";
 import { buildQQBotStateKey, openQQBotSyncKeyedStore } from "../utils/sqlite-state.js";
 
 /** Persisted gateway session state. */
-interface SessionState {
+export interface SessionState {
   sessionId: string | null;
   lastSeq: number | null;
   lastConnectedAt: number;
@@ -31,6 +38,30 @@ const throttleState = new Map<
   }
 >();
 
+function getSessionDir(): string {
+  return getQQBotDataPath("sessions");
+}
+
+function encodeAccountIdForFileName(accountId: string): string {
+  return Buffer.from(accountId, "utf8").toString("base64url");
+}
+
+function getLegacySessionPath(accountId: string): string {
+  const safeId = accountId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return path.join(getSessionDir(), `session-${safeId}.json`);
+}
+
+function getSessionPath(accountId: string): string {
+  const encodedId = encodeAccountIdForFileName(accountId);
+  return path.join(getSessionDir(), `session-${encodedId}.json`);
+}
+
+function getCandidateSessionPaths(accountId: string): string[] {
+  const primaryPath = getSessionPath(accountId);
+  const legacyPath = getLegacySessionPath(accountId);
+  return primaryPath === legacyPath ? [primaryPath] : [primaryPath, legacyPath];
+}
+
 function createSessionStore() {
   return openQQBotSyncKeyedStore<SessionState>({
     namespace: SESSION_NAMESPACE,
@@ -41,6 +72,10 @@ function createSessionStore() {
 
 function sessionKey(accountId: string): string {
   return buildQQBotStateKey("gateway-session", accountId);
+}
+
+function remainingSessionTtlMs(state: SessionState, now = Date.now()): number {
+  return Math.max(1, SESSION_EXPIRE_TIME - (now - state.savedAt));
 }
 
 function toStoredSessionState(state: SessionState): SessionState {
@@ -55,11 +90,51 @@ function toStoredSessionState(state: SessionState): SessionState {
   };
 }
 
+function removeFileQuietly(filePath: string): void {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    /* ignore cleanup errors */
+  }
+}
+
+function loadLegacySession(accountId: string): { state: SessionState; filePath: string } | null {
+  for (const candidatePath of getCandidateSessionPaths(accountId)) {
+    const state = privateFileStoreSync(path.dirname(candidatePath)).readJsonIfExists<SessionState>(
+      path.basename(candidatePath),
+    );
+    if (state) {
+      return { state, filePath: candidatePath };
+    }
+  }
+  return null;
+}
+
+function migrateLegacySession(accountId: string): SessionState | null {
+  const legacy = loadLegacySession(accountId);
+  if (!legacy) {
+    return null;
+  }
+  const now = Date.now();
+  if (now - legacy.state.savedAt <= SESSION_EXPIRE_TIME) {
+    createSessionStore().register(sessionKey(accountId), toStoredSessionState(legacy.state), {
+      ttlMs: remainingSessionTtlMs(legacy.state, now),
+    });
+  }
+  for (const filePath of getCandidateSessionPaths(accountId)) {
+    removeFileQuietly(filePath);
+  }
+  return legacy.state;
+}
+
 /** Load a saved session, rejecting expired or mismatched appId entries. */
 export function loadSession(accountId: string, expectedAppId?: string): SessionState | null {
   try {
     const store = createSessionStore();
-    const state = store.lookup(sessionKey(accountId));
+    let state = store.lookup(sessionKey(accountId));
+    if (!state) {
+      state = migrateLegacySession(accountId) ?? undefined;
+    }
     if (!state) {
       return null;
     }
@@ -140,11 +215,15 @@ export function saveSession(state: SessionState): void {
 }
 
 function doSaveSession(state: SessionState): void {
+  const filePath = getSessionPath(state.accountId);
+  const legacyPath = getLegacySessionPath(state.accountId);
   try {
     const stateToSave: SessionState = { ...state, savedAt: Date.now() };
     createSessionStore().register(sessionKey(state.accountId), toStoredSessionState(stateToSave), {
       ttlMs: SESSION_EXPIRE_TIME,
     });
+    removeFileQuietly(filePath);
+    removeFileQuietly(legacyPath);
     debugLog(
       `[session-store] Saved session for ${state.accountId}: sessionId=${state.sessionId}, lastSeq=${state.lastSeq}`,
     );
@@ -166,6 +245,9 @@ export function clearSession(accountId: string): void {
   }
   try {
     const cleared = createSessionStore().delete(sessionKey(accountId));
+    for (const filePath of getCandidateSessionPaths(accountId)) {
+      removeFileQuietly(filePath);
+    }
     if (cleared) {
       debugLog(`[session-store] Cleared session for ${accountId}`);
     }

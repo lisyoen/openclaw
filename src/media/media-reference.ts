@@ -1,7 +1,6 @@
 // Media reference helpers resolve media refs to file, URL, or inline payloads.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { hasHttpUrlPrefix } from "@openclaw/net-policy/url-protocol";
 import { safeFileURLToPath } from "../infra/local-file-access.js";
 import { resolveUserPath } from "../utils.js";
 import { getMediaDir, resolveMediaBufferPath } from "./store.js";
@@ -59,7 +58,7 @@ export function classifyMediaReferenceSource(
   const looksLikeWindowsDrivePath = /^[a-zA-Z]:[\\/]/.test(source);
   const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(source);
   const isFileUrl = /^file:/i.test(source);
-  const isHttpUrl = hasHttpUrlPrefix(source);
+  const isHttpUrl = /^https?:\/\//i.test(source);
   const isDataUrl = /^data:/i.test(source);
   const isMediaStoreUrl = /^media:\/\//i.test(source);
   const hasUnsupportedScheme =
@@ -228,18 +227,10 @@ export async function resolveInboundMediaReference(
   };
 }
 
-/** Resolves a media reference while preserving whether it belongs to the inbound store. */
-export async function resolveMediaReferenceLocalPathInfo(source: string) {
-  const normalizedSource = normalizeMediaReferenceSource(source);
-  const inboundReference = await resolveInboundMediaReference(normalizedSource);
-  return inboundReference
-    ? { kind: "inbound" as const, path: inboundReference.physicalPath }
-    : { kind: "local" as const, path: normalizedSource };
-}
-
 /** Converts inbound media references for callers that need a direct local file path. */
 export async function resolveMediaReferenceLocalPath(source: string): Promise<string> {
-  return (await resolveMediaReferenceLocalPathInfo(source)).path;
+  const normalizedSource = normalizeMediaReferenceSource(source);
+  return (await resolveInboundMediaReference(normalizedSource))?.physicalPath ?? normalizedSource;
 }
 
 async function resolveInboundMediaPath(id: string, source: string): Promise<string> {

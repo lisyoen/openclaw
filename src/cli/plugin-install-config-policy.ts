@@ -5,7 +5,6 @@ import path from "node:path";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import type { Command } from "commander";
 import { tryReadJsonSync } from "../infra/json-files.js";
-import { parseRegistryNpmSpec } from "../infra/npm-registry-spec.js";
 import { findBundledPluginSource } from "../plugins/bundled-sources.js";
 import { loadPluginManifest } from "../plugins/manifest.js";
 import {
@@ -22,7 +21,6 @@ type PluginInstallInvalidConfigPolicy = "deny" | "allow-plugin-recovery";
 export type PluginInstallRequestContext = {
   rawSpec: string;
   normalizedSpec: string;
-  installKind?: "plugin";
   resolvedPath?: string;
   marketplace?: string;
   bundledPluginId?: string;
@@ -78,12 +76,6 @@ function resolveBundledInstallRecoveryMetadata(
       return direct;
     }
   }
-  if (
-    resolveFileNpmSpecToLocalPath(request.rawSpec) !== null ||
-    (request.resolvedPath !== undefined && fs.existsSync(request.resolvedPath))
-  ) {
-    return {};
-  }
   const rawNpmPrefixSpec = parseNpmPrefixSpec(request.rawSpec);
   const normalizedNpmPrefixSpec = parseNpmPrefixSpec(request.normalizedSpec);
   for (const value of [
@@ -119,12 +111,6 @@ function resolveOfficialExternalInstallRecoveryMetadata(
   if (request.marketplace) {
     return {};
   }
-  if (resolveFileNpmSpecToLocalPath(request.rawSpec) !== null) {
-    return {};
-  }
-  if (fs.existsSync(resolveUserPath(request.rawSpec))) {
-    return {};
-  }
   const rawNpmPrefixSpec = parseNpmPrefixSpec(request.rawSpec);
   const normalizedNpmPrefixSpec = parseNpmPrefixSpec(request.normalizedSpec);
   const values = new Set(
@@ -133,10 +119,6 @@ function resolveOfficialExternalInstallRecoveryMetadata(
       request.normalizedSpec,
       rawNpmPrefixSpec ?? "",
       normalizedNpmPrefixSpec ?? "",
-      parseRegistryNpmSpec(request.rawSpec)?.name ?? "",
-      parseRegistryNpmSpec(request.normalizedSpec)?.name ?? "",
-      rawNpmPrefixSpec ? parseRegistryNpmSpec(rawNpmPrefixSpec)?.name : "",
-      normalizedNpmPrefixSpec ? parseRegistryNpmSpec(normalizedNpmPrefixSpec)?.name : "",
     ]),
   );
   if (values.size === 0) {
@@ -180,10 +162,7 @@ function resolvePluginInstallArgvRequest(commandPath: string[], argv: string[]) 
   let rawSpec: string | null = null;
   let marketplace: string | undefined;
   for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens.at(index);
-    if (token === undefined) {
-      break;
-    }
+    const token = tokens[index];
     if (token.startsWith("--marketplace=")) {
       marketplace = token.slice("--marketplace=".length);
       continue;
@@ -208,7 +187,6 @@ function resolvePluginInstallArgvRequest(commandPath: string[], argv: string[]) 
 export function resolvePluginInstallRequestContext(params: {
   rawSpec: string;
   marketplace?: string;
-  installKind?: "plugin";
 }): PluginInstallRequestResolution {
   if (params.marketplace) {
     return {
@@ -216,7 +194,6 @@ export function resolvePluginInstallRequestContext(params: {
       request: {
         rawSpec: params.rawSpec,
         normalizedSpec: params.rawSpec,
-        installKind: "plugin",
         marketplace: params.marketplace,
       },
     };
@@ -250,7 +227,6 @@ export function resolvePluginInstallRequestContext(params: {
       rawSpec: params.rawSpec,
       normalizedSpec,
       resolvedPath: resolveUserPath(normalizedSpec),
-      ...(params.installKind === "plugin" || recovered.pluginId ? { installKind: "plugin" } : {}),
       ...(recovered.pluginId ? { bundledPluginId: recovered.pluginId } : {}),
       ...(recovered.allowInvalidConfigRecovery !== undefined
         ? { allowInvalidConfigRecovery: recovered.allowInvalidConfigRecovery }

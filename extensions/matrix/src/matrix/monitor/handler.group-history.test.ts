@@ -110,7 +110,7 @@ function createFinalDeliveryFailureHandler(finalizeInboundContext: (ctx: unknown
     groupPolicy: "open",
     isDirectMessage: false,
     finalizeInboundContext,
-    dispatchInboundMessage: async () => ({
+    dispatchReplyFromConfig: async () => ({
       queuedFinal: true,
       counts: { final: 1, block: 0, tool: 0 },
     }),
@@ -119,16 +119,23 @@ function createFinalDeliveryFailureHandler(finalizeInboundContext: (ctx: unknown
     }) => {
       capturedOnError = params?.onError;
       return {
-        dispatcher: {
-          markComplete: () => {},
-          waitForIdle: async () => {
-            capturedOnError?.(new Error("simulated delivery failure"), { kind: "final" });
-          },
-        },
+        dispatcher: {},
         replyOptions: {},
         markDispatchIdle: () => {},
         markRunComplete: () => {},
       };
+    },
+    withReplyDispatcher: async <T>(params: {
+      dispatcher: { markComplete?: () => void; waitForIdle?: () => Promise<void> };
+      run: () => Promise<T>;
+      onSettled?: () => void | Promise<void>;
+    }) => {
+      const result = await params.run();
+      capturedOnError?.(new Error("simulated delivery failure"), { kind: "final" });
+      params.dispatcher.markComplete?.();
+      await params.dispatcher.waitForIdle?.();
+      await params.onSettled?.();
+      return result;
     },
   });
 }
@@ -166,7 +173,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
       groupPolicy: "open",
       isDirectMessage: false,
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -193,7 +200,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
       isDirectMessage: false,
       threadReplies: "off",
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -226,7 +233,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
       isDirectMessage: false,
       threadReplies: "always",
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -260,7 +267,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
       isDirectMessage: false,
       finalizeInboundContext,
       resolveAgentRoute: vi.fn(() => makeDevRoute(currentAgentId)),
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -306,7 +313,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
       groupPolicy: "open",
       isDirectMessage: false,
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -334,7 +341,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
       groupPolicy: "open",
       isDirectMessage: false,
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -364,7 +371,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
           return "@bot:example.org";
         },
       },
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -387,7 +394,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
       historyLimit: 20,
       isDirectMessage: true,
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -421,7 +428,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
       historyLimit: 20,
       isDirectMessage: true,
       getMemberDisplayName,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -451,7 +458,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
       groupPolicy: "open",
       isDirectMessage: false,
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -513,7 +520,7 @@ describe("matrix group chat history — scenario 1: basic accumulation", () => {
         getRelations,
       },
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -553,7 +560,7 @@ describe("matrix group chat history — scenario 2: race condition safety", () =
     let firstDispatchStarted = false;
 
     const finalizeInboundContext = vi.fn((ctx: unknown) => ctx);
-    const dispatchInboundMessage = vi.fn(async () => {
+    const dispatchReplyFromConfig = vi.fn(async () => {
       if (!firstDispatchStarted) {
         firstDispatchStarted = true;
         await new Promise<void>((resolve) => {
@@ -568,7 +575,7 @@ describe("matrix group chat history — scenario 2: race condition safety", () =
       groupPolicy: "open",
       isDirectMessage: false,
       finalizeInboundContext,
-      dispatchInboundMessage,
+      dispatchReplyFromConfig,
     });
 
     // Step 1: trigger msg A — don't await, let it block in dispatch
@@ -680,7 +687,7 @@ describe("matrix group chat history — scenario 2: race condition safety", () =
       isDirectMessage: false,
       getMemberDisplayName,
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),
@@ -732,7 +739,7 @@ describe("matrix group chat history — scenario 2: race condition safety", () =
         getEvent: async () => ({ sender: "@bot:example.org" }),
       },
       finalizeInboundContext,
-      dispatchInboundMessage: async () => ({
+      dispatchReplyFromConfig: async () => ({
         queuedFinal: true,
         counts: { final: 1, block: 0, tool: 0 },
       }),

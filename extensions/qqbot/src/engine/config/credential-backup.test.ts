@@ -43,22 +43,13 @@ function useStateDir(stateDir: string): void {
   installQQBotRuntimeForStateTests(stateDir);
 }
 
+function legacyOsHomeBackupPath(homeDir: string, accountId = "default"): string {
+  return path.join(homeDir, ".openclaw", "qqbot", "data", `credential-backup-${accountId}.json`);
+}
+
 function writeJson(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function legacyCredentialBackupFile(accountId: string): string {
-  return path.join(
-    process.env.OPENCLAW_STATE_DIR!,
-    "qqbot",
-    "data",
-    `credential-backup-${accountId}.json`,
-  );
-}
-
-function legacySingleCredentialBackupFile(): string {
-  return path.join(process.env.OPENCLAW_STATE_DIR!, "qqbot", "data", "credential-backup.json");
 }
 
 function readCredentialRows(stateDir: string): CredentialBackup[] {
@@ -92,6 +83,7 @@ describe("engine/config/credential-backup", () => {
   });
 
   it("round-trips a credential snapshot through SQLite without writing JSON", async () => {
+    const { getCredentialBackupFile } = await import("../utils/data-paths.js");
     const { loadCredentialBackup, saveCredentialBackup } = await import("./credential-backup.js");
     const stateDir = process.env.OPENCLAW_STATE_DIR!;
 
@@ -103,7 +95,7 @@ describe("engine/config/credential-backup", () => {
       appId: "app-1",
       clientSecret: "secret-1",
     });
-    expect(fs.existsSync(legacyCredentialBackupFile("default"))).toBe(false);
+    expect(fs.existsSync(getCredentialBackupFile("default"))).toBe(false);
     expect(readCredentialRows(stateDir)).toHaveLength(1);
   });
 
@@ -124,24 +116,44 @@ describe("engine/config/credential-backup", () => {
     expect(loadCredentialBackup("default")?.appId).toBe("app-b");
   });
 
-  it("does not import state-dir legacy JSON backups during runtime reads", async () => {
+  it("imports the state-dir legacy per-account JSON backup once", async () => {
+    const { getCredentialBackupFile } = await import("../utils/data-paths.js");
     const { loadCredentialBackup } = await import("./credential-backup.js");
-    const legacyFile = legacyCredentialBackupFile("default");
-    writeJson(legacyFile, {
+    writeJson(getCredentialBackupFile("default"), {
       accountId: "default",
       appId: "app-old",
       clientSecret: "secret-old",
       savedAt: new Date().toISOString(),
     });
 
-    expect(loadCredentialBackup("default")).toBeNull();
-    expect(fs.existsSync(legacyFile)).toBe(true);
+    const loaded = loadCredentialBackup("default");
+
+    expect(loaded?.appId).toBe("app-old");
+    expect(fs.existsSync(getCredentialBackupFile("default"))).toBe(false);
+    expect(loadCredentialBackup("default")?.clientSecret).toBe("secret-old");
   });
 
-  it("does not import legacy single-file backups during runtime reads", async () => {
+  it("imports the old OS-home JSON backup once", async () => {
     const { loadCredentialBackup } = await import("./credential-backup.js");
-    const legacyFile = legacySingleCredentialBackupFile();
-    writeJson(legacyFile, {
+    const legacyPath = legacyOsHomeBackupPath(process.env.HOME!);
+    writeJson(legacyPath, {
+      accountId: "default",
+      appId: "app-home",
+      clientSecret: "secret-home",
+      savedAt: new Date().toISOString(),
+    });
+
+    const loaded = loadCredentialBackup("default");
+
+    expect(loaded?.appId).toBe("app-home");
+    expect(fs.existsSync(legacyPath)).toBe(false);
+    expect(loadCredentialBackup("default")?.clientSecret).toBe("secret-home");
+  });
+
+  it("returns null when the legacy single-file backup belongs to a different accountId", async () => {
+    const { getLegacyCredentialBackupFile } = await import("../utils/data-paths.js");
+    const { loadCredentialBackup } = await import("./credential-backup.js");
+    writeJson(getLegacyCredentialBackupFile(), {
       accountId: "other-acct",
       appId: "app-old",
       clientSecret: "secret-old",
@@ -149,7 +161,7 @@ describe("engine/config/credential-backup", () => {
     });
 
     expect(loadCredentialBackup("default")).toBeNull();
-    expect(fs.existsSync(legacyFile)).toBe(true);
+    expect(fs.existsSync(getLegacyCredentialBackupFile())).toBe(true);
   });
 
   it("ignores empty appId/clientSecret on save", async () => {

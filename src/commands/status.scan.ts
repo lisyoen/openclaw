@@ -64,7 +64,6 @@ export async function scanStatus(
         includeChannelSecretTargets: isFullScan ? undefined : false,
         fetchGitUpdate: isFullScan,
         includeRegistryUpdate: isFullScan,
-        includeAdvertisedControlUiLinks: true,
         progress,
         labels: {
           loadingConfig: "Loading config…",

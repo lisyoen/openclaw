@@ -23,6 +23,8 @@ vi.mock("./model-auth-env-vars.js", () => {
   } as const;
   return {
     listKnownProviderEnvApiKeyNames: () => [...new Set(Object.values(candidates).flat())],
+    resolveProviderEnvApiKeyCandidates: () => candidates,
+    resolveProviderEnvAuthEvidence: () => ({}),
     resolveProviderEnvAuthLookupMaps: () => ({
       aliasMap: {},
       envCandidateMap: candidates,
@@ -31,7 +33,7 @@ vi.mock("./model-auth-env-vars.js", () => {
   };
 });
 
-vi.mock("./provider-attribution.js", () => ({
+vi.mock("../plugin-sdk/provider-http.js", () => ({
   // Only the CN endpoint advertises native streaming usage in this contract.
   resolveProviderRequestCapabilities: (params: { provider: string; baseUrl?: string }) => ({
     supportsNativeStreamingUsageCompat:

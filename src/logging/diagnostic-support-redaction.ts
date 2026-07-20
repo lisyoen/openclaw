@@ -2,8 +2,6 @@
 import path from "node:path";
 import { isSensitiveUrlQueryParamName } from "@openclaw/net-policy/redact-sensitive-url";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import { REDACTED_SENTINEL } from "../config/redact-snapshot.js";
 import { isSecretRefShape } from "../config/redact-snapshot.secret-ref.js";
 import { isBlockedObjectKey } from "../infra/prototype-keys.js";
 import { redactSensitiveText } from "./redact.js";
@@ -345,7 +343,7 @@ export function redactSupportString(
   if (pathRedacted.length <= maxLength) {
     return pathRedacted;
   }
-  return `${truncateUtf16Safe(pathRedacted, maxLength)}${truncationSuffix}`;
+  return `${pathRedacted.slice(0, maxLength)}${truncationSuffix}`;
 }
 
 function sanitizeCommandArguments(args: unknown[], redaction: SupportRedactionContext): unknown[] {
@@ -431,9 +429,6 @@ export function sanitizeSupportConfigValue(
     return isPrivateConfigField(key) ? "<redacted>" : value;
   }
   if (typeof value === "string") {
-    if (value === REDACTED_SENTINEL) {
-      return "<redacted>";
-    }
     return isPrivateConfigField(key) ? "<redacted>" : redactSupportString(value, redaction);
   }
   if (depth >= MAX_SUPPORT_SNAPSHOT_DEPTH) {

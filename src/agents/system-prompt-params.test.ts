@@ -3,9 +3,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { setActiveNodeContext } from "../infra/active-node-context.js";
 import { buildSystemPromptParams } from "./system-prompt-params.js";
 
 async function makeTempDir(label: string): Promise<string> {
@@ -32,16 +31,6 @@ function buildParams(params: { config?: OpenClawConfig; workspaceDir?: string; c
 }
 
 describe("buildSystemPromptParams", () => {
-  afterEach(() => setActiveNodeContext(null));
-
-  it("projects only the stable active-node identity", () => {
-    setActiveNodeContext({ nodeId: "mac-123" });
-
-    const { runtimeInfo } = buildParams({});
-
-    expect(runtimeInfo.activeNode).toBe("mac-123");
-  });
-
   it("detects repo root from workspaceDir", async () => {
     const temp = await makeTempDir("workspace");
     const repoRoot = path.join(temp, "repo");

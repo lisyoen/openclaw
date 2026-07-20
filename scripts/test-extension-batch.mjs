@@ -2,13 +2,9 @@
 
 // Runs grouped Vitest plans for one or more bundled plugins.
 import path from "node:path";
-import pMap from "p-map";
 import {
-  createExtensionTestProcessTargetChunks,
-  listExtensionTestFilesForRoots,
+  listTrackedTestFilesForRoots,
   resolveExtensionBatchPlan,
-  shouldSplitExtensionTestProcesses,
-  splitExtensionTestProcessTargets,
 } from "./lib/extension-test-plan.mjs";
 import {
   normalizeRelativePath,
@@ -152,7 +148,7 @@ function resolveGroupTargets(group, exactExcludePaths) {
     return group.roots;
   }
 
-  const testFiles = listExtensionTestFilesForRoots(group.roots);
+  const testFiles = listTrackedTestFilesForRoots(group.roots);
   if (!testFiles) {
     return group.roots;
   }
@@ -167,33 +163,20 @@ async function runPlanGroup(group, params) {
     return params.allowEmptyAfterExclude ? 0 : 1;
   }
 
-  const targetChunks =
-    params.exactExcludePaths.size > 0
-      ? shouldSplitExtensionTestProcesses(group.config, params.vitestArgs)
-        ? splitExtensionTestProcessTargets(group.config, targets)
-        : [targets]
-      : createExtensionTestProcessTargetChunks(group.config, group.roots, params.vitestArgs);
-  let finalExitCode = 0;
-  for (const [index, chunk] of targetChunks.entries()) {
-    console.log(
-      `[test-extension-batch] ${group.config}: ${group.extensionIds.join(", ")} (${chunk.length} targets${targetChunks.length > 1 ? `, chunk ${index + 1}/${targetChunks.length}` : ""})`,
-    );
-    const exitCode = await params.runGroup({
-      args: relativizeExtensionVitestArgs(params.vitestArgs),
-      config: group.config,
-      env: createGroupEnv({
-        baseEnv: params.env,
-        group,
-        groupIndex: params.groupIndex,
-        useDedicatedCache: params.useDedicatedCache,
-      }),
-      targets: chunk.map((target) => relativizeExtensionVitestPath(target)),
-    });
-    if (exitCode !== 0 && finalExitCode === 0) {
-      finalExitCode = exitCode;
-    }
-  }
-  return finalExitCode;
+  console.log(
+    `[test-extension-batch] ${group.config}: ${group.extensionIds.join(", ")} (${targets.length} targets)`,
+  );
+  return await params.runGroup({
+    args: relativizeExtensionVitestArgs(params.vitestArgs),
+    config: group.config,
+    env: createGroupEnv({
+      baseEnv: params.env,
+      group,
+      groupIndex: params.groupIndex,
+      useDedicatedCache: params.useDedicatedCache,
+    }),
+    targets: targets.map((target) => relativizeExtensionVitestPath(target)),
+  });
 }
 
 /**
@@ -213,11 +196,14 @@ export async function runExtensionBatchPlan(batchPlan, params = {}) {
     console.log(`[test-extension-batch] Running up to ${parallelism} config groups in parallel`);
   }
 
+  let nextGroupIndex = 0;
   let exitCode = 0;
-  await pMap(
-    orderedGroups,
-    async (group, groupIndex) => {
-      if (exitCode !== 0) {
+  async function worker() {
+    while (exitCode === 0) {
+      const groupIndex = nextGroupIndex;
+      nextGroupIndex += 1;
+      const group = orderedGroups[groupIndex];
+      if (!group) {
         return;
       }
       const groupExitCode = await runPlanGroup(group, {
@@ -229,12 +215,14 @@ export async function runExtensionBatchPlan(batchPlan, params = {}) {
         useDedicatedCache,
         vitestArgs,
       });
-      if (groupExitCode !== 0 && exitCode === 0) {
+      if (groupExitCode !== 0) {
         exitCode = groupExitCode;
+        return;
       }
-    },
-    { concurrency: parallelism, stopOnError: true },
-  );
+    }
+  }
+
+  await Promise.all(Array.from({ length: parallelism }, () => worker()));
   return exitCode;
 }
 

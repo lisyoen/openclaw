@@ -5,9 +5,12 @@ import type {
 } from "openclaw/plugin-sdk/image-generation";
 import {
   DEFAULT_COMFY_MODEL,
+  setComfyFetchGuardForTesting,
   isComfyCapabilityConfigured,
   runComfyWorkflow,
 } from "./workflow-runtime.js";
+
+export { setComfyFetchGuardForTesting };
 
 export function buildComfyImageGenerationProvider(): ImageGenerationProvider {
   return {

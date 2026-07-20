@@ -10,39 +10,11 @@ import {
   validateWizardStartParams,
   validateWizardStatusParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import type { OnboardOptions } from "../../commands/onboard-types.js";
-import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
-import type { WizardPrompter } from "../../wizard/prompts.js";
+import { defaultRuntime } from "../../runtime.js";
 import { WizardSession } from "../../wizard/session.js";
 import { formatForLog } from "../ws-log.js";
 import type { GatewayRequestContext, GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
-
-export type SetupWizardRunner = (
-  opts: OnboardOptions,
-  runtime: RuntimeEnv,
-  prompter: WizardPrompter,
-) => Promise<void>;
-
-export type ChannelSetupWizardRunner = (
-  opts: {
-    channel?: string;
-    onConfigured?: (accounts: Array<{ channel: string; accountId: string }>) => void;
-    beforePersistentEffect?: () => Promise<void>;
-  },
-  runtime: RuntimeEnv,
-  prompter: WizardPrompter,
-) => Promise<void>;
-
-export const runDefaultSetupWizard: SetupWizardRunner = async (...args) => {
-  const { runSetupWizard } = await import("../../wizard/setup.js");
-  return runSetupWizard(...args);
-};
-
-export const runDefaultChannelSetupWizard: ChannelSetupWizardRunner = async (...args) => {
-  const { runChannelsSetupWizard } = await import("../../commands/channels/add-wizard.js");
-  return runChannelsSetupWizard(...args);
-};
 
 function readWizardStatus(session: WizardSession) {
   return {
@@ -77,32 +49,13 @@ export const wizardHandlers: GatewayRequestHandlers = {
       return;
     }
     const sessionId = randomUUID();
-    const flow = params.flow ?? "setup";
-    const session =
-      flow === "channels"
-        ? new WizardSession((prompter, _signal, wizardSession) =>
-            context.channelWizardRunner(
-              {
-                channel: readStringValue(params.channel),
-                onConfigured: (accounts) => wizardSession.setConfiguredAccounts(accounts),
-                // Durable effects (plugin installs, config commit) must finish
-                // even if the client cancels mid-write.
-                beforePersistentEffect: async () => wizardSession.lockCancellation(),
-              },
-              defaultRuntime,
-              prompter,
-            ),
-          )
-        : new WizardSession((prompter) =>
-            context.wizardRunner(
-              {
-                mode: params.mode,
-                workspace: readStringValue(params.workspace),
-              },
-              defaultRuntime,
-              prompter,
-            ),
-          );
+    const opts = {
+      mode: params.mode,
+      workspace: readStringValue(params.workspace),
+    };
+    const session = new WizardSession((prompter) =>
+      context.wizardRunner(opts, defaultRuntime, prompter),
+    );
     context.wizardSessions.set(sessionId, session);
     const result = await session.next();
     if (result.done) {
@@ -128,11 +81,7 @@ export const wizardHandlers: GatewayRequestHandlers = {
         return;
       }
       try {
-        const validationError = await session.answer(answer.stepId ?? "", answer.value);
-        if (validationError) {
-          respond(true, { ...(await session.next()), error: validationError }, undefined);
-          return;
-        }
+        await session.answer(answer.stepId ?? "", answer.value);
       } catch (err) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)));
         return;
@@ -155,11 +104,9 @@ export const wizardHandlers: GatewayRequestHandlers = {
     if (!session) {
       return;
     }
-    const cancelled = session.cancel();
+    session.cancel();
     const status = readWizardStatus(session);
-    if (cancelled || status.status !== "running") {
-      context.wizardSessions.delete(sessionId);
-    }
+    context.wizardSessions.delete(sessionId);
     respond(true, status, undefined);
   },
   "wizard.status": ({ params, respond, context }) => {

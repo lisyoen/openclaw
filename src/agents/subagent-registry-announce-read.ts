@@ -9,7 +9,6 @@ import { subagentRuns } from "./subagent-registry-memory.js";
 import {
   countPendingDescendantRunsExcludingRunFromRuns,
   countPendingDescendantRunsFromRuns,
-  hasDescendantRunAwaitingSettleFromRuns,
   isSubagentSessionRunActiveFromRuns,
   listRunsForRequesterFromRuns,
   resolveRequesterForChildSessionFromRuns,
@@ -71,18 +70,6 @@ export function countPendingDescendantRunsExcludingRun(
   excludeRunId: string,
 ): number {
   return countPendingDescendantRunsExcludingRunFromRuns(
-    getSubagentRunsSnapshotForRead(subagentRuns),
-    rootSessionKey,
-    excludeRunId,
-  );
-}
-
-/** True when any descendant run still awaits terminal settle (suspended delivery counts as settled). */
-export function hasDescendantRunAwaitingSettle(
-  rootSessionKey: string,
-  excludeRunId?: string,
-): boolean {
-  return hasDescendantRunAwaitingSettleFromRuns(
     getSubagentRunsSnapshotForRead(subagentRuns),
     rootSessionKey,
     excludeRunId,

@@ -1,5 +1,4 @@
 // Discord plugin module implements component runtime behavior.
-import { createPluginRuntimeMock } from "openclaw/plugin-sdk/channel-test-helpers";
 import {
   parsePluginBindingApprovalCustomId,
   resolvePinnedMainDmOwnerFromAllowlist,
@@ -55,31 +54,6 @@ const resolvePluginConversationBindingApprovalMock: AsyncUnknownMock =
 const buildPluginBindingResolvedTextMock: UnknownMock =
   runtimeMocks.buildPluginBindingResolvedTextMock;
 
-vi.mock("openclaw/plugin-sdk/channel-inbound", async () => {
-  const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/channel-inbound")>(
-    "openclaw/plugin-sdk/channel-inbound",
-  );
-  type RunParams = Parameters<typeof actual.runChannelInboundEvent>[0];
-  return {
-    ...actual,
-    runChannelInboundEvent: (params: RunParams) => {
-      const runtime = createPluginRuntimeMock({
-        channel: {
-          session: {
-            resolveStorePath: (...args) => resolveStorePathMock(...args) as string,
-            recordInboundSession: async (...args) => {
-              await recordInboundSessionMock(...args);
-            },
-          },
-          reply: {
-            dispatchReplyWithBufferedBlockDispatcher: (...args) => dispatchReplyMock(...args),
-          },
-        },
-      });
-      return runtime.channel.inbound.run(params);
-    },
-  };
-});
 async function readChannelIngressStoreAllowFromForDmPolicy(params: {
   provider: string;
   accountId: string;

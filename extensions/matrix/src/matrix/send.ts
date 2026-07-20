@@ -50,17 +50,18 @@ import {
 const MATRIX_TEXT_LIMIT = 4000;
 const getCore = () => getMatrixRuntime();
 
+export type { MatrixSendOpts, MatrixSendResult } from "./send/types.js";
 export { resolveMatrixMentionsForBody } from "./send/formatting.js";
 export { resolveMatrixRoomId } from "./send/targets.js";
 
-type MatrixPreparedSingleText = {
+export type MatrixPreparedSingleText = {
   trimmedText: string;
   convertedText: string;
   singleEventLimit: number;
   fitsInSingleEvent: boolean;
 };
 
-type MatrixPreparedChunkedText = MatrixPreparedSingleText & {
+export type MatrixPreparedChunkedText = MatrixPreparedSingleText & {
   chunks: string[];
 };
 
@@ -258,24 +259,10 @@ export async function sendMessageMatrix(
         ? buildThreadRelation(threadId, opts.replyToId)
         : buildReplyRelation(opts.replyToId);
       let pendingExtraContent = opts.extraContent;
-      const sendContent = async (content: MatrixOutboundContent, kind: MessageReceiptPartKind) => {
+      const sendContent = async (content: MatrixOutboundContent) => {
         const contentWithExtra = withMatrixExtraContentFields(content, pendingExtraContent);
         pendingExtraContent = undefined;
         const eventId = await client.sendMessage(roomId, contentWithExtra);
-        if (eventId) {
-          await opts.onDeliveryResult?.({
-            messageId: eventId,
-            roomId,
-            primaryMessageId: eventId,
-            receipt: createMatrixSendReceipt({
-              roomId,
-              platformMessageIds: [eventId],
-              kind,
-              replyToId: opts.replyToId,
-              threadId,
-            }),
-          });
-        }
         return eventId;
       };
 
@@ -337,7 +324,7 @@ export async function sendMessageMatrix(
           content,
           markdown: captionMarkdown,
         });
-        const eventId = await sendContent(content, receiptKind);
+        const eventId = await sendContent(content);
         lastMessageId = eventId ?? lastMessageId;
         if (eventId) {
           platformMessageIds.push(eventId);
@@ -357,7 +344,7 @@ export async function sendMessageMatrix(
             content: followup,
             markdown: text,
           });
-          const followupEventId = await sendContent(followup, "text");
+          const followupEventId = await sendContent(followup);
           lastMessageId = followupEventId ?? lastMessageId;
           if (followupEventId) {
             platformMessageIds.push(followupEventId);
@@ -375,7 +362,7 @@ export async function sendMessageMatrix(
             content,
             markdown: text,
           });
-          const eventId = await sendContent(content, "text");
+          const eventId = await sendContent(content);
           lastMessageId = eventId ?? lastMessageId;
           if (eventId) {
             platformMessageIds.push(eventId);

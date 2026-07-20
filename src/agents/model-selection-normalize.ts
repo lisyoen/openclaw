@@ -86,7 +86,6 @@ function normalizeProviderModelId(
   return (
     normalizeProviderModelIdWithRuntime({
       provider,
-      ...(options?.manifestPlugins ? { plugins: options.manifestPlugins } : {}),
       context: {
         provider,
         modelId: staticModelId,
@@ -111,13 +110,14 @@ export function normalizeModelRef(
   return { provider: normalizedProvider, model: normalizedModel };
 }
 
+type ParseModelRefOptions = ModelRefNormalizeOptions;
 const OPENROUTER_AUTO_COMPAT_ALIAS = "openrouter:auto";
 
 /** Parse `provider/model` or bare model text using a default provider. */
 export function parseModelRef(
   raw: string,
   defaultProvider: string,
-  options?: ModelRefNormalizeOptions,
+  options?: ParseModelRefOptions,
 ): ModelRef | null {
   const trimmed = raw.trim();
   if (!trimmed) {

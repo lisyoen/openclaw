@@ -42,6 +42,7 @@ function createMediaFailureHarness() {
       matchedBy: "binding.account",
     }),
     resolveStorePath: () => "/tmp/openclaw-test-session.json",
+    readSessionUpdatedAt: () => 123,
     getRoomInfo: async () => ({
       name: "Media Room",
       canonicalAlias: "#media:example.org",

@@ -15,13 +15,13 @@ type CacheEntry = {
   users: ReadonlySet<string>;
 };
 
-const subteamMemberCache = new WeakMap<WebClient, Map<string, CacheEntry>>();
+let subteamMemberCache = new WeakMap<WebClient, Map<string, CacheEntry>>();
 
 export function normalizeSlackId(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim().toUpperCase() : undefined;
 }
 
-function extractSlackSubteamMentionIds(text?: string | null): string[] {
+export function extractSlackSubteamMentionIds(text?: string | null): string[] {
   if (!text) {
     return [];
   }
@@ -123,4 +123,8 @@ export async function isSlackSubteamMentionForBot(params: {
     }
   }
   return false;
+}
+
+export function clearSlackSubteamMentionCacheForTest(): void {
+  subteamMemberCache = new WeakMap<WebClient, Map<string, CacheEntry>>();
 }

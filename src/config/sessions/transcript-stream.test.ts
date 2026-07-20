@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   streamSessionTranscriptLines,
   streamSessionTranscriptLinesReverse,
@@ -23,7 +23,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.restoreAllMocks();
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -57,15 +56,6 @@ describe("streamSessionTranscriptLines", () => {
     const lines = await collect(streamSessionTranscriptLines(path.join(tempDir, "missing.jsonl")));
 
     expect(lines).toEqual([]);
-  });
-
-  it("propagates stat failures other than ENOENT", async () => {
-    const error = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-    vi.spyOn(fs.promises, "stat").mockRejectedValueOnce(error);
-
-    await expect(
-      collect(streamSessionTranscriptLines("/some/protected/transcript.jsonl")),
-    ).rejects.toBe(error);
   });
 
   it("forwards malformed JSON lines as raw text so callers can choose to skip them", async () => {
@@ -116,21 +106,12 @@ describe("streamSessionTranscriptLinesReverse", () => {
     expect(lines).toEqual(["third", "second", "first"]);
   });
 
-  it("returns an empty iterator when the file does not exist", async () => {
+  it("returns an empty iterator when the file cannot be opened", async () => {
     const lines = await collect(
       streamSessionTranscriptLinesReverse(path.join(tempDir, "missing.jsonl")),
     );
 
     expect(lines).toEqual([]);
-  });
-
-  it("propagates open failures other than ENOENT", async () => {
-    const error = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
-    vi.spyOn(fs.promises, "open").mockRejectedValueOnce(error);
-
-    await expect(
-      collect(streamSessionTranscriptLinesReverse("/some/protected/transcript.jsonl")),
-    ).rejects.toBe(error);
   });
 
   it("preserves complete lines across chunk boundaries", async () => {

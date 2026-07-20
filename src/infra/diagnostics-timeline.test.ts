@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   emitDiagnosticsTimelineEvent,
+  flushDiagnosticsTimelineForTest,
   isDiagnosticsTimelineEnabled,
   measureDiagnosticsTimelineSpan,
   measureDiagnosticsTimelineSpanSync,
@@ -28,7 +29,7 @@ async function createTimelineEnv() {
 }
 
 async function readTimeline(path: string) {
-  await Promise.resolve();
+  await flushDiagnosticsTimelineForTest();
   return (await readFile(path, "utf8"))
     .trim()
     .split("\n")

@@ -1,12 +1,10 @@
 // Whatsapp tests cover qa driver plugin behavior.
 import { EventEmitter } from "node:events";
 import type { WAMessage } from "baileys";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { startWhatsAppQaDriverSession } from "./qa-driver.runtime.js";
-import { DEFAULT_WHATSAPP_SOCKET_TIMING } from "./socket-timing.js";
 
 const mocks = vi.hoisted(() => ({
-  createWebSendApi: vi.fn(),
   createWaSocket: vi.fn(),
   jidToE164: vi.fn(),
   sendContact: vi.fn(),
@@ -32,7 +30,14 @@ vi.mock("./text-runtime.js", () => ({
 }));
 
 vi.mock("./inbound/send-api.js", () => ({
-  createWebSendApi: mocks.createWebSendApi,
+  createWebSendApi: () => ({
+    sendContact: mocks.sendContact,
+    sendLocation: mocks.sendLocation,
+    sendMessage: mocks.sendMessage,
+    sendPoll: mocks.sendPoll,
+    sendReaction: mocks.sendReaction,
+    sendSticker: mocks.sendSticker,
+  }),
 }));
 
 function createMockSocket() {
@@ -55,25 +60,6 @@ function incomingMessage(remoteJid: string, text: string, id = "message-1"): WAM
     },
     message: {
       conversation: text,
-    },
-  } as WAMessage;
-}
-
-function incomingGroupMessage(params: {
-  id?: string;
-  participant: string;
-  remoteJid: string;
-  text: string;
-}): WAMessage {
-  return {
-    key: {
-      fromMe: false,
-      id: params.id ?? "group-message-1",
-      participant: params.participant,
-      remoteJid: params.remoteJid,
-    },
-    message: {
-      conversation: params.text,
     },
   } as WAMessage;
 }
@@ -238,17 +224,6 @@ function incomingQuotedLocationMessage(remoteJid: string): WAMessage {
 }
 
 describe("startWhatsAppQaDriverSession", () => {
-  beforeEach(() => {
-    mocks.createWebSendApi.mockImplementation(() => ({
-      sendContact: mocks.sendContact,
-      sendLocation: mocks.sendLocation,
-      sendMessage: mocks.sendMessage,
-      sendPoll: mocks.sendPoll,
-      sendReaction: mocks.sendReaction,
-      sendSticker: mocks.sendSticker,
-    }));
-  });
-
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
@@ -282,95 +257,6 @@ describe("startWhatsAppQaDriverSession", () => {
         messageId: "message-1",
         observedAt,
         text: "hello",
-      },
-    ]);
-
-    await session.close();
-  });
-
-  it("normalizes group participants separately from the group conversation JID", async () => {
-    const sock = createMockSocket();
-    mocks.createWaSocket.mockResolvedValue(sock);
-    mocks.waitForWaConnection.mockResolvedValue(undefined);
-    mocks.jidToE164.mockReturnValue("+15551234567");
-
-    const session = await startWhatsAppQaDriverSession({
-      authDir: "/tmp/openclaw-whatsapp-auth",
-    });
-
-    sock.ev.emit("messages.upsert", {
-      messages: [
-        incomingGroupMessage({
-          participant: "15551234567@s.whatsapp.net",
-          remoteJid: "120363000000000000@g.us",
-          text: "hello group",
-        }),
-      ],
-    });
-
-    expect(mocks.jidToE164).toHaveBeenCalledWith("15551234567@s.whatsapp.net", {
-      authDir: "/tmp/openclaw-whatsapp-auth",
-    });
-    const observedMessages = session.getObservedMessages();
-    const observedAt = observedMessages[0]?.observedAt;
-    expect(observedAt).toBe(new Date(observedAt ?? "").toISOString());
-    expect(observedMessages).toEqual([
-      {
-        fromJid: "120363000000000000@g.us",
-        fromPhoneE164: "+15551234567",
-        kind: "text",
-        messageId: "group-message-1",
-        observedAt,
-        participantJid: "15551234567@s.whatsapp.net",
-        text: "hello group",
-      },
-    ]);
-
-    await session.close();
-  });
-
-  it("normalizes DM senders from the conversation JID when Baileys includes a participant", async () => {
-    const sock = createMockSocket();
-    mocks.createWaSocket.mockResolvedValue(sock);
-    mocks.waitForWaConnection.mockResolvedValue(undefined);
-    mocks.jidToE164.mockImplementation((jid: string) =>
-      jid === "15551234567@s.whatsapp.net" ? "+15551234567" : null,
-    );
-
-    const session = await startWhatsAppQaDriverSession({
-      authDir: "/tmp/openclaw-whatsapp-auth",
-    });
-
-    sock.ev.emit("messages.upsert", {
-      messages: [
-        {
-          key: {
-            fromMe: false,
-            id: "dm-message-1",
-            participant: "99999@lid",
-            remoteJid: "15551234567@s.whatsapp.net",
-          },
-          message: {
-            conversation: "hello dm",
-          },
-        } as WAMessage,
-      ],
-    });
-
-    expect(mocks.jidToE164).toHaveBeenCalledWith("15551234567@s.whatsapp.net", {
-      authDir: "/tmp/openclaw-whatsapp-auth",
-    });
-    const observedMessages = session.getObservedMessages();
-    const observedAt = observedMessages[0]?.observedAt;
-    expect(observedMessages).toEqual([
-      {
-        fromJid: "15551234567@s.whatsapp.net",
-        fromPhoneE164: "+15551234567",
-        kind: "text",
-        messageId: "dm-message-1",
-        observedAt,
-        participantJid: "99999@lid",
-        text: "hello dm",
       },
     ]);
 
@@ -733,39 +619,6 @@ describe("startWhatsAppQaDriverSession", () => {
     expect(mocks.waitForWaConnection).toHaveBeenCalledWith(sock, { timeoutMs: 45_000 });
 
     await session.close();
-  });
-
-  it("passes a bounded socket adapter to the send API", async () => {
-    const sock = createMockSocket();
-    mocks.createWaSocket.mockResolvedValue(sock);
-    mocks.waitForWaConnection.mockResolvedValue(undefined);
-
-    const session = await startWhatsAppQaDriverSession({
-      authDir: "/tmp/openclaw-whatsapp-auth",
-    });
-    const sendApiParams = mocks.createWebSendApi.mock.calls[0]?.[0] as {
-      sock: {
-        sendMessage: (jid: string, content: { text: string }) => Promise<unknown>;
-      };
-    };
-
-    vi.useFakeTimers();
-    try {
-      sock.sendMessage.mockImplementationOnce(async () => await new Promise(() => {}));
-
-      const sendPromise = sendApiParams.sock.sendMessage("1555@s.whatsapp.net", { text: "hi" });
-      const rejection = expect(sendPromise).rejects.toMatchObject({
-        name: "WhatsAppSocketOperationTimeoutError",
-        operation: "sendMessage",
-        timeoutMs: DEFAULT_WHATSAPP_SOCKET_TIMING.defaultQueryTimeoutMs,
-      });
-      await vi.advanceTimersByTimeAsync(DEFAULT_WHATSAPP_SOCKET_TIMING.defaultQueryTimeoutMs);
-
-      await rejection;
-    } finally {
-      vi.useRealTimers();
-      await session.close();
-    }
   });
 
   it("can wait for pending notifications before returning the driver session", async () => {

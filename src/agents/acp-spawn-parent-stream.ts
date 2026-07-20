@@ -1,7 +1,9 @@
 /** Relays child ACP session stream updates back into the requester parent session. */
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { sliceUtf16Safe, truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+import { readAcpSessionEntry } from "../acp/runtime/session-meta.js";
 import {
   isAcpTagVisible,
   resolveAcpProjectionSettings,
@@ -11,6 +13,7 @@ import {
   resolveChannelStreamingProgressCommentary,
   type StreamingCompatEntry,
 } from "../channels/streaming.js";
+import { resolveSessionFilePath, resolveSessionFilePathOptions } from "../config/sessions/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { onAgentEvent } from "../infra/agent-events.js";
 import {
@@ -19,17 +22,13 @@ import {
   scopedHeartbeatWakeOptionsForPolicy,
 } from "../infra/event-session-routing.js";
 import { requestHeartbeat } from "../infra/heartbeat-wake.js";
+import { appendRegularFile } from "../infra/regular-file.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveNormalizedAccountEntry } from "../routing/account-lookup.js";
 import { normalizeAccountId } from "../routing/session-key.js";
 import { normalizeAssistantPhase } from "../shared/chat-message-content.js";
 import { recordTaskRunProgressByRunId } from "../tasks/detached-task-runtime.js";
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
-import {
-  recordAcpParentStreamEvents,
-  type AcpParentStreamEvent,
-} from "./acp-parent-stream-store.sqlite.js";
 
 const DEFAULT_STREAM_FLUSH_MS = 2_500;
 const DEFAULT_NO_OUTPUT_NOTICE_MS = 60_000;
@@ -37,11 +36,6 @@ const DEFAULT_NO_OUTPUT_POLL_MS = 15_000;
 const DEFAULT_MAX_RELAY_LIFETIME_MS = 6 * 60 * 60 * 1000;
 const STREAM_BUFFER_MAX_CHARS = 4_000;
 const STREAM_SNIPPET_MAX_CHARS = 220;
-const STREAM_LOG_BATCH_SIZE = 100;
-const STREAM_LOG_FLUSH_MS = 1_000;
-const STREAM_LOG_MAX_PENDING_EVENTS = 256;
-const STREAM_LOG_MAX_RETRY_MS = 30_000;
-const log = createSubsystemLogger("agents/acp-parent-stream");
 
 type AcpParentProgressStreamingConfig = StreamingCompatEntry & {
   accounts?: Record<string, StreamingCompatEntry | undefined>;
@@ -56,9 +50,9 @@ function truncate(value: string, maxChars: number): string {
     return value;
   }
   if (maxChars <= 1) {
-    return truncateUtf16Safe(value, maxChars);
+    return value.slice(0, maxChars);
   }
-  return `${truncateUtf16Safe(value, maxChars - 1)}…`;
+  return `${value.slice(0, maxChars - 1)}…`;
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -127,10 +121,20 @@ function mergeStreamingEntry(
   if (!override) {
     return base;
   }
+  const overrideStreaming = asObjectRecord(override.streaming);
+  const legacyOverrideMode =
+    override.streamMode !== undefined &&
+    (override.streaming === undefined || overrideStreaming) &&
+    overrideStreaming?.mode === undefined
+      ? { mode: override.streamMode }
+      : undefined;
   return {
     ...base,
     ...override,
-    streaming: mergeStreamingConfig(base.streaming, override.streaming),
+    streaming: mergeStreamingConfig(
+      mergeStreamingConfig(base.streaming, override.streaming),
+      legacyOverrideMode,
+    ),
   };
 }
 
@@ -138,7 +142,8 @@ function hasConfiguredPreviewStreamMode(entry: StreamingCompatEntry): boolean {
   return (
     asObjectRecord(entry.streaming)?.mode !== undefined ||
     typeof entry.streaming === "string" ||
-    typeof entry.streaming === "boolean"
+    typeof entry.streaming === "boolean" ||
+    entry.streamMode !== undefined
   );
 }
 
@@ -211,14 +216,46 @@ function shouldRelayAcpStatusProgress(params: {
   return isAcpTagVisible(params.projectionSettings, params.tag);
 }
 
+function resolveAcpStreamLogPathFromSessionFile(sessionFile: string, sessionId: string): string {
+  const baseDir = path.dirname(path.resolve(sessionFile));
+  return path.join(baseDir, `${sessionId}.acp-stream.jsonl`);
+}
+
+/** Resolves the JSONL stream log path for an ACP child session when metadata exists. */
+export function resolveAcpSpawnStreamLogPath(params: {
+  childSessionKey: string;
+}): string | undefined {
+  const childSessionKey = normalizeOptionalString(params.childSessionKey);
+  if (!childSessionKey) {
+    return undefined;
+  }
+  const storeEntry = readAcpSessionEntry({
+    sessionKey: childSessionKey,
+  });
+  const sessionId = normalizeOptionalString(storeEntry?.entry?.sessionId);
+  if (!storeEntry || !sessionId) {
+    return undefined;
+  }
+  try {
+    const sessionFile = resolveSessionFilePath(
+      sessionId,
+      storeEntry.entry,
+      resolveSessionFilePathOptions({
+        storePath: storeEntry.storePath,
+      }),
+    );
+    return resolveAcpStreamLogPathFromSessionFile(sessionFile, sessionId);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Starts a bounded parent-session relay for child ACP output and progress notices. */
 export function startAcpSpawnParentStreamRelay(params: {
   runId: string;
   parentSessionKey: string;
   childSessionKey: string;
-  childSessionId?: string;
   agentId: string;
-  env?: NodeJS.ProcessEnv;
   /**
    * Optional `session.mainKey` from the runtime config. Used to remap
    * cron-run parent session keys to the agent's main queue when relaying
@@ -235,6 +272,7 @@ export function startAcpSpawnParentStreamRelay(params: {
    */
   sessionScope?: "per-sender" | "global";
   eventRouting?: EventSessionRoutingPolicy;
+  logPath?: string;
   deliveryContext?: DeliveryContext;
   surfaceUpdates?: boolean;
   streamFlushMs?: number;
@@ -272,105 +310,67 @@ export function startAcpSpawnParentStreamRelay(params: {
 
   const relayLabel = truncate(compactWhitespace(params.agentId), 40) || "ACP child";
   const contextPrefix = `acp-spawn:${runId}`;
-  const childSessionId = normalizeOptionalString(params.childSessionId);
-  // Delayed flushes must keep the state database selected when the relay started.
-  const stateEnv = { ...(params.env ?? process.env) };
-  const pendingLogEvents: Array<{ event: AcpParentStreamEvent; createdAt: number }> = [];
-  let logFlushTimer: NodeJS.Timeout | undefined;
-  let logFailureWarned = false;
-  let logBufferWarned = false;
-  let consecutiveLogFailures = 0;
-  let disposed = false;
-  const capPendingLogEvents = () => {
-    const overflow = pendingLogEvents.length - STREAM_LOG_MAX_PENDING_EVENTS;
-    if (overflow <= 0) {
+  const logPath = normalizeOptionalString(params.logPath);
+  let logDirReady = false;
+  let pendingLogLines = "";
+  let logFlushScheduled = false;
+  let logWriteChain: Promise<void> = Promise.resolve();
+  const flushLogBuffer = () => {
+    if (!logPath || !pendingLogLines) {
       return;
     }
-    pendingLogEvents.splice(0, overflow);
-    if (!logBufferWarned) {
-      log.warn("Capped ACP parent stream diagnostic buffer", {
-        runId,
-        childSessionId,
-        maxPendingEvents: STREAM_LOG_MAX_PENDING_EVENTS,
+    const chunk = pendingLogLines;
+    pendingLogLines = "";
+    logWriteChain = logWriteChain
+      .then(async () => {
+        if (!logDirReady) {
+          await mkdir(path.dirname(logPath), {
+            recursive: true,
+          });
+          logDirReady = true;
+        }
+        await appendRegularFile({ filePath: logPath, content: chunk });
+      })
+      .catch(() => {
+        // Best-effort diagnostics; never break relay flow.
       });
-      logBufferWarned = true;
-    }
   };
-  const clearLogFlushTimer = () => {
-    if (!logFlushTimer) {
+  const scheduleLogFlush = () => {
+    if (!logPath || logFlushScheduled) {
       return;
     }
-    clearTimeout(logFlushTimer);
-    logFlushTimer = undefined;
-  };
-  function flushLogEvents(options: { terminal?: boolean } = {}) {
-    clearLogFlushTimer();
-    if (!childSessionId || pendingLogEvents.length === 0) {
-      return;
-    }
-    const events = pendingLogEvents.splice(0);
-    try {
-      recordAcpParentStreamEvents({
-        agentId: params.agentId,
-        env: stateEnv,
-        sessionId: childSessionId,
-        runId,
-        events,
-      });
-      logFailureWarned = false;
-      logBufferWarned = false;
-      consecutiveLogFailures = 0;
-    } catch (error) {
-      if (!options.terminal) {
-        pendingLogEvents.unshift(...events);
-        capPendingLogEvents();
-        consecutiveLogFailures += 1;
-        scheduleLogFlush(
-          Math.min(STREAM_LOG_FLUSH_MS * 2 ** consecutiveLogFailures, STREAM_LOG_MAX_RETRY_MS),
-        );
-      }
-      if (!logFailureWarned || options.terminal) {
-        log.warn("Failed to persist ACP parent stream diagnostics", {
-          runId,
-          childSessionId,
-          retrying: !options.terminal,
-          error: String(error),
-        });
-        logFailureWarned = true;
-      }
-    }
-  }
-  function scheduleLogFlush(delayMs = STREAM_LOG_FLUSH_MS) {
-    if (disposed || logFlushTimer || pendingLogEvents.length === 0) {
-      return;
-    }
-    logFlushTimer = setTimeout(() => flushLogEvents(), delayMs);
-    logFlushTimer.unref?.();
-  }
-  const logEvent = (kind: string, fields?: Record<string, unknown>) => {
-    if (!childSessionId) {
-      return;
-    }
-    const createdAt = Date.now();
-    pendingLogEvents.push({
-      createdAt,
-      event: {
-        ts: new Date(createdAt).toISOString(),
-        epochMs: createdAt,
-        runId,
-        parentSessionKey,
-        childSessionKey: params.childSessionKey,
-        agentId: params.agentId,
-        kind,
-        ...fields,
-      },
+    logFlushScheduled = true;
+    queueMicrotask(() => {
+      logFlushScheduled = false;
+      flushLogBuffer();
     });
-    capPendingLogEvents();
-    if (consecutiveLogFailures === 0 && pendingLogEvents.length >= STREAM_LOG_BATCH_SIZE) {
-      flushLogEvents();
+  };
+  const writeLogLine = (entry: Record<string, unknown>) => {
+    if (!logPath) {
       return;
     }
-    scheduleLogFlush();
+    try {
+      pendingLogLines += `${JSON.stringify(entry)}\n`;
+      if (pendingLogLines.length >= 16_384) {
+        flushLogBuffer();
+        return;
+      }
+      scheduleLogFlush();
+    } catch {
+      // Best-effort diagnostics; never break relay flow.
+    }
+  };
+  const logEvent = (kind: string, fields?: Record<string, unknown>) => {
+    writeLogLine({
+      ts: new Date().toISOString(),
+      epochMs: Date.now(),
+      runId,
+      parentSessionKey,
+      childSessionKey: params.childSessionKey,
+      agentId: params.agentId,
+      kind,
+      ...fields,
+    });
   };
   const shouldSurfaceUpdates = params.surfaceUpdates !== false;
   const shouldRelayProgressCommentary = resolveParentProgressCommentary({
@@ -428,9 +428,9 @@ export function startAcpSpawnParentStreamRelay(params: {
     );
   };
 
+  let disposed = false;
   let pendingText = "";
   let pendingProgressKind: string | undefined;
-  let replaceableAssistantSnapshot: string | undefined;
   const itemProgressTextById = new Map<string, string>();
   let lastProgressAt = Date.now();
   let stallNotified = false;
@@ -502,22 +502,13 @@ export function startAcpSpawnParentStreamRelay(params: {
     pendingProgressKind = kind;
     pendingText += delta;
     if (pendingText.length > STREAM_BUFFER_MAX_CHARS) {
-      pendingText = sliceUtf16Safe(pendingText, -STREAM_BUFFER_MAX_CHARS);
+      pendingText = pendingText.slice(-STREAM_BUFFER_MAX_CHARS);
     }
     if (pendingText.length >= STREAM_SNIPPET_MAX_CHARS || delta.includes("\n\n")) {
       flushPending();
       return;
     }
     scheduleFlush();
-  };
-
-  const flushReplaceableAssistantSnapshot = () => {
-    const snapshot = replaceableAssistantSnapshot;
-    replaceableAssistantSnapshot = undefined;
-    if (!snapshot?.trim()) {
-      return;
-    }
-    appendVisibleProgress(snapshot, "assistant:replaceable");
   };
 
   const appendItemProgressSnapshot = (snapshot: { itemId: string; text: string }) => {
@@ -532,7 +523,8 @@ export function startAcpSpawnParentStreamRelay(params: {
       pendingText = "";
     }
     itemProgressTextById.set(snapshot.itemId, snapshot.text);
-    const delta = isPrefixUpdate ? snapshot.text.slice(previous.length) : snapshot.text;
+    const delta =
+      isPrefixUpdate && hasPendingSnapshot ? snapshot.text.slice(previous.length) : snapshot.text;
     appendVisibleProgress(delta, kind);
   };
 
@@ -613,27 +605,10 @@ export function startAcpSpawnParentStreamRelay(params: {
       const assistantPhase = normalizeAssistantPhase(
         (data as { phase?: unknown } | undefined)?.phase,
       );
-      const textCandidate = (data as { text?: unknown } | undefined)?.text;
-      const deltaCandidate = (data as { delta?: unknown } | undefined)?.delta;
-      const snapshot =
-        typeof textCandidate === "string"
-          ? textCandidate
-          : typeof deltaCandidate === "string"
-            ? deltaCandidate
-            : undefined;
-      if ((data as { replaceable?: unknown } | undefined)?.replaceable === true) {
-        if (snapshot?.trim()) {
-          replaceableAssistantSnapshot = snapshot;
-          lastProgressAt = Date.now();
-          logEvent("assistant_replaceable_snapshot", {
-            text: snapshot,
-            ...(assistantPhase ? { phase: assistantPhase } : {}),
-          });
-        }
-        return;
-      }
-
-      const delta = typeof deltaCandidate === "string" ? deltaCandidate : snapshot;
+      const deltaCandidate =
+        (data as { delta?: unknown } | undefined)?.delta ??
+        (data as { text?: unknown } | undefined)?.text;
+      const delta = typeof deltaCandidate === "string" ? deltaCandidate : undefined;
       if (!delta || !delta.trim()) {
         return;
       }
@@ -647,7 +622,6 @@ export function startAcpSpawnParentStreamRelay(params: {
         return;
       }
 
-      replaceableAssistantSnapshot = undefined;
       appendVisibleProgress(delta, `assistant:${assistantPhase ?? "unknown"}`);
       return;
     }
@@ -723,7 +697,6 @@ export function startAcpSpawnParentStreamRelay(params: {
     const phase = normalizeOptionalString((event.data as { phase?: unknown } | undefined)?.phase);
     logEvent("lifecycle", { phase: phase ?? "unknown", data: event.data });
     if (phase === "end") {
-      flushReplaceableAssistantSnapshot();
       flushPending();
       const startedAt = asFiniteNumber(
         (event.data as { startedAt?: unknown } | undefined)?.startedAt,
@@ -746,7 +719,6 @@ export function startAcpSpawnParentStreamRelay(params: {
     }
 
     if (phase === "error") {
-      flushReplaceableAssistantSnapshot();
       flushPending();
       const errorText = normalizeOptionalString(
         (event.data as { error?: unknown } | undefined)?.error,
@@ -766,8 +738,8 @@ export function startAcpSpawnParentStreamRelay(params: {
     }
     disposed = true;
     clearFlushTimer();
-    flushLogEvents({ terminal: true });
     clearRelayLifetimeTimer();
+    flushLogBuffer();
     clearInterval(noOutputWatcherTimer);
     unsubscribe();
   };
@@ -782,4 +754,3 @@ export type AcpSpawnParentRelayHandle = {
   dispose: () => void;
   notifyStarted: () => void;
 };
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

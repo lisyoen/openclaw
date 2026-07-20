@@ -11,8 +11,8 @@ import {
   identitiesOverlap,
   type WhatsAppIdentity,
 } from "../identity.js";
-import { requireWhatsAppInboundAdmission } from "../inbound/admission.js";
-import type { AdmittedWebInboundMessage } from "../inbound/types.js";
+import type { WebInboundMessage } from "../inbound/types.js";
+import { isWhatsAppGroupJid } from "../normalize-target.js";
 import { isSelfChatMode, normalizeE164 } from "../text-runtime.js";
 
 export type MentionConfig = {
@@ -21,7 +21,7 @@ export type MentionConfig = {
   isSelfChat?: boolean;
 };
 
-type MentionTargets = {
+export type MentionTargets = {
   normalizedMentions: WhatsAppIdentity[];
   self: WhatsAppIdentity;
 };
@@ -35,14 +35,14 @@ export function buildMentionConfig(
   return { mentionRegexes, allowFrom: cfg.channels?.whatsapp?.allowFrom };
 }
 
-function resolveMentionTargets(msg: AdmittedWebInboundMessage, authDir?: string): MentionTargets {
+export function resolveMentionTargets(msg: WebInboundMessage, authDir?: string): MentionTargets {
   const normalizedMentions = getMentionIdentities(msg, authDir);
   const self = getSelfIdentity(msg, authDir);
   return { normalizedMentions, self };
 }
 
-function isBotMentionedFromTargets(
-  msg: AdmittedWebInboundMessage,
+export function isBotMentionedFromTargets(
+  msg: WebInboundMessage,
   mentionCfg: MentionConfig,
   targets: MentionTargets,
 ): boolean {
@@ -61,32 +61,26 @@ function isBotMentionedFromTargets(
   // and let real group @mentions go through the identity-overlap check
   // (#49317). Explicit `mentionCfg.isSelfChat` overrides from the caller
   // are honored as-is so multi-account / precomputed paths keep working.
-  const admission = requireWhatsAppInboundAdmission(msg);
-  const isGroupConversation = admission.conversation.kind === "group";
+  const isGroupConversation = isWhatsAppGroupJid(msg.from);
   const isSelfChat = explicitSelfChatOverride
     ? Boolean(mentionCfg.isSelfChat)
     : isSelfChatMode(targets.self.e164, mentionCfg.allowFrom) && !isGroupConversation;
 
   const hasMentions = targets.normalizedMentions.length > 0;
-  const hasNativeMentionsOutsideSelfChat = hasMentions && !isSelfChat;
-  if (hasNativeMentionsOutsideSelfChat) {
+  if (hasMentions && !isSelfChat) {
     for (const mention of targets.normalizedMentions) {
       if (identitiesOverlap(targets.self, mention)) {
         return true;
       }
     }
+    // If the message explicitly mentions someone else, do not fall back to regex matches.
+    return false;
   } else if (hasMentions && isSelfChat) {
     // Self-chat mode: ignore WhatsApp @mention JIDs, otherwise @mentioning the owner in self-chat triggers the bot.
   }
   const bodyClean = clean(msg.payload.body);
   if (mentionCfg.mentionRegexes.some((re) => re.test(bodyClean))) {
     return true;
-  }
-
-  // Native mentions for other participants inject their identities into the
-  // body, so they must not activate the loose self-number fallback below.
-  if (hasNativeMentionsOutsideSelfChat) {
-    return false;
   }
 
   // Fallback: detect body containing our own number (with or without +, spacing)
@@ -109,15 +103,14 @@ function isBotMentionedFromTargets(
 }
 
 export function debugMention(
-  msg: AdmittedWebInboundMessage,
+  msg: WebInboundMessage,
   mentionCfg: MentionConfig,
   authDir?: string,
 ): { wasMentioned: boolean; details: Record<string, unknown> } {
   const mentionTargets = resolveMentionTargets(msg, authDir);
   const result = isBotMentionedFromTargets(msg, mentionCfg, mentionTargets);
-  const admission = requireWhatsAppInboundAdmission(msg);
   const details = {
-    from: admission.conversation.id,
+    from: msg.from,
     body: msg.payload.body,
     bodyClean: normalizeMentionText(msg.payload.body),
     mentionedJids: msg.group?.mentions?.jids ?? null,

@@ -7,17 +7,19 @@ title: "Secure file operations"
 
 OpenClaw uses [`@openclaw/fs-safe`](https://github.com/openclaw/fs-safe) for security-sensitive local file operations: root-bounded reads/writes, atomic replacement, archive extraction, temp workspaces, JSON state, and secret-file handling.
 
-It is a **library guardrail** for trusted OpenClaw code that receives untrusted path names, not a sandbox. Host filesystem permissions, OS users, containers, and the agent/tool policy still define the real blast radius.
+The goal is a consistent **library guardrail** for trusted OpenClaw code that receives untrusted path names. It is not a sandbox. Host filesystem permissions, OS users, containers, and the agent/tool policy still define the real blast radius.
 
 ## Default: no Python helper
 
-OpenClaw sets the fs-safe POSIX Python helper to **off** by default:
+OpenClaw defaults the fs-safe POSIX Python helper to **off**.
 
-- the gateway should not spawn a persistent Python sidecar unless an operator opts in;
-- most installs do not need the extra parent-directory mutation hardening;
-- disabling Python keeps runtime behavior predictable across desktop, Docker, CI, and bundled-app environments.
+Why:
 
-OpenClaw only changes the _default_. An explicit setting always wins:
+- the gateway should not spawn a persistent Python sidecar unless an operator opted into it;
+- many installs do not need the extra parent-directory mutation hardening;
+- disabling Python keeps package/runtime behavior more predictable across desktop, Docker, CI, and bundled app environments.
+
+OpenClaw only changes the default. If you explicitly set a mode, fs-safe honors it:
 
 ```bash
 # Default OpenClaw behavior: Node-only fs-safe fallbacks.
@@ -29,46 +31,46 @@ OPENCLAW_FS_SAFE_PYTHON_MODE=auto
 # Fail closed if the helper cannot start.
 OPENCLAW_FS_SAFE_PYTHON_MODE=require
 
-# Optional explicit interpreter path.
+# Optional explicit interpreter.
 OPENCLAW_FS_SAFE_PYTHON=/usr/bin/python3
 ```
 
-The generic fs-safe env names also work: `FS_SAFE_PYTHON_MODE` and `FS_SAFE_PYTHON`.
-
-Use `require` (not `auto`) when the helper is part of your security posture; `auto` silently falls back to Node-only behavior if the helper cannot start.
+The generic fs-safe names also work: `FS_SAFE_PYTHON_MODE` and `FS_SAFE_PYTHON`.
 
 ## What stays protected without Python
 
-With the helper off, OpenClaw still gets fs-safe's Node-only guardrails:
+With the helper off, OpenClaw still uses fs-safe's Node paths for:
 
-- rejects relative-path escapes (`..`), absolute paths, and path separators where only bare names are allowed;
-- resolves operations through a trusted root handle instead of ad-hoc `path.resolve(...).startsWith(...)` checks;
-- refuses symlink and hardlink patterns on APIs that require that policy;
-- opens files with identity checks where the API returns or consumes file contents;
-- writes state/config files via atomic sibling-temp + rename;
-- enforces byte limits for reads and archive extraction;
-- applies private file modes for secrets and state files where the API requires them.
+- rejecting relative-path escapes such as `..`, absolute paths, and path separators where only names are allowed;
+- resolving operations through a trusted root handle instead of ad-hoc `path.resolve(...).startsWith(...)` checks;
+- refusing symlink and hardlink patterns on APIs that require that policy;
+- opening files with identity checks where the API returns or consumes file contents;
+- atomic sibling-temp writes for state/config files;
+- byte limits for reads and archive extraction;
+- private modes for secrets and state files where the API requires them.
 
-This covers OpenClaw's normal threat model: trusted gateway code handling untrusted model/plugin/channel path input inside a single trusted operator boundary.
+These protections cover the normal OpenClaw threat model: trusted gateway code handling untrusted model/plugin/channel path input inside a single trusted operator boundary.
 
 ## What Python adds
 
-On POSIX, the optional helper keeps one persistent Python process and uses fd-relative filesystem operations for parent-directory mutations: rename, remove, mkdir, stat/list, and some write paths.
+On POSIX, fs-safe's optional helper keeps one persistent Python process and uses fd-relative filesystem operations for parent-directory mutations such as rename, remove, mkdir, stat/list, and some write paths.
 
-That narrows same-UID race windows where another process swaps a parent directory between validation and mutation — defense in depth on hosts where untrusted local processes can modify the same directories OpenClaw operates in.
+That narrows same-UID race windows where another process can swap a parent directory between validation and mutation. It is defense in depth for hosts where untrusted local processes can modify the same directories OpenClaw is operating in.
 
-If your deployment has that risk and Python is guaranteed to exist, set:
+If your deployment has that risk and Python is guaranteed to exist, use:
 
 ```bash
 OPENCLAW_FS_SAFE_PYTHON_MODE=require
 ```
 
+Use `require` rather than `auto` when the helper is part of your security posture; `auto` intentionally falls back to Node-only behavior if the helper is unavailable.
+
 ## Plugin and core guidance
 
 - Plugin-facing file access should go through `openclaw/plugin-sdk/*` helpers, not raw `fs`, when a path comes from a message, model output, config, or plugin input.
-- Core code should use the fs-safe wrappers under `src/infra/*` so OpenClaw's process policy applies consistently.
+- Core code should use the local fs-safe wrappers under `src/infra/*` so OpenClaw's process policy is applied consistently.
 - Archive extraction should use the fs-safe archive helpers with explicit size, entry-count, link, and destination limits.
 - Secrets should use OpenClaw secret helpers or fs-safe secret/private-state helpers; do not hand-roll mode checks around `fs.writeFile`.
-- For hostile local-user isolation, do not rely on fs-safe alone. Run separate gateways under separate OS users/hosts, or use sandboxing.
+- If you need hostile local-user isolation, do not rely on fs-safe alone. Run separate gateways under separate OS users/hosts or use sandboxing.
 
 Related: [Security](/gateway/security), [Sandboxing](/gateway/sandboxing), [Exec approvals](/tools/exec-approvals), [Secrets](/gateway/secrets).

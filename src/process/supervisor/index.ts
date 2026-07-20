@@ -13,4 +13,14 @@ export function getProcessSupervisor(): ProcessSupervisor {
   return singleton;
 }
 
-export type { ManagedRun, ProcessSupervisor } from "./types.js";
+export { createProcessSupervisor } from "./supervisor.js";
+export type {
+  ManagedRun,
+  ProcessSupervisor,
+  RunExit,
+  RunRecord,
+  RunState,
+  SpawnInput,
+  SpawnMode,
+  TerminationReason,
+} from "./types.js";

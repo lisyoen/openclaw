@@ -22,12 +22,6 @@ describe("isVolatileBackupPath", () => {
     [`${stateDir}/ipc/gateway.sock`, true],
     [`${stateDir}/gateway.pid`, true],
     [`${stateDir}/tmp/pending.tmp`, true],
-    [`${stateDir}/audit/system-agent.jsonl.migrated.raw`, false],
-    [`${stateDir}/audit/system-agent.jsonl.migrated.2.raw`, false],
-    [`${stateDir}/audit/system-agent.jsonl.migrated.10.raw`, false],
-    [`${stateDir}/audit/system-agent.jsonl.migrated.raw.doctor-scrub-restore`, false],
-    [`${stateDir}/logs/config-audit.jsonl.migrated.raw.doctor-scrub-staging`, false],
-    [`${stateDir}/logs/config-audit.jsonl.migrated.raw.doctor-scrub-progress`, false],
     [`${stateDir}/delivery-queue/pending.tmp`, true],
     [`${stateDir}/session-delivery-queue/pending.tmp`, true],
 
@@ -44,7 +38,6 @@ describe("isVolatileBackupPath", () => {
     ["/home/user/project/README.md", false],
     ["/home/user/project/Cargo.lock", false],
     ["/home/user/project/pending.tmp", false],
-    ["/home/user/project/config.jsonl.doctor-scrub-restore", false],
     // non-volatile: log-like name outside scope
     ["/home/user/notes/daily.log", false],
   ])("classifies %s as volatile=%s", (p, expected) => {

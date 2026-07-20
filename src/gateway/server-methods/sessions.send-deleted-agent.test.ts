@@ -1,8 +1,6 @@
 /**
  * Tests that session send rejects sessions whose configured agent was deleted.
  */
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
 import {
@@ -29,10 +27,7 @@ describe("sessions.send / sessions.steer deleted-agent guard", () => {
         getRuntimeConfig: () => ({}),
       } as unknown as GatewayRequestContext;
 
-      await expectDefined(
-        sessionsHandlers[method],
-        "sessionsHandlers[method] test invariant",
-      )({
+      await sessionsHandlers[method]({
         req: { id: "req-1" } as never,
         params: { key: orphanKey, message: "hi" },
         respond,

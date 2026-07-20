@@ -1,7 +1,7 @@
 // Terminal Core module implements note behavior.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { note as clackNote } from "@clack/prompts";
-import { splitGraphemes, visibleWidth } from "./ansi.js";
+import { visibleWidth } from "./ansi.js";
 import { stylePromptTitle } from "./prompt-style.js";
 import { normalizeLowercaseStringOrEmpty } from "./string.js";
 
@@ -26,23 +26,10 @@ function splitLongWord(word: string, maxLen: number): string[] {
   if (maxLen <= 0) {
     return [word];
   }
-  // maxLen is a visible-column budget, so accumulate grapheme visible width (CJK/emoji count as 2
-  // columns) instead of code-point count; otherwise a wide-char run overflows the line by up to 2x.
+  const chars = Array.from(word);
   const parts: string[] = [];
-  let current = "";
-  let currentWidth = 0;
-  for (const grapheme of splitGraphemes(word)) {
-    const width = visibleWidth(grapheme);
-    if (current && currentWidth + width > maxLen) {
-      parts.push(current);
-      current = "";
-      currentWidth = 0;
-    }
-    current += grapheme;
-    currentWidth += width;
-  }
-  if (current) {
-    parts.push(current);
+  for (let i = 0; i < chars.length; i += maxLen) {
+    parts.push(chars.slice(i, i + maxLen).join(""));
   }
   return parts.length > 0 ? parts : [word];
 }
@@ -199,13 +186,6 @@ export function resolveNoteColumns(columns: number | undefined): number {
   return columns;
 }
 
-export function resolveNoteOutputColumns(message: string, columns: number): number {
-  const widestLine = message
-    .split("\n")
-    .reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
-  return Math.max(columns, widestLine + 6);
-}
-
 function createNoteOutput(columns: number): NodeJS.WriteStream {
   if (process.stdout.columns === columns) {
     return process.stdout;
@@ -227,9 +207,9 @@ export function note(message: unknown, title?: string) {
     return;
   }
   const columns = resolveNoteColumns(process.stdout.columns);
-  const wrappedMessage = wrapNoteMessage(message, { columns });
-  clackNote(wrappedMessage, stylePromptTitle(title), {
-    output: createNoteOutput(resolveNoteOutputColumns(wrappedMessage, columns)),
+  clackNote(wrapNoteMessage(message, { columns }), stylePromptTitle(title), {
+    output: createNoteOutput(columns),
+    format: (line) => line,
   });
 }
 

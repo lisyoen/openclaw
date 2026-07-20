@@ -6,6 +6,15 @@ user-invocable: false
 
 # ACP Harness Router
 
+## Local operating policy for this OpenClaw
+
+For Changyeon's OpenClaw sessions, ACP delegation is **codex-only** unless Changyeon explicitly grants a one-off exception in the current conversation.
+
+- Default and preferred: `sessions_spawn(runtime="acp", agentId="codex")`.
+- Do **not** use `agentId="claude"`, Claude Code ACP, Claude Code headless/print, Opus, or paid `runtime="subagent"` for coding/document/server work.
+- If the user says “클로드큐/ClaudeQ” as a generic work-delegation phrase, still route to codex ACP, not Claude Code.
+- For remote/server projects, include the real target access path (for example rtunnel/VDI/spark4) in the codex task; never complete from local docs alone.
+
 When user intent is "run this in Claude Code/Cursor/Copilot/OpenClaw/OpenCode/Gemini/Qwen/Kiro/Kimi/iFlow/Droid/Kilocode (ACP harness)", do not use subagent runtime or PTY scraping. Route through ACP-aware flows.
 
 Codex is special: plain chat/conversation binding and control should use the native Codex app-server plugin (`/codex bind`, `/codex threads`, `/codex resume`) instead of the default ACP path. Use ACP for Codex only when the user explicitly names ACP/`/acp`/acpx, or when spawning background child sessions through `sessions_spawn` where a native Codex runtime spawn is not available yet.
@@ -209,8 +218,8 @@ ${ACPX_CMD} codex sessions close oc-codex-<conversationId>
 Defaults are:
 
 - `openclaw -> openclaw acp`
-- `claude -> bundled @agentclientprotocol/claude-agent-acp@0.55.0`
-- `codex -> bundled @agentclientprotocol/codex-acp@1.1.2 through OpenClaw's isolated CODEX_HOME wrapper`
+- `claude -> bundled @agentclientprotocol/claude-agent-acp@0.32.0`
+- `codex -> bundled @zed-industries/codex-acp@0.13.0 through OpenClaw's isolated CODEX_HOME wrapper`
 - `copilot -> copilot --acp --stdio`
 - `cursor -> cursor-agent acp`
 - `droid -> droid exec --output-format acp`

@@ -1,9 +1,12 @@
 // Memory Wiki plugin module implements obsidian behavior.
+import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { runExec } from "openclaw/plugin-sdk/process-runtime";
+import { promisify } from "node:util";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
+
+const execFileAsync = promisify(execFile);
 
 type ObsidianCliProbe = {
   available: boolean;
@@ -17,15 +20,8 @@ type ObsidianCliResult = {
   stderr: string;
 };
 
-// User-triggered CLI helpers must not pin the gateway when Obsidian stops responding.
-const OBSIDIAN_CLI_TIMEOUT_MS = 10_000;
-
 type ObsidianCliDeps = {
-  exec?: (
-    command: string,
-    args: string[],
-    options: { logOutput: false; timeoutMs: number },
-  ) => Promise<{ stdout: string; stderr: string }>;
+  exec?: typeof execFileAsync;
   resolveCommand?: (command: string) => Promise<string | null>;
 };
 
@@ -84,16 +80,13 @@ async function runObsidianCli(params: {
   deps?: ObsidianCliDeps;
 }): Promise<ObsidianCliResult> {
   const resolveCommand = params.deps?.resolveCommand ?? resolveCommandOnPath;
+  const exec = params.deps?.exec ?? execFileAsync;
   const probe = await probeObsidianCli({ resolveCommand });
   if (!probe.command) {
     throw new Error("Obsidian CLI is not available on PATH.");
   }
   const argv = [...buildVaultPrefix(params.config), params.subcommand, ...(params.args ?? [])];
-  const exec = params.deps?.exec ?? runExec;
-  const { stdout, stderr } = await exec(probe.command, argv, {
-    logOutput: false,
-    timeoutMs: OBSIDIAN_CLI_TIMEOUT_MS,
-  });
+  const { stdout, stderr } = await exec(probe.command, argv, { encoding: "utf8" });
   return {
     command: probe.command,
     argv,

@@ -45,11 +45,7 @@ export function mergeAllowlist(params: {
 /** Splits lookup results into resolved mappings, unresolved display text, and id additions. */
 export function buildAllowlistResolutionSummary<T extends AllowlistUserResolutionLike>(
   resolvedUsers: T[],
-  opts?: {
-    /** Return null to omit an entry from the logged mapping (e.g. identity lookups). */
-    formatResolved?: (entry: T) => string | null;
-    formatUnresolved?: (entry: T) => string;
-  },
+  opts?: { formatResolved?: (entry: T) => string; formatUnresolved?: (entry: T) => string },
 ): {
   resolvedMap: Map<string, T>;
   mapping: string[];
@@ -58,16 +54,9 @@ export function buildAllowlistResolutionSummary<T extends AllowlistUserResolutio
 } {
   const resolvedMap = new Map(resolvedUsers.map((entry) => [entry.input, entry]));
   const resolvedOk = (entry: T) => Boolean(entry.resolved && entry.id);
-  // An id that "resolves" to itself carries no information; skip it so startup
-  // summaries only mention lookups that actually translated something.
-  const formatResolved =
-    opts?.formatResolved ??
-    ((entry: T) => (entry.id === entry.input ? null : `${entry.input}→${entry.id}`));
+  const formatResolved = opts?.formatResolved ?? ((entry: T) => `${entry.input}→${entry.id}`);
   const formatUnresolved = opts?.formatUnresolved ?? ((entry: T) => entry.input);
-  const mapping = resolvedUsers
-    .filter(resolvedOk)
-    .map(formatResolved)
-    .filter((label): label is string => label !== null);
+  const mapping = resolvedUsers.filter(resolvedOk).map(formatResolved);
   const additions = resolvedUsers
     .filter(resolvedOk)
     .map((entry) => entry.id)
@@ -176,15 +165,14 @@ export function summarizeMapping(
   unresolved: string[],
   runtime: RuntimeEnv,
 ): void {
-  // One log call per line: the console logger only prefixes the first line of
-  // a message with timestamp/subsystem, so a joined multi-line summary leaves
-  // bare continuation lines in operator output.
+  const lines: string[] = [];
   if (mapping.length > 0) {
-    runtime.log?.(`${label} resolved: ${summarizeStringEntries({ entries: mapping, limit: 6 })}`);
+    lines.push(`${label} resolved: ${summarizeStringEntries({ entries: mapping, limit: 6 })}`);
   }
   if (unresolved.length > 0) {
-    runtime.log?.(
-      `${label} unresolved: ${summarizeStringEntries({ entries: unresolved, limit: 6 })}`,
-    );
+    lines.push(`${label} unresolved: ${summarizeStringEntries({ entries: unresolved, limit: 6 })}`);
+  }
+  if (lines.length > 0) {
+    runtime.log?.(lines.join("\n"));
   }
 }

@@ -3,7 +3,6 @@
 // Summarizes GitHub Actions run/job timings for CI analysis.
 import { execFileSync } from "node:child_process";
 import { parsePositiveInt } from "./lib/numeric-options.mjs";
-import { execPlainGh } from "./lib/plain-gh.mjs";
 
 const DEFAULT_GITHUB_REPOSITORY = "openclaw/openclaw";
 const RUN_JOBS_PAGE_SIZE = 20;
@@ -18,21 +17,16 @@ function parseJsonCommand(command, args, options = {}) {
   let lastError;
   for (let attempt = 0; attempt <= GH_JSON_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
-      const stdout =
-        command === "gh"
-          ? execPlainGh(args, {
-              encoding: "utf8",
-              ...options,
-            })
-          : execFileSync(command, args, {
-              encoding: "utf8",
-              ...options,
-            });
-      return JSON.parse(stdout);
+      return JSON.parse(
+        execFileSync(command, args, {
+          encoding: "utf8",
+          ...options,
+        }),
+      );
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
-      const retryable = isRetryableGhJsonErrorMessage(message);
+      const retryable = /HTTP 5\d\d|Server Error|ETIMEDOUT|ECONNRESET|EAI_AGAIN/u.test(message);
       if (!retryable || attempt === GH_JSON_RETRY_DELAYS_MS.length) {
         throw error;
       }
@@ -40,12 +34,6 @@ function parseJsonCommand(command, args, options = {}) {
     }
   }
   throw lastError;
-}
-
-export function isRetryableGhJsonErrorMessage(message) {
-  return /HTTP 5\d\d|HTTP 429|Server Error|secondary rate limit|abuse detection|ETIMEDOUT|ECONNRESET|EAI_AGAIN/iu.test(
-    message,
-  );
 }
 
 function normalizeRunJob(job) {
@@ -124,9 +112,7 @@ function collectRunTimingContext(run) {
         conclusion: job.conclusion ?? "",
         durationSeconds: secondsBetween(started, completed),
         name: job.name,
-        // Actions exposes job start time, but not the split between `needs`
-        // dependency wait and runner queue. Keep the combined delay honest.
-        startDelaySeconds: secondsBetween(created, started),
+        queueSeconds: secondsBetween(created, started),
         started,
         completed,
         status: job.status,
@@ -148,9 +134,9 @@ export function summarizeRunTimings(run, limit = 15) {
     .filter((job) => job.durationSeconds !== null)
     .toSorted((left, right) => right.durationSeconds - left.durationSeconds)
     .slice(0, limit);
-  const byStartDelay = [...jobs]
-    .filter((job) => job.startDelaySeconds !== null && (job.durationSeconds ?? 0) > 5)
-    .toSorted((left, right) => right.startDelaySeconds - left.startDelaySeconds)
+  const byQueue = [...jobs]
+    .filter((job) => job.queueSeconds !== null && (job.durationSeconds ?? 0) > 5)
+    .toSorted((left, right) => right.queueSeconds - left.queueSeconds)
     .slice(0, limit);
   const badJobs = jobs.filter(
     (job) => job.conclusion && !["success", "skipped", "cancelled"].includes(job.conclusion),
@@ -158,7 +144,7 @@ export function summarizeRunTimings(run, limit = 15) {
 
   return {
     byDuration,
-    byStartDelay,
+    byQueue,
     conclusion: run.conclusion ?? "",
     status: run.status ?? "",
     wallSeconds: secondsBetween(created, updated),
@@ -224,7 +210,8 @@ export function selectLatestMainPushCiRun(runs, headSha = null) {
 }
 
 function getLatestCiRunId() {
-  const raw = execPlainGh(
+  const raw = execFileSync(
+    "gh",
     ["run", "list", "--branch", "main", "--workflow", "CI", "--limit", "1", "--json", "databaseId"],
     { encoding: "utf8" },
   );
@@ -247,7 +234,8 @@ function getRemoteMainSha() {
 
 function getLatestMainPushCiRunId() {
   const headSha = getRemoteMainSha();
-  const raw = execPlainGh(
+  const raw = execFileSync(
+    "gh",
     [
       "run",
       "list",
@@ -270,7 +258,8 @@ function getLatestMainPushCiRunId() {
 }
 
 function listRecentSuccessfulCiRuns(limit) {
-  const raw = execPlainGh(
+  const raw = execFileSync(
+    "gh",
     [
       "run",
       "list",
@@ -349,9 +338,7 @@ function summarizeJobs(run) {
       Number.isFinite(firstStart) && Number.isFinite(lastComplete)
         ? secondsBetween(firstStart, lastComplete)
         : null,
-    firstStartDelaySeconds: Number.isFinite(firstStart)
-      ? secondsBetween(created, firstStart)
-      : null,
+    firstQueueSeconds: Number.isFinite(firstStart) ? secondsBetween(created, firstStart) : null,
     jobCount: successfulDurations.length,
     maxDurationSeconds: successfulDurations.length === 0 ? null : Math.max(...successfulDurations),
     p90DurationSeconds: percentile(successfulDurations, 0.9),
@@ -364,7 +351,7 @@ function printSection(title, jobs, metric) {
   console.log(title);
   for (const job of jobs) {
     console.log(
-      `${String(job.name).padEnd(48)} ${formatSeconds(job[metric]).padStart(6)}  start-delay=${formatSeconds(job.startDelaySeconds).padStart(6)}  ${job.status}/${job.conclusion}`,
+      `${String(job.name).padEnd(48)} ${formatSeconds(job[metric]).padStart(6)}  queue=${formatSeconds(job.queueSeconds).padStart(6)}  ${job.status}/${job.conclusion}`,
     );
   }
 }
@@ -429,7 +416,7 @@ function consumePositiveIntFlag(args, index, flag) {
     return null;
   }
   const rawValue = args[index + 1];
-  if (!rawValue || rawValue.startsWith("-")) {
+  if (!rawValue || rawValue.startsWith("--")) {
     throw new Error(`${flag} requires a value`);
   }
   return {
@@ -451,7 +438,7 @@ async function main() {
           run.headSha.slice(0, 10),
           `wall=${formatSeconds(summary.wallSeconds)}`,
           `exec=${formatSeconds(summary.executionWindowSeconds)}`,
-          `firstStartDelay=${formatSeconds(summary.firstStartDelaySeconds)}`,
+          `firstQueue=${formatSeconds(summary.firstQueueSeconds)}`,
           `jobs=${summary.jobCount}`,
           `avg=${formatSeconds(summary.avgDurationSeconds)}`,
           `p90=${formatSeconds(summary.p90DurationSeconds)}`,
@@ -490,11 +477,7 @@ async function main() {
     );
   }
   printSection("\nSlowest jobs", summary.byDuration, "durationSeconds");
-  printSection(
-    "\nLongest start delays (dependencies + runner queue)",
-    summary.byStartDelay,
-    "startDelaySeconds",
-  );
+  printSection("\nLongest queues", summary.byQueue, "queueSeconds");
   if (summary.badJobs.length > 0) {
     console.log("\nFailed jobs");
     for (const job of summary.badJobs) {

@@ -23,7 +23,9 @@ import type { ChannelRuntimeSurface } from "./channel-runtime-surface.types.js";
 import type { ConfigWriteTarget } from "./config-writes.js";
 export type {
   ChannelOutboundAdapter,
+  ChannelOutboundChunkContext,
   ChannelOutboundContext,
+  ChannelOutboundFormattedContext,
   ChannelOutboundPayloadContext,
   ChannelOutboundPayloadHint,
   ChannelOutboundTargetRef,
@@ -45,13 +47,16 @@ import type {
 export type { ChannelPairingAdapter } from "./pairing.types.js";
 
 type ConfiguredBindingRule = AgentBinding;
+export type { ChannelApprovalKind } from "../../infra/approval-types.js";
 
-type ChannelActionAvailabilityState =
+export type ChannelActionAvailabilityState =
   | { kind: "enabled" }
   | { kind: "disabled" }
   | { kind: "unsupported" };
 
-type ChannelApprovalForwardTarget = {
+export type ChannelApprovalInitiatingSurfaceState = ChannelActionAvailabilityState;
+
+export type ChannelApprovalForwardTarget = {
   channel: string;
   to: string;
   accountId?: string | null;
@@ -59,7 +64,7 @@ type ChannelApprovalForwardTarget = {
   source?: "session" | "target";
 };
 
-type ChannelCapabilitiesDisplayTone = "default" | "muted" | "success" | "warn" | "error";
+export type ChannelCapabilitiesDisplayTone = "default" | "muted" | "success" | "warn" | "error";
 
 export type ChannelCapabilitiesDisplayLine = {
   text: string;
@@ -79,12 +84,6 @@ export type ChannelSetupAdapter = {
     accountId?: string;
     input?: ChannelSetupInput;
   }) => string;
-  prepareAccountConfigInput?: (params: {
-    cfg: OpenClawConfig;
-    accountId: string;
-    input: ChannelSetupInput;
-    runtime: RuntimeEnv;
-  }) => Promise<ChannelSetupInput> | ChannelSetupInput;
   resolveBindingAccountId?: (params: {
     cfg: OpenClawConfig;
     agentId: string;
@@ -176,10 +175,10 @@ export type ChannelSecretsAdapter = {
 
 export type ChannelGroupAdapter = {
   resolveRequireMention?: (params: ChannelGroupContext) => boolean | undefined;
-  /** @deprecated Core never consumed this; removed after the next release train. */
   resolveGroupIntroHint?: (params: ChannelGroupContext) => string | undefined;
   resolveToolPolicy?: (params: ChannelGroupContext) => GroupToolPolicyConfig | undefined;
 };
+
 export type ChannelStatusAdapter<ResolvedAccount, Probe = unknown, Audit = unknown> = {
   defaultRuntime?: ChannelAccountSnapshot;
   buildChannelSummary?: ChannelAdapterCallback<
@@ -314,25 +313,25 @@ export type ChannelGatewayContext<ResolvedAccount = unknown> = {
   channelRuntime?: ChannelRuntimeSurface;
 };
 
-type ChannelLogoutResult = {
+export type ChannelLogoutResult = {
   cleared: boolean;
   loggedOut?: boolean;
   [key: string]: unknown;
 };
 
-type ChannelLoginWithQrStartResult = {
+export type ChannelLoginWithQrStartResult = {
   qrDataUrl?: string;
   message: string;
   connected?: boolean;
 };
 
-type ChannelLoginWithQrWaitResult = {
+export type ChannelLoginWithQrWaitResult = {
   connected: boolean;
   message: string;
   qrDataUrl?: string;
 };
 
-type ChannelLogoutContext<ResolvedAccount = unknown> = {
+export type ChannelLogoutContext<ResolvedAccount = unknown> = {
   cfg: OpenClawConfig;
   accountId: string;
   account: ResolvedAccount;
@@ -575,7 +574,7 @@ export type ChannelLifecycleAdapter = {
   }) => ChannelLegacyStateMigrationPlan[] | Promise<ChannelLegacyStateMigrationPlan[]>;
 };
 
-type ChannelApprovalDeliveryAdapter = {
+export type ChannelApprovalDeliveryAdapter = {
   hasConfiguredDmRoute?: (params: { cfg: OpenClawConfig }) => boolean;
   shouldSuppressForwardingFallback?: (params: {
     cfg: OpenClawConfig;
@@ -584,14 +583,21 @@ type ChannelApprovalDeliveryAdapter = {
     request: ExecApprovalRequest | PluginApprovalRequest;
   }) => boolean;
 };
-type ChannelApproveCommandBehavior =
+export type ChannelApproveCommandBehavior =
   | { kind: "allow" }
   | { kind: "ignore" }
   | { kind: "reply"; text: string };
 
-export type { ChannelApprovalNativeAdapter } from "./approval-native.types.js";
+export type {
+  ChannelApprovalNativeAdapter,
+  ChannelApprovalNativeDeliveryCapabilities,
+  ChannelApprovalNativeDeliveryPreference,
+  ChannelApprovalNativeRequest,
+  ChannelApprovalNativeSurface,
+  ChannelApprovalNativeTarget,
+} from "./approval-native.types.js";
 
-type ChannelApprovalRenderAdapter = {
+export type ChannelApprovalRenderAdapter = {
   exec?: {
     buildPendingPayload?: (params: {
       cfg: OpenClawConfig;
@@ -626,11 +632,6 @@ export type ChannelApprovalAdapter = {
   render?: ChannelApprovalRenderAdapter;
   native?: ChannelApprovalNativeAdapter;
   describeExecApprovalSetup?: (params: {
-    channel: string;
-    channelLabel: string;
-    accountId?: string;
-  }) => string | null | undefined;
-  describePluginApprovalSetup?: (params: {
     channel: string;
     channelLabel: string;
     accountId?: string;
@@ -766,7 +767,6 @@ export type ChannelConfiguredBindingProvider = {
 
 export type ChannelConversationBindingSupport = {
   supportsCurrentConversationBinding?: boolean;
-  isCurrentConversationBindingSupported?: (params: { accountId: string }) => boolean;
   /**
    * Preferred placement when a command is started from a top-level conversation
    * without an existing native thread id.
@@ -878,4 +878,3 @@ export type ChannelSecurityAdapter<ResolvedAccount = unknown> = {
         }>
   >;
 };
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

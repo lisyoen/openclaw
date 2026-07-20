@@ -46,6 +46,10 @@ type QQBotPendingPayload = {
   keyboard: InlineKeyboard;
 };
 
+function isExecRequest(request: ApprovalRequest): request is ExecApprovalRequest {
+  return "expiresAtMs" in request;
+}
+
 function resolveQQTarget(request: ApprovalRequest): { type: ChatScope; id: string } | null {
   const sessionConversation = resolveApprovalRequestSessionConversation({
     request: request as never,
@@ -125,18 +129,17 @@ const qqbotApprovalRuntimeSpec: ChannelApprovalNativeRuntimeSpec<
   },
 
   presentation: {
-    buildPendingPayload: ({ view, nowMs }) => {
-      const text =
-        view.approvalKind === "exec"
-          ? buildExecApprovalText(view, nowMs)
-          : buildPluginApprovalText(view, nowMs);
+    buildPendingPayload: ({ request, view }) => {
+      const req = request as ApprovalRequest;
+      const text = isExecRequest(req) ? buildExecApprovalText(req) : buildPluginApprovalText(req);
       const keyboard = buildApprovalKeyboard(
-        view.approvalId,
-        view.approvalKind,
+        req.id,
         view.actions.map((action) => action.decision),
       );
       getBridgeLogger().debug?.(
-        `[qqbot:approval-runtime] buildPendingPayload requestId=${view.approvalId} kind=${view.approvalKind}`,
+        `[qqbot:approval-runtime] buildPendingPayload requestId=${req.id} kind=${
+          isExecRequest(req) ? "exec" : "plugin"
+        }`,
       );
       return { text, keyboard };
     },

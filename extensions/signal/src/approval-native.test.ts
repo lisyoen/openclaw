@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   shouldSuppressLocalSignalExecApprovalPrompt,
   signalApprovalCapability,
+  signalNativeApprovalAdapter,
 } from "./approval-native.js";
 
 type SignalConfig = NonNullable<NonNullable<OpenClawConfig["channels"]>["signal"]>;
@@ -72,7 +73,6 @@ function buildPluginRequest(
 
 function nativeShouldHandle(params: {
   cfg: OpenClawConfig;
-  approvalKind: "exec" | "plugin";
   request: ExecApprovalRequest | PluginApprovalRequest;
   accountId?: string | null;
 }) {
@@ -80,7 +80,6 @@ function nativeShouldHandle(params: {
     cfg: params.cfg,
     accountId: params.accountId ?? "default",
     context: {},
-    approvalKind: params.approvalKind,
     request: params.request,
   });
 }
@@ -113,7 +112,7 @@ describe("signal approval capability", () => {
     const pluginRequest = buildPluginRequest("+15551230000");
 
     expect(
-      signalApprovalCapability?.getActionAvailabilityState?.({
+      signalNativeApprovalAdapter.auth?.getActionAvailabilityState?.({
         cfg,
         accountId: "default",
         action: "approve",
@@ -121,7 +120,7 @@ describe("signal approval capability", () => {
       }),
     ).toEqual({ kind: "disabled" });
     expect(
-      signalApprovalCapability?.getActionAvailabilityState?.({
+      signalNativeApprovalAdapter.auth?.getActionAvailabilityState?.({
         cfg,
         accountId: "default",
         action: "approve",
@@ -136,8 +135,8 @@ describe("signal approval capability", () => {
         request: execRequest,
       }).enabled,
     ).toBe(false);
-    expect(nativeShouldHandle({ cfg, approvalKind: "exec", request: execRequest })).toBe(false);
-    expect(nativeShouldHandle({ cfg, approvalKind: "plugin", request: pluginRequest })).toBe(false);
+    expect(nativeShouldHandle({ cfg, request: execRequest })).toBe(false);
+    expect(nativeShouldHandle({ cfg, request: pluginRequest })).toBe(false);
   });
 
   it("allows session-mode exec delivery for matching Signal origins", () => {
@@ -158,7 +157,7 @@ describe("signal approval capability", () => {
       supportsApproverDmSurface: false,
       notifyOriginWhenDmOnly: true,
     });
-    expect(nativeShouldHandle({ cfg, approvalKind: "exec", request })).toBe(true);
+    expect(nativeShouldHandle({ cfg, request })).toBe(true);
   });
 
   it("requires explicit approvers before delivering group-origin approvals", () => {
@@ -192,26 +191,14 @@ describe("signal approval capability", () => {
     const execOnly = buildConfig({ approvals: { exec: { enabled: true } } });
     const pluginOnly = buildConfig({ approvals: { plugin: { enabled: true } } });
 
+    expect(nativeShouldHandle({ cfg: execOnly, request: buildPluginRequest("+15551230000") })).toBe(
+      false,
+    );
+    expect(nativeShouldHandle({ cfg: pluginOnly, request: buildExecRequest("+15551230000") })).toBe(
+      false,
+    );
     expect(
-      nativeShouldHandle({
-        cfg: execOnly,
-        approvalKind: "plugin",
-        request: buildPluginRequest("+15551230000"),
-      }),
-    ).toBe(false);
-    expect(
-      nativeShouldHandle({
-        cfg: pluginOnly,
-        approvalKind: "exec",
-        request: buildExecRequest("+15551230000"),
-      }),
-    ).toBe(false);
-    expect(
-      nativeShouldHandle({
-        cfg: pluginOnly,
-        approvalKind: "plugin",
-        request: buildPluginRequest("+15551230000"),
-      }),
+      nativeShouldHandle({ cfg: pluginOnly, request: buildPluginRequest("+15551230000") }),
     ).toBe(true);
   });
 
@@ -223,7 +210,7 @@ describe("signal approval capability", () => {
       sessionKey: "agent:main:slack:channel:c123",
     });
 
-    expect(nativeShouldHandle({ cfg, approvalKind: "exec", request })).toBe(false);
+    expect(nativeShouldHandle({ cfg, request })).toBe(false);
     expect(
       signalApprovalCapability.native?.describeDeliveryCapabilities({
         cfg,
@@ -248,7 +235,7 @@ describe("signal approval capability", () => {
     const request = buildExecRequest("+15551230000");
 
     expect(
-      signalApprovalCapability?.getActionAvailabilityState?.({
+      signalNativeApprovalAdapter.auth?.getActionAvailabilityState?.({
         cfg,
         accountId: "default",
         action: "approve",
@@ -262,7 +249,7 @@ describe("signal approval capability", () => {
         context: {},
       }),
     ).toBe(false);
-    expect(nativeShouldHandle({ cfg, approvalKind: "exec", request })).toBe(false);
+    expect(nativeShouldHandle({ cfg, request })).toBe(false);
     expect(
       signalApprovalCapability.native?.describeDeliveryCapabilities({
         cfg,

@@ -12,7 +12,6 @@ import {
   buildPluginToolGroups,
   expandPolicyWithPluginGroups,
   normalizeToolName,
-  type DeclaredToolAllowlistContext,
   type ToolPolicyLike,
 } from "./tool-policy.js";
 
@@ -43,14 +42,6 @@ export type ToolPolicyPipelineStep = {
   suppressUnavailableCoreToolWarning?: boolean;
   suppressUnavailableCoreToolWarningAllowlist?: string[];
   unavailableCoreToolReason?: string;
-};
-
-/** One policy application, exposed for diagnostics that need exclusion provenance. */
-export type ToolPolicyFilterEvent = {
-  step: ToolPolicyPipelineStep;
-  policy: ToolPolicyLike;
-  before: readonly AnyAgentTool[];
-  after: readonly AnyAgentTool[];
 };
 
 /** Builds the default profile, provider, agent, group, and sender policy layers. */
@@ -138,8 +129,6 @@ export function applyToolPolicyPipeline(params: {
   warn: (message: string) => void;
   steps: ToolPolicyPipelineStep[];
   auditLogLevel?: ToolPolicyAuditLogLevel;
-  declaredToolAllowlist?: DeclaredToolAllowlistContext;
-  onFilter?: (event: ToolPolicyFilterEvent) => void;
 }): AnyAgentTool[] {
   const coreToolNames = new Set(
     params.tools
@@ -162,12 +151,7 @@ export function applyToolPolicyPipeline(params: {
     let policy: ToolPolicyLike | undefined = step.policy;
     if (step.stripPluginOnlyAllowlist) {
       // Plugin-only allowlists are valid for deferred tools; warn only for entries that cannot match.
-      const resolved = analyzeAllowlistByToolType(
-        policy,
-        pluginGroups,
-        coreToolNames,
-        params.declaredToolAllowlist,
-      );
+      const resolved = analyzeAllowlistByToolType(policy, pluginGroups, coreToolNames);
       if (resolved.unknownAllowlist.length > 0) {
         const unavailableCoreWarningAllowlist = new Set(
           (step.suppressUnavailableCoreToolWarningAllowlist ?? []).map((entry) =>
@@ -212,7 +196,6 @@ export function applyToolPolicyPipeline(params: {
     }
     const before = filtered;
     filtered = filterToolsByPolicy(before, expanded);
-    params.onFilter?.({ step, policy: expanded, before, after: filtered });
     auditToolPolicyFilter({
       stepLabel: step.label,
       policy: expanded,
@@ -257,13 +240,7 @@ function describeUnknownAllowlistSuffix(params: {
 }
 
 /** Clears process-local warning dedupe state between tests. */
-function resetToolPolicyWarningCacheForTest(): void {
+export function resetToolPolicyWarningCacheForTest(): void {
   seenToolPolicyWarnings.clear();
   toolPolicyWarningOrder.length = 0;
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for("openclaw.toolPolicyWarningCacheTestApi")
-  ] = { resetToolPolicyWarningCacheForTest };
 }

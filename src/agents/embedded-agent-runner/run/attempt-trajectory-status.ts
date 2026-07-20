@@ -6,19 +6,19 @@ import {
   type AcceptedSessionSpawn,
 } from "../../accepted-session-spawn.js";
 
-type AttemptTrajectoryTerminalStatus = "success" | "error" | "interrupted";
+export type AttemptTrajectoryTerminalStatus = "success" | "error" | "interrupted";
 
 /** Terminal error marker for runs that produced no user-visible delivery or durable progress. */
-const NON_DELIVERABLE_TERMINAL_TURN_REASON = "non_deliverable_terminal_turn";
+export const NON_DELIVERABLE_TERMINAL_TURN_REASON = "non_deliverable_terminal_turn";
 
 /** Normalized terminal status recorded for an embedded run attempt trajectory. */
-type AttemptTrajectoryTerminal = {
+export type AttemptTrajectoryTerminal = {
   status: AttemptTrajectoryTerminalStatus;
   terminalError?: typeof NON_DELIVERABLE_TERMINAL_TURN_REASON;
 };
 
 /** Signals that decide whether a completed run attempt has deliverable output. */
-type ResolveAttemptTrajectoryTerminalParams = {
+export type ResolveAttemptTrajectoryTerminalParams = {
   promptError?: unknown;
   aborted: boolean;
   externalAbort: boolean;
@@ -46,7 +46,6 @@ type ResolveAttemptTrajectoryTerminalParams = {
   silentExpected?: boolean;
   emptyAssistantReplyIsSilent?: boolean;
   lastAssistantStopReason?: string;
-  hasTerminalOutput?: boolean;
 };
 
 /**
@@ -119,6 +118,7 @@ export function resolveAttemptTrajectoryTerminal(
     params.didSendDeterministicApprovalPrompt ||
     hasCommittedMessagingDeliveryEvidence(params) ||
     hasAcceptedSessionSpawn(params.acceptedSessionSpawns) ||
+    params.synthesizedPayloadCount > 0 ||
     params.heartbeatToolResponse !== undefined ||
     (params.clientToolCalls?.length ?? 0) > 0 ||
     params.yieldDetected === true ||
@@ -131,21 +131,9 @@ export function resolveAttemptTrajectoryTerminal(
       terminalError: NON_DELIVERABLE_TERMINAL_TURN_REASON,
     };
   }
-  if (
-    params.lastAssistantStopReason === "length" &&
-    !params.hasTerminalOutput &&
-    !hasExplicitTerminalDelivery
-  ) {
-    return {
-      status: "error",
-      terminalError: NON_DELIVERABLE_TERMINAL_TURN_REASON,
-    };
-  }
 
   const hasDeliverableOrProgress =
     hasExplicitTerminalDelivery ||
-    params.hasTerminalOutput ||
-    params.synthesizedPayloadCount > 0 ||
     hasNonEmptyAssistantText(params.assistantTexts) ||
     params.successfulCronAdds > 0;
 

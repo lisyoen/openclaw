@@ -3,9 +3,7 @@ package ai.openclaw.app.node
 import ai.openclaw.app.BuildConfig
 import ai.openclaw.app.SensitiveFeatureConfig
 import ai.openclaw.app.gateway.GatewaySession
-import ai.openclaw.app.hasPhotoReadPermission
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
@@ -65,7 +63,7 @@ private class AndroidDeviceAppSource(
 
     val appInfos =
       if (includeNonLaunchable) {
-        visibleInstalledApplications(packageManager)
+        packageManager.getInstalledApplications(PackageManager.MATCH_ALL)
       } else {
         launchablePackages.mapNotNull { packageName ->
           runCatching { packageManager.getApplicationInfo(packageName, 0) }.getOrNull()
@@ -91,13 +89,6 @@ private class AndroidDeviceAppSource(
       }.distinctBy { it.packageName }
       .sortedWith(compareBy<DeviceAppEntry> { it.label.lowercase() }.thenBy { it.packageName })
       .toList()
-  }
-
-  @SuppressLint("QueryPermissionsNeeded")
-  private fun visibleInstalledApplications(packageManager: PackageManager): List<ApplicationInfo> {
-    // Android package visibility intentionally bounds this result to packages the app can see.
-    // OpenClaw should not request QUERY_ALL_PACKAGES for this optional device-context surface.
-    return packageManager.getInstalledApplications(PackageManager.MATCH_ALL)
   }
 }
 
@@ -323,8 +314,11 @@ class DeviceHandler private constructor(
     val photosGranted =
       if (!photosEnabled) {
         false
+      } else if (Build.VERSION.SDK_INT >= 33) {
+        // Android 13 split media permissions; earlier versions use external storage.
+        hasPermission(Manifest.permission.READ_MEDIA_IMAGES)
       } else {
-        hasPhotoReadPermission(appContext)
+        hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
       }
     val motionGranted = hasPermission(Manifest.permission.ACTIVITY_RECOGNITION)
     val notificationsGranted =
@@ -426,18 +420,14 @@ class DeviceHandler private constructor(
           put(
             "contacts",
             permissionStateJson(
-              granted =
-                hasPermission(Manifest.permission.READ_CONTACTS) &&
-                  hasPermission(Manifest.permission.WRITE_CONTACTS),
+              granted = hasPermission(Manifest.permission.READ_CONTACTS),
               promptableWhenDenied = true,
             ),
           )
           put(
             "calendar",
             permissionStateJson(
-              granted =
-                hasPermission(Manifest.permission.READ_CALENDAR) &&
-                  hasPermission(Manifest.permission.WRITE_CALENDAR),
+              granted = hasPermission(Manifest.permission.READ_CALENDAR),
               promptableWhenDenied = true,
             ),
           )

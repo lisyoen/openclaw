@@ -1,7 +1,6 @@
 // Provider operation retry helpers run retryable provider operations with backoff.
 import { sleepWithAbort } from "../infra/backoff.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { hasRetryableConnectionErrorCode } from "../infra/retryable-network-errors.js";
 
 export type ProviderOperationRetryStage = "read" | "poll" | "download" | "create";
 
@@ -29,7 +28,7 @@ export type TransientProviderRetryOptions = {
 
 export type TransientProviderRetryConfig = boolean | TransientProviderRetryOptions;
 
-const DEFAULT_TRANSIENT_PROVIDER_RETRY_OPTIONS = {
+export const DEFAULT_TRANSIENT_PROVIDER_RETRY_OPTIONS = {
   attempts: 2,
   baseDelayMs: 250,
   maxDelayMs: 1_000,
@@ -47,7 +46,7 @@ export function resolveTransientProviderRetryOptions(
   return options;
 }
 
-function defaultTransientProviderRetryForStage(
+export function defaultTransientProviderRetryForStage(
   stage: ProviderOperationRetryStage,
 ): TransientProviderRetryConfig | undefined {
   return stage === "create" ? undefined : true;
@@ -104,20 +103,13 @@ function readErrorCause(error: unknown): unknown {
   return (error as { cause?: unknown }).cause;
 }
 
-// Provider reads get one bounded retry for negative DNS responses. Gateway
-// waits exclude ENOTFOUND because their configured gateway address needs repair.
-const PROVIDER_RETRYABLE_DNS_ERROR_CODE_RE = /\bENOTFOUND\b/i;
-
-function hasProviderRetryableNetworkCode(value: string): boolean {
-  return hasRetryableConnectionErrorCode(value) || PROVIDER_RETRYABLE_DNS_ERROR_CODE_RE.test(value);
-}
-
 function hasTransientNetworkSignal(error: unknown, message: string): boolean {
-  if (hasProviderRetryableNetworkCode(message)) {
+  const transientCodes = /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN)\b/i;
+  if (transientCodes.test(message)) {
     return true;
   }
   const code = readErrorCode(error);
-  if (code && hasProviderRetryableNetworkCode(code)) {
+  if (code && transientCodes.test(code)) {
     return true;
   }
   const cause = readErrorCause(error);
@@ -125,11 +117,11 @@ function hasTransientNetworkSignal(error: unknown, message: string): boolean {
     return false;
   }
   const causeCode = readErrorCode(cause);
-  if (causeCode && hasProviderRetryableNetworkCode(causeCode)) {
+  if (causeCode && transientCodes.test(causeCode)) {
     return true;
   }
   const causeMessage = formatErrorMessage(cause);
-  return hasProviderRetryableNetworkCode(causeMessage);
+  return transientCodes.test(causeMessage);
 }
 
 function hasTimeoutSignal(error: unknown, message: string): boolean {
@@ -151,19 +143,10 @@ function hasTimeoutSignal(error: unknown, message: string): boolean {
   );
 }
 
-/**
- * Canonical transient HTTP status predicate for provider operations.
- * Shared by structured-error classification and the guarded POST gate so
- * these paths cannot drift.
- */
-export function isTransientProviderHttpStatus(status: number): boolean {
-  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-}
-
-function isTransientProviderOperationError(error: unknown, message: string): boolean {
+export function isTransientProviderOperationError(error: unknown, message: string): boolean {
   const status = readErrorStatus(error);
   if (status !== undefined) {
-    return isTransientProviderHttpStatus(status);
+    return status === 500 || status === 502 || status === 503 || status === 504;
   }
   if (
     /\b(?:HTTP\s*)?(?:400|401|403|404)\b/i.test(message) ||
@@ -173,7 +156,7 @@ function isTransientProviderOperationError(error: unknown, message: string): boo
   ) {
     return false;
   }
-  if (/\b(?:HTTP\s*)?(?:429|500|502|503|504)\b/i.test(message)) {
+  if (/\b(?:HTTP\s*)?(?:500|502|503|504)\b/i.test(message)) {
     return true;
   }
   if (hasTransientNetworkSignal(error, message)) {

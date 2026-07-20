@@ -158,14 +158,14 @@ function collectPatternCandidates(params: {
 /**
  * Returns canonical config/auth-profile path patterns that do not support SecretRef values.
  */
-function listUnsupportedSecretRefSurfacePatterns(): string[] {
+export function getUnsupportedSecretRefSurfacePatterns(): string[] {
   return [...unsupportedSecretRefSurfacePatterns];
 }
 
 /**
  * Concrete unsupported config value discovered from an openclaw.json-like object.
  */
-type UnsupportedSecretRefConfigCandidate = {
+export type UnsupportedSecretRefConfigCandidate = {
   path: string;
   value: unknown;
 };
@@ -173,7 +173,7 @@ type UnsupportedSecretRefConfigCandidate = {
 /**
  * Finds configured openclaw.json values whose surfaces currently reject SecretRef objects.
  */
-function collectUnsupportedSecretRefConfigCandidates(
+export function collectUnsupportedSecretRefConfigCandidates(
   raw: unknown,
 ): UnsupportedSecretRefConfigCandidate[] {
   if (!isRecord(raw)) {
@@ -192,8 +192,3 @@ function collectUnsupportedSecretRefConfigCandidates(
   }
   return candidates;
 }
-
-export const unsupportedSecretRefSurfacePolicy = {
-  listPatterns: listUnsupportedSecretRefSurfacePatterns,
-  collectConfigCandidates: collectUnsupportedSecretRefConfigCandidates,
-};

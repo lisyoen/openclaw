@@ -2,6 +2,7 @@
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TemplateContext } from "../templating.js";
+import type { AgentRunLoopResult } from "./agent-runner-execution.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import { createMockFollowupRun, createMockTypingController } from "./test-helpers.js";
@@ -61,20 +62,13 @@ vi.mock("../../media/outbound-attachment.js", () => ({
     resolveOutboundAttachmentFromUrlMock(...args),
 }));
 
-vi.mock("./agent-runner-failure-reply.js", () => ({
-  buildEmptyInteractiveReplyPayload: vi.fn(() => undefined),
-  buildKnownAgentRunFailureReplyPayload: vi.fn(() => undefined),
-}));
-
 vi.mock("./agent-runner-execution.js", () => ({
+  buildKnownAgentRunFailureReplyPayload: vi.fn(() => undefined),
   runAgentTurnWithFallback: (...args: unknown[]) => runAgentTurnWithFallbackMock(...args),
 }));
 
 vi.mock("./agent-runner-memory.js", () => ({
-  runMemoryFlushIfNeeded: async ({ sessionEntry }: { sessionEntry?: unknown }) => ({
-    sessionEntry,
-    outcome: "skipped",
-  }),
+  runMemoryFlushIfNeeded: async ({ sessionEntry }: { sessionEntry?: unknown }) => sessionEntry,
   runPreflightCompactionIfNeeded: async ({ sessionEntry }: { sessionEntry?: unknown }) =>
     sessionEntry,
 }));
@@ -105,18 +99,10 @@ vi.mock("./session-run-accounting.js", () => ({
 
 const { runReplyAgent } = await import("./agent-runner.js");
 
-type AgentRunLoopResult = Awaited<
-  ReturnType<typeof import("./agent-runner-execution.js").runAgentTurnWithFallback>
->;
-
 function createReplyOperation(): ReplyOperation {
   return {
     result: undefined,
-    startedAtMs: Date.now(),
-    lastActivityAtMs: Date.now(),
-    recordActivity: vi.fn(),
     setPhase: vi.fn(),
-    freezeAbort: vi.fn(),
     fail: vi.fn(),
     complete: vi.fn(),
     completeThen: vi.fn(),

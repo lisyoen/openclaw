@@ -9,7 +9,6 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -318,8 +317,6 @@ class MotionHandler private constructor(
       )
     } catch (err: IllegalArgumentException) {
       GatewaySession.InvokeResult.error(code = "MOTION_UNAVAILABLE", message = err.message ?: "MOTION_UNAVAILABLE")
-    } catch (err: CancellationException) {
-      throw err
     } catch (err: Throwable) {
       GatewaySession.InvokeResult.error(
         code = "MOTION_UNAVAILABLE",
@@ -356,8 +353,6 @@ class MotionHandler private constructor(
       )
     } catch (err: IllegalArgumentException) {
       GatewaySession.InvokeResult.error(code = "MOTION_UNAVAILABLE", message = err.message ?: "MOTION_UNAVAILABLE")
-    } catch (err: CancellationException) {
-      throw err
     } catch (err: Throwable) {
       GatewaySession.InvokeResult.error(
         code = "MOTION_UNAVAILABLE",

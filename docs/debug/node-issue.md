@@ -1,84 +1,88 @@
 ---
-summary: Historical Node + tsx "__name is not a function" crash and its cause
+summary: Node + tsx "__name is not a function" crash notes and workarounds
 read_when:
-  - Investigating a tsx/esbuild loader crash that mentions a missing __name helper
+  - Debugging Node-only dev scripts or watch mode failures
+  - Investigating tsx/esbuild loader crashes in OpenClaw
 title: "Node + tsx crash"
 ---
 
 # Node + tsx "\_\_name is not a function" crash
 
-## Status
+## Summary
 
-Resolved. This crash does not reproduce on the current `tsx` version pinned in
-`package.json` (`4.22.3`) or on current Node releases. Kept here in case a
-future `tsx`/esbuild upgrade reintroduces it.
+Running OpenClaw via Node with `tsx` fails at startup with:
 
-## Original symptom
-
-Running OpenClaw dev scripts through `tsx` failed at startup with:
-
-```text
+```
 [openclaw] Failed to start CLI: TypeError: __name is not a function
-    at createSubsystemLogger (src/logging/subsystem.ts)
-    at <caller> (src/agents/auth-profiles/constants.ts)
+    at createSubsystemLogger (.../src/logging/subsystem.ts:203:25)
+    at .../src/agents/auth-profiles/constants.ts:25:20
 ```
 
-Line numbers are omitted; both files have changed since the original crash
-and the specific lines no longer match.
+This began after switching dev scripts from Bun to `tsx` (commit `2871657e`, 2026-01-06). The same runtime path worked with Bun.
 
-This appeared after dev scripts switched from Bun to `tsx` (`2871657e`,
-2026-01-06) to make Bun optional. The equivalent Bun-based path did not crash.
-It was originally observed on Node v25.3.0 on macOS; other platforms that run
-Node 25 were considered likely to be affected too.
+## Environment
 
-## Cause
+- Node: v25.x (observed on v25.3.0)
+- tsx: 4.21.0
+- OS: macOS (repro also likely on other platforms that run Node 25)
 
-`tsx` transforms TS/ESM through esbuild with `keepNames: true` hardcoded in
-its transform options. That setting makes esbuild wrap named function/class
-declarations in a call to a `__name` helper so `fn.name` survives minification
-and bundling. The crash means the helper was missing or shadowed at the call
-site for that module in the affected `tsx`/Node combination, so `__name(...)`
-threw instead of returning the wrapped value.
-
-## Current repro check
+## Repro (Node-only)
 
 ```bash
+# in repo root
 node --version
 pnpm install
 node --import tsx src/entry.ts status
 ```
 
-Minimal isolated repro (loads only the module from the original stack trace):
+## Minimal repro in repo
 
 ```bash
 node --import tsx scripts/repro/tsx-name-repro.ts
 ```
 
-Both commands currently exit cleanly. If either throws `__name is not a
-function` again, capture the exact Node version, `tsx` version
-(`node_modules/tsx/package.json`), and full stack trace before filing upstream.
+## Node version check
 
-## Workarounds (if the crash returns)
+- Node 25.3.0: fails
+- Node 22.22.0 (Homebrew `node@22`): fails
+- Node 24: not installed here yet; needs verification
 
-- Run dev scripts with Bun instead of `node --import tsx`.
-- Run `pnpm tsgo` for type checking, then run the built output instead of the
-  source through `tsx`:
+## Notes / hypothesis
+
+- `tsx` uses esbuild to transform TS/ESM. esbuild's `keepNames` emits a `__name` helper and wraps function definitions with `__name(...)`.
+- The crash indicates `__name` exists but is not a function at runtime, which implies the helper is missing or overwritten for this module in the Node 25 loader path.
+- Similar `__name` helper issues have been reported in other esbuild consumers when the helper is missing or rewritten.
+
+## Regression history
+
+- `2871657e` (2026-01-06): scripts changed from Bun to tsx to make Bun optional.
+- Before that (Bun path), `openclaw status` and `gateway:watch` worked.
+
+## Workarounds
+
+- Use Bun for dev scripts (current temporary revert).
+- Use `tsgo` for repo type checking, then run the built output:
 
   ```bash
   pnpm tsgo
   node openclaw.mjs status
   ```
 
-- Try a different `tsx` version (`pnpm add -D tsx@<version>` is a dependency
-  change and needs approval per repo policy) to bisect whether the esbuild
-  version it bundles reintroduced the bug.
-- Test on a different Node major/minor to see whether the failure is version
-  specific.
+- Historical note: `tsc` was used here while debugging this Node/tsx issue, but repo type-check lanes now use `tsgo`.
+- Disable esbuild keepNames in the TS loader if possible (prevents `__name` helper insertion); tsx does not currently expose this.
+- Test Node LTS (22/24) with `tsx` to see if the issue is Node 25–specific.
 
 ## References
 
+- [https://opennext.js.org/cloudflare/howtos/keep_names](https://opennext.js.org/cloudflare/howtos/keep_names)
 - [https://esbuild.github.io/api/#keep-names](https://esbuild.github.io/api/#keep-names)
 - [https://github.com/evanw/esbuild/issues/1031](https://github.com/evanw/esbuild/issues/1031)
+
+## Next steps
+
+- Repro on Node 22/24 to confirm Node 25 regression.
+- Test `tsx` nightly or pin to earlier version if a known regression exists.
+- If reproduces on Node LTS, file a minimal repro upstream with the `__name` stack trace.
 
 ## Related
 

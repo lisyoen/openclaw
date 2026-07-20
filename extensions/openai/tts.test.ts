@@ -16,6 +16,7 @@ import {
   OPENAI_TTS_MODELS,
   OPENAI_TTS_VOICES,
   openaiTTS,
+  resolveOpenAITtsInstructions,
 } from "./tts.js";
 
 vi.mock("openclaw/plugin-sdk/ssrf-runtime", () => ({
@@ -117,6 +118,32 @@ describe("openai tts", () => {
         expect(isAccepted()).toBe(false);
       },
     );
+  });
+
+  describe("resolveOpenAITtsInstructions", () => {
+    it("keeps instructions only for gpt-4o-mini-tts variants", () => {
+      expect(resolveOpenAITtsInstructions("gpt-4o-mini-tts", " Speak warmly ")).toBe(
+        "Speak warmly",
+      );
+      expect(resolveOpenAITtsInstructions("gpt-4o-mini-tts-2025-12-15", "Speak warmly")).toBe(
+        "Speak warmly",
+      );
+      expect(resolveOpenAITtsInstructions("tts-1", "Speak warmly")).toBeUndefined();
+      expect(resolveOpenAITtsInstructions("tts-1-hd", "Speak warmly")).toBeUndefined();
+      expect(resolveOpenAITtsInstructions("gpt-4o-mini-tts", "   ")).toBeUndefined();
+    });
+
+    it("preserves instructions for custom OpenAI-compatible TTS endpoints", () => {
+      expect(
+        resolveOpenAITtsInstructions("tts-1", " Speak warmly ", "https://tts.example.com/v1"),
+      ).toBe("Speak warmly");
+      expect(
+        resolveOpenAITtsInstructions("tts-1", " Speak warmly ", "https://api.openai.com/v1/"),
+      ).toBeUndefined();
+      expect(
+        resolveOpenAITtsInstructions("tts-1", "   ", "https://tts.example.com/v1"),
+      ).toBeUndefined();
+    });
   });
 
   describe("openaiTTS diagnostics", () => {
@@ -351,7 +378,8 @@ describe("openai tts", () => {
       const tempDir = mkdtempSync(path.join(os.tmpdir(), "openai-tts-capture-"));
       proxyReset.captureProxyEnv();
       process.env.OPENCLAW_DEBUG_PROXY_ENABLED = "1";
-      process.env.OPENCLAW_STATE_DIR = tempDir;
+      process.env.OPENCLAW_DEBUG_PROXY_DB_PATH = path.join(tempDir, "capture.sqlite");
+      process.env.OPENCLAW_DEBUG_PROXY_BLOB_DIR = path.join(tempDir, "blobs");
       process.env.OPENCLAW_DEBUG_PROXY_SESSION_ID = "tts-session";
 
       globalThis.fetch = vi
@@ -360,13 +388,18 @@ describe("openai tts", () => {
           new Response(Buffer.from("audio-bytes"), { status: 200 }),
         ) as unknown as typeof globalThis.fetch;
 
-      const store = getDebugProxyCaptureStore();
+      const store = getDebugProxyCaptureStore(
+        process.env.OPENCLAW_DEBUG_PROXY_DB_PATH,
+        process.env.OPENCLAW_DEBUG_PROXY_BLOB_DIR,
+      );
       store.upsertSession({
         id: "tts-session",
         startedAt: Date.now(),
         mode: "test",
         sourceScope: "openclaw",
         sourceProcess: "openclaw",
+        dbPath: process.env.OPENCLAW_DEBUG_PROXY_DB_PATH,
+        blobDir: process.env.OPENCLAW_DEBUG_PROXY_BLOB_DIR,
       });
 
       await openaiTTS({
@@ -394,7 +427,8 @@ describe("openai tts", () => {
       const tempDir = mkdtempSync(path.join(os.tmpdir(), "openai-tts-patched-capture-"));
       proxyReset.captureProxyEnv();
       process.env.OPENCLAW_DEBUG_PROXY_ENABLED = "1";
-      process.env.OPENCLAW_STATE_DIR = tempDir;
+      process.env.OPENCLAW_DEBUG_PROXY_DB_PATH = path.join(tempDir, "capture.sqlite");
+      process.env.OPENCLAW_DEBUG_PROXY_BLOB_DIR = path.join(tempDir, "blobs");
       process.env.OPENCLAW_DEBUG_PROXY_SESSION_ID = "tts-patched-session";
 
       globalThis.fetch = vi
@@ -415,7 +449,10 @@ describe("openai tts", () => {
         timeoutMs: 5_000,
       });
 
-      const store = getDebugProxyCaptureStore();
+      const store = getDebugProxyCaptureStore(
+        process.env.OPENCLAW_DEBUG_PROXY_DB_PATH,
+        process.env.OPENCLAW_DEBUG_PROXY_BLOB_DIR,
+      );
       let events: Array<Record<string, unknown>> = [];
       try {
         await vi.waitFor(() => {

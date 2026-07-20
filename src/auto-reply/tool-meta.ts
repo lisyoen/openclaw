@@ -1,12 +1,24 @@
-import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import { resolveToolDisplay } from "../agents/tool-display.js";
 /** Formats compact tool metadata labels for auto-reply progress/status messages. */
-import { formatInlineCodeSpan } from "../shared/markdown-code.js";
-import { shortenHomeInString } from "../utils.js";
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { formatToolSummary, resolveToolDisplay } from "../agents/tool-display.js";
+import { shortenHomeInString, shortenHomePath } from "../utils.js";
 
 type ToolAggregateOptions = {
   markdown?: boolean;
 };
+
+/** Shortens a filesystem path for display. */
+export function shortenPath(p: string): string {
+  return shortenHomePath(p);
+}
+
+/** Shortens user-home paths inside arbitrary tool metadata. */
+export function shortenMeta(meta: string): string {
+  if (!meta) {
+    return meta;
+  }
+  return shortenHomeInString(meta);
+}
 
 /** Formats one grouped tool-progress label from a tool name and metadata entries. */
 export function formatToolAggregate(
@@ -14,7 +26,7 @@ export function formatToolAggregate(
   metas?: string[],
   options?: ToolAggregateOptions,
 ): string {
-  const filtered = (metas ?? []).filter(Boolean).map(shortenHomeInString);
+  const filtered = (metas ?? []).filter(Boolean).map(shortenMeta);
   const display = resolveToolDisplay({ name: toolName });
   const normalizedToolName = normalizeLowercaseStringOrEmpty(toolName);
   const compactCommandSummary =
@@ -64,6 +76,13 @@ export function formatToolAggregate(
   const meta = allSegments.join("; ");
   const formattedMeta = formatMetaForDisplay(toolName, meta, options?.markdown);
   return compactCommandSummary ? `${prefix} ${formattedMeta}` : `${prefix}: ${formattedMeta}`;
+}
+
+/** Formats the prefix for a single tool event. */
+export function formatToolPrefix(toolName?: string, meta?: string) {
+  const extra = meta?.trim() ? shortenMeta(meta) : undefined;
+  const display = resolveToolDisplay({ name: toolName, meta: extra });
+  return formatToolSummary(display);
 }
 
 function formatMetaForDisplay(
@@ -124,5 +143,24 @@ function isPathLike(value: string): boolean {
 }
 
 function maybeWrapMarkdown(value: string, markdown?: boolean): string {
-  return markdown ? formatInlineCodeSpan(value) : value;
+  if (!markdown) {
+    return value;
+  }
+  const delimiter = "`".repeat(longestBacktickRun(value) + 1);
+  const padding = value.startsWith("`") || value.endsWith("`") || value.includes("\n") ? " " : "";
+  return `${delimiter}${padding}${value}${padding}${delimiter}`;
+}
+
+function longestBacktickRun(value: string): number {
+  let longest = 0;
+  let current = 0;
+  for (const char of value) {
+    if (char === "`") {
+      current += 1;
+      longest = Math.max(longest, current);
+      continue;
+    }
+    current = 0;
+  }
+  return longest;
 }

@@ -161,7 +161,7 @@ describe("OpenClaw-owned tool runtime contract — Codex app-server adapter", ()
       expectRecordFields(eventRecord, {
         toolName: "exec",
         toolCallId: "call-middleware",
-        args: mergedParams,
+        args: { command: "status" },
       });
       expectRecordFields(requireRecord(eventRecord.result, "tool_result middleware result"), {
         content: [{ type: "text", text: "raw output" }],
@@ -318,7 +318,7 @@ describe("OpenClaw-owned tool runtime contract — Codex app-server adapter", ()
 
   it("records successful Codex messaging text, media, and target telemetry", async () => {
     const hooks = installOpenClawOwnedToolHooks();
-    const execute = vi.fn(async () => textToolResult("Sent.", { messageId: "message-1" }));
+    const execute = vi.fn(async () => textToolResult("Sent."));
     const bridge = createCodexDynamicToolBridge({
       tools: [createContractTool({ name: "message", execute })],
       signal: new AbortController().signal,

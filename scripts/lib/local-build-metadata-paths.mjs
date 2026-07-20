@@ -4,10 +4,7 @@ export const BUILD_STAMP_FILE = ".buildstamp";
 /** File written after runtime postbuild sync completion. */
 export const RUNTIME_POSTBUILD_STAMP_FILE = ".runtime-postbuildstamp";
 
-/**
- * Dist paths that contain local build metadata and should not be packaged as source.
- * @internal Shared repository-script contract.
- */
+/** Dist paths that contain local build metadata and should not be packaged as source. */
 export const LOCAL_BUILD_METADATA_DIST_PATHS = Object.freeze([
   `dist/${BUILD_STAMP_FILE}`,
   `dist/${RUNTIME_POSTBUILD_STAMP_FILE}`,

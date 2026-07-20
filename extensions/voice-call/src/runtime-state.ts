@@ -4,21 +4,15 @@ import { createPluginRuntimeStore, type PluginRuntime } from "openclaw/plugin-sd
 // Process-local runtime store used by voice-call persistence helpers.
 
 /** Runtime subset needed by voice-call state persistence. */
-export type VoiceCallStateRuntime = {
-  state: Pick<
-    PluginRuntime["state"],
-    | "resolveStateDir"
-    | "openKeyedStore"
-    | "openSyncKeyedStore"
-    | "openChannelIngressQueue"
-    | "openChannelIngressDrain"
-  >;
-};
+export type VoiceCallStateRuntime = Pick<PluginRuntime, "state">;
 
-const { setRuntime: setVoiceCallStateRuntime, tryGetRuntime: getOptionalVoiceCallStateRuntime } =
-  createPluginRuntimeStore<VoiceCallStateRuntime>({
-    pluginId: "voice-call-state",
-    errorMessage: "Voice Call state runtime not initialized",
-  });
+const {
+  setRuntime: setVoiceCallStateRuntime,
+  clearRuntime: clearVoiceCallStateRuntime,
+  tryGetRuntime: getOptionalVoiceCallStateRuntime,
+} = createPluginRuntimeStore<VoiceCallStateRuntime>({
+  pluginId: "voice-call-state",
+  errorMessage: "Voice Call state runtime not initialized",
+});
 
-export { getOptionalVoiceCallStateRuntime, setVoiceCallStateRuntime };
+export { clearVoiceCallStateRuntime, getOptionalVoiceCallStateRuntime, setVoiceCallStateRuntime };

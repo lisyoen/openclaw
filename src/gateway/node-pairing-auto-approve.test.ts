@@ -5,12 +5,13 @@ import { describe, expect, it } from "vitest";
 import {
   resolveNodePairingClientIpSource,
   shouldAutoApproveNodePairingFromTrustedCidrs,
+  type NodePairingAutoApproveReason,
 } from "./node-pairing-auto-approve.js";
 
 const BASE_PARAMS = {
   existingPairedDevice: false,
   role: "node",
-  reason: "not-paired" as const,
+  reason: "not-paired" as NodePairingAutoApproveReason,
   scopes: [],
   hasBrowserOriginHeader: false,
   isControlUi: false,

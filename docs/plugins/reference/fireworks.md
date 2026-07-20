@@ -12,12 +12,12 @@ Adds Fireworks model provider support to OpenClaw.
 ## Distribution
 
 - Package: `@openclaw/fireworks-provider`
-- Install route: npm; ClawHub: `clawhub:@openclaw/fireworks-provider`
+- Install route: included in OpenClaw
 
 ## Surface
 
-providers: `fireworks`
+providers: fireworks
 
 ## Related docs
 
-- [Fireworks](/providers/fireworks)
+- [fireworks](/providers/fireworks)

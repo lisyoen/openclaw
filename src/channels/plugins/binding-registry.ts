@@ -9,6 +9,7 @@ import {
   resolveConfiguredBinding as resolveConfiguredBindingRaw,
   resolveConfiguredBindingRecord as resolveConfiguredBindingRecordRaw,
   resolveConfiguredBindingRecordBySessionKey as resolveConfiguredBindingRecordBySessionKeyRaw,
+  resolveConfiguredBindingRecordForConversation as resolveConfiguredBindingRecordForConversationRaw,
 } from "./configured-binding-registry.js";
 
 export function primeConfiguredBindingRegistry(
@@ -23,6 +24,13 @@ export function resolveConfiguredBindingRecord(
 ): ReturnType<typeof resolveConfiguredBindingRecordRaw> {
   ensureConfiguredBindingBuiltinsRegistered();
   return resolveConfiguredBindingRecordRaw(...args);
+}
+
+export function resolveConfiguredBindingRecordForConversation(
+  ...args: Parameters<typeof resolveConfiguredBindingRecordForConversationRaw>
+): ReturnType<typeof resolveConfiguredBindingRecordForConversationRaw> {
+  ensureConfiguredBindingBuiltinsRegistered();
+  return resolveConfiguredBindingRecordForConversationRaw(...args);
 }
 
 export function resolveConfiguredBinding(

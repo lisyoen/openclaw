@@ -6,10 +6,10 @@ import { parseRegistryNpmSpec } from "../infra/npm-registry-spec.js";
 import { validatePluginId } from "./install-paths.js";
 
 /** Legacy declaration filename used by early npm-backed plugin installs. */
-const LEGACY_NPM_DECLARATION_FILE = "openclaw.extension.json";
+export const LEGACY_NPM_DECLARATION_FILE = "openclaw.extension.json";
 
 /** Parsed legacy npm declaration stored beside an installed plugin. */
-type LegacyNpmPluginDeclaration = {
+export type LegacyNpmPluginDeclaration = {
   pluginId: string;
   npmSpec: string;
   source: string;

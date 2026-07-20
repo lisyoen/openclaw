@@ -7,7 +7,6 @@
  * Zero external dependencies — uses only the constants from `./constants.ts`.
  */
 
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import type { EngineLogger } from "../types.js";
 import {
   RECONNECT_DELAYS,
@@ -79,11 +78,7 @@ export class ReconnectState {
    */
   getNextDelay(customDelay?: number): number {
     const delay =
-      customDelay ??
-      expectDefined(
-        RECONNECT_DELAYS[Math.min(this.attempts, RECONNECT_DELAYS.length - 1)],
-        "non-empty reconnect delay schedule",
-      );
+      customDelay ?? RECONNECT_DELAYS[Math.min(this.attempts, RECONNECT_DELAYS.length - 1)];
     this.attempts++;
     this.log?.debug?.(`Reconnecting ${this.accountId} in ${delay}ms (attempt ${this.attempts})`);
     return delay;
@@ -146,14 +141,13 @@ export class ReconnectState {
         [GatewayCloseCode.SEQ_OUT_OF_RANGE]: "invalid seq on resume",
         [GatewayCloseCode.SESSION_TIMEOUT]: "session timed out",
       };
-      const reason = expectDefined(codeDesc[code], "recognized session close code");
-      this.log?.info(`Error ${code} (${reason}), will re-identify`);
+      this.log?.info(`Error ${code} (${codeDesc[code]}), will re-identify`);
       return {
         shouldReconnect: !isAborted,
         clearSession: true,
         refreshToken: true,
         fatal: false,
-        reason,
+        reason: codeDesc[code],
       };
     }
 

@@ -7,17 +7,11 @@ import {
 } from "@openclaw/normalization-core/number-coercion";
 import { resolveDefaultAgentId } from "../agents/agent-scope-config.js";
 import { createAgentRunRestartAbortError } from "../agents/run-termination.js";
-import { readToolValidationErrorSummary } from "../agents/tool-error-summary.js";
 import { isAbortRequestText } from "../auto-reply/reply/abort-primitives.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { emitAgentEvent, getAgentEventLifecycleGeneration } from "../infra/agent-events.js";
 import { jsonUtf8Bytes } from "../infra/json-utf8-bytes.js";
 import { projectLiveAssistantBufferedText } from "./live-chat-projector.js";
-import {
-  createChatAbortMarker,
-  type ChatAbortMarker,
-  type ChatRunPlanSnapshot,
-} from "./server-chat-state.js";
 
 const DEFAULT_CHAT_RUN_ABORT_GRACE_MS = 60_000;
 
@@ -34,8 +28,6 @@ export type ChatAbortControllerEntry = {
   providerId?: string;
   authProviderId?: string;
   abortStopReason?: string;
-  /** Latest argument-free validation diagnostic for operator-initiated aborts. */
-  toolErrorSummary?: string;
   /**
    * False for backend/internal agent runs that may share a session key but must
    * not be projected into operator chat surfaces.
@@ -57,10 +49,6 @@ export type ChatAbortControllerEntry = {
   projectSessionTerminalPersistence?: Promise<void>;
   /** Caller completion requested cleanup before terminal lifecycle persistence settled. */
   registrationCleanupRequested?: boolean;
-  /** False after the owning reply run commits a terminal outcome. */
-  isAbortable?: (entry: ChatAbortControllerEntry) => boolean;
-  /** Runs once when this registration is actually removed. */
-  onRemoved?: () => void;
   /**
    * Which RPC owns this registration. Absent (undefined) is treated as
    * `"chat-send"` so pre-existing callers that constructed entries without
@@ -68,8 +56,6 @@ export type ChatAbortControllerEntry = {
    * is active" must check `kind !== "agent"`, not just `.has(runId)`.
    */
   kind?: "chat-send" | "agent";
-  /** Side questions stay independent from main-turn TUI session stops. */
-  turnKind?: "main" | "btw";
 };
 
 export type RestartRecoveryCandidate = {
@@ -159,10 +145,7 @@ export function registerChatAbortController(params: {
   providerId?: string;
   authProviderId?: string;
   controlUiVisible?: boolean;
-  isAbortable?: (entry: ChatAbortControllerEntry) => boolean;
-  onRemoved?: () => void;
   kind?: ChatAbortControllerEntry["kind"];
-  turnKind?: ChatAbortControllerEntry["turnKind"];
   lifecycleGeneration?: string;
   now?: number;
   expiresAtMs?: number;
@@ -172,7 +155,7 @@ export function registerChatAbortController(params: {
     const entry = params.chatAbortControllers.get(params.runId);
     if (entry?.controller === controller) {
       if (opts?.force === true) {
-        removeChatAbortControllerEntry(params.chatAbortControllers, params.runId, entry);
+        params.chatAbortControllers.delete(params.runId);
         return;
       }
       entry.registrationCleanupRequested = true;
@@ -186,17 +169,17 @@ export function registerChatAbortController(params: {
         void persistence
           .then(() => {
             if (params.chatAbortControllers.get(params.runId)?.controller === controller) {
-              removeChatAbortControllerEntry(params.chatAbortControllers, params.runId, entry);
+              params.chatAbortControllers.delete(params.runId);
             }
           })
           .catch(() => {
             if (params.chatAbortControllers.get(params.runId)?.controller === controller) {
-              removeChatAbortControllerEntry(params.chatAbortControllers, params.runId, entry);
+              params.chatAbortControllers.delete(params.runId);
             }
           });
         return;
       }
-      removeChatAbortControllerEntry(params.chatAbortControllers, params.runId, entry);
+      params.chatAbortControllers.delete(params.runId);
     }
   };
 
@@ -225,11 +208,8 @@ export function registerChatAbortController(params: {
     providerId: normalizeProviderIdForActiveRun(params.providerId),
     authProviderId: normalizeProviderIdForActiveRun(params.authProviderId),
     controlUiVisible: params.controlUiVisible,
-    isAbortable: params.isAbortable,
-    onRemoved: params.onRemoved,
     projectSessionActive: true,
     kind: params.kind,
-    turnKind: params.turnKind,
   };
   params.chatAbortControllers.set(params.runId, entry);
   return { controller, registered: true, entry, cleanup };
@@ -264,12 +244,11 @@ function normalizeActiveAgentId(agentId: string | undefined): string | undefined
 export function resolveInFlightRunSnapshot(params: {
   chatAbortControllers: Map<string, ChatAbortControllerEntry>;
   chatRunBuffers: Map<string, string>;
-  chatRunPlanSnapshots?: Map<string, ChatRunPlanSnapshot>;
   requestedSessionKey: string;
   canonicalSessionKey: string;
   agentId?: string;
   defaultAgentId?: string;
-}): { runId: string; text: string; plan?: ChatRunPlanSnapshot } | undefined {
+}): { runId: string; text: string } | undefined {
   const matchesKey = (entry: ChatAbortControllerEntry, key: string): boolean => {
     if (entry.sessionKey !== key) {
       return false;
@@ -333,57 +312,32 @@ export function resolveInFlightRunSnapshot(params: {
   const projected = projectLiveAssistantBufferedText(bufferedText, {
     suppressLeadFragments: true,
   });
-  const plan = params.chatRunPlanSnapshots?.get(best.runId);
-  return {
-    runId: best.runId,
-    text: projected.suppress ? "" : projected.text,
-    ...(plan ? { plan } : {}),
-  };
+  return { runId: best.runId, text: projected.suppress ? "" : projected.text };
 }
 
 export function boundInFlightRunSnapshotForChatHistory(params: {
-  snapshot: { runId: string; text: string; plan?: ChatRunPlanSnapshot } | undefined;
+  snapshot: { runId: string; text: string } | undefined;
   messages: unknown[];
   maxBytes: number;
-}): { runId: string; text: string; plan?: ChatRunPlanSnapshot } | undefined {
-  if (!params.snapshot) {
-    return undefined;
+}): { runId: string; text: string } | undefined {
+  if (!params.snapshot?.text) {
+    return params.snapshot;
   }
   const messagesBytes = jsonUtf8Bytes(params.messages);
   const snapshotBytes = jsonUtf8Bytes(params.snapshot);
   if (messagesBytes + snapshotBytes <= params.maxBytes) {
     return params.snapshot;
   }
-  // Recovery priority is run adoption, then plan replay, then opportunistic text.
-  const withoutText = {
-    runId: params.snapshot.runId,
-    text: "",
-    ...(params.snapshot.plan ? { plan: params.snapshot.plan } : {}),
-  };
-  if (params.snapshot.plan && messagesBytes + jsonUtf8Bytes(withoutText) <= params.maxBytes) {
-    return withoutText;
-  }
-  // An oversized plan must not also cost the deliverable buffered text. Clients
-  // treat an ABSENT plan as legacy-gateway unknown and preserve retained state,
-  // so a budget-dropped plan is sent as an explicit empty snapshot (authoritative
-  // clear) — accepted tradeoff: the checklist blanks until the next live plan
-  // event instead of showing a possibly obsolete retained plan indefinitely.
-  const droppedPlan = params.snapshot.plan ? { plan: { steps: [] } } : {};
-  const withoutPlan = {
-    runId: params.snapshot.runId,
-    text: params.snapshot.text,
-    ...droppedPlan,
-  };
-  if (params.snapshot.text && messagesBytes + jsonUtf8Bytes(withoutPlan) <= params.maxBytes) {
-    return withoutPlan;
-  }
-  return { runId: params.snapshot.runId, text: "", ...droppedPlan };
+  // The run id is the recovery contract; buffered partial text is opportunistic.
+  // If it would break the history payload budget, keep adoption and wait for the
+  // next live delta/final instead of sending an oversized chat.history response.
+  return { runId: params.snapshot.runId, text: "" };
 }
 
 export type ChatAbortOps = {
   chatAbortControllers: Map<string, ChatAbortControllerEntry>;
   chatRunBuffers: Map<string, string>;
-  chatAbortedRuns: Map<string, ChatAbortMarker>;
+  chatAbortedRuns: Map<string, number>;
   clearChatRunState: (runId: string) => void;
   removeChatRun: (
     sessionId: string,
@@ -392,16 +346,11 @@ export type ChatAbortOps = {
   ) => { sessionKey: string; agentId?: string; clientRunId: string } | undefined;
   agentRunSeq: Map<string, number>;
   getRuntimeConfig?: () => OpenClawConfig;
-  broadcast: (
-    event: string,
-    payload: unknown,
-    opts?: { dropIfSlow?: boolean; sessionKeys?: readonly string[] },
-  ) => void;
+  broadcast: (event: string, payload: unknown, opts?: { dropIfSlow?: boolean }) => void;
   nodeSendToSession: (sessionKey: string, event: string, payload: unknown) => void;
-  onRunAborted?: (runId: string) => void;
 };
 
-type TrackedChatRunAbortOps = {
+export type TrackedChatRunAbortOps = {
   chatAbortControllers: ChatAbortOps["chatAbortControllers"];
   chatRunBuffers: ChatAbortOps["chatRunBuffers"];
   chatRunState: {
@@ -462,11 +411,9 @@ function broadcastChatAborted(
     agentId?: string;
     stopReason?: string;
     partialText?: string;
-    errorMessage?: string;
   },
 ) {
   const { runId, sessionKey, stopReason, partialText } = params;
-  const errorMessage = readToolValidationErrorSummary(params.errorMessage);
   const defaultGlobalAgentId =
     sessionKey === "global" ? normalizeActiveAgentId(resolveDefaultGlobalAgentId(ops)) : undefined;
   const payloadAgentId =
@@ -480,7 +427,6 @@ function broadcastChatAborted(
     seq: (ops.agentRunSeq.get(runId) ?? 0) + 1,
     state: "aborted" as const,
     stopReason,
-    ...(errorMessage ? { errorMessage } : {}),
     message: partialText
       ? {
           role: "assistant",
@@ -489,9 +435,12 @@ function broadcastChatAborted(
         }
       : undefined,
   };
-  const deliverySessionKeys = resolveChatAbortDeliverySessionKeys(ops, sessionKey, payloadAgentId);
-  ops.broadcast("chat", payload, { sessionKeys: deliverySessionKeys });
-  for (const deliverySessionKey of deliverySessionKeys) {
+  ops.broadcast("chat", payload);
+  for (const deliverySessionKey of resolveChatAbortDeliverySessionKeys(
+    ops,
+    sessionKey,
+    payloadAgentId,
+  )) {
     ops.nodeSendToSession(deliverySessionKey, "chat", payload);
   }
 }
@@ -499,35 +448,6 @@ function broadcastChatAborted(
 function resolveDefaultGlobalAgentId(ops: ChatAbortOps): string | undefined {
   const cfg = ops.getRuntimeConfig?.();
   return cfg ? resolveDefaultAgentId(cfg) : undefined;
-}
-
-export function isChatAbortControllerEntryAbortable(entry: ChatAbortControllerEntry): boolean {
-  if (entry.controller.signal.aborted) {
-    return false;
-  }
-  try {
-    return entry.isAbortable?.(entry) !== false;
-  } catch {
-    return false;
-  }
-}
-
-export function removeChatAbortControllerEntry(
-  entries: Map<string, ChatAbortControllerEntry>,
-  runId: string,
-  expectedEntry?: ChatAbortControllerEntry,
-): boolean {
-  const entry = entries.get(runId);
-  if (!entry || (expectedEntry && entry !== expectedEntry)) {
-    return false;
-  }
-  entries.delete(runId);
-  try {
-    entry.onRemoved?.();
-  } catch {
-    // Removal owns state cleanup even if a caller-provided release hook fails.
-  }
-  return true;
 }
 
 export function abortChatRunById(
@@ -546,30 +466,15 @@ export function abortChatRunById(
   if (active.sessionKey !== sessionKey) {
     return { aborted: false };
   }
-  if (!isChatAbortControllerEntryAbortable(active)) {
-    return { aborted: false };
-  }
 
   const bufferedText = ops.chatRunBuffers.get(runId);
   const partialText = bufferedText && bufferedText.trim() ? bufferedText : undefined;
-  ops.chatAbortedRuns.set(runId, createChatAbortMarker());
+  ops.chatAbortedRuns.set(runId, Date.now());
   if (stopReason) {
     active.abortStopReason = stopReason;
   }
-  active.projectSessionActive = false;
-  // Reserve terminal ownership before abort listeners run; synchronous caller
-  // cleanup must not erase the entry before Gateway observes the event below.
-  active.projectSessionTerminalPending = true;
-  active.projectSessionTerminalObservedAt = undefined;
-  active.registrationCleanupRequested = true;
-  // Approval cancellation and run abort share this owner so authorization
-  // cannot outlive the active run whose controller is about to terminate.
-  try {
-    ops.onRunAborted?.(runId);
-  } catch {
-    // Approval persistence failure must not prevent the requested run abort.
-  }
   active.controller.abort(createChatAbortSignalReason(stopReason));
+  ops.chatAbortControllers.delete(runId);
   ops.clearChatRunState(runId);
   const removed = ops.removeChatRun(runId, runId, sessionKey);
   if (active.controlUiVisible !== false) {
@@ -579,7 +484,6 @@ export function abortChatRunById(
       agentId: active.agentId,
       stopReason,
       partialText,
-      errorMessage: active.toolErrorSummary,
     });
   }
   emitAgentEvent({
@@ -593,20 +497,10 @@ export function abortChatRunById(
       status: "cancelled",
       aborted: true,
       stopReason,
-      ...(active.toolErrorSummary ? { toolErrorSummary: active.toolErrorSummary } : {}),
       startedAt: active.startedAtMs,
       endedAt: Date.now(),
     },
   });
-  // Gateway listeners synchronously stamp the terminal observation. Keep the
-  // entry as suspension-visible ownership until its persistence write settles.
-  if (
-    ops.chatAbortControllers.get(runId) === active &&
-    active.projectSessionTerminalObservedAt === undefined &&
-    !active.projectSessionTerminalPersistence
-  ) {
-    removeChatAbortControllerEntry(ops.chatAbortControllers, runId, active);
-  }
   ops.agentRunSeq.delete(runId);
   if (removed?.clientRunId) {
     ops.agentRunSeq.delete(removed.clientRunId);

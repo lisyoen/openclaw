@@ -3,6 +3,7 @@ import type { SubagentRunRecord } from "../../agents/subagent-registry.types.js"
 import type { HandleCommandsParams } from "./commands-types.js";
 
 export {
+  COMMAND,
   resolveHandledPrefix,
   resolveRequesterSessionKey,
   resolveSubagentsAction,

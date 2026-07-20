@@ -1,13 +1,7 @@
 // Cached startup metadata readers for precomputed root and subcommand help text.
 import { readCliStartupMetadata } from "./startup-metadata.js";
 
-export type PrecomputedSubcommandHelpName =
-  | "doctor"
-  | "gateway"
-  | "models"
-  | "plugins"
-  | "sessions"
-  | "tasks";
+export type PrecomputedSubcommandHelpName = "doctor" | "gateway" | "models" | "plugins";
 
 let precomputedRootHelpText: string | null | undefined;
 let precomputedBrowserHelpText: string | null | undefined;
@@ -48,7 +42,31 @@ function loadPrecomputedHelpText(
   return null;
 }
 
-function loadPrecomputedSubcommandHelpText(commandName: string): string | null {
+export function loadPrecomputedRootHelpText(): string | null {
+  return loadPrecomputedHelpText("rootHelpText", precomputedRootHelpText, (value) => {
+    precomputedRootHelpText = value;
+  });
+}
+
+export function loadPrecomputedBrowserHelpText(): string | null {
+  return loadPrecomputedHelpText("browserHelpText", precomputedBrowserHelpText, (value) => {
+    precomputedBrowserHelpText = value;
+  });
+}
+
+export function loadPrecomputedSecretsHelpText(): string | null {
+  return loadPrecomputedHelpText("secretsHelpText", precomputedSecretsHelpText, (value) => {
+    precomputedSecretsHelpText = value;
+  });
+}
+
+export function loadPrecomputedNodesHelpText(): string | null {
+  return loadPrecomputedHelpText("nodesHelpText", precomputedNodesHelpText, (value) => {
+    precomputedNodesHelpText = value;
+  });
+}
+
+export function loadPrecomputedSubcommandHelpText(commandName: string): string | null {
   if (!isPrecomputedSubcommandHelpName(commandName)) {
     return null;
   }
@@ -74,9 +92,7 @@ function loadPrecomputedSubcommandHelpText(commandName: string): string | null {
 }
 
 export function outputPrecomputedRootHelpText(): boolean {
-  const rootHelpText = loadPrecomputedHelpText("rootHelpText", precomputedRootHelpText, (value) => {
-    precomputedRootHelpText = value;
-  });
+  const rootHelpText = loadPrecomputedRootHelpText();
   if (!rootHelpText) {
     return false;
   }
@@ -85,13 +101,7 @@ export function outputPrecomputedRootHelpText(): boolean {
 }
 
 export function outputPrecomputedBrowserHelpText(): boolean {
-  const browserHelpText = loadPrecomputedHelpText(
-    "browserHelpText",
-    precomputedBrowserHelpText,
-    (value) => {
-      precomputedBrowserHelpText = value;
-    },
-  );
+  const browserHelpText = loadPrecomputedBrowserHelpText();
   if (!browserHelpText) {
     return false;
   }
@@ -100,13 +110,7 @@ export function outputPrecomputedBrowserHelpText(): boolean {
 }
 
 export function outputPrecomputedSecretsHelpText(): boolean {
-  const secretsHelpText = loadPrecomputedHelpText(
-    "secretsHelpText",
-    precomputedSecretsHelpText,
-    (value) => {
-      precomputedSecretsHelpText = value;
-    },
-  );
+  const secretsHelpText = loadPrecomputedSecretsHelpText();
   if (!secretsHelpText) {
     return false;
   }
@@ -115,13 +119,7 @@ export function outputPrecomputedSecretsHelpText(): boolean {
 }
 
 export function outputPrecomputedNodesHelpText(): boolean {
-  const nodesHelpText = loadPrecomputedHelpText(
-    "nodesHelpText",
-    precomputedNodesHelpText,
-    (value) => {
-      precomputedNodesHelpText = value;
-    },
-  );
+  const nodesHelpText = loadPrecomputedNodesHelpText();
   if (!nodesHelpText) {
     return false;
   }
@@ -145,9 +143,7 @@ function isPrecomputedSubcommandHelpName(
     commandName === "doctor" ||
     commandName === "gateway" ||
     commandName === "models" ||
-    commandName === "plugins" ||
-    commandName === "sessions" ||
-    commandName === "tasks"
+    commandName === "plugins"
   );
 }
 
@@ -166,3 +162,14 @@ function setPrecomputedSubcommandHelpText(
     [commandName]: value,
   };
 }
+
+export const testing = {
+  resetPrecomputedRootHelpTextForTests(): void {
+    precomputedRootHelpText = undefined;
+    precomputedBrowserHelpText = undefined;
+    precomputedSecretsHelpText = undefined;
+    precomputedNodesHelpText = undefined;
+    precomputedSubcommandHelpText = undefined;
+  },
+};
+export { testing as __testing };

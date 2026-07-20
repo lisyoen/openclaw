@@ -1,66 +1,23 @@
 // Slack plugin module implements message action dispatch behavior.
-import { normalizeAccountId } from "openclaw/plugin-sdk/account-resolution";
 import type { AgentToolResult } from "openclaw/plugin-sdk/agent-core";
 import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
-import { resolveReactionMessageId } from "openclaw/plugin-sdk/channel-actions";
 import type { ChannelMessageActionContext } from "openclaw/plugin-sdk/channel-contract";
 import {
-  normalizeLegacyInteractiveReply,
+  normalizeInteractiveReply,
   normalizeMessagePresentation,
 } from "openclaw/plugin-sdk/interactive-runtime";
 import { readPositiveIntegerParam, readStringParam } from "openclaw/plugin-sdk/param-readers";
 import {
-  normalizeOptionalLowercaseString,
-  normalizeOptionalString,
-} from "openclaw/plugin-sdk/string-coerce-runtime";
-import { resolveDefaultSlackAccountId } from "./accounts.js";
-import { SLACK_MAX_BLOCKS } from "./blocks-input.js";
-import { buildSlackPresentationBlocks, canRenderSlackPresentation } from "./blocks-render.js";
-import { SLACK_EDIT_TEXT_LIMIT } from "./limits.js";
-import { renderSlackMessagePresentationFallbackText } from "./presentation-fallback.js";
-import {
-  resolveSlackReplyBlockResolution,
-  resolveSlackReplyDeliveryMessages,
-  type SlackReplyDeliveryMessage,
-} from "./reply-blocks.js";
+  buildSlackInteractiveBlocks,
+  buildSlackPresentationBlocks,
+  resolveSlackInteractiveBlockOffsets,
+} from "./blocks-render.js";
 
 type SlackActionInvoke = (
   action: Record<string, unknown>,
   cfg: ChannelMessageActionContext["cfg"],
   toolContext?: ChannelMessageActionContext["toolContext"],
 ) => Promise<AgentToolResult<unknown>>;
-
-function resolveSlackPresentationText(
-  content: string | undefined,
-  presentation: ReturnType<typeof normalizeMessagePresentation>,
-): string {
-  const hasStructuredData = presentation?.blocks.some(
-    (block) => block.type === "chart" || block.type === "table",
-  );
-  return hasStructuredData
-    ? renderSlackMessagePresentationFallbackText({ text: content, presentation })
-    : (content ?? "");
-}
-
-function renderSlackActionPresentation(
-  presentation: ReturnType<typeof normalizeMessagePresentation>,
-): {
-  blocks?: ReturnType<typeof buildSlackPresentationBlocks>;
-  usesPresentationTextFallback: boolean;
-} {
-  if (!presentation) {
-    return { usesPresentationTextFallback: false };
-  }
-  const renderedBlocks = canRenderSlackPresentation(presentation)
-    ? buildSlackPresentationBlocks(presentation)
-    : undefined;
-  const usesPresentationTextFallback = !renderedBlocks || renderedBlocks.length > SLACK_MAX_BLOCKS;
-  const blocks = usesPresentationTextFallback ? undefined : renderedBlocks;
-  return {
-    ...(blocks?.length ? { blocks } : {}),
-    usesPresentationTextFallback,
-  };
-}
 
 /** Translate generic channel action requests into Slack-specific tool invocations and payload shapes. */
 export async function handleSlackMessageAction(params: {
@@ -88,25 +45,19 @@ export async function handleSlackMessageAction(params: {
     });
     const mediaUrl = readStringParam(actionParams, "media", { trim: false });
     const presentation = normalizeMessagePresentation(actionParams.presentation);
-    const interactive = normalizeLegacyInteractiveReply(actionParams.interactive);
-    const hasStructuredContent = Boolean(presentation || interactive?.blocks.length);
-    const resolution = resolveSlackReplyBlockResolution(
-      {
-        text: content,
-        presentation,
-        interactive,
-      },
-      { materializeAuthoredText: hasStructuredContent },
-    );
-    const preparedMessages =
-      resolution.segments.length > 0
-        ? resolveSlackReplyDeliveryMessages({
-            authoredTextPlacement: resolution.authoredTextPlacement,
-            segments: resolution.segments,
-            text: content,
-          })
-        : [];
-    if (!content && preparedMessages.length === 0 && !mediaUrl) {
+    const interactive = normalizeInteractiveReply(actionParams.interactive);
+    const presentationBlocks = presentation
+      ? buildSlackPresentationBlocks(presentation)
+      : undefined;
+    const interactiveBlocks = interactive
+      ? buildSlackInteractiveBlocks(
+          interactive,
+          resolveSlackInteractiveBlockOffsets(presentationBlocks),
+        )
+      : undefined;
+    const mergedBlocks = [...(presentationBlocks ?? []), ...(interactiveBlocks ?? [])];
+    const blocks = mergedBlocks.length > 0 ? mergedBlocks : undefined;
+    if (!content && !mediaUrl && !blocks) {
       throw new Error("Slack send requires message, blocks, or media.");
     }
     const replyBroadcast = readBooleanParam(actionParams, "replyBroadcast");
@@ -117,13 +68,6 @@ export async function handleSlackMessageAction(params: {
     const replyTo = readStringParam(actionParams, "replyTo");
     const topLevel =
       readBooleanParam(actionParams, "topLevel") === true || actionParams.threadId === null;
-    const toolContext =
-      preparedMessages.length > 0
-        ? {
-            ...ctx.toolContext,
-            preparedMessages: preparedMessages satisfies readonly SlackReplyDeliveryMessage[],
-          }
-        : ctx.toolContext;
     return await invoke(
       {
         action: "sendMessage",
@@ -134,23 +78,17 @@ export async function handleSlackMessageAction(params: {
         threadTs: threadId ?? replyTo ?? undefined,
         ...(topLevel ? { topLevel: true } : {}),
         ...(replyBroadcast ? { replyBroadcast } : {}),
+        ...(blocks ? { blocks } : {}),
       },
       cfg,
-      toolContext,
+      ctx.toolContext,
     );
   }
 
   if (action === "react") {
-    const messageIdRaw = resolveReactionMessageId({
-      args: actionParams,
-      toolContext: ctx.toolContext,
+    const messageId = readStringParam(actionParams, "messageId", {
+      required: true,
     });
-    if (messageIdRaw == null) {
-      throw new Error(
-        "messageId required. Provide messageId explicitly or react to the current inbound message.",
-      );
-    }
-    const messageId = String(messageIdRaw);
     const emoji = readStringParam(actionParams, "emoji", { allowEmpty: true });
     const remove = typeof actionParams.remove === "boolean" ? actionParams.remove : undefined;
     return await invoke(
@@ -163,7 +101,6 @@ export async function handleSlackMessageAction(params: {
         accountId,
       },
       cfg,
-      ctx.toolContext,
     );
   }
 
@@ -183,7 +120,6 @@ export async function handleSlackMessageAction(params: {
         accountId,
       },
       cfg,
-      ctx.toolContext,
     );
   }
 
@@ -203,7 +139,7 @@ export async function handleSlackMessageAction(params: {
     if (includeReadThreadId) {
       readAction.threadId = readStringParam(actionParams, "threadId");
     }
-    return await invoke(readAction, cfg, ctx.toolContext);
+    return await invoke(readAction, cfg);
   }
 
   if (action === "edit") {
@@ -212,24 +148,8 @@ export async function handleSlackMessageAction(params: {
     });
     const content = readStringParam(actionParams, "message", { allowEmpty: true });
     const presentation = normalizeMessagePresentation(actionParams.presentation);
-    const renderedPresentation = renderSlackActionPresentation(presentation);
-    // Slack hides top-level text when blocks are present on updates. Keep an
-    // unrenderable presentation text-only so its complete fallback stays visible.
-    const blocks = renderedPresentation.usesPresentationTextFallback
-      ? undefined
-      : renderedPresentation.blocks;
-    const accessibleContent = renderedPresentation.usesPresentationTextFallback
-      ? renderSlackMessagePresentationFallbackText({ text: content, presentation })
-      : resolveSlackPresentationText(content, presentation);
-    if (
-      renderedPresentation.usesPresentationTextFallback &&
-      accessibleContent.length > SLACK_EDIT_TEXT_LIMIT
-    ) {
-      throw new Error(
-        `Slack presentation fallback exceeds the ${String(SLACK_EDIT_TEXT_LIMIT)}-character edit limit. Send a new message instead.`,
-      );
-    }
-    if (!accessibleContent && !blocks) {
+    const blocks = presentation ? buildSlackPresentationBlocks(presentation) : undefined;
+    if (!content && !blocks) {
       throw new Error("Slack edit requires message or blocks.");
     }
     return await invoke(
@@ -237,12 +157,11 @@ export async function handleSlackMessageAction(params: {
         action: "editMessage",
         channelId: resolveChannelId(),
         messageId,
-        content: accessibleContent,
+        content: content ?? "",
         blocks,
         accountId,
       },
       cfg,
-      ctx.toolContext,
     );
   }
 
@@ -258,7 +177,6 @@ export async function handleSlackMessageAction(params: {
         accountId,
       },
       cfg,
-      ctx.toolContext,
     );
   }
 
@@ -275,33 +193,19 @@ export async function handleSlackMessageAction(params: {
         accountId,
       },
       cfg,
-      ctx.toolContext,
     );
   }
 
   if (action === "member-info") {
-    const requesterAccountId = ctx.requesterAccountId
-      ? normalizeAccountId(ctx.requesterAccountId)
-      : undefined;
-    const targetAccountId = normalizeAccountId(accountId ?? resolveDefaultSlackAccountId(cfg));
-    const requesterUserId =
-      normalizeOptionalLowercaseString(ctx.toolContext?.currentChannelProvider) === "slack" &&
-      requesterAccountId !== undefined &&
-      requesterAccountId === targetAccountId
-        ? normalizeOptionalString(ctx.requesterSenderId)
-        : undefined;
-    const userId = readStringParam(actionParams, "userId") ?? requesterUserId;
-    if (!userId) {
-      throw new Error("member-info requires a userId outside a current Slack conversation.");
-    }
-    return await invoke({ action: "memberInfo", userId, accountId }, cfg, ctx.toolContext);
+    const userId = readStringParam(actionParams, "userId", { required: true });
+    return await invoke({ action: "memberInfo", userId, accountId }, cfg);
   }
 
   if (action === "emoji-list") {
     const limit = readPositiveIntegerParam(actionParams, "limit", {
       message: "limit must be a positive integer.",
     });
-    return await invoke({ action: "emojiList", limit, accountId }, cfg, ctx.toolContext);
+    return await invoke({ action: "emojiList", limit, accountId }, cfg);
   }
 
   if (action === "download-file") {

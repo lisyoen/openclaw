@@ -31,7 +31,7 @@ export function runPackageAssetBuild(plan) {
 /** List static asset source paths referenced by a package but missing from disk. */
 export function listMissingPackageStaticAssetSources(plan) {
   const packagePrefix = `extensions/${plan.pluginDir}/`;
-  return discoverStaticExtensionAssets({ rootDir: plan.repoRoot, includeExternalPlugins: true })
+  return discoverStaticExtensionAssets({ rootDir: plan.repoRoot })
     .filter((asset) => asset.src.replaceAll("\\", "/").startsWith(packagePrefix))
     .map((asset) => asset.src)
     .filter((src) => !fs.existsSync(path.join(plan.repoRoot, src)))

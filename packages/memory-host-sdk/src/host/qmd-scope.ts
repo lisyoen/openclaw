@@ -1,9 +1,9 @@
 // Memory Host SDK module implements qmd scope behavior.
+import type { ResolvedQmdConfig } from "./backend-config.js";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
-} from "@openclaw/normalization-core/string-coerce";
-import type { ResolvedQmdConfig } from "./backend-config.js";
+} from "./string-utils.js";
 
 type ParsedQmdSessionScope = {
   channel?: string;

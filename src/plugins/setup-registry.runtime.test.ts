@@ -1,7 +1,8 @@
-// Verifies metadata-backed setup registry descriptor lookup.
+// Verifies runtime setup registry loading and lazy boundaries.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearCurrentPluginMetadataSnapshot,
+  resolvePluginMetadataControlPlaneFingerprint,
   setCurrentPluginMetadataSnapshot,
 } from "./current-plugin-metadata-snapshot.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
@@ -84,7 +85,15 @@ function createCurrentSnapshot(params: {
   };
   return {
     policyHash,
-    configFingerprint: params.manifestHash,
+    configFingerprint: resolvePluginMetadataControlPlaneFingerprint(
+      {},
+      {
+        env: process.env,
+        index,
+        policyHash,
+        workspaceDir: params.workspaceDir,
+      },
+    ),
     workspaceDir: params.workspaceDir,
     index,
     plugins: [
@@ -97,8 +106,8 @@ function createCurrentSnapshot(params: {
   } as unknown as PluginMetadataSnapshot;
 }
 
-describe("setup-registry descriptor lookup", () => {
-  it("uses enabled metadata cliBackends", async () => {
+describe("setup-registry runtime fallback", () => {
+  it("uses bundled registry cliBackends when the setup-registry runtime is unavailable", async () => {
     loadPluginMetadataSnapshotMock.mockReturnValue({
       index: {
         diagnostics: [],
@@ -126,30 +135,20 @@ describe("setup-registry descriptor lookup", () => {
           origin: "bundled",
           cliBackends: ["Codex-CLI", "legacy-openai-cli"],
         },
-        {
-          id: "disabled",
-          origin: "bundled",
-          cliBackends: ["disabled-cli"],
-        },
-        {
-          id: "local",
-          origin: "workspace",
-          cliBackends: ["local-cli"],
-        },
       ],
     });
 
-    const { resolvePluginSetupCliBackendDescriptor } = await import("./setup-registry.runtime.js");
+    const { testing, resolvePluginSetupCliBackendRuntime } =
+      await import("./setup-registry.runtime.js");
+    testing.resetRuntimeState();
+    testing.setRuntimeModuleForTest(null);
 
-    expect(resolvePluginSetupCliBackendDescriptor({ backend: "codex-cli" })).toEqual({
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "codex-cli" })).toEqual({
       pluginId: "openai",
       backend: { id: "Codex-CLI" },
     });
-    expect(resolvePluginSetupCliBackendDescriptor({ backend: "local-cli" })).toEqual({
-      pluginId: "local",
-      backend: { id: "local-cli" },
-    });
-    expect(resolvePluginSetupCliBackendDescriptor({ backend: "disabled-cli" })).toBeUndefined();
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "local-cli" })).toBeUndefined();
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "disabled-cli" })).toBeUndefined();
     expect(loadPluginMetadataSnapshotMock).toHaveBeenCalledTimes(3);
     expect(loadPluginMetadataSnapshotMock).toHaveBeenCalledWith({
       config: {},
@@ -157,8 +156,11 @@ describe("setup-registry descriptor lookup", () => {
     });
   });
 
-  it("refreshes cliBackends when the current metadata snapshot changes", async () => {
-    const { resolvePluginSetupCliBackendDescriptor } = await import("./setup-registry.runtime.js");
+  it("refreshes bundled registry cliBackends when the current metadata snapshot changes", async () => {
+    const { testing, resolvePluginSetupCliBackendRuntime } =
+      await import("./setup-registry.runtime.js");
+    testing.resetRuntimeState();
+    testing.setRuntimeModuleForTest(null);
 
     setCurrentPluginMetadataSnapshot(
       createCurrentSnapshot({
@@ -168,11 +170,11 @@ describe("setup-registry descriptor lookup", () => {
       { config: {}, env: process.env },
     );
 
-    expect(resolvePluginSetupCliBackendDescriptor({ backend: "codex-cli" })).toEqual({
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "codex-cli" })).toEqual({
       pluginId: "openai",
       backend: { id: "Codex-CLI" },
     });
-    expect(resolvePluginSetupCliBackendDescriptor({ backend: "next-cli" })).toBeUndefined();
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "next-cli" })).toBeUndefined();
 
     setCurrentPluginMetadataSnapshot(
       createCurrentSnapshot({
@@ -182,8 +184,8 @@ describe("setup-registry descriptor lookup", () => {
       { config: {}, env: process.env },
     );
 
-    expect(resolvePluginSetupCliBackendDescriptor({ backend: "codex-cli" })).toBeUndefined();
-    expect(resolvePluginSetupCliBackendDescriptor({ backend: "next-cli" })).toEqual({
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "codex-cli" })).toBeUndefined();
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "next-cli" })).toEqual({
       pluginId: "openai",
       backend: { id: "Next-CLI" },
     });
@@ -191,7 +193,10 @@ describe("setup-registry descriptor lookup", () => {
   });
 
   it("uses workspace-scoped current metadata through the active plugin runtime", async () => {
-    const { resolvePluginSetupCliBackendDescriptor } = await import("./setup-registry.runtime.js");
+    const { testing, resolvePluginSetupCliBackendRuntime } =
+      await import("./setup-registry.runtime.js");
+    testing.resetRuntimeState();
+    testing.setRuntimeModuleForTest(null);
 
     setActivePluginRegistry(
       createEmptyPluginRegistry(),
@@ -208,12 +213,12 @@ describe("setup-registry descriptor lookup", () => {
       { config: {}, env: process.env },
     );
 
-    expect(resolvePluginSetupCliBackendDescriptor({ backend: "codex-cli", config: {} })).toEqual({
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "codex-cli", config: {} })).toEqual({
       pluginId: "openai",
       backend: { id: "Codex-CLI" },
     });
     expect(
-      resolvePluginSetupCliBackendDescriptor({ backend: "next-cli", config: {} }),
+      resolvePluginSetupCliBackendRuntime({ backend: "next-cli", config: {} }),
     ).toBeUndefined();
 
     setCurrentPluginMetadataSnapshot(
@@ -226,9 +231,9 @@ describe("setup-registry descriptor lookup", () => {
     );
 
     expect(
-      resolvePluginSetupCliBackendDescriptor({ backend: "codex-cli", config: {} }),
+      resolvePluginSetupCliBackendRuntime({ backend: "codex-cli", config: {} }),
     ).toBeUndefined();
-    expect(resolvePluginSetupCliBackendDescriptor({ backend: "next-cli", config: {} })).toEqual({
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "next-cli", config: {} })).toEqual({
       pluginId: "openai",
       backend: { id: "Next-CLI" },
     });
@@ -244,7 +249,10 @@ describe("setup-registry descriptor lookup", () => {
       plugins: [],
     });
 
-    const { resolvePluginSetupCliBackendDescriptor } = await import("./setup-registry.runtime.js");
+    const { testing, resolvePluginSetupCliBackendRuntime } =
+      await import("./setup-registry.runtime.js");
+    testing.resetRuntimeState();
+    testing.setRuntimeModuleForTest(null);
 
     setCurrentPluginMetadataSnapshot(
       createCurrentSnapshot({
@@ -256,11 +264,37 @@ describe("setup-registry descriptor lookup", () => {
     );
 
     expect(
-      resolvePluginSetupCliBackendDescriptor({ backend: "codex-cli", config: {} }),
+      resolvePluginSetupCliBackendRuntime({ backend: "codex-cli", config: {} }),
     ).toBeUndefined();
     expect(loadPluginMetadataSnapshotMock).toHaveBeenCalledWith({
       config: {},
       env: process.env,
     });
+  });
+
+  it("preserves fail-closed setup lookup when the runtime module explicitly declines to resolve", async () => {
+    loadPluginMetadataSnapshotMock.mockReturnValue({
+      index: {
+        diagnostics: [],
+        plugins: [
+          {
+            pluginId: "openai",
+            origin: "bundled",
+            enabled: true,
+          },
+        ],
+      },
+      plugins: [],
+    });
+
+    const { testing, resolvePluginSetupCliBackendRuntime } =
+      await import("./setup-registry.runtime.js");
+    testing.resetRuntimeState();
+    testing.setRuntimeModuleForTest({
+      resolvePluginSetupCliBackend: () => undefined,
+    });
+
+    expect(resolvePluginSetupCliBackendRuntime({ backend: "codex-cli" })).toBeUndefined();
+    expect(loadPluginMetadataSnapshotMock).not.toHaveBeenCalled();
   });
 });

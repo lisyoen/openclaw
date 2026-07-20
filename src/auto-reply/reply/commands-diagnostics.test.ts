@@ -2,42 +2,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { clearPluginCommands, registerPluginCommand } from "../../plugins/commands.js";
-import { createPluginRegistry } from "../../plugins/registry.js";
+import { createPluginRegistry, type PluginRecord } from "../../plugins/registry.js";
 import type { PluginRuntime } from "../../plugins/runtime/types.js";
-import { createBundledPluginRecord } from "../../plugins/status.test-fixtures.js";
-import type { OpenClawPluginCommandDefinition, PluginCommandContext } from "../../plugins/types.js";
-
-type PluginCommandHandler = OpenClawPluginCommandDefinition["handler"];
+import type { PluginCommandContext, PluginCommandHandler } from "../../plugins/types.js";
 import type { MsgContext } from "../templating.js";
-import { handleDiagnosticsCommand as defaultDiagnosticsCommandHandler } from "./commands-diagnostics.js";
+import { createDiagnosticsCommandHandler } from "./commands-diagnostics.js";
 import type { HandleCommandsParams } from "./commands-types.js";
-
-const diagnosticsCommandMocks = vi.hoisted(() => ({
-  createExecTool: vi.fn(),
-  deliverPrivateCommandReply: vi.fn(),
-  resolvePrivateCommandRouteTargets: vi.fn(),
-}));
-
-vi.mock("../../agents/bash-tools.js", async () => {
-  const actual = await vi.importActual<typeof import("../../agents/bash-tools.js")>(
-    "../../agents/bash-tools.js",
-  );
-  return {
-    ...actual,
-    createExecTool: diagnosticsCommandMocks.createExecTool,
-  };
-});
-
-vi.mock("./commands-private-route.js", async () => {
-  const actual = await vi.importActual<typeof import("./commands-private-route.js")>(
-    "./commands-private-route.js",
-  );
-  return {
-    ...actual,
-    deliverPrivateCommandReply: diagnosticsCommandMocks.deliverPrivateCommandReply,
-    resolvePrivateCommandRouteTargets: diagnosticsCommandMocks.resolvePrivateCommandRouteTargets,
-  };
-});
 
 type ExecCall = {
   defaults: unknown;
@@ -71,11 +41,6 @@ type DiagnosticsSession = {
   sessionFile?: string;
   sessionId?: string;
   sessionKey?: string;
-};
-
-type PrivateDiagnosticsReply = {
-  targets: Array<{ channel: string; to: string; accountId?: string | null }>;
-  text?: string;
 };
 
 function requireExecCall(execCalls: ExecCall[], index = 0) {
@@ -137,6 +102,44 @@ function buildDiagnosticsParams(
     elevated: { enabled: true, allowed: true, failures: [] },
     ...overrides,
   } as HandleCommandsParams;
+}
+
+function createBundledPluginRecord(id: string): PluginRecord {
+  return {
+    id,
+    name: id,
+    source: `bundled:${id}`,
+    rootDir: `/bundled/${id}`,
+    origin: "bundled",
+    enabled: true,
+    status: "loaded",
+    toolNames: [],
+    hookNames: [],
+    channelIds: [],
+    cliBackendIds: [],
+    providerIds: [],
+    embeddingProviderIds: [],
+    speechProviderIds: [],
+    realtimeTranscriptionProviderIds: [],
+    realtimeVoiceProviderIds: [],
+    mediaUnderstandingProviderIds: [],
+    transcriptSourceProviderIds: [],
+    imageGenerationProviderIds: [],
+    videoGenerationProviderIds: [],
+    musicGenerationProviderIds: [],
+    webFetchProviderIds: [],
+    webSearchProviderIds: [],
+    migrationProviderIds: [],
+    memoryEmbeddingProviderIds: [],
+    agentHarnessIds: [],
+    cliCommands: [],
+    services: [],
+    gatewayDiscoveryServiceIds: [],
+    commands: [],
+    httpRoutes: 0,
+    hookCount: 0,
+    configSchema: false,
+  } as PluginRecord;
 }
 
 function registerHostTrustedReservedCommandForTest(
@@ -240,12 +243,12 @@ function createDiagnosticsHandlerForTest(
     };
   } = {},
 ) {
-  diagnosticsCommandMocks.createExecTool.mockReset();
-  diagnosticsCommandMocks.deliverPrivateCommandReply.mockReset();
-  diagnosticsCommandMocks.resolvePrivateCommandRouteTargets.mockReset();
   const execCalls: ExecCall[] = [];
-  const privateReplies: PrivateDiagnosticsReply[] = [];
-  diagnosticsCommandMocks.createExecTool.mockImplementation((defaults: unknown) => ({
+  const privateReplies: Array<{
+    targets: Array<{ channel: string; to: string; accountId?: string | null }>;
+    text?: string;
+  }> = [];
+  const createExecTool = vi.fn((defaults: unknown) => ({
     execute: vi.fn(async (_toolCallId: string, params: unknown) => {
       execCalls.push({ defaults, params });
       return (
@@ -270,25 +273,17 @@ function createDiagnosticsHandlerForTest(
       );
     }),
   }));
-  diagnosticsCommandMocks.resolvePrivateCommandRouteTargets.mockResolvedValue(
-    options.privateTargets ?? [],
-  );
-  diagnosticsCommandMocks.deliverPrivateCommandReply.mockImplementation(
-    async ({
-      targets,
-      reply,
-    }: {
-      targets: PrivateDiagnosticsReply["targets"];
-      reply: { text?: string };
-    }) => {
-      privateReplies.push({ targets, text: reply.text });
-      return true;
-    },
-  );
   return {
     execCalls,
     privateReplies,
-    handleDiagnosticsCommand: defaultDiagnosticsCommandHandler,
+    handleDiagnosticsCommand: createDiagnosticsCommandHandler({
+      createExecTool: createExecTool as never,
+      resolvePrivateDiagnosticsTargets: vi.fn(async () => options.privateTargets ?? []),
+      deliverPrivateDiagnosticsReply: vi.fn(async ({ targets, reply }) => {
+        privateReplies.push({ targets, text: reply.text });
+        return true;
+      }),
+    }),
   };
 }
 
@@ -616,7 +611,7 @@ describe("diagnostics command", () => {
   });
 
   it("requires an owner for diagnostics", async () => {
-    const { execCalls, handleDiagnosticsCommand } = createDiagnosticsHandlerForTest();
+    const { handleDiagnosticsCommand } = createDiagnosticsHandlerForTest();
     const result = await handleDiagnosticsCommand(
       buildDiagnosticsParams("/diagnostics", {
         command: {
@@ -628,7 +623,6 @@ describe("diagnostics command", () => {
     );
 
     expect(result).toEqual({ shouldContinue: false });
-    expect(execCalls).toHaveLength(0);
   });
 
   it("routes confirmations back to the Codex diagnostics handler without repeating the preamble", async () => {

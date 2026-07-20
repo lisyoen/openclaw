@@ -4,8 +4,6 @@
 // reaches provider/auth discovery and would create an architecture cycle through
 // the broad harness barrel.
 
-import type { ExecAutoReviewHost } from "../infra/exec-auto-review.js";
-
 export async function reviewExecRequestWithConfiguredModel(params: {
   cfg?: import("../config/types.openclaw.js").OpenClawConfig;
   agentId?: string;
@@ -34,7 +32,7 @@ export async function buildExecAutoReviewInputForShellCommand(params: {
   };
 }): Promise<import("../infra/exec-auto-review.js").ExecAutoReviewInput | undefined> {
   const [
-    { commandRequiresSecurityAuditSuppressionApproval, evaluateShellAllowlistWithAuthorization },
+    { commandRequiresSecurityAuditSuppressionApproval, evaluateShellAllowlist },
     { detectUnsafeExecControlShellCommand },
     { detectPolicyInlineEval },
   ] = await Promise.all([
@@ -43,11 +41,10 @@ export async function buildExecAutoReviewInputForShellCommand(params: {
     import("../infra/command-analysis/policy.js"),
   ]);
   const command = params.command.trim();
-  const host: ExecAutoReviewHost = params.host;
   if (!command) {
     return undefined;
   }
-  const allowlistEval = await evaluateShellAllowlistWithAuthorization({
+  const allowlistEval = evaluateShellAllowlist({
     command,
     allowlist: [],
     safeBins: new Set<string>(),
@@ -72,7 +69,7 @@ export async function buildExecAutoReviewInputForShellCommand(params: {
   ) {
     return undefined;
   }
-  if ((await detectUnsafeExecControlShellCommand(command)) !== null) {
+  if (detectUnsafeExecControlShellCommand(command) !== null) {
     return undefined;
   }
   const inlineEval = detectPolicyInlineEval(allowlistEval.segments) !== null;
@@ -82,7 +79,7 @@ export async function buildExecAutoReviewInputForShellCommand(params: {
     argv: segment.argv,
     cwd: params.cwd ?? null,
     envKeys: params.envKeys,
-    host,
+    host: params.host,
     reason: inlineEval ? "strict-inline-eval" : heredoc ? "heredoc" : "approval-required",
     analysis: {
       parsed: true,

@@ -20,7 +20,7 @@ function resolveXaiSyntheticAuth(config: unknown) {
 const xaiProviderDiscovery: ProviderPlugin = {
   id: PROVIDER_ID,
   label: "xAI",
-  docsPath: "/providers/xai",
+  docsPath: "/providers/models",
   auth: [],
   resolveSyntheticAuth: ({ config }) => resolveXaiSyntheticAuth(config),
 };

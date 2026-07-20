@@ -1,22 +1,5 @@
 // Handles TUI input submission and command dispatch.
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import type { TuiChatSubmitAdmission } from "./tui-submit-state.js";
-
-export type TuiSubmitAction = "local shell" | "command" | "message";
-
-function runSubmitAction(
-  action: TuiSubmitAction,
-  run: () => Promise<void> | void,
-  onError: (action: TuiSubmitAction, error: unknown) => void,
-): void {
-  try {
-    void Promise.resolve(run()).catch((error: unknown) => {
-      onError(action, error);
-    });
-  } catch (error) {
-    onError(action, error);
-  }
-}
 
 export function createEditorSubmitHandler(params: {
   editor: {
@@ -26,12 +9,8 @@ export function createEditorSubmitHandler(params: {
   handleCommand: (value: string) => Promise<void> | void;
   sendMessage: (value: string) => Promise<void> | void;
   handleBangLine: (value: string) => Promise<void> | void;
-  onSubmitError: (action: TuiSubmitAction, error: unknown) => void;
-  admitMessage?: (value: string) => TuiChatSubmitAdmission;
-  onBlockedMessageSubmit?: (
-    value: string,
-    reason: Exclude<TuiChatSubmitAdmission, "allowed">,
-  ) => void;
+  canSubmitMessage?: (value: string) => boolean;
+  onBlockedMessageSubmit?: (value: string) => void;
 }) {
   return (text: string) => {
     const raw = text;
@@ -49,7 +28,7 @@ export function createEditorSubmitHandler(params: {
     if (raw.startsWith("!") && raw !== "!") {
       params.editor.setText("");
       params.editor.addToHistory(raw);
-      runSubmitAction("local shell", () => params.handleBangLine(raw), params.onSubmitError);
+      void params.handleBangLine(raw);
       return;
     }
 
@@ -57,21 +36,20 @@ export function createEditorSubmitHandler(params: {
       params.editor.setText("");
       // Enable built-in editor prompt history navigation (up/down).
       params.editor.addToHistory(value);
-      runSubmitAction("command", () => params.handleCommand(value), params.onSubmitError);
+      void params.handleCommand(value);
       return;
     }
 
-    const admission = params.admitMessage?.(value) ?? "allowed";
-    if (admission !== "allowed") {
+    if (params.canSubmitMessage && !params.canSubmitMessage(value)) {
       params.editor.setText(value);
-      params.onBlockedMessageSubmit?.(value, admission);
+      params.onBlockedMessageSubmit?.(value);
       return;
     }
 
     params.editor.setText("");
     // Enable built-in editor prompt history navigation (up/down).
     params.editor.addToHistory(value);
-    runSubmitAction("message", () => params.sendMessage(value), params.onSubmitError);
+    void params.sendMessage(value);
   };
 }
 

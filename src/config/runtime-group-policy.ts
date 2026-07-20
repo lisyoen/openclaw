@@ -1,6 +1,5 @@
 // Resolves runtime group-policy settings for channels and sessions.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { createDedupeCache } from "../infra/dedupe.js";
 import type { GroupPolicy } from "./types.base.js";
 
 type RuntimeGroupPolicyResolution = {
@@ -20,7 +19,9 @@ type RuntimeGroupPolicyParams = {
  * Resolve the effective group policy for a channel/provider runtime.
  * Missing provider config can fail closed separately from configured providers.
  */
-function resolveRuntimeGroupPolicy(params: RuntimeGroupPolicyParams): RuntimeGroupPolicyResolution {
+export function resolveRuntimeGroupPolicy(
+  params: RuntimeGroupPolicyParams,
+): RuntimeGroupPolicyResolution {
   const configuredFallbackPolicy = params.configuredFallbackPolicy ?? "open";
   const missingProviderFallbackPolicy = params.missingProviderFallbackPolicy ?? "allowlist";
   const groupPolicy = params.providerConfigPresent
@@ -91,13 +92,7 @@ export function resolveAllowlistProviderRuntimeGroupPolicy(
   });
 }
 
-const MAX_WARNED_MISSING_PROVIDER_GROUP_POLICY_KEYS = 4096;
-// Warn-once keys accumulate per provider/account for the process lifetime;
-// bounding them means evicted keys can re-warn instead of growing without limit.
-const warnedMissingProviderGroupPolicy = createDedupeCache({
-  ttlMs: 0,
-  maxSize: MAX_WARNED_MISSING_PROVIDER_GROUP_POLICY_KEYS,
-});
+const warnedMissingProviderGroupPolicy = new Set<string>();
 
 /**
  * Log the missing-provider fail-closed fallback once per provider/account.
@@ -114,12 +109,20 @@ export function warnMissingProviderGroupPolicyFallbackOnce(params: {
     return false;
   }
   const key = `${params.providerKey}:${params.accountId ?? "*"}`;
-  if (warnedMissingProviderGroupPolicy.check(key)) {
+  if (warnedMissingProviderGroupPolicy.has(key)) {
     return false;
   }
+  warnedMissingProviderGroupPolicy.add(key);
   const blockedLabel = normalizeOptionalString(params.blockedLabel) || "group messages";
   params.log(
     `${params.providerKey}: channels.${params.providerKey} is missing; defaulting groupPolicy to "allowlist" (${blockedLabel} blocked until explicitly configured).`,
   );
   return true;
+}
+
+/**
+ * Test helper. Keeps warning-cache state deterministic across test files.
+ */
+export function resetMissingProviderGroupPolicyFallbackWarningsForTesting(): void {
+  warnedMissingProviderGroupPolicy.clear();
 }

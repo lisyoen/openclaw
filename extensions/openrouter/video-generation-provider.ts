@@ -1,5 +1,4 @@
 // Openrouter provider module implements model/runtime integration.
-import { toImageDataUrl } from "openclaw/plugin-sdk/image-generation";
 import { extensionForMime } from "openclaw/plugin-sdk/media-mime";
 import { isProviderApiKeyConfigured } from "openclaw/plugin-sdk/provider-auth";
 import { resolveApiKeyForProvider } from "openclaw/plugin-sdk/provider-auth-runtime";
@@ -7,7 +6,6 @@ import {
   assertOkOrThrowHttpError,
   createProviderOperationDeadline,
   postJsonRequest,
-  readProviderJsonResponse,
   resolveProviderHttpRequestConfig,
   resolveProviderOperationTimeoutMs,
   sanitizeConfiguredModelProviderRequest,
@@ -70,12 +68,9 @@ type OpenRouterFrameImagePart = OpenRouterImagePart & {
 async function readOpenRouterVideoJson(response: Response): Promise<Record<string, unknown>> {
   let payload: unknown;
   try {
-    payload = await readProviderJsonResponse<unknown>(response, "OpenRouter video generation");
-  } catch (error) {
-    if (error instanceof Error && error.message.endsWith(": malformed JSON response")) {
-      throw new Error(OPENROUTER_VIDEO_MALFORMED_RESPONSE, { cause: error });
-    }
-    throw error;
+    payload = await response.json();
+  } catch {
+    throw new Error(OPENROUTER_VIDEO_MALFORMED_RESPONSE);
   }
   if (!isRecord(payload)) {
     throw new Error(OPENROUTER_VIDEO_MALFORMED_RESPONSE);
@@ -119,7 +114,8 @@ function readOpenRouterVideoResponse(payload: Record<string, unknown>): OpenRout
 
 function toDataUrl(asset: VideoGenerationSourceAsset): string {
   if (asset.buffer) {
-    return toImageDataUrl({ ...asset, buffer: asset.buffer, defaultMimeType: "image/png" });
+    const mimeType = normalizeOptionalString(asset.mimeType) ?? "image/png";
+    return `data:${mimeType};base64,${asset.buffer.toString("base64")}`;
   }
   const url = normalizeOptionalString(asset.url);
   if (url) {

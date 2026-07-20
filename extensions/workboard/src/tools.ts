@@ -1,12 +1,10 @@
-import type { WorkboardCard } from "@openclaw/workboard-contract";
 // Workboard plugin module implements tools behavior.
 import { jsonResult, readStringParam } from "openclaw/plugin-sdk/core";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginToolContext } from "openclaw/plugin-sdk/plugin-entry";
-import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import { Type } from "typebox";
 import { WorkboardStore } from "./store.js";
-import { cardIdField, claimTokenField, createWorkboardMoveTool } from "./tools-card-mutations.js";
+import type { WorkboardCard } from "./types.js";
 
 function contextOwner(ctx: OpenClawPluginToolContext | undefined): string {
   const record = (ctx ?? {}) as Record<string, unknown>;
@@ -20,7 +18,10 @@ function contextOwner(ctx: OpenClawPluginToolContext | undefined): string {
 
 function canMutateCard(card: WorkboardCard, ownerId: string, token?: string): boolean {
   const claim = card.metadata?.claim;
-  return !claim || claim.ownerId === ownerId || safeEqualSecret(token, claim.token);
+  if (!claim) {
+    return true;
+  }
+  return claim.ownerId === ownerId || (Boolean(token) && claim.token === token);
 }
 
 function readParentIds(value: unknown): string[] {
@@ -140,6 +141,14 @@ type WorkboardCardMutation = (
   scope: WorkboardToolCardParams["scope"],
 ) => Promise<WorkboardCard>;
 
+function cardIdField() {
+  return Type.String({ description: "Workboard card id." });
+}
+
+function claimTokenField(description = "Claim token returned by workboard_claim.") {
+  return Type.Optional(Type.String({ description }));
+}
+
 const ScopedClaimTokenField = claimTokenField("Claim token for claimed cards.");
 const OptionalNextStatusField = Type.Optional(
   Type.String({ description: "Optional next status." }),
@@ -166,17 +175,6 @@ function redactedCardResult(card: WorkboardCard) {
 
 function redactedRawCardResult(card: WorkboardCard) {
   return jsonResult(redactClaimToken(card));
-}
-
-function redactedProofResult(card: WorkboardCard) {
-  const proofId = card.metadata?.proof?.at(-1)?.id;
-  if (!proofId) {
-    throw new Error("proof was not retained in card metadata.");
-  }
-  return jsonResult({
-    card: redactClaimToken(card),
-    proofId,
-  });
 }
 
 const CardIdSchema = Type.Object(
@@ -450,7 +448,7 @@ export function createWorkboardTools(params: {
       name: "workboard_proof",
       label: "Workboard Proof",
       description:
-        "Attach proof or artifact metadata to a Workboard card after running tests, checks, or producing screenshots/logs. Returns proofId; pass it to workboard_complete when that call reports the terminal status for this proof.",
+        "Attach proof or artifact metadata to a Workboard card after running tests, checks, or producing screenshots/logs.",
       parameters: Type.Object(
         {
           id: cardIdField(),
@@ -485,7 +483,7 @@ export function createWorkboardTools(params: {
               scope,
             )
           : await store.addProof(id, record, scope);
-        return redactedProofResult(card);
+        return redactedCardResult(card);
       },
     },
     {
@@ -498,12 +496,6 @@ export function createWorkboardTools(params: {
           id: cardIdField(),
           token: claimTokenField(),
           summary: Type.Optional(Type.String({ description: "Completion summary." })),
-          proofId: Type.Optional(
-            Type.String({
-              description:
-                "Proof id returned by workboard_proof when resolving that pending proof.",
-            }),
-          ),
           proof: Type.Optional(
             Type.Object(
               {
@@ -631,7 +623,6 @@ export function createWorkboardTools(params: {
         return redactedRawCardResult(await store.unblock(id, scope));
       },
     },
-    createWorkboardMoveTool({ store, readScopedCardToolParams, redactedCardResult }),
     {
       name: "workboard_boards",
       label: "Workboard Boards",
@@ -987,7 +978,7 @@ export function createWorkboardTools(params: {
       name: "workboard_dispatch",
       label: "Workboard Dispatch",
       description:
-        "Advance persisted board state without launching workers: promote unblocked cards, reclaim expired claims, and block timed-out runs.",
+        "Run one Workboard dispatcher pass: promote unblocked cards, reclaim expired claims, and block timed-out runs.",
       parameters: Type.Object(
         {
           boardId: Type.Optional(Type.String({ description: "Optional board id filter." })),
@@ -1051,4 +1042,3 @@ export function createWorkboardTools(params: {
     },
   ];
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

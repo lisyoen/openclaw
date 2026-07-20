@@ -16,6 +16,7 @@ type BundledPluginSource = {
   manifest: {
     id: string;
     channels?: unknown;
+    channelEnvVars?: unknown;
     name?: string;
     description?: string;
   } & Record<string, unknown>;
@@ -172,25 +173,17 @@ function resolveRootConfigurable(source: BundledPluginSource, channelId: string)
 }
 
 function resolveRootChannelEnvVars(source: BundledPluginSource, channelId: string): string[] {
-  const channelMeta = resolvePackageChannelMeta(source);
-  if (channelMeta?.id !== channelId) {
+  const raw = source.manifest.channelEnvVars;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return [];
   }
-  const configuredState = channelMeta.configuredState;
-  if (!configuredState || typeof configuredState !== "object" || Array.isArray(configuredState)) {
+  const value = (raw as Record<string, unknown>)[channelId];
+  if (!Array.isArray(value)) {
     return [];
   }
-  const env = (configuredState as Record<string, unknown>).env;
-  if (!env || typeof env !== "object" || Array.isArray(env)) {
-    return [];
-  }
-  const envRecord = env as Record<string, unknown>;
-  const values = [envRecord.allOf, envRecord.anyOf].flatMap((value) =>
-    Array.isArray(value) ? value : [],
-  );
   return [
     ...new Set(
-      values
+      value
         .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
         .filter((entry) => entry.length > 0),
     ),
@@ -242,7 +235,7 @@ function resolveChannelUnsupportedSecretRefSurfacePatterns(
   }
 }
 
-async function collectBundledChannelConfigMetadata(params?: { repoRoot?: string }) {
+export async function collectBundledChannelConfigMetadata(params?: { repoRoot?: string }) {
   const repoRoot = path.resolve(params?.repoRoot ?? process.cwd());
   const sources = collectBundledPluginSources({ repoRoot, requirePackageJson: true });
   const entries: BundledChannelConfigMetadata[] = [];
@@ -260,7 +253,7 @@ async function collectBundledChannelConfigMetadata(params?: { repoRoot?: string 
     if (!modulePath) {
       continue;
     }
-    const surface = await loadChannelConfigSurfaceModule(modulePath);
+    const surface = await loadChannelConfigSurfaceModule(modulePath, { repoRoot });
     if (!surface?.schema) {
       continue;
     }
@@ -296,7 +289,7 @@ async function collectBundledChannelConfigMetadata(params?: { repoRoot?: string 
   return entries.toSorted((left, right) => left.channelId.localeCompare(right.channelId));
 }
 
-async function writeBundledChannelConfigMetadataModule(params?: {
+export async function writeBundledChannelConfigMetadataModule(params?: {
   repoRoot?: string;
   outputPath?: string;
   check?: boolean;

@@ -8,10 +8,6 @@ import path from "node:path";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import type { ChatType } from "../channels/chat-type.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import {
-  formatActiveNodeContextLabel,
-  getActiveNodeContext,
-} from "../infra/active-node-context.js";
 import { findGitRoot } from "../infra/git-root.js";
 import type { ActiveProcessSessionReference } from "./bash-process-references.js";
 import {
@@ -39,7 +35,6 @@ type RuntimeInfoInput = {
   channelActions?: string[];
   repoRoot?: string;
   activeProcessSessions?: ActiveProcessSessionReference[];
-  activeNode?: string;
 };
 
 type SystemPromptRuntimeParams = {
@@ -68,7 +63,6 @@ export function buildSystemPromptParams(params: {
     runtimeInfo: {
       agentId: params.agentId,
       ...params.runtime,
-      activeNode: formatActiveNodeContextLabel(getActiveNodeContext()) ?? params.runtime.activeNode,
       repoRoot,
     },
     userTimezone,

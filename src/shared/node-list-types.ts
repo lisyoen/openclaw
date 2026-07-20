@@ -1,5 +1,3 @@
-import type { NodePluginToolDescriptor } from "../../packages/gateway-protocol/src/schema/nodes.js";
-
 /** Node record returned by gateway node-list endpoints. */
 export type NodeListNode = {
   nodeId: string;
@@ -16,7 +14,6 @@ export type NodeListNode = {
   pathEnv?: string;
   caps?: string[];
   commands?: string[];
-  nodePluginTools?: NodePluginToolDescriptor[];
   permissions?: Record<string, boolean>;
   approvalState?: "approved" | "pending-approval" | "pending-reapproval" | "unapproved";
   pendingRequestId?: string;
@@ -26,9 +23,6 @@ export type NodeListNode = {
   paired?: boolean;
   connected?: boolean;
   connectedAtMs?: number;
-  lastActiveAtMs?: number;
-  presenceUpdatedAtMs?: number;
-  active?: boolean;
   lastSeenAtMs?: number;
   lastSeenReason?: string;
   approvedAtMs?: number;
@@ -49,9 +43,10 @@ export type PendingRequest = {
   requiredApproveScopes?: Array<"operator.pairing" | "operator.write" | "operator.admin">;
 };
 
-/** Persisted paired node entry with permission metadata. */
+/** Persisted paired node entry with optional token and permission metadata. */
 export type PairedNode = {
   nodeId: string;
+  token?: string;
   displayName?: string;
   platform?: string;
   version?: string;

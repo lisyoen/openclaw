@@ -4,7 +4,9 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   clearAgentHarnesses,
   disposeRegisteredAgentHarnesses,
+  getAgentHarness,
   getRegisteredAgentHarness,
+  listAgentHarnessIds,
   listRegisteredAgentHarnesses,
   registerAgentHarness,
   resetRegisteredAgentHarnessSessions,
@@ -70,11 +72,11 @@ describe("agent harness registry", () => {
     const harness = makeHarness("custom");
     registerAgentHarness(harness, { ownerPluginId: "plugin-a" });
 
-    const registeredHarness = getRegisteredAgentHarness("custom");
-    expect(registeredHarness?.harness.id).toBe("custom");
-    expect(registeredHarness?.harness.pluginId).toBe("plugin-a");
-    expect(registeredHarness?.ownerPluginId).toBe("plugin-a");
-    expect(listRegisteredAgentHarnesses().map((entry) => entry.harness.id)).toEqual(["custom"]);
+    const registeredHarness = getAgentHarness("custom");
+    expect(registeredHarness?.id).toBe("custom");
+    expect(registeredHarness?.pluginId).toBe("plugin-a");
+    expect(getRegisteredAgentHarness("custom")?.ownerPluginId).toBe("plugin-a");
+    expect(listAgentHarnessIds()).toEqual(["custom"]);
   });
 
   it("restores a registry snapshot", () => {
@@ -84,7 +86,7 @@ describe("agent harness registry", () => {
 
     restoreRegisteredAgentHarnesses(snapshot);
 
-    expect(listRegisteredAgentHarnesses().map((entry) => entry.harness.id)).toEqual(["a"]);
+    expect(listAgentHarnessIds()).toEqual(["a"]);
   });
 
   it("dispatches generic session reset to registered harnesses", async () => {

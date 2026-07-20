@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolvePreferredOpenClawTmpDir } from "../../../../infra/tmp-openclaw-dir.js";
-import { getChannelPluginCatalogEntry, listRawChannelPluginCatalogEntries } from "../../catalog.js";
+import { getChannelPluginCatalogEntry, listChannelPluginCatalogEntries } from "../../catalog.js";
 
 type CatalogEntryMeta = {
   id: string;
@@ -48,7 +48,7 @@ export function describeChannelCatalogEntryContract(params: {
     });
 
     it("appears in the channel catalog listing", () => {
-      const ids = listRawChannelPluginCatalogEntries().map((entry) => entry.id);
+      const ids = listChannelPluginCatalogEntries().map((entry) => entry.id);
       expect(ids).toContain(params.channelId);
     });
   });
@@ -96,7 +96,7 @@ export function describeBundledMetadataOnlyChannelCatalogContract(params: {
         "utf8",
       );
 
-      const entry = listRawChannelPluginCatalogEntries({
+      const entry = listChannelPluginCatalogEntries({
         workspaceDir,
         env: createCatalogFixtureEnv({ OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" }),
       }).find((item) => item.id === params.meta.id);
@@ -141,7 +141,7 @@ export function describeOfficialFallbackChannelCatalogContract(params: {
         }),
       );
 
-      const entry = listRawChannelPluginCatalogEntries({
+      const entry = listChannelPluginCatalogEntries({
         env: createCatalogFallbackOnlyEnv(),
         officialCatalogPaths: [catalogPath],
       }).find((item) => item.id === params.channelId);
@@ -216,7 +216,7 @@ export function describeOfficialFallbackChannelCatalogContract(params: {
         "utf8",
       );
 
-      const entry = listRawChannelPluginCatalogEntries({
+      const entry = listChannelPluginCatalogEntries({
         catalogPaths: [externalCatalogPath],
         officialCatalogPaths: [officialCatalogPath],
         env: createCatalogFallbackOnlyEnv(),
@@ -252,7 +252,7 @@ export function describeOfficialFallbackChannelCatalogContract(params: {
         "utf8",
       );
 
-      const entry = listRawChannelPluginCatalogEntries({
+      const entry = listChannelPluginCatalogEntries({
         catalogPaths: [catalogPath],
         officialCatalogPaths: [],
         env: createCatalogFallbackOnlyEnv(),

@@ -3,7 +3,6 @@
  */
 import fs from "node:fs/promises";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import { openAuthenticatedGatewayWs, waitForGatewayWsClose } from "./shared-auth.test-helpers.js";
 import {
   getFreePort,
@@ -44,7 +43,7 @@ beforeAll(async () => {
   }
   port = await getFreePort();
   testState.gatewayAuth = undefined;
-  setTestEnvValue(SECRET_REF_TOKEN_ID, OLD_TOKEN);
+  process.env[SECRET_REF_TOKEN_ID] = OLD_TOKEN;
   await fs.writeFile(
     configPath,
     `${JSON.stringify(buildSharedTokenReloadConfig(), null, 2)}\n`,
@@ -54,11 +53,11 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  setTestEnvValue(SECRET_REF_TOKEN_ID, OLD_TOKEN);
+  process.env[SECRET_REF_TOKEN_ID] = OLD_TOKEN;
 });
 
 afterAll(async () => {
-  deleteTestEnvValue(SECRET_REF_TOKEN_ID);
+  delete process.env[SECRET_REF_TOKEN_ID];
   testState.gatewayAuth = ORIGINAL_GATEWAY_AUTH;
   await server.close();
 });
@@ -68,7 +67,7 @@ describe("gateway shared token hot reload rotation", () => {
     const ws = await openAuthenticatedGatewayWs(port, OLD_TOKEN);
     try {
       const closed = waitForGatewayWsClose(ws);
-      setTestEnvValue(SECRET_REF_TOKEN_ID, NEW_TOKEN);
+      process.env[SECRET_REF_TOKEN_ID] = NEW_TOKEN;
       const reload = await rpcReq<{ warningCount?: number }>(ws, "secrets.reload", {}).catch(
         (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
       );

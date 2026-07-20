@@ -5,13 +5,12 @@ import type { DiscordAccountConfig } from "openclaw/plugin-sdk/config-contracts"
 import { resolveOpenProviderRuntimeGroupPolicy } from "openclaw/plugin-sdk/runtime-group-policy";
 import type { Guild } from "../internal/discord.js";
 import {
-  allowListMatches,
   isDiscordGroupAllowedByPolicy,
-  normalizeDiscordAllowList,
   resolveDiscordChannelConfigWithFallback,
   type DiscordChannelConfigResolved,
   resolveDiscordGuildEntry,
   resolveDiscordMemberAccessState,
+  resolveDiscordOwnerAccess,
 } from "../monitor/allow-list.js";
 
 export async function authorizeDiscordVoiceIngress(params: {
@@ -32,7 +31,7 @@ export async function authorizeDiscordVoiceIngress(params: {
   scope?: "channel" | "thread";
   channelLabel?: string;
   memberRoleIds: string[];
-  admissionAllowFrom?: string[];
+  ownerAllowFrom?: string[];
   sender: { id: string; name?: string; tag?: string };
 }): Promise<
   { ok: true; channelConfig?: DiscordChannelConfigResolved | null } | { ok: false; message: string }
@@ -102,21 +101,17 @@ export async function authorizeDiscordVoiceIngress(params: {
     allowNameMatching: false,
   });
 
-  const admissionAllowList = normalizeDiscordAllowList(
-    params.admissionAllowFrom ?? params.discordConfig.allowFrom ?? params.discordConfig.allowFrom,
-    ["discord:", "user:", "pk:"],
-  );
-  const admissionAllowed = admissionAllowList
-    ? allowListMatches(admissionAllowList, params.sender, { allowNameMatching: false })
-    : false;
+  const { ownerAllowList, ownerAllowed } = resolveDiscordOwnerAccess({
+    allowFrom:
+      params.ownerAllowFrom ?? params.discordConfig.allowFrom ?? params.discordConfig.dm?.allowFrom,
+    sender: params.sender,
+    allowNameMatching: false,
+  });
 
   const useAccessGroups = params.useAccessGroups ?? params.cfg.commands?.useAccessGroups !== false;
   const authorizers = useAccessGroups
     ? [
-        {
-          configured: admissionAllowList != null,
-          allowed: admissionAllowed,
-        },
+        { configured: ownerAllowList != null, allowed: ownerAllowed },
         { configured: hasAccessRestrictions, allowed: memberAllowed },
       ]
     : [{ configured: hasAccessRestrictions, allowed: memberAllowed }];

@@ -1,8 +1,8 @@
 // Subagent delivery-context tests protect route metadata inheritance for child
 // agent sessions and outbound delivery through channel plugins.
+import fs from "node:fs/promises";
 import { describe, expect, test } from "vitest";
-import type { ChannelPlugin } from "../channels/plugins/types.public.js";
-import { loadSessionEntry } from "../config/sessions/session-accessor.js";
+import type { ChannelPlugin } from "../channels/plugins/types.js";
 import {
   createChannelTestPluginBase,
   createDirectOutboundTestAdapter,
@@ -66,6 +66,14 @@ async function prepareSessionStore(entries: StoreEntries = {}): Promise<void> {
   await writeSessionStore({ entries });
 }
 
+function readStoredEntry(stored: Record<string, StoredEntry>, key: string): StoredEntry {
+  const entry = stored[key];
+  if (!entry) {
+    throw new Error(`expected stored entry ${key}`);
+  }
+  return entry;
+}
+
 function readDeliveryContext(entry: StoredEntry): NonNullable<StoredEntry["deliveryContext"]> {
   if (!entry.deliveryContext) {
     throw new Error("expected stored deliveryContext");
@@ -74,13 +82,11 @@ function readDeliveryContext(entry: StoredEntry): NonNullable<StoredEntry["deliv
 }
 
 async function readStoredSessionEntry(key: string): Promise<StoredEntry> {
-  const entry = loadSessionEntry({ sessionKey: key, storePath: gatewaySuite.sessionStorePath }) as
-    | StoredEntry
-    | undefined;
-  if (!entry) {
-    throw new Error(`expected stored entry ${key}`);
-  }
-  return entry;
+  const stored = JSON.parse(await fs.readFile(gatewaySuite.sessionStorePath, "utf-8")) as Record<
+    string,
+    StoredEntry
+  >;
+  return readStoredEntry(stored, key);
 }
 
 async function sendAgentRequest(params: Record<string, unknown>): Promise<void> {

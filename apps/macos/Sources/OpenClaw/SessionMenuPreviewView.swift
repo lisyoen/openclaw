@@ -342,7 +342,7 @@ enum SessionMenuPreviewLoader {
         case "empty":
             return SessionMenuPreviewSnapshot(items: items, status: .empty)
         case "missing":
-            return SessionMenuPreviewSnapshot(items: items, status: .error("Thread missing"))
+            return SessionMenuPreviewSnapshot(items: items, status: .error("Session missing"))
         default:
             return SessionMenuPreviewSnapshot(items: items, status: .error("Preview unavailable"))
         }

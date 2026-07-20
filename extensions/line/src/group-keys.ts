@@ -52,10 +52,11 @@ export function resolveLineGroupsConfig(
 }
 
 export function resolveExactLineGroupConfigKey(params: {
-  groups: Record<string, unknown> | undefined;
+  cfg: OpenClawConfig;
+  accountId?: string | null;
   groupId?: string | null;
 }): string | undefined {
-  const { groups } = params;
+  const groups = resolveLineGroupsConfig(params.cfg, params.accountId);
   if (!groups) {
     return undefined;
   }

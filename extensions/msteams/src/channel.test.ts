@@ -76,15 +76,6 @@ describe("msteams config schema", () => {
     }
   });
 
-  it("accepts the opt-in Graph media fallback", () => {
-    const res = MSTeamsConfigSchema.safeParse({ graphMediaFallback: true });
-
-    expect(res.success).toBe(true);
-    if (res.success) {
-      expect(res.data.graphMediaFallback).toBe(true);
-    }
-  });
-
   it("accepts replyStyle at global/team/channel levels", () => {
     const res = MSTeamsConfigSchema.safeParse({
       replyStyle: "top-level",

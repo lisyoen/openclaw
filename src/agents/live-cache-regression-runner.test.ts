@@ -1,15 +1,6 @@
 // Verifies live cache regression baseline classification without live providers.
 import { describe, expect, it } from "vitest";
-import {
-  assertAgainstBaseline,
-  evaluateAgainstBaseline,
-  isAnthropicToolProbeDrift,
-  resolveCacheProbeMaxTokens,
-  resolveLiveCacheProviderPool,
-  shouldAcceptEmptyCacheProbe,
-  shouldRetryBaselineFindings,
-  shouldRetryCacheProbeText,
-} from "./live-cache-regression-policy.js";
+import { testing } from "./live-cache-regression-runner.js";
 import {
   LiveCachePrerequisiteSkip,
   toLiveCachePrerequisiteSkip,
@@ -23,7 +14,7 @@ describe("live cache regression runner", () => {
     const regressions: string[] = [];
     const warnings: string[] = [];
 
-    assertAgainstBaseline({
+    testing.assertAgainstBaseline({
       lane: "image",
       provider: "openai",
       result: {
@@ -49,7 +40,7 @@ describe("live cache regression runner", () => {
     const regressions: string[] = [];
     const warnings: string[] = [];
 
-    assertAgainstBaseline({
+    testing.assertAgainstBaseline({
       lane: "stable",
       provider: "openai",
       result: {
@@ -75,7 +66,7 @@ describe("live cache regression runner", () => {
     // Hard regressions get one rerun to absorb provider cache warmup jitter;
     // advisory warnings should not trigger reruns.
     expect(
-      shouldRetryBaselineFindings(
+      testing.shouldRetryBaselineFindings(
         {
           regressions: ["anthropic:image cacheRead=0 < min=4500"],
           warnings: [],
@@ -84,7 +75,7 @@ describe("live cache regression runner", () => {
       ),
     ).toBe(true);
     expect(
-      shouldRetryBaselineFindings(
+      testing.shouldRetryBaselineFindings(
         {
           regressions: ["anthropic:image cacheRead=0 < min=4500"],
           warnings: [],
@@ -93,7 +84,7 @@ describe("live cache regression runner", () => {
       ),
     ).toBe(false);
     expect(
-      shouldRetryBaselineFindings(
+      testing.shouldRetryBaselineFindings(
         {
           regressions: [],
           warnings: ["openai:image cacheRead=0 < min=3840"],
@@ -111,7 +102,7 @@ describe("live cache regression runner", () => {
       openai: {},
     };
 
-    const resolved = await resolveLiveCacheProviderPool({
+    const resolved = await testing.resolveLiveCacheProviderPool({
       config: {
         provider: "openai",
         api: "openai-responses",
@@ -147,7 +138,7 @@ describe("live cache regression runner", () => {
       openai: {},
     };
 
-    const resolved = await resolveLiveCacheProviderPool({
+    const resolved = await testing.resolveLiveCacheProviderPool({
       config: {
         provider: "anthropic",
         api: "anthropic-messages",
@@ -186,35 +177,35 @@ describe("live cache regression runner", () => {
 
   it("retries a cache probe twice when provider text misses the sentinel", () => {
     expect(
-      shouldRetryCacheProbeText({
+      testing.shouldRetryCacheProbeText({
         attempt: 1,
         suffix: "openai-stable-hit-a",
         text: "",
       }),
     ).toBe(true);
     expect(
-      shouldRetryCacheProbeText({
+      testing.shouldRetryCacheProbeText({
         attempt: 2,
         suffix: "openai-stable-hit-a",
         text: "",
       }),
     ).toBe(true);
     expect(
-      shouldRetryCacheProbeText({
+      testing.shouldRetryCacheProbeText({
         attempt: 3,
         suffix: "openai-stable-hit-a",
         text: "",
       }),
     ).toBe(false);
     expect(
-      shouldRetryCacheProbeText({
+      testing.shouldRetryCacheProbeText({
         attempt: 1,
         suffix: "openai-stable-hit-a",
         text: "I saw openai-stable-hit-a.",
       }),
     ).toBe(true);
     expect(
-      shouldRetryCacheProbeText({
+      testing.shouldRetryCacheProbeText({
         attempt: 1,
         suffix: "openai-stable-hit-a",
         text: "CACHE-OK openai-stable-hit-a",
@@ -224,25 +215,25 @@ describe("live cache regression runner", () => {
 
   it("keeps cache probes above the provider empty-output floor", () => {
     expect(
-      resolveCacheProbeMaxTokens({
+      testing.resolveCacheProbeMaxTokens({
         maxTokens: 32,
         providerTag: "openai",
       }),
     ).toBe(1024);
     expect(
-      resolveCacheProbeMaxTokens({
+      testing.resolveCacheProbeMaxTokens({
         maxTokens: 512,
         providerTag: "openai",
       }),
     ).toBe(1024);
     expect(
-      resolveCacheProbeMaxTokens({
+      testing.resolveCacheProbeMaxTokens({
         maxTokens: 2048,
         providerTag: "openai",
       }),
     ).toBe(2048);
     expect(
-      resolveCacheProbeMaxTokens({
+      testing.resolveCacheProbeMaxTokens({
         maxTokens: 32,
         providerTag: "anthropic",
       }),
@@ -250,44 +241,46 @@ describe("live cache regression runner", () => {
   });
 
   it("classifies Anthropic tool-only probe misses as provider drift", () => {
-    expect(isAnthropicToolProbeDrift(new Error("expected tool call for noop"))).toBe(true);
+    expect(testing.isAnthropicToolProbeDrift(new Error("expected tool call for noop"))).toBe(true);
     expect(
-      isAnthropicToolProbeDrift(new Error('expected tool-only response for noop, got "ok"')),
+      testing.isAnthropicToolProbeDrift(
+        new Error('expected tool-only response for noop, got "ok"'),
+      ),
     ).toBe(true);
-    expect(isAnthropicToolProbeDrift(new Error("other failure"))).toBe(false);
+    expect(testing.isAnthropicToolProbeDrift(new Error("other failure"))).toBe(false);
   });
 
   it("accepts empty cache probe text only when usage is observable", () => {
     expect(
-      shouldAcceptEmptyCacheProbe({
+      testing.shouldAcceptEmptyCacheProbe({
         providerTag: "openai",
         text: "",
         usage: { input: 5_000 },
       }),
     ).toBe(true);
     expect(
-      shouldAcceptEmptyCacheProbe({
+      testing.shouldAcceptEmptyCacheProbe({
         providerTag: "openai",
         text: "",
         usage: { cacheRead: 4_608 },
       }),
     ).toBe(true);
     expect(
-      shouldAcceptEmptyCacheProbe({
+      testing.shouldAcceptEmptyCacheProbe({
         providerTag: "openai",
         text: "wrong",
         usage: { input: 5_000 },
       }),
     ).toBe(false);
     expect(
-      shouldAcceptEmptyCacheProbe({
+      testing.shouldAcceptEmptyCacheProbe({
         providerTag: "anthropic",
         text: "",
         usage: { input: 5_000 },
       }),
     ).toBe(true);
     expect(
-      shouldAcceptEmptyCacheProbe({
+      testing.shouldAcceptEmptyCacheProbe({
         providerTag: "openai",
         text: "",
         usage: {},
@@ -296,7 +289,7 @@ describe("live cache regression runner", () => {
   });
 
   it("accepts a warmup that already hits the provider cache", () => {
-    const findings = evaluateAgainstBaseline({
+    const findings = testing.evaluateAgainstBaseline({
       lane: "image",
       provider: "anthropic",
       result: {
@@ -321,7 +314,7 @@ describe("live cache regression runner", () => {
   it("still rejects warmups with no cache write or cache hit evidence", () => {
     // A successful best probe is not enough: warmup must prove either cache
     // write or read evidence so the measured hit is meaningful.
-    const findings = evaluateAgainstBaseline({
+    const findings = testing.evaluateAgainstBaseline({
       lane: "image",
       provider: "anthropic",
       result: {

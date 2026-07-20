@@ -17,7 +17,7 @@ const {
   const { tmpdir } = require("node:os");
   const baseDir = mkdtempSync(nodePath.join(tmpdir(), "openclaw-sandbox-registry-"));
   const previousStateDir = process.env.OPENCLAW_STATE_DIR;
-  Reflect.set(process.env, "OPENCLAW_STATE_DIR", baseDir);
+  process.env.OPENCLAW_STATE_DIR = baseDir;
 
   return {
     TEST_STATE_DIR: baseDir,
@@ -38,7 +38,6 @@ vi.mock("./constants.js", () => ({
 }));
 
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
-import { deleteTestEnvValue, setTestEnvValue } from "../../test-utils/env.js";
 import { hashTextSha256 } from "./hash.js";
 import {
   migrateLegacySandboxRegistryFiles,
@@ -78,9 +77,9 @@ afterAll(async () => {
   closeOpenClawStateDatabaseForTest();
   await fs.rm(TEST_STATE_DIR, { recursive: true, force: true });
   if (PREVIOUS_OPENCLAW_STATE_DIR === undefined) {
-    deleteTestEnvValue("OPENCLAW_STATE_DIR");
+    delete process.env.OPENCLAW_STATE_DIR;
   } else {
-    setTestEnvValue("OPENCLAW_STATE_DIR", PREVIOUS_OPENCLAW_STATE_DIR);
+    process.env.OPENCLAW_STATE_DIR = PREVIOUS_OPENCLAW_STATE_DIR;
   }
 });
 
@@ -181,7 +180,6 @@ describe("registry race safety", () => {
     await expect(readRegistry()).resolves.toEqual({ entries: [] });
     await expect(readRegistryEntry("legacy-container")).resolves.toBeNull();
     await expect(fs.access(SANDBOX_REGISTRY_PATH)).resolves.toBeUndefined();
-    await expectPathMissing(path.join(TEST_STATE_DIR, "state", "openclaw.sqlite"));
   });
 
   it("normalizes legacy registry entries after explicit migration", async () => {

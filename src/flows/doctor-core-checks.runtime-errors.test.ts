@@ -18,10 +18,7 @@ vi.mock("../agents/model-catalog.js", () => ({
     provider: string,
     modelId: string,
   ) => catalog.find((entry) => entry.provider === provider && entry.id === modelId),
-}));
-
-vi.mock("../agents/prepared-model-catalog.js", () => ({
-  loadPreparedModelCatalog: mocks.loadModelCatalog,
+  loadModelCatalog: mocks.loadModelCatalog,
 }));
 
 vi.mock("../agents/model-selection.js", async (importOriginal) => ({

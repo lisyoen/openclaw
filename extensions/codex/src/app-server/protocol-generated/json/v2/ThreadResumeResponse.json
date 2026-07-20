@@ -79,6 +79,7 @@
         {
           "enum": [
             "untrusted",
+            "on-failure",
             "on-request",
             "never"
           ],
@@ -228,7 +229,6 @@
         {
           "enum": [
             "contextWindowExceeded",
-            "sessionBudgetExceeded",
             "usageLimitExceeded",
             "serverOverloaded",
             "cyberPolicy",
@@ -536,50 +536,6 @@
       ],
       "type": "string"
     },
-    "LegacyAppPathString": {
-      "type": "string"
-    },
-    "McpToolCallAppContext": {
-      "properties": {
-        "actionName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "appName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "connectorId": {
-          "type": "string"
-        },
-        "linkId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "resourceUri": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "templateId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "connectorId"
-      ],
-      "type": "object"
-    },
     "McpToolCallError": {
       "properties": {
         "message": {
@@ -675,31 +631,6 @@
           "description": "The assistant's terminal answer text for the current turn.",
           "enum": [
             "final_answer"
-          ],
-          "type": "string"
-        }
-      ]
-    },
-    "MultiAgentMode": {
-      "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "custom": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "custom"
-          ],
-          "title": "CustomMultiAgentMode",
-          "type": "object"
-        },
-        {
-          "enum": [
-            "explicitRequestOnly",
-            "proactive"
           ],
           "type": "string"
         }
@@ -930,14 +861,6 @@
         }
       ]
     },
-    "SubAgentActivityKind": {
-      "enum": [
-        "started",
-        "interacted",
-        "interrupted"
-      ],
-      "type": "string"
-    },
     "SubAgentSource": {
       "oneOf": [
         {
@@ -1074,17 +997,6 @@
           "description": "Whether the thread is ephemeral and should not be materialized on disk.",
           "type": "boolean"
         },
-        "extra": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ThreadExtra"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional implementation-specific thread data."
-        },
         "forkedFromId": {
           "description": "Source thread id when this thread was created by forking another thread.",
           "type": [
@@ -1103,17 +1015,7 @@
           ],
           "description": "Optional Git metadata captured when the thread was created."
         },
-        "historyMode": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/ThreadHistoryMode"
-            }
-          ],
-          "default": "legacy",
-          "description": "Persisted thread history contract selected when this thread was created."
-        },
         "id": {
-          "description": "Identifier for this thread. Codex-generated thread IDs are UUIDv7.",
           "type": "string"
         },
         "modelProvider": {
@@ -1144,14 +1046,6 @@
         "preview": {
           "description": "Usually the first user message in the thread, if available.",
           "type": "string"
-        },
-        "recencyAt": {
-          "description": "Unix timestamp (in seconds) used for thread recency ordering.",
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
         },
         "sessionId": {
           "description": "Session id shared by threads that belong to the same session tree.",
@@ -1217,17 +1111,6 @@
       "enum": [
         "waitingOnApproval",
         "waitingOnUserInput"
-      ],
-      "type": "string"
-    },
-    "ThreadExtra": {
-      "description": "Extra app-server data for a thread.",
-      "type": "object"
-    },
-    "ThreadHistoryMode": {
-      "enum": [
-        "legacy",
-        "paginated"
       ],
       "type": "string"
     },
@@ -1424,7 +1307,7 @@
             "cwd": {
               "allOf": [
                 {
-                  "$ref": "#/definitions/LegacyAppPathString"
+                  "$ref": "#/definitions/AbsolutePathBuf"
                 }
               ],
               "description": "The command's working directory."
@@ -1518,16 +1401,6 @@
         },
         {
           "properties": {
-            "appContext": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/McpToolCallAppContext"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "arguments": true,
             "durationMs": {
               "description": "The duration of the MCP tool call in milliseconds.",
@@ -1551,7 +1424,6 @@
               "type": "string"
             },
             "mcpAppResourceUri": {
-              "description": "Deprecated: use `appContext.resourceUri` instead.",
               "type": [
                 "string",
                 "null"
@@ -1747,38 +1619,6 @@
         },
         {
           "properties": {
-            "agentPath": {
-              "type": "string"
-            },
-            "agentThreadId": {
-              "type": "string"
-            },
-            "id": {
-              "type": "string"
-            },
-            "kind": {
-              "$ref": "#/definitions/SubAgentActivityKind"
-            },
-            "type": {
-              "enum": [
-                "subAgentActivity"
-              ],
-              "title": "SubAgentActivityThreadItemType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "agentPath",
-            "agentThreadId",
-            "id",
-            "kind",
-            "type"
-          ],
-          "title": "SubAgentActivityThreadItem",
-          "type": "object"
-        },
-        {
-          "properties": {
             "action": {
               "anyOf": [
                 {
@@ -1817,7 +1657,7 @@
               "type": "string"
             },
             "path": {
-              "$ref": "#/definitions/LegacyAppPathString"
+              "$ref": "#/definitions/AbsolutePathBuf"
             },
             "type": {
               "enum": [
@@ -1833,32 +1673,6 @@
             "type"
           ],
           "title": "ImageViewThreadItem",
-          "type": "object"
-        },
-        {
-          "properties": {
-            "durationMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "id": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "sleep"
-              ],
-              "title": "SleepThreadItemType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "durationMs",
-            "id",
-            "type"
-          ],
-          "title": "SleepThreadItem",
           "type": "object"
         },
         {
@@ -1976,6 +1790,11 @@
       ]
     },
     "ThreadSource": {
+      "enum": [
+        "user",
+        "subagent",
+        "memory_consolidation"
+      ],
       "type": "string"
     },
     "ThreadStatus": {
@@ -2083,7 +1902,6 @@
           "description": "Only populated when the Turn's status is failed."
         },
         "id": {
-          "description": "Identifier for this turn. Codex-generated turn IDs are UUIDv7.",
           "type": "string"
         },
         "items": {
@@ -2494,9 +2312,9 @@
     },
     "instructionSources": {
       "default": [],
-      "description": "Environment-native paths to instruction source files currently loaded for this thread.",
+      "description": "Instruction source files currently loaded for this thread.",
       "items": {
-        "$ref": "#/definitions/LegacyAppPathString"
+        "$ref": "#/definitions/AbsolutePathBuf"
       },
       "type": "array"
     },
@@ -2505,15 +2323,6 @@
     },
     "modelProvider": {
       "type": "string"
-    },
-    "multiAgentMode": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/MultiAgentMode"
-        }
-      ],
-      "default": "explicitRequestOnly",
-      "description": "@deprecated Always `explicitRequestOnly`. Use `reasoningEffort` for Ultra behavior."
     },
     "reasoningEffort": {
       "anyOf": [

@@ -3,8 +3,6 @@
  * with no pending tool calls, so the parent session is idle when subagent
  * results arrive.
  */
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { makeAttemptResult } from "./run.overflow-compaction.fixture.js";
 import {
@@ -12,7 +10,6 @@ import {
   mockedGlobalHookRunner,
   mockedRunEmbeddedAttempt,
   overflowBaseRunParams,
-  warmRunOverflowCompactionHarness,
 } from "./run.overflow-compaction.harness.js";
 import { isEmbeddedAgentRunActive, queueEmbeddedAgentMessageWithOutcome } from "./runs.js";
 
@@ -21,7 +18,6 @@ let runEmbeddedAgent: typeof import("./run.js").runEmbeddedAgent;
 describe("sessions_yield orchestration", () => {
   beforeAll(async () => {
     ({ runEmbeddedAgent } = await loadRunOverflowCompactionHarness());
-    await warmRunOverflowCompactionHarness(runEmbeddedAgent);
   });
 
   beforeEach(() => {
@@ -82,9 +78,8 @@ describe("sessions_yield orchestration", () => {
 
     // clientToolCalls wins — tool_calls stopReason, pendingToolCalls populated
     expect(result.meta.stopReason).toBe("tool_calls");
-    const pendingToolCalls = expectDefined(result.meta.pendingToolCalls, "pending tool calls");
-    expect(pendingToolCalls).toHaveLength(1);
-    expect(expectDefined(pendingToolCalls[0], "hosted tool call").name).toBe("hosted_tool");
+    expect(result.meta.pendingToolCalls).toHaveLength(1);
+    expect(result.meta.pendingToolCalls![0].name).toBe("hosted_tool");
   });
 
   it("preserves order across multiple client tool calls in one attempt (#52288)", async () => {
@@ -108,16 +103,13 @@ describe("sessions_yield orchestration", () => {
     });
 
     expect(result.meta.stopReason).toBe("tool_calls");
-    const pendingToolCalls = expectDefined(result.meta.pendingToolCalls, "pending tool calls");
-    expect(pendingToolCalls).toHaveLength(3);
-    expect(pendingToolCalls.map((c) => c.name)).toEqual([
+    expect(result.meta.pendingToolCalls).toHaveLength(3);
+    expect(result.meta.pendingToolCalls!.map((c) => c.name)).toEqual([
       "create_graph",
       "activate_graph",
       "get_status",
     ]);
-    expect(
-      JSON.parse(expectDefined(pendingToolCalls[0], "first pending tool call").arguments),
-    ).toEqual({
+    expect(JSON.parse(result.meta.pendingToolCalls![0].arguments)).toEqual({
       nodes: ["a", "b"],
     });
   });

@@ -86,7 +86,7 @@ function getSlashAccountStates(): Map<string, SlashCommandAccountState> {
 
 const accountStates = getSlashAccountStates();
 
-function resolveSlashHandlerForToken(token: string): SlashHandlerMatch {
+export function resolveSlashHandlerForToken(token: string): SlashHandlerMatch {
   const matches: Array<{
     accountId: string;
     handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -102,15 +102,11 @@ function resolveSlashHandlerForToken(token: string): SlashHandlerMatch {
     return { kind: "none" };
   }
   if (matches.length === 1) {
-    const match = matches[0];
-    if (!match) {
-      return { kind: "none" };
-    }
     return {
       kind: "single",
       source: "token",
-      handler: match.handler,
-      accountIds: [match.accountId],
+      handler: matches[0].handler,
+      accountIds: [matches[0].accountId],
     };
   }
 
@@ -121,7 +117,7 @@ function resolveSlashHandlerForToken(token: string): SlashHandlerMatch {
   };
 }
 
-function resolveSlashHandlerForCommand(params: {
+export function resolveSlashHandlerForCommand(params: {
   teamId: string;
   command: string;
 }): SlashHandlerMatch {
@@ -150,15 +146,11 @@ function resolveSlashHandlerForCommand(params: {
     return { kind: "none" };
   }
   if (matches.length === 1) {
-    const match = matches[0];
-    if (!match) {
-      return { kind: "none" };
-    }
     return {
       kind: "single",
       source: "command",
-      handler: match.handler,
-      accountIds: [match.accountId],
+      handler: matches[0].handler,
+      accountIds: [matches[0].accountId],
     };
   }
 
@@ -309,8 +301,8 @@ export function registerSlashCommandRoute(api: OpenClawPluginApi) {
 
     // If there's only one active account (common case), route directly.
     if (accountStates.size === 1) {
-      const state = accountStates.values().next().value;
-      if (!state?.handler) {
+      const [, state] = [...accountStates.entries()][0];
+      if (!state.handler) {
         res.statusCode = 503;
         res.setHeader("Content-Type", "application/json; charset=utf-8");
         res.end(

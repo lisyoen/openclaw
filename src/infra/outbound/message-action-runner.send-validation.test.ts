@@ -89,44 +89,6 @@ describe("runMessageAction send validation", () => {
     expect(result.kind).toBe("send");
   });
 
-  it("allows send when only a portable location is provided", async () => {
-    const result = await runDrySend({
-      cfg: workspaceConfig,
-      actionParams: {
-        channel: "workspace",
-        target: "#C12345678",
-        location: { latitude: 48.858844, longitude: 2.294351 },
-      },
-      toolContext: { currentChannelId: "C12345678" },
-    });
-
-    expect(result.kind).toBe("send");
-  });
-
-  it.each([
-    { name: "text", extra: { message: "caption" } },
-    { name: "media", extra: { mediaUrl: "https://example.com/photo.jpg" } },
-  ])(
-    "rejects location sends mixed with $name before cross-context decoration",
-    async ({ extra }) => {
-      await expect(
-        runDrySend({
-          cfg: workspaceConfig,
-          actionParams: {
-            channel: "workspace",
-            target: "channel:C99999999",
-            location: { latitude: 48.858844, longitude: 2.294351 },
-            ...extra,
-          },
-          toolContext: {
-            currentChannelId: "C12345678",
-            currentChannelProvider: "workspace",
-          },
-        }),
-      ).rejects.toThrow(/cannot be combined/i);
-    },
-  );
-
   it("uses the current internal UI source as the message-tool-only send sink", async () => {
     const result = await runMessageAction({
       cfg: emptyConfig,
@@ -180,27 +142,6 @@ describe("runMessageAction send validation", () => {
     });
     expect(JSON.stringify(result.toolResult?.content)).not.toContain("hello from codex");
   });
-
-  it.each(["agent:voice:agent:channel:room", "agent:main:telegram::group:room"])(
-    "keeps malformed session route %s on the internal source sink",
-    async (sessionKey) => {
-      const result = await runMessageAction({
-        cfg: emptyConfig,
-        action: "send",
-        params: { message: "private reply" },
-        toolContext: { currentChannelProvider: "webchat" },
-        sessionKey,
-        sourceReplyDeliveryMode: "message_tool_only",
-      });
-
-      expect(result).toMatchObject({
-        kind: "send",
-        channel: "webchat",
-        to: "current-run",
-        handledBy: "internal-source",
-      });
-    },
-  );
 
   it("uses non-webchat current source context as the message-tool-only send sink", async () => {
     const result = await runMessageAction({
@@ -288,21 +229,6 @@ describe("runMessageAction send validation", () => {
         },
         sessionKey: "agent:main",
         sourceReplyDeliveryMode: "automatic",
-      }),
-    ).rejects.toThrow(/requires a target/i);
-  });
-
-  it("does not treat broadcast targets as a send target", async () => {
-    await expect(
-      runMessageAction({
-        cfg: emptyConfig,
-        action: "send",
-        params: {
-          action: "send",
-          idempotencyKey: "run:message:1",
-          targets: ["user:123456789"],
-          message: "hello from codex",
-        },
       }),
     ).rejects.toThrow(/requires a target/i);
   });
@@ -400,7 +326,17 @@ describe("runMessageAction send validation", () => {
       },
     },
     {
-      name: "snake_case content poll params",
+      name: "string-encoded poll params",
+      actionParams: {
+        channel: "workspace",
+        target: "#C12345678",
+        message: "hi",
+        pollDurationSeconds: "60",
+        pollPublic: "true",
+      },
+    },
+    {
+      name: "snake_case poll params",
       actionParams: {
         channel: "workspace",
         target: "#C12345678",
@@ -411,15 +347,12 @@ describe("runMessageAction send validation", () => {
       },
     },
     {
-      name: "channel-extra poll params with content",
+      name: "negative poll duration params",
       actionParams: {
         channel: "workspace",
         target: "#C12345678",
         message: "hi",
-        pollQuestion: "Ready?",
-        pollOption: ["Yes", "No"],
         pollDurationSeconds: -5,
-        pollPublic: "true",
       },
     },
   ])("rejects send actions that include $name", async ({ actionParams }) => {
@@ -448,24 +381,6 @@ describe("runMessageAction send validation", () => {
         pollOption: [],
         pollDurationHours: 1,
         pollMulti: false,
-      },
-      toolContext: { currentChannelId: "C12345678" },
-    });
-
-    expect(result.kind).toBe("send");
-  });
-
-  it("allows send when only schema-padded channel-extra poll metadata is present", async () => {
-    const result = await runDrySend({
-      cfg: workspaceConfig,
-      actionParams: {
-        channel: "workspace",
-        target: "#C12345678",
-        message: "hello",
-        pollDurationSeconds: 60,
-        pollPublic: true,
-        pollAnonymous: false,
-        pollOptionIndex: 0,
       },
       toolContext: { currentChannelId: "C12345678" },
     });

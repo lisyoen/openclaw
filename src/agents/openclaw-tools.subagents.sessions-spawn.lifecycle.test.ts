@@ -2,8 +2,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentRouteBinding } from "../config/types.agents.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
-import { testing as bundleMcpRuntimeTesting } from "./agent-bundle-mcp-runtime.js";
-import { getOrCreateSessionMcpRuntime } from "./agent-bundle-mcp-tools.js";
+import {
+  testing as bundleMcpRuntimeTesting,
+  getOrCreateSessionMcpRuntime,
+} from "./agent-bundle-mcp-tools.js";
 import {
   getCallGatewayMock,
   getSessionsSpawnTool,
@@ -19,7 +21,7 @@ import {
 import {
   getLatestSubagentRunByChildSessionKey,
   resetSubagentRegistryForTests,
-} from "./subagent-registry.test-helpers.js";
+} from "./subagent-registry.js";
 
 const fastModeEnv = vi.hoisted(() => {
   const previous = process.env.OPENCLAW_TEST_FAST;
@@ -30,8 +32,11 @@ const fastModeEnv = vi.hoisted(() => {
 const hookRunnerMocks = vi.hoisted(() => ({
   runSubagentSpawning: vi.fn(async () => undefined),
   runSubagentSpawned: vi.fn(async () => {}),
-  runSubagentProgress: vi.fn(async () => {}),
   runSubagentEnded: vi.fn(async () => {}),
+}));
+
+vi.mock("./tools/agent-step.js", () => ({
+  readLatestAssistantReply: async () => "done",
 }));
 
 const callGatewayMock = getCallGatewayMock();
@@ -106,7 +111,7 @@ async function executeBoundAccountSpawn(params: {
   let spawnAccountId: string | undefined;
   setSessionsSpawnConfigOverride({
     session: { mainKey: "main", scope: "per-sender" },
-    messages: { queue: {} },
+    messages: { queue: { debounceMs: 0 } },
     agents: {
       defaults: { subagents: { allowAgents: ["bot-alpha"] } },
       list: [{ id: "main" }, { id: "bot-alpha" }],
@@ -173,7 +178,9 @@ describe("openclaw-tools: subagents (sessions_spawn lifecycle)", () => {
         scope: "per-sender",
       },
       messages: {
-        queue: {},
+        queue: {
+          debounceMs: 0,
+        },
       },
       agents: {
         defaults: {
@@ -186,16 +193,12 @@ describe("openclaw-tools: subagents (sessions_spawn lifecycle)", () => {
     resetSubagentRegistryForTests({ persist: false });
     hookRunnerMocks.runSubagentSpawning.mockClear();
     hookRunnerMocks.runSubagentSpawned.mockClear();
-    hookRunnerMocks.runSubagentProgress.mockClear();
     hookRunnerMocks.runSubagentEnded.mockClear();
     setSessionsSpawnHookRunnerOverride({
       hasHooks: (hookName: string) =>
-        hookName === "subagent_spawned" ||
-        hookName === "subagent_progress" ||
-        hookName === "subagent_ended",
+        hookName === "subagent_spawned" || hookName === "subagent_ended",
       runSubagentSpawning: hookRunnerMocks.runSubagentSpawning,
       runSubagentSpawned: hookRunnerMocks.runSubagentSpawned,
-      runSubagentProgress: hookRunnerMocks.runSubagentProgress,
       runSubagentEnded: hookRunnerMocks.runSubagentEnded,
     });
     callGatewayMock.mockClear();
@@ -296,7 +299,7 @@ describe("openclaw-tools: subagents (sessions_spawn lifecycle)", () => {
     });
     setSessionsSpawnConfigOverride({
       session: { mainKey: "main", scope: "per-sender" },
-      messages: { queue: {} },
+      messages: { queue: { debounceMs: 0 } },
       agents: {
         defaults: {
           subagents: {

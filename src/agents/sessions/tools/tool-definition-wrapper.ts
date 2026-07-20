@@ -19,10 +19,8 @@ export function wrapToolDefinition<
   return {
     name: definition.name,
     label: definition.label,
-    ...(definition.hideFromChannelProgress === true ? { hideFromChannelProgress: true } : {}),
     description: definition.description,
     parameters: definition.parameters,
-    ...(definition.outputSchema ? { outputSchema: definition.outputSchema } : {}),
     prepareArguments: definition.prepareArguments,
     executionMode: definition.executionMode,
     execute: (toolCallId, params, signal, onUpdate) =>
@@ -48,10 +46,8 @@ export function createToolDefinitionFromAgentTool(tool: AgentTool): ToolDefiniti
   return {
     name: tool.name,
     label: tool.label,
-    ...(tool.hideFromChannelProgress === true ? { hideFromChannelProgress: true } : {}),
     description: tool.description,
     parameters: tool.parameters,
-    ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
     prepareArguments: tool.prepareArguments,
     executionMode: tool.executionMode,
     execute: async (toolCallId, params, signal, onUpdate) =>

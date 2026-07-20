@@ -3,12 +3,8 @@ import {
   createModelCatalogPresetAppliers,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/provider-onboard";
-import {
-  buildXaiCatalogModels,
-  isLegacyXaiBuiltinModel,
-  XAI_BASE_URL,
-  XAI_DEFAULT_MODEL_ID,
-} from "./model-definitions.js";
+import { XAI_BASE_URL, XAI_DEFAULT_MODEL_ID } from "./model-definitions.js";
+import { buildXaiCatalogModels, isRetiredXaiBuiltinModelId } from "./model-definitions.js";
 
 export const XAI_DEFAULT_MODEL_REF = `xai/${XAI_DEFAULT_MODEL_ID}`;
 
@@ -30,7 +26,7 @@ function pruneRetiredXaiBuiltinModels(cfg: OpenClawConfig): OpenClawConfig {
   if (!provider || !Array.isArray(provider.models)) {
     return cfg;
   }
-  const models = provider.models.filter((model) => !isLegacyXaiBuiltinModel(model));
+  const models = provider.models.filter((model) => !isRetiredXaiBuiltinModelId(model.id));
   if (models.length === provider.models.length) {
     return cfg;
   }

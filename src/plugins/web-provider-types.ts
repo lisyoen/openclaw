@@ -9,8 +9,8 @@ import type {
 import type { WizardPrompter } from "../wizard/prompts.js";
 import type { SecretInputMode } from "./provider-auth-types.js";
 
-type WebSearchProviderId = string;
-type WebFetchProviderId = string;
+export type WebSearchProviderId = string;
+export type WebFetchProviderId = string;
 
 export type WebSearchProviderToolDefinition = {
   description: string;
@@ -27,7 +27,7 @@ export type WebFetchProviderToolDefinition = {
   execute: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 };
 
-type WebSearchProviderContext = {
+export type WebSearchProviderContext = {
   config?: OpenClawConfig;
   searchConfig?: Record<string, unknown>;
   runtimeMetadata?: RuntimeWebSearchMetadata;
@@ -38,7 +38,7 @@ export type WebSearchProviderToolExecutionContext = {
   signal?: AbortSignal;
 };
 
-type WebFetchProviderContext = {
+export type WebFetchProviderContext = {
   config?: OpenClawConfig;
   fetchConfig?: Record<string, unknown>;
   runtimeMetadata?: RuntimeWebFetchMetadata;
@@ -46,17 +46,17 @@ type WebFetchProviderContext = {
 
 export type WebSearchCredentialResolutionSource = "config" | "secretRef" | "env" | "missing";
 
-type WebSearchProviderConfiguredCredentialFallback = {
+export type WebSearchProviderConfiguredCredentialFallback = {
   path: string;
   value: unknown;
 };
 
-type WebFetchProviderConfiguredCredentialFallback = {
+export type WebFetchProviderConfiguredCredentialFallback = {
   path: string;
   value: unknown;
 };
 
-type WebSearchRuntimeMetadataContext = {
+export type WebSearchRuntimeMetadataContext = {
   config?: OpenClawConfig;
   searchConfig?: Record<string, unknown>;
   runtimeMetadata?: RuntimeWebSearchMetadata;
@@ -77,7 +77,7 @@ export type WebSearchProviderSetupContext = {
 
 export type WebFetchCredentialResolutionSource = "config" | "secretRef" | "env" | "missing";
 
-type WebFetchRuntimeMetadataContext = {
+export type WebFetchRuntimeMetadataContext = {
   config?: OpenClawConfig;
   fetchConfig?: Record<string, unknown>;
   runtimeMetadata?: RuntimeWebFetchMetadata;

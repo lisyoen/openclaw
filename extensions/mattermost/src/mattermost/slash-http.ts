@@ -6,15 +6,12 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import {
   asDateTimestampMs,
   resolveExpiresAtMsFromDurationMs,
 } from "openclaw/plugin-sdk/number-runtime";
-import { finalizeInboundContext } from "openclaw/plugin-sdk/reply-runtime";
 import { safeEqualSecret } from "openclaw/plugin-sdk/security-runtime";
 import { isPrivateNetworkOptInEnabled } from "openclaw/plugin-sdk/ssrf-runtime";
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { ResolvedMattermostAccount } from "../mattermost/accounts.js";
 import { getMattermostRuntime } from "../runtime.js";
 import {
@@ -34,10 +31,7 @@ import {
   authorizeMattermostCommandInvocation,
   normalizeMattermostAllowList,
 } from "./monitor-auth.js";
-import {
-  createMattermostReplyDeliveryBarrier,
-  deliverMattermostReplyPayload,
-} from "./reply-delivery.js";
+import { deliverMattermostReplyPayload } from "./reply-delivery.js";
 import {
   buildModelsProviderData,
   createChannelMessageReplyPipeline,
@@ -145,7 +139,7 @@ function isDeletedMattermostCommand(command: { delete_at?: number }): boolean {
 
 function sanitizeCommandLookupError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
-  const sanitized = raw
+  return raw
     .replace(/[\r\n\t]/gu, " ")
     .replace(/https?:\/\/[^\s)\]}]+/giu, (urlText) => {
       try {
@@ -168,12 +162,12 @@ function sanitizeCommandLookupError(error: unknown): string {
     .replace(
       /\b(token|authorization|access_token|refresh_token|client_secret|botToken)\b(\s*["']?\s*(?:=|:)\s*["']?)[^"',\s;}]+/giu,
       "$1$2[redacted]",
-    );
-  return truncateUtf16Safe(sanitized, 300);
+    )
+    .slice(0, 300);
 }
 
 function sanitizeMattermostLogValue(value: string): string {
-  return truncateUtf16Safe(value.replace(/[\r\n\t]/gu, " "), 200);
+  return value.replace(/[\r\n\t]/gu, " ").slice(0, 200);
 }
 
 async function withCommandLookupTimeout<T>(task: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -192,6 +186,12 @@ function commandLookupKey(
   accountId: string,
 ): string {
   return `${client.apiBaseUrl}:${accountId}:${registered.teamId}:${registered.id}`;
+}
+
+export function resetMattermostSlashCommandValidationCacheForTests(): void {
+  commandLookupInflight.clear();
+  commandValidationFailureCache.clear();
+  commandValidationLookupRateLimit.clear();
 }
 
 export function clearMattermostSlashCommandValidationCacheForAccount(accountId: string): void {
@@ -396,7 +396,7 @@ async function fetchCurrentMattermostCommand(params: {
   return await lookup;
 }
 
-async function validateMattermostSlashCommandToken(params: {
+export async function validateMattermostSlashCommandToken(params: {
   accountId: string;
   client: ReturnType<typeof createMattermostClient>;
   registeredCommand: MattermostRegisteredCommand;
@@ -832,7 +832,7 @@ async function handleSlashCommandAsync(params: {
   }
 
   // Build inbound context — the command text is the body
-  const ctxPayload = finalizeInboundContext({
+  const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: commandText,
     BodyForAgent: commandText,
     RawBody: commandText,
@@ -888,19 +888,11 @@ async function handleSlashCommandAsync(params: {
       },
     },
   });
-  const humanDelay = resolveHumanDelayConfig(cfg, route.agentId);
-  const deliveryBarrier = createMattermostReplyDeliveryBarrier({
-    isDirect: kind === "direct",
-    dmRetryOptions: account.config.dmChannelRetry,
-  });
+  const humanDelay = core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId);
 
-  await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-    ctx: ctxPayload,
-    cfg,
-    dispatcherOptions: {
+  const { dispatcher, replyOptions, markDispatchIdle } =
+    core.channel.reply.createReplyDispatcherWithTyping({
       ...replyPipeline,
-      resolveFollowupAdmissionBarrierTimeoutPolicy: deliveryBarrier.resolveTimeoutPolicy,
-      onDeliverySettled: deliveryBarrier.markDeliverySettled,
       humanDelay,
       deliver: async (payload: ReplyPayload) => {
         await deliverMattermostReplyPayload({
@@ -913,7 +905,6 @@ async function handleSlashCommandAsync(params: {
           textLimit,
           tableMode,
           sendMessage: sendMessageMattermost,
-          onDmChannelResolution: deliveryBarrier.trackDmChannelResolution,
         });
         runtime.log?.(`delivered slash reply to ${to}`);
       },
@@ -922,13 +913,25 @@ async function handleSlashCommandAsync(params: {
           `mattermost slash ${info.kind} reply failed: ${sanitizeCommandLookupError(err)}`,
         );
       },
-      typingCallbacks,
+      onReplyStart: typingCallbacks?.onReplyStart,
+    });
+
+  await core.channel.reply.withReplyDispatcher({
+    dispatcher,
+    onSettled: () => {
+      markDispatchIdle();
     },
-    replyOptions: {
-      disableBlockStreaming:
-        typeof account.blockStreaming === "boolean" ? !account.blockStreaming : undefined,
-      onModelSelected,
-    },
+    run: () =>
+      core.channel.reply.dispatchReplyFromConfig({
+        ctx: ctxPayload,
+        cfg,
+        dispatcher,
+        replyOptions: {
+          ...replyOptions,
+          disableBlockStreaming:
+            typeof account.blockStreaming === "boolean" ? !account.blockStreaming : undefined,
+          onModelSelected,
+        },
+      }),
   });
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

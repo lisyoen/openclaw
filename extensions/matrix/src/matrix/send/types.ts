@@ -102,8 +102,6 @@ export type MatrixSendOpts = {
   extraContent?: MatrixExtraContentFields;
   /** Send audio as voice message instead of audio file. Defaults to false. */
   audioAsVoice?: boolean;
-  /** Persist each concrete platform send before any later event can fail. */
-  onDeliveryResult?: (result: MatrixSendResult) => Promise<void> | void;
 };
 
 export type MatrixMediaMsgType =

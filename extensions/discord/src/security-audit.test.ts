@@ -100,7 +100,7 @@ describe("Discord security audit findings", () => {
             },
           },
         },
-      } as OpenClawConfig,
+      } satisfies OpenClawConfig,
       expectFinding: true,
     },
     {
@@ -122,17 +122,13 @@ describe("Discord security audit findings", () => {
             },
           },
         },
-      } as unknown as OpenClawConfig,
+      } satisfies OpenClawConfig,
       expectFinding: false,
     },
   ])("$name", async (testCase) => {
-    const discordConfig = testCase.cfg.channels?.discord;
-    if (!discordConfig) {
-      throw new Error("discord config required");
-    }
     const findings = await collectFindings({
       cfg: testCase.cfg,
-      config: discordConfig,
+      config: testCase.cfg.channels.discord,
     });
 
     expect(

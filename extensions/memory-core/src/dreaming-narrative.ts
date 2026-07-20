@@ -14,10 +14,13 @@ import {
 import { resolveGlobalMap } from "openclaw/plugin-sdk/global-singleton";
 import { resolveStateDir } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
 import { getRuntimeConfig } from "openclaw/plugin-sdk/runtime-config-snapshot";
-import { cleanupSessionLifecycleArtifacts } from "openclaw/plugin-sdk/session-store-runtime";
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
-import pLimit from "p-limit";
-import { readDreamsFile, resolveDreamsPath, updateDreamsFile } from "./dreaming-dreams-file.js";
+import { pathExists } from "openclaw/plugin-sdk/security-runtime";
+import {
+  loadSessionStore,
+  resolveStorePath,
+  updateSessionStore,
+} from "openclaw/plugin-sdk/session-store-runtime";
+import { updateDreamsFile } from "./dreaming-dreams-file.js";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -51,8 +54,6 @@ export type NarrativePhaseData = {
   themes?: string[];
   /** Snippets that were promoted to durable memory (deep). */
   promotions?: string[];
-  currentDate?: string;
-  recentDiaryEntries?: string[];
 };
 
 type Logger = {
@@ -105,11 +106,10 @@ const NARRATIVE_MESSAGE_SETTLE_DELAYS_MS = [50, 150, 300, 750] as const;
 const DREAMING_SESSION_KEY_PREFIX = "dreaming-narrative-";
 const DREAMING_TRANSCRIPT_RUN_MARKER = '"runId":"dreaming-narrative-';
 const DREAMING_ORPHAN_MIN_AGE_MS = 300_000;
+const SAFE_SESSION_ID_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const DIARY_START_MARKER = "<!-- openclaw:dreaming:diary:start -->";
 const DIARY_END_MARKER = "<!-- openclaw:dreaming:diary:end -->";
 const BACKFILL_ENTRY_MARKER = "openclaw:dreaming:backfill-entry";
-const RECENT_DIARY_CONTEXT_LIMIT = 3;
-const RECENT_DIARY_CONTEXT_MAX_CHARS = 360;
 const NARRATIVE_SESSION_LOCKS_KEY = Symbol.for(
   "openclaw.memoryCore.dreamingNarrative.sessionLocks",
 );
@@ -147,8 +147,14 @@ function formatFallbackWriteFailure(err: unknown): string {
   return "unknown error";
 }
 
-const REQUEST_SCOPED_FALLBACK_NARRATIVE =
-  "A memory trace surfaced, but details were unavailable in this run.";
+// Raw snippets and promotions are pre-processing memory staging fragments
+// (session metadata, conversation summaries, operational logs). They must never
+// be persisted to the human-readable dream diary. When narrative generation
+// fails, always fall back to a generic placeholder so no staging content leaks
+// into DREAMS.md.
+function buildRequestScopedFallbackNarrative(_data: NarrativePhaseData): string {
+  return "A memory trace surfaced, but details were unavailable in this run.";
+}
 
 export async function appendFallbackNarrativeEntry(params: {
   workspaceDir: string;
@@ -161,9 +167,7 @@ export async function appendFallbackNarrativeEntry(params: {
   try {
     await appendNarrativeEntry({
       workspaceDir: params.workspaceDir,
-      // Raw snippets and promotions are pre-processing memory staging fragments.
-      // Keep fallback diary text generic so DREAMS.md never leaks staging content.
-      narrative: REQUEST_SCOPED_FALLBACK_NARRATIVE,
+      narrative: buildRequestScopedFallbackNarrative(params.data),
       nowMs: params.nowMs,
       timezone: params.timezone,
     });
@@ -279,7 +283,7 @@ function buildNarrativeSessionKey(params: {
 
 // ── Prompt building ────────────────────────────────────────────────────
 
-function buildNarrativePrompt(data: NarrativePhaseData): string {
+export function buildNarrativePrompt(data: NarrativePhaseData): string {
   const lines: string[] = [];
   lines.push("Write a dream diary entry from these memory fragments:\n");
 
@@ -301,33 +305,12 @@ function buildNarrativePrompt(data: NarrativePhaseData): string {
     }
   }
 
-  const currentDate = data.currentDate?.trim();
-  const recentDiaryEntries = (data.recentDiaryEntries ?? [])
-    .map(clampDiaryContextEntry)
-    .filter((entry) => entry.length > 0)
-    .slice(0, RECENT_DIARY_CONTEXT_LIMIT);
-  if (currentDate || recentDiaryEntries.length > 0) {
-    lines.push("\nDiary continuity context:");
-    if (currentDate) {
-      lines.push(`- Current sweep: ${currentDate}`);
-    }
-    if (recentDiaryEntries.length > 0) {
-      lines.push("- Recent diary entries already written:");
-      for (const entry of recentDiaryEntries) {
-        lines.push(`  - ${entry}`);
-      }
-    }
-    lines.push(
-      "- Prefer a fresh angle; do not replay the same first-day framing unless newer fragments change it.",
-    );
-  }
-
   return lines.join("\n");
 }
 
 // ── Message extraction ─────────────────────────────────────────────────
 
-function extractNarrativeText(messages: unknown[]): string | null {
+export function extractNarrativeText(messages: unknown[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) {
@@ -401,7 +384,7 @@ async function readSettledNarrativeText(params: {
 
 // ── Date formatting ────────────────────────────────────────────────────
 
-function formatNarrativeDate(epochMs: number, timezone?: string): string {
+export function formatNarrativeDate(epochMs: number, timezone?: string): string {
   const opts: Intl.DateTimeFormatOptions = {
     timeZone: timezone ?? process.env.TZ,
     year: "numeric",
@@ -450,78 +433,6 @@ function splitDiaryBlocks(diaryContent: string): string[] {
     .split(/\n---\n/)
     .map((block) => block.trim())
     .filter((block) => block.length > 0);
-}
-
-function clampDiaryContextEntry(entry: string): string {
-  const normalized = entry.replace(/\s+/g, " ").trim();
-  if (normalized.length <= RECENT_DIARY_CONTEXT_MAX_CHARS) {
-    return normalized;
-  }
-  return `${truncateUtf16Safe(normalized, RECENT_DIARY_CONTEXT_MAX_CHARS).trimEnd()}...`;
-}
-
-function normalizeDiaryBlockBody(block: string): string {
-  const bodyLines: string[] = [];
-  for (const line of block.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("<!--") || trimmed.startsWith("#")) {
-      continue;
-    }
-    if (trimmed.startsWith("*") && trimmed.endsWith("*") && trimmed.length > 2) {
-      continue;
-    }
-    bodyLines.push(trimmed);
-  }
-  return clampDiaryContextEntry(bodyLines.join(" "));
-}
-
-function isOptionalDiaryContextReadError(err: unknown): boolean {
-  const code = extractErrorCode(err);
-  if (
-    code === "EACCES" ||
-    code === "EPERM" ||
-    code === "ENOENT" ||
-    code === "ENOTDIR" ||
-    code === "not-found" ||
-    code === "not-file" ||
-    code === "path-alias" ||
-    code === "path-mismatch" ||
-    code === "symlink"
-  ) {
-    return true;
-  }
-  return err instanceof Error && err.message === "path must be a regular file";
-}
-
-export async function readRecentDreamDiaryEntries(params: {
-  workspaceDir: string;
-  limit?: number;
-}): Promise<string[]> {
-  const limit = Math.max(0, Math.floor(params.limit ?? RECENT_DIARY_CONTEXT_LIMIT));
-  if (limit === 0) {
-    return [];
-  }
-  let existing: string;
-  try {
-    const dreamsPath = await resolveDreamsPath(params.workspaceDir);
-    existing = await readDreamsFile(dreamsPath);
-  } catch (err) {
-    if (isOptionalDiaryContextReadError(err)) {
-      return [];
-    }
-    throw err;
-  }
-  const startIdx = existing.indexOf(DIARY_START_MARKER);
-  const endIdx = existing.indexOf(DIARY_END_MARKER);
-  if (startIdx < 0 || endIdx < 0 || endIdx < startIdx) {
-    return [];
-  }
-  const inner = existing.slice(startIdx + DIARY_START_MARKER.length, endIdx);
-  return splitDiaryBlocks(inner)
-    .map(normalizeDiaryBlockBody)
-    .filter((entry) => entry.length > 0)
-    .slice(-limit)
-    .toReversed();
 }
 
 function normalizeDiaryBlockFingerprint(block: string): string {
@@ -579,7 +490,7 @@ function stripBackfillDiaryBlocks(existing: string): { updated: string; removed:
   };
 }
 
-function formatBackfillDiaryDate(isoDay: string, _timezone?: string): string {
+export function formatBackfillDiaryDate(isoDay: string, _timezone?: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDay);
   if (!match) {
     return isoDay;
@@ -613,7 +524,7 @@ async function withNarrativeSessionLock<T>(sessionKey: string, fn: () => Promise
   }
 }
 
-function buildBackfillDiaryEntry(params: {
+export function buildBackfillDiaryEntry(params: {
   isoDay: string;
   bodyLines: string[];
   sourcePath?: string;
@@ -733,11 +644,11 @@ export async function dedupeDreamDiaryEntries(params: {
   });
 }
 
-function buildDiaryEntry(narrative: string, dateStr: string): string {
+export function buildDiaryEntry(narrative: string, dateStr: string): string {
   return `\n---\n\n*${dateStr}*\n\n${narrative}\n`;
 }
 
-async function appendNarrativeEntry(params: {
+export async function appendNarrativeEntry(params: {
   workspaceDir: string;
   narrative: string;
   nowMs: number;
@@ -772,6 +683,80 @@ async function appendNarrativeEntry(params: {
 
 // ── Orchestrator ───────────────────────────────────────────────────────
 
+function normalizeComparablePath(pathname: string): string {
+  return process.platform === "win32" ? pathname.toLowerCase() : pathname;
+}
+
+async function normalizeSessionFileForComparison(params: {
+  sessionsDir: string;
+  sessionFile: string;
+}): Promise<string | null> {
+  const trimmed = params.sessionFile.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const resolved = path.isAbsolute(trimmed) ? trimmed : path.resolve(params.sessionsDir, trimmed);
+  try {
+    return normalizeComparablePath(await fs.realpath(resolved));
+  } catch {
+    return normalizeComparablePath(path.resolve(resolved));
+  }
+}
+
+function isDreamingSessionStoreKey(sessionKey: string): boolean {
+  const firstSeparator = sessionKey.indexOf(":");
+  if (firstSeparator < 0) {
+    return sessionKey.startsWith(DREAMING_SESSION_KEY_PREFIX);
+  }
+  const secondSeparator = sessionKey.indexOf(":", firstSeparator + 1);
+  const sessionSegment = secondSeparator < 0 ? sessionKey : sessionKey.slice(secondSeparator + 1);
+  return sessionSegment.startsWith(DREAMING_SESSION_KEY_PREFIX);
+}
+
+// A dreaming store row is reclaimable once its narrative run is finished. The
+// happy path deletes the session in `finally`, but when `deleteSession` throws
+// (e.g. request-scoped subagent runtime) the row is left behind referencing a
+// still-present transcript, so the missing-transcript check alone never reaps
+// it and the session lingers in the sidebar forever (issue #88322). Reclaim a
+// dreaming row when its transcript is missing, or when the transcript has aged
+// past the orphan threshold (a live narrative refreshes its transcript well
+// within that window, so active runs are never reaped).
+async function isReclaimableDreamingStoreEntry(
+  normalizedSessionFile: string | null,
+): Promise<boolean> {
+  if (!normalizedSessionFile || !(await pathExists(normalizedSessionFile))) {
+    return true;
+  }
+  try {
+    const stat = await fs.stat(normalizedSessionFile);
+    return Date.now() - stat.mtimeMs >= DREAMING_ORPHAN_MIN_AGE_MS;
+  } catch {
+    return true;
+  }
+}
+
+async function normalizeSessionEntryPathForComparison(params: {
+  sessionsDir: string;
+  entry: { sessionFile?: string; sessionId?: string } | undefined;
+}): Promise<string | null> {
+  const sessionFile = typeof params.entry?.sessionFile === "string" ? params.entry.sessionFile : "";
+  if (sessionFile) {
+    return normalizeSessionFileForComparison({
+      sessionsDir: params.sessionsDir,
+      sessionFile,
+    });
+  }
+  const sessionId =
+    typeof params.entry?.sessionId === "string" ? params.entry.sessionId.trim() : "";
+  if (!SAFE_SESSION_ID_RE.test(sessionId)) {
+    return null;
+  }
+  return normalizeSessionFileForComparison({
+    sessionsDir: params.sessionsDir,
+    sessionFile: `${sessionId}.jsonl`,
+  });
+}
+
 async function scrubDreamingNarrativeArtifacts(logger: Logger): Promise<void> {
   const cfg = getRuntimeConfig();
   const agentsDir = path.join(resolveStateDir(), "agents");
@@ -790,19 +775,111 @@ async function scrubDreamingNarrativeArtifacts(logger: Logger): Promise<void> {
       continue;
     }
 
+    const storePath = resolveStorePath(cfg.session?.store, { agentId: agentEntry.name });
+    const sessionsDir = path.dirname(storePath);
+    let store: Record<string, { sessionFile?: string; sessionId?: string } | undefined>;
     try {
-      const result = await cleanupSessionLifecycleArtifacts({
-        agentId: agentEntry.name,
-        archiveRemovedEntryTranscripts: false,
-        sessionStore: cfg.session?.store,
-        sessionKeySegmentPrefix: DREAMING_SESSION_KEY_PREFIX,
-        transcriptContentMarker: DREAMING_TRANSCRIPT_RUN_MARKER,
-        orphanTranscriptMinAgeMs: DREAMING_ORPHAN_MIN_AGE_MS,
-      });
-      prunedEntries += result.removedEntries;
-      archivedOrphans += result.archivedTranscriptArtifacts;
+      store = loadSessionStore(storePath) as Record<
+        string,
+        { sessionFile?: string; sessionId?: string } | undefined
+      >;
     } catch {
       continue;
+    }
+
+    const referencedSessionFiles = new Set<string>();
+    let needsStoreUpdate = false;
+    for (const [key, entry] of Object.entries(store)) {
+      const normalizedSessionFile = await normalizeSessionEntryPathForComparison({
+        sessionsDir,
+        entry,
+      });
+      if (normalizedSessionFile) {
+        referencedSessionFiles.add(normalizedSessionFile);
+      }
+      if (!isDreamingSessionStoreKey(key)) {
+        continue;
+      }
+      if (await isReclaimableDreamingStoreEntry(normalizedSessionFile)) {
+        needsStoreUpdate = true;
+      }
+    }
+
+    if (needsStoreUpdate) {
+      referencedSessionFiles.clear();
+      prunedEntries += await updateSessionStore(storePath, async (lockedStore) => {
+        let prunedForAgent = 0;
+        for (const [key, entry] of Object.entries(lockedStore)) {
+          const normalizedSessionFile = await normalizeSessionEntryPathForComparison({
+            sessionsDir,
+            entry,
+          });
+          if (!isDreamingSessionStoreKey(key)) {
+            if (normalizedSessionFile) {
+              referencedSessionFiles.add(normalizedSessionFile);
+            }
+            continue;
+          }
+          if (await isReclaimableDreamingStoreEntry(normalizedSessionFile)) {
+            // Drop the row and leave the transcript unreferenced so the orphan
+            // transcript pass below archives the aged-out (or missing) file.
+            delete lockedStore[key];
+            prunedForAgent += 1;
+            continue;
+          }
+          if (normalizedSessionFile) {
+            referencedSessionFiles.add(normalizedSessionFile);
+          }
+        }
+        return prunedForAgent;
+      });
+    }
+
+    let sessionFiles: Dirent[];
+    try {
+      sessionFiles = await fs.readdir(sessionsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const fileEntry of sessionFiles) {
+      if (!fileEntry.isFile() || !fileEntry.name.endsWith(".jsonl")) {
+        continue;
+      }
+      const transcriptPath = path.join(sessionsDir, fileEntry.name);
+      const normalizedTranscriptPath =
+        (await normalizeSessionFileForComparison({
+          sessionsDir,
+          sessionFile: fileEntry.name,
+        })) ?? normalizeComparablePath(transcriptPath);
+      if (referencedSessionFiles.has(normalizedTranscriptPath)) {
+        continue;
+      }
+      let stat;
+      try {
+        stat = await fs.stat(transcriptPath);
+      } catch {
+        continue;
+      }
+      if (Date.now() - stat.mtimeMs < DREAMING_ORPHAN_MIN_AGE_MS) {
+        continue;
+      }
+      let content;
+      try {
+        content = await fs.readFile(transcriptPath, "utf-8");
+      } catch {
+        continue;
+      }
+      if (!content.includes(DREAMING_TRANSCRIPT_RUN_MARKER)) {
+        continue;
+      }
+      const archivedPath = `${transcriptPath}.deleted.${Date.now()}`;
+      try {
+        await fs.rename(transcriptPath, archivedPath);
+        archivedOrphans += 1;
+      } catch {
+        // best-effort scrubber
+      }
     }
   }
 
@@ -998,21 +1075,44 @@ export async function generateAndAppendDreamNarrative(params: {
 // write-lock while it runs and burns a model slot, which caused lock
 // contention (>30 s) and cascading narrative timeouts (#73198).
 //
-// `runDetachedDreamNarrative` caps total in-flight detached narratives across
-// phases/workspaces so cron sweeps cannot exhaust model and session-lock slots.
+// `runDetachedDreamNarrative` wraps `generateAndAppendDreamNarrative` with a
+// FIFO queue capped at `DETACHED_NARRATIVE_CONCURRENCY` so the total in-flight
+// detached narratives across phases/workspaces stays bounded.
 const DETACHED_NARRATIVE_CONCURRENCY = 3;
-const detachedNarrativeLimit = pLimit(DETACHED_NARRATIVE_CONCURRENCY);
+
+let activeDetachedNarratives = 0;
+const detachedNarrativeQueue: Array<() => void> = [];
+
+function releaseDetachedNarrativeSlot(): void {
+  activeDetachedNarratives -= 1;
+  detachedNarrativeQueue.shift()?.();
+}
+
+async function acquireDetachedNarrativeSlot(): Promise<void> {
+  if (activeDetachedNarratives >= DETACHED_NARRATIVE_CONCURRENCY) {
+    await new Promise<void>((resolve) => {
+      detachedNarrativeQueue.push(resolve);
+    });
+  }
+  activeDetachedNarratives += 1;
+}
 
 export function runDetachedDreamNarrative(
   params: Parameters<typeof generateAndAppendDreamNarrative>[0],
 ): void {
   queueMicrotask(() => {
-    void detachedNarrativeLimit(() => generateAndAppendDreamNarrative(params)).catch(() => {
-      // Detached narratives intentionally swallow errors — callers (cron
-      // sweeps) cannot recover, and surfacing here would only cause noisy
-      // unhandled rejections. Logging happens inside
-      // generateAndAppendDreamNarrative.
-    });
+    void (async () => {
+      await acquireDetachedNarrativeSlot();
+      try {
+        await generateAndAppendDreamNarrative(params);
+      } catch {
+        // Detached narratives intentionally swallow errors — callers (cron
+        // sweeps) cannot recover, and surfacing here would only cause noisy
+        // unhandled rejections. Logging happens inside
+        // generateAndAppendDreamNarrative.
+      } finally {
+        releaseDetachedNarrativeSlot();
+      }
+    })();
   });
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

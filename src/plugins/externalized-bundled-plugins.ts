@@ -1,5 +1,5 @@
 // Defines metadata for bundled plugins that are installed externally.
-type ExternalizedBundledPluginPreferredSource = "npm" | "clawhub";
+export type ExternalizedBundledPluginPreferredSource = "npm" | "clawhub";
 
 export type ExternalizedBundledPluginBridge = {
   /** Plugin id used while the plugin was bundled in core. */

@@ -1,6 +1,7 @@
 // Qa Lab plugin module implements suite runtime transport behavior.
 import { setTimeout as sleep } from "node:timers/promises";
 import {
+  createFailureAwareTransportWaitForCondition,
   findFailureOutboundMessage as findTransportFailureOutboundMessage,
   waitForQaTransportCondition,
   type QaTransportState,
@@ -8,15 +9,15 @@ import {
 import { extractQaFailureReplyText } from "./reply-failure.js";
 import type { QaBusMessage } from "./runtime-api.js";
 
-type WaitForNoOutboundOptions = {
-  sinceIndex?: number;
-};
-
 function findFailureOutboundMessage(
   state: QaTransportState,
   options?: { sinceIndex?: number; cursorSpace?: "all" | "outbound" },
 ) {
   return findTransportFailureOutboundMessage(state, options);
+}
+
+function createScenarioWaitForCondition(state: QaTransportState) {
+  return createFailureAwareTransportWaitForCondition(state);
 }
 
 async function waitForOutboundMessage(
@@ -46,25 +47,13 @@ async function waitForOutboundMessage(
   }, timeoutMs);
 }
 
-async function waitForNoOutbound(
-  state: QaTransportState,
-  timeoutMs = 1_200,
-  options?: WaitForNoOutboundOptions,
-) {
+async function waitForNoOutbound(state: QaTransportState, timeoutMs = 1_200) {
   await sleep(timeoutMs);
   const outbound = state
     .getSnapshot()
-    .messages.filter((message: QaBusMessage) => message.direction === "outbound")
-    .slice(options?.sinceIndex ?? 0);
+    .messages.filter((message: QaBusMessage) => message.direction === "outbound");
   if (outbound.length > 0) {
-    const summary = outbound
-      .slice(0, 5)
-      .map(
-        (message: QaBusMessage) =>
-          `${message.conversation.kind}:${message.conversation.id}:${message.senderId}:${message.text}`,
-      )
-      .join(" | ");
-    throw new Error(`expected no outbound messages, saw ${outbound.length}: ${summary}`);
+    throw new Error(`expected no outbound messages, saw ${outbound.length}`);
   }
 }
 
@@ -152,15 +141,13 @@ async function waitForChannelOutboundMessage(
   return await waitForTransportOutboundMessage(state, predicate, timeoutMs);
 }
 
-async function waitForNoTransportOutbound(
-  state: QaTransportState,
-  timeoutMs = 1_200,
-  options?: WaitForNoOutboundOptions,
-) {
-  await waitForNoOutbound(state, timeoutMs, options);
+async function waitForNoTransportOutbound(state: QaTransportState, timeoutMs = 1_200) {
+  await waitForNoOutbound(state, timeoutMs);
 }
 
 export {
+  createScenarioWaitForCondition,
+  findFailureOutboundMessage,
   formatConversationTranscript,
   formatTransportTranscript,
   readTransportTranscript,

@@ -2,15 +2,33 @@
 import { describe, expect, it } from "vitest";
 import {
   getRecentDiagnosticPhases,
+  recordDiagnosticPhase,
   resetDiagnosticPhasesForTest,
-  withDiagnosticPhase,
 } from "./diagnostic-phase.js";
 
 describe("getRecentDiagnosticPhases", () => {
-  it("returns an empty list for zero, negative, and non-finite limits", async () => {
+  it("returns an empty list for zero, negative, and non-finite limits", () => {
     resetDiagnosticPhasesForTest();
-    await withDiagnosticPhase("phase-a", () => undefined);
-    await withDiagnosticPhase("phase-b", () => undefined);
+    recordDiagnosticPhase({
+      name: "phase-a",
+      startedAt: 1,
+      endedAt: 2,
+      durationMs: 1,
+      cpuUserMs: 0,
+      cpuSystemMs: 0,
+      cpuTotalMs: 0,
+      cpuCoreRatio: 0,
+    });
+    recordDiagnosticPhase({
+      name: "phase-b",
+      startedAt: 3,
+      endedAt: 4,
+      durationMs: 1,
+      cpuUserMs: 0,
+      cpuSystemMs: 0,
+      cpuTotalMs: 0,
+      cpuCoreRatio: 0,
+    });
 
     expect(getRecentDiagnosticPhases(0)).toEqual([]);
     expect(getRecentDiagnosticPhases(-1)).toEqual([]);
@@ -18,10 +36,28 @@ describe("getRecentDiagnosticPhases", () => {
     expect(getRecentDiagnosticPhases(Number.POSITIVE_INFINITY)).toEqual([]);
   });
 
-  it("returns the most recent phases for positive limits", async () => {
+  it("returns the most recent phases for positive limits", () => {
     resetDiagnosticPhasesForTest();
-    await withDiagnosticPhase("phase-a", () => undefined);
-    await withDiagnosticPhase("phase-b", () => undefined);
+    recordDiagnosticPhase({
+      name: "phase-a",
+      startedAt: 1,
+      endedAt: 2,
+      durationMs: 1,
+      cpuUserMs: 0,
+      cpuSystemMs: 0,
+      cpuTotalMs: 0,
+      cpuCoreRatio: 0,
+    });
+    recordDiagnosticPhase({
+      name: "phase-b",
+      startedAt: 3,
+      endedAt: 4,
+      durationMs: 1,
+      cpuUserMs: 0,
+      cpuSystemMs: 0,
+      cpuTotalMs: 0,
+      cpuCoreRatio: 0,
+    });
 
     const recent = getRecentDiagnosticPhases(1);
     expect(recent).toHaveLength(1);

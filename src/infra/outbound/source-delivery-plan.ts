@@ -1,12 +1,11 @@
 // Source-delivery plans decide whether final output is visible through the
 // message tool, direct fallback delivery, both, or neither.
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
-import { getChannelPlugin } from "../../channels/plugins/index.js";
 import { stringifyRouteThreadId } from "../../plugin-sdk/channel-route.js";
 import { normalizeTargetForProvider } from "./target-normalization.js";
 
 /** Owner responsible for making source delivery visible to the user. */
-type SourceVisibleDeliveryOwner =
+export type SourceVisibleDeliveryOwner =
   | "automatic_source"
   | "message_tool"
   | "message_tool_then_direct_fallback"
@@ -14,7 +13,7 @@ type SourceVisibleDeliveryOwner =
   | "none";
 
 /** Reason code explaining why source delivery policy took this shape. */
-type SourceDeliveryPlanReason =
+export type SourceDeliveryPlanReason =
   | "config"
   | "room_event"
   | "cron_announce"
@@ -24,7 +23,7 @@ type SourceDeliveryPlanReason =
   | "subagent_completion";
 
 /** Configured or inferred destination source delivery must satisfy. */
-type SourceDeliveryTarget = {
+export type SourceDeliveryTarget = {
   channel?: string;
   to?: string;
   accountId?: string;
@@ -32,7 +31,7 @@ type SourceDeliveryTarget = {
 };
 
 /** Message-tool destination observed during a run. */
-type SourceDeliveryMessageToolTarget = {
+export type SourceDeliveryMessageToolTarget = {
   tool?: string;
   provider?: string;
   accountId?: string;
@@ -92,6 +91,9 @@ function normalizeDeliveryTarget(channel: string, to: string): string {
   return normalizeTargetForProvider(channel, toTrimmed) ?? toTrimmed;
 }
 
+const caseSensitivePrefixedTargetProviders = new Set(["googlechat", "mattermost", "matrix"]);
+const lowercaseNormalizedPrefixedTargetProviders = new Set(["discord", "slack"]);
+
 function deliveryTargetsMatch(channel: string, targetTo: string, deliveryTo: string): boolean {
   const targetToTrimmed = targetTo.trim();
   const deliveryToTrimmed = deliveryTo.trim();
@@ -107,14 +109,14 @@ function deliveryTargetsMatch(channel: string, targetTo: string, deliveryTo: str
     targetKind === deliveryKind &&
     ["channel", "conversation", "group", "user"].includes(targetKind)
   ) {
-    // Provider-owned ID comparison can bypass generic target normalization.
+    // Some provider-owned ids are case-sensitive while Slack/Discord ids are
+    // compared case-insensitively; decide that before generic target normalization.
     const targetId = targetPrefixed?.[2]?.trim();
     const deliveryId = deliveryPrefixed?.[2]?.trim();
-    const comparison = getChannelPlugin(channel)?.messaging?.targetIdComparison;
-    if (comparison === "case-sensitive") {
+    if (caseSensitivePrefixedTargetProviders.has(channel)) {
       return targetId === deliveryId;
     }
-    if (comparison === "lowercase") {
+    if (lowercaseNormalizedPrefixedTargetProviders.has(channel)) {
       return targetId?.toLowerCase() === deliveryId?.toLowerCase();
     }
   }

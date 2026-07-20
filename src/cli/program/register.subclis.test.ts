@@ -38,14 +38,6 @@ const { inferAction, registerCapabilityCli } = vi.hoisted(() => {
   return { inferAction: action, registerCapabilityCli: register };
 });
 
-const { approvalsAction, registerExecApprovalsCli } = vi.hoisted(() => {
-  const action = vi.fn();
-  const register = vi.fn((program: Command) => {
-    program.command("approvals").alias("exec-approvals").action(action);
-  });
-  return { approvalsAction: action, registerExecApprovalsCli: register };
-});
-
 const { registerPluginsCli, registerPluginCliCommandsFromValidatedConfig } = vi.hoisted(() => ({
   registerPluginsCli: vi.fn((program: Command) => {
     const plugins = program.command("plugins");
@@ -80,7 +72,6 @@ vi.mock("../gateway-cli.js", () => ({ registerGatewayCli }));
 vi.mock("../gateway-cli/run-command.js", () => ({ addGatewayRunCommand }));
 vi.mock("../nodes-cli.js", () => ({ registerNodesCli }));
 vi.mock("../capability-cli.js", () => ({ registerCapabilityCli }));
-vi.mock("../exec-approvals-cli.js", () => ({ registerExecApprovalsCli }));
 vi.mock("../plugins-cli.js", () => ({ registerPluginsCli }));
 vi.mock("../channels-cli.js", () => ({ registerChannelsCli }));
 vi.mock("../../plugins/cli.js", () => ({ registerPluginCliCommandsFromValidatedConfig }));
@@ -122,8 +113,6 @@ describe("registerSubCliCommands", () => {
     loadPrivateQaCliModule.mockClear();
     registerCapabilityCli.mockClear();
     inferAction.mockClear();
-    registerExecApprovalsCli.mockClear();
-    approvalsAction.mockClear();
     registerPluginsCli.mockClear();
     registerPluginCliCommandsFromValidatedConfig.mockClear();
     registerChannelsCli.mockClear();
@@ -202,17 +191,6 @@ describe("registerSubCliCommands", () => {
 
     expect(registerCapabilityCli).toHaveBeenCalledTimes(1);
     expect(inferAction).toHaveBeenCalledTimes(1);
-  });
-
-  it("registers the exec-approvals placeholder and dispatches through the approvals registrar", async () => {
-    const program = createRegisteredProgram(["node", "openclaw", "exec-approvals"], "openclaw");
-
-    expect(program.commands.map((cmd) => cmd.name())).toEqual(["exec-approvals", "completion"]);
-
-    await program.parseAsync(["exec-approvals"], { from: "user" });
-
-    expect(registerExecApprovalsCli).toHaveBeenCalledTimes(1);
-    expect(approvalsAction).toHaveBeenCalledTimes(1);
   });
 
   it("replaces placeholder when registering a subcommand by name", async () => {

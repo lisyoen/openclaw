@@ -1,5 +1,7 @@
 // Gmail hook helpers manage Gmail OAuth setup and watcher launch state.
 import { randomBytes } from "node:crypto";
+import path from "node:path";
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { normalizeUniqueStringEntries } from "@openclaw/normalization-core/string-normalization";
 import {
   type OpenClawConfig,
@@ -8,11 +10,7 @@ import {
   resolveGatewayPort,
 } from "../config/config.js";
 import { resolveExecutable } from "../infra/executable-path.js";
-import {
-  buildWindowsCmdExeCommandLine,
-  isWindowsBatchCommand,
-  resolveTrustedWindowsCmdExe,
-} from "../process/windows-command.js";
+import { getWindowsInstallRoots } from "../infra/windows-install-roots.js";
 
 export const DEFAULT_GMAIL_LABEL = "INBOX";
 export const DEFAULT_GMAIL_TOPIC = "gog-gmail-watch";
@@ -24,6 +22,7 @@ export const DEFAULT_GMAIL_MAX_BYTES = 20_000;
 export const DEFAULT_GMAIL_RENEW_MINUTES = 12 * 60;
 const DEFAULT_HOOKS_PATH = "/hooks";
 const GMAIL_WATCH_SENSITIVE_FLAGS = new Set(["--token", "--hook-url", "--hook-token"]);
+const WINDOWS_UNSAFE_CMD_CHARS_RE = /[&|<>^%\r\n]/;
 let gogBin: string | undefined;
 
 export type GmailHookOverrides = {
@@ -272,6 +271,16 @@ export function resolveGogExecutable(): string {
   return (gogBin ??= resolveExecutable("gog"));
 }
 
+function escapeForCmdExe(arg: string): string {
+  if (WINDOWS_UNSAFE_CMD_CHARS_RE.test(arg)) {
+    throw new Error(`Unsafe Windows cmd.exe argument detected: ${JSON.stringify(arg)}`);
+  }
+  if (!arg.includes(" ") && !arg.includes('"')) {
+    return arg;
+  }
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
 export function resolveGogServeInvocation(args: string[]): {
   args: string[];
   command: string;
@@ -279,12 +288,14 @@ export function resolveGogServeInvocation(args: string[]): {
   windowsVerbatimArguments?: true;
 } {
   const command = resolveGogExecutable();
-  if (!isWindowsBatchCommand(command)) {
+  const ext = normalizeLowercaseStringOrEmpty(path.extname(command));
+  if (process.platform !== "win32" || (ext !== ".cmd" && ext !== ".bat")) {
     return { command, args, windowsHide: process.platform === "win32" ? true : undefined };
   }
+  const cmdExe = path.win32.join(getWindowsInstallRoots().systemRoot, "System32", "cmd.exe");
   return {
-    command: resolveTrustedWindowsCmdExe(),
-    args: ["/d", "/s", "/c", buildWindowsCmdExeCommandLine(command, args)],
+    command: cmdExe,
+    args: ["/d", "/s", "/c", [command, ...args].map(escapeForCmdExe).join(" ")],
     windowsHide: true,
     windowsVerbatimArguments: true,
   };

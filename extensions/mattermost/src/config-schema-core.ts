@@ -1,25 +1,20 @@
 // Mattermost helper module supports config schema core behavior.
 import {
   BlockStreamingCoalesceSchema,
-  ChannelImplicitMentionsSchema,
   DmPolicySchema,
   GroupPolicySchema,
   MarkdownConfigSchema,
-  buildGroupEntrySchema,
-  buildMultiAccountChannelSchema,
   requireOpenAllowFrom,
-} from "openclaw/plugin-sdk/channel-config-schema";
+} from "openclaw/plugin-sdk/channel-config-primitives";
 import { z } from "zod";
 import { buildSecretInputSchema } from "./secret-input.js";
 
-const MattermostGroupSchema = buildGroupEntrySchema().omit({
-  tools: true,
-  toolsBySender: true,
-  skills: true,
-  enabled: true,
-  allowFrom: true,
-  systemPrompt: true,
-});
+const MattermostGroupSchema = z
+  .object({
+    /** Whether mentions are required to trigger the bot in this group. */
+    requireMention: z.boolean().optional(),
+  })
+  .strict();
 
 function requireMattermostOpenAllowFrom(params: {
   policy?: string;
@@ -92,13 +87,11 @@ const MattermostStreamingProgressSchema = z
     maxLines: z.number().int().positive().optional(),
     maxLineChars: z.number().int().positive().optional(),
     toolProgress: z.boolean().optional(),
-    commandText: z.enum(["raw", "status"]).optional(),
   })
   .strict();
 const MattermostStreamingPreviewSchema = z
   .object({
     toolProgress: z.boolean().optional(),
-    commandText: z.enum(["raw", "status"]).optional(),
   })
   .strict();
 const MattermostStreamingBlockSchema = z
@@ -107,24 +100,19 @@ const MattermostStreamingBlockSchema = z
     coalesce: BlockStreamingCoalesceSchema.optional(),
   })
   .strict();
-const MattermostStreamingSchema = z
-  .object({
-    mode: MattermostStreamingModeSchema.optional(),
-    chunkMode: z.enum(["length", "newline"]).optional(),
-    preview: MattermostStreamingPreviewSchema.optional(),
-    progress: MattermostStreamingProgressSchema.optional(),
-    block: MattermostStreamingBlockSchema.optional(),
-  })
-  .strict();
-
-const MattermostReplyToModeSchema = z.enum(["off", "first", "all", "batched"]);
-const MattermostReplyToModeByChatTypeSchema = z
-  .object({
-    direct: MattermostReplyToModeSchema.optional(),
-    group: MattermostReplyToModeSchema.optional(),
-    channel: MattermostReplyToModeSchema.optional(),
-  })
-  .strict();
+const MattermostStreamingSchema = z.union([
+  MattermostStreamingModeSchema,
+  z.boolean(),
+  z
+    .object({
+      mode: MattermostStreamingModeSchema.optional(),
+      chunkMode: z.enum(["length", "newline"]).optional(),
+      preview: MattermostStreamingPreviewSchema.optional(),
+      progress: MattermostStreamingProgressSchema.optional(),
+      block: MattermostStreamingBlockSchema.optional(),
+    })
+    .strict(),
+]);
 
 const MattermostAccountSchemaBase = z
   .object({
@@ -139,15 +127,16 @@ const MattermostAccountSchemaBase = z
     chatmode: z.enum(["oncall", "onmessage", "onchar"]).optional(),
     oncharPrefixes: z.array(z.string()).optional(),
     requireMention: z.boolean().optional(),
-    implicitMentions: ChannelImplicitMentionsSchema.optional(),
     dmPolicy: DmPolicySchema.optional().default("pairing"),
     allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
     groupAllowFrom: z.array(z.union([z.string(), z.number()])).optional(),
     groupPolicy: GroupPolicySchema.optional().default("allowlist"),
     textChunkLimit: z.number().int().positive().optional(),
+    chunkMode: z.enum(["length", "newline"]).optional(),
     streaming: MattermostStreamingSchema.optional(),
-    replyToMode: MattermostReplyToModeSchema.optional(),
-    replyToModeByChatType: MattermostReplyToModeByChatTypeSchema.optional(),
+    blockStreaming: z.boolean().optional(),
+    blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
+    replyToMode: z.enum(["off", "first", "all", "batched"]).optional(),
     responsePrefix: z.string().optional(),
     actions: z
       .object({
@@ -170,13 +159,21 @@ const MattermostAccountSchemaBase = z
   })
   .strict();
 
-export const MattermostConfigSchema = buildMultiAccountChannelSchema(MattermostAccountSchemaBase, {
-  optionalAccount: true,
-  refine: (value, ctx) => {
-    requireMattermostOpenAllowFrom({
-      policy: value.dmPolicy,
-      allowFrom: value.allowFrom,
-      ctx,
-    });
-  },
+const MattermostAccountSchema = MattermostAccountSchemaBase.superRefine((value, ctx) => {
+  requireMattermostOpenAllowFrom({
+    policy: value.dmPolicy,
+    allowFrom: value.allowFrom,
+    ctx,
+  });
+});
+
+export const MattermostConfigSchema = MattermostAccountSchemaBase.extend({
+  accounts: z.record(z.string(), MattermostAccountSchema.optional()).optional(),
+  defaultAccount: z.string().optional(),
+}).superRefine((value, ctx) => {
+  requireMattermostOpenAllowFrom({
+    policy: value.dmPolicy,
+    allowFrom: value.allowFrom,
+    ctx,
+  });
 });

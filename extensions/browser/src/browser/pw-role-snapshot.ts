@@ -4,7 +4,6 @@
  * Converts ARIA or AI snapshots into compact role/name text with stable refs
  * and duplicate disambiguation for agent actions.
  */
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { CONTENT_ROLES, INTERACTIVE_ROLES, STRUCTURAL_ROLES } from "./snapshot-roles.js";
 
@@ -25,10 +24,6 @@ type RoleSnapshotStats = {
   interactive: number;
 };
 
-const ROLE_SNAPSHOT_TRUNCATION_MARKER = "[...TRUNCATED - page too large]";
-// A formatter ref precedes any YAML scalar delimiter; ref-looking scalar text is hostile page content.
-const ROLE_SNAPSHOT_LINE_REF_RE = /^\s*-\s+\w+(?:\s+"(?:\\.|[^"\\])*")?[^:]*?\[ref=([^\]]+)\]/;
-
 /** Options for filtering and compacting role snapshots. */
 export type RoleSnapshotOptions = {
   /** Only include interactive elements (buttons, links, inputs, etc.). */
@@ -40,76 +35,19 @@ export type RoleSnapshotOptions = {
 };
 
 /** Compute snapshot line/char/ref statistics. */
-function getRoleSnapshotStats<T extends { role: string }>(
-  snapshot: string,
-  refs: Record<string, T>,
-): RoleSnapshotStats {
+export function getRoleSnapshotStats(snapshot: string, refs: RoleRefMap): RoleSnapshotStats {
   const interactive = Object.values(refs).filter((r) => INTERACTIVE_ROLES.has(r.role)).length;
   return {
-    lines: snapshot ? snapshot.split("\n").length : 0,
+    lines: snapshot.split("\n").length,
     chars: snapshot.length,
     refs: Object.keys(refs).length,
     interactive,
   };
 }
 
-function findSnapshotLineRef(line: string): string | undefined {
-  return ROLE_SNAPSHOT_LINE_REF_RE.exec(line)?.[1];
-}
-
-function truncateRoleSnapshot(snapshot: string, maxChars: number): string {
-  const marker =
-    maxChars >= ROLE_SNAPSHOT_TRUNCATION_MARKER.length ? ROLE_SNAPSHOT_TRUNCATION_MARKER : "…";
-  let prefix = "";
-  for (const line of snapshot.split("\n")) {
-    const candidate = prefix ? `${prefix}\n${line}` : line;
-    if (candidate.length + 2 + marker.length > maxChars) {
-      break;
-    }
-    prefix = candidate;
-  }
-  return prefix ? `${prefix}\n\n${marker}` : marker;
-}
-
-/** Apply the final output budget, then keep only refs present on complete output lines. */
-export function finalizeRoleSnapshot<T extends { role: string }>(params: {
-  snapshot: string;
-  refs: Record<string, T>;
-  maxChars?: number;
-}): {
-  snapshot: string;
-  truncated?: boolean;
-  refs: Record<string, T>;
-  stats: RoleSnapshotStats;
-} {
-  const normalizedMaxChars =
-    typeof params.maxChars === "number" && Number.isFinite(params.maxChars) && params.maxChars > 0
-      ? Math.floor(params.maxChars)
-      : undefined;
-  const maxChars = normalizedMaxChars && normalizedMaxChars > 0 ? normalizedMaxChars : undefined;
-  const truncated = maxChars !== undefined && params.snapshot.length > maxChars;
-  const snapshot = truncated ? truncateRoleSnapshot(params.snapshot, maxChars) : params.snapshot;
-  const visibleRefs = new Set(
-    snapshot
-      .split("\n")
-      .map(findSnapshotLineRef)
-      .filter((ref): ref is string => Boolean(ref)),
-  );
-  const refs = Object.fromEntries(
-    Object.entries(params.refs).filter(([ref]) => visibleRefs.has(ref)),
-  ) as Record<string, T>;
-  const result = {
-    snapshot,
-    refs,
-    stats: getRoleSnapshotStats(snapshot, refs),
-  };
-  return truncated ? { ...result, truncated: true } : result;
-}
-
 function getIndentLevel(line: string): number {
   const match = line.match(/^(\s*)/);
-  const indent = match?.[1];
-  return indent === undefined ? 0 : Math.floor(indent.length / 2);
+  return match ? Math.floor(match[1].length / 2) : 0;
 }
 
 function matchInteractiveSnapshotLine(
@@ -127,9 +65,6 @@ function matchInteractiveSnapshotLine(
   const roleRaw = match[2];
   const name = match[3];
   const suffix = match[4];
-  if (roleRaw === undefined || suffix === undefined) {
-    return null;
-  }
   if (roleRaw.startsWith("/")) {
     return null;
   }
@@ -196,49 +131,37 @@ function removeNthFromNonDuplicates(refs: RoleRefMap, tracker: RoleNameTracker) 
 
 function compactTree(tree: string) {
   const lines = tree.split("\n");
-  const entries: Array<{ line: string; keep: boolean; hasRef: boolean; indent: number }> = [];
-  const stack: Array<{ entry: (typeof entries)[number]; indent: number }> = [];
+  const result: string[] = [];
 
-  const finishEntry = () => {
-    const current = stack.pop();
-    if (!current) {
-      return;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.includes("[ref=")) {
+      result.push(line);
+      continue;
     }
-    current.entry.keep ||= current.entry.hasRef;
-    if (current.entry.hasRef && stack.length > 0) {
-      const parent = stack.at(-1);
-      if (parent !== undefined) {
-        parent.entry.hasRef = true;
-      }
+    if (line.includes(":") && !line.trimEnd().endsWith(":")) {
+      result.push(line);
+      continue;
     }
-  };
 
-  for (const line of lines) {
-    const indent = getIndentLevel(line);
-    while (stack.length > 0) {
-      const lastEntry = expectDefined(stack.at(-1), "non-empty role snapshot stack");
-      if (lastEntry.indent < indent) {
+    const currentIndent = getIndentLevel(line);
+    let hasRelevantChildren = false;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const childIndent = getIndentLevel(lines[j]);
+      if (childIndent <= currentIndent) {
         break;
       }
-      finishEntry();
+      if (lines[j]?.includes("[ref=")) {
+        hasRelevantChildren = true;
+        break;
+      }
     }
-    const entry = {
-      line,
-      keep: line.includes("[ref=") || (line.includes(":") && !line.trimEnd().endsWith(":")),
-      hasRef: line.includes("[ref="),
-      indent,
-    };
-    entries.push(entry);
-    stack.push({ entry, indent });
-  }
-  while (stack.length > 0) {
-    finishEntry();
+    if (hasRelevantChildren) {
+      result.push(line);
+    }
   }
 
-  return entries
-    .filter((entry) => entry.keep)
-    .map((entry) => entry.line)
-    .join("\n");
+  return result.join("\n");
 }
 
 function processLine(
@@ -258,13 +181,7 @@ function processLine(
     return options.interactive ? null : line;
   }
 
-  const prefix = match[1];
-  const roleRaw = match[2];
-  const name = match[3];
-  const suffix = match[4];
-  if (prefix === undefined || roleRaw === undefined || suffix === undefined) {
-    return options.interactive ? null : line;
-  }
+  const [, prefix, roleRaw, name, suffix] = match;
   if (roleRaw.startsWith("/")) {
     return options.interactive ? null : line;
   }
@@ -432,10 +349,10 @@ export function buildRoleSnapshotFromAriaSnapshot(
 function parseAiSnapshotRef(suffix: string): string | null {
   const eMatch = suffix.match(/\[ref=(e\d+)\]/i);
   if (eMatch) {
-    return eMatch[1] ?? null;
+    return eMatch[1];
   }
   const numMatch = suffix.match(/\[ref=(\d{1,9})\]/);
-  return numMatch?.[1] ?? null;
+  return numMatch ? numMatch[1] : null;
 }
 
 /**
@@ -484,10 +401,6 @@ export function buildRoleSnapshotFromAiSnapshot(
     const roleRaw = match[2];
     const name = match[3];
     const suffix = match[4];
-    if (roleRaw === undefined || suffix === undefined) {
-      out.push(line);
-      continue;
-    }
     if (roleRaw.startsWith("/")) {
       out.push(line);
       continue;

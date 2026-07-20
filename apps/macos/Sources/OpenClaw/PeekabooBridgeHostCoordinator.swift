@@ -56,8 +56,7 @@ final class PeekabooBridgeHostCoordinator {
     private func startIfNeeded() async {
         guard self.host == nil else { return }
 
-        // Peekaboo owns release-signer migrations; hosts must accept its current compatibility set.
-        var allowlistedTeamIDs = PeekabooBridgeConstants.trustedReleaseTeamIDs
+        var allowlistedTeamIDs: Set = ["Y5PE65HELJ"]
         if let teamID = Self.currentTeamID() {
             allowlistedTeamIDs.insert(teamID)
         }

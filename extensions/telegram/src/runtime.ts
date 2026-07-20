@@ -4,10 +4,11 @@ import type { TelegramRuntime } from "./runtime.types.js";
 
 const {
   setRuntime: setTelegramRuntime,
+  clearRuntime: clearTelegramRuntime,
   getRuntime: getTelegramRuntime,
   tryGetRuntime: getOptionalTelegramRuntime,
 } = createPluginRuntimeStore<TelegramRuntime>({
   pluginId: "telegram",
   errorMessage: "Telegram runtime not initialized",
 });
-export { getOptionalTelegramRuntime, getTelegramRuntime, setTelegramRuntime };
+export { clearTelegramRuntime, getOptionalTelegramRuntime, getTelegramRuntime, setTelegramRuntime };

@@ -1,8 +1,20 @@
 // Feishu tests cover tool result plugin behavior.
 import { describe, expect, it } from "vitest";
-import { toolExecutionErrorResult, unknownToolActionResult } from "./tool-result.js";
+import {
+  jsonToolResult,
+  toolExecutionErrorResult,
+  unknownToolActionResult,
+} from "./tool-result.js";
 
-describe("tool result errors", () => {
+describe("jsonToolResult", () => {
+  it("formats tool result with text content and details", () => {
+    const payload = { ok: true, id: "abc" };
+    expect(jsonToolResult(payload)).toEqual({
+      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+      details: payload,
+    });
+  });
+
   it("formats unknown action errors", () => {
     expect(unknownToolActionResult("create")).toEqual({
       content: [

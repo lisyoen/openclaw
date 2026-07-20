@@ -5,7 +5,6 @@
 import { posix as pathPosix } from "node:path";
 import type { JsonObject } from "../protocol.js";
 import { requireObject, requireString } from "./json-rpc.js";
-import { resolveExecServerPath } from "./path-uri.js";
 import type {
   FsAccessMode,
   OpenClawExecServer,
@@ -68,10 +67,7 @@ function readFsSandboxCwd(execServer: OpenClawExecServer, sandbox: JsonObject): 
   if (sandbox.cwd === undefined || sandbox.cwd === null) {
     return normalizeSandboxAbsolutePath(execServer.sandbox.containerWorkdir, "sandbox cwd");
   }
-  return normalizeSandboxAbsolutePath(
-    resolveExecServerPath(requireString(sandbox.cwd, "sandbox cwd"), "sandbox cwd"),
-    "sandbox cwd",
-  );
+  return normalizeSandboxAbsolutePath(requireString(sandbox.cwd, "sandbox cwd"), "sandbox cwd");
 }
 
 function resolveFsSandboxEntry(entry: JsonObject, cwd: string): ResolvedFsSandboxEntry | undefined {
@@ -82,7 +78,7 @@ function resolveFsSandboxEntry(entry: JsonObject, cwd: string): ResolvedFsSandbo
     return {
       kind: "path",
       path: normalizeSandboxAbsolutePath(
-        resolveExecServerPath(requireString(pathSpec.path, "fs sandbox path"), "fs sandbox path"),
+        requireString(pathSpec.path, "fs sandbox path"),
         "fs sandbox path",
       ),
       access,

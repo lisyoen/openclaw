@@ -1,8 +1,5 @@
 // Gateway run command option registration and lazy handoff to runtime startup.
 import type { Command } from "commander";
-import type { GatewayRunOpts } from "./run-options.js";
-import { resolveGatewayRunOptions } from "./run-options.js";
-import { getGatewayRunRuntimeHooks } from "./runtime-hooks.js";
 
 const GATEWAY_AUTH_MODES = ["none", "token", "password", "trusted-proxy"] as const;
 const GATEWAY_TAILSCALE_MODES = ["off", "serve", "funnel"] as const;
@@ -11,11 +8,7 @@ function formatModeChoices(modes: readonly string[]): string {
   return modes.map((mode) => `"${mode}"`).join("|");
 }
 
-type GatewayRunCommandHooks = {
-  beforeRun?: (opts: Pick<GatewayRunOpts, "force" | "reset">) => Promise<void> | void;
-};
-
-export function addGatewayRunCommand(cmd: Command, hooks: GatewayRunCommandHooks = {}): Command {
+export function addGatewayRunCommand(cmd: Command): Command {
   return cmd
     .option("--port <port>", "Port for the gateway WebSocket")
     .option(
@@ -62,9 +55,7 @@ export function addGatewayRunCommand(cmd: Command, hooks: GatewayRunCommandHooks
     .option("--raw-stream", "Log raw model stream events to jsonl", false)
     .option("--raw-stream-path <path>", "Raw stream jsonl path")
     .action(async (opts, command) => {
-      const resolved = resolveGatewayRunOptions(opts, command);
-      await hooks.beforeRun?.(resolved);
-      const { runGatewayCommand } = await import("./run.js");
-      await runGatewayCommand(resolved, getGatewayRunRuntimeHooks());
+      const { resolveGatewayRunOptions, runGatewayCommand } = await import("./run.js");
+      await runGatewayCommand(resolveGatewayRunOptions(opts, command));
     });
 }

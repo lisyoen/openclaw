@@ -5,7 +5,6 @@
   },
   "name": "OpenProse",
   "description": "OpenProse VM skill pack with a /prose slash command.",
-  "catalog": { "featured": true, "order": 20 },
   "skills": ["./skills"],
   "configSchema": {
     "type": "object",

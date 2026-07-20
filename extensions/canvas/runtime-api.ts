@@ -1,4 +1,7 @@
-/** Runtime API exports for Canvas plugin host, CLI, and capability helpers. */
+/**
+ * Runtime API exports for Canvas plugin host, document, CLI, and capability
+ * helpers.
+ */
 export {
   canvasConfigSchema,
   isCanvasHostEnabled,
@@ -20,6 +23,13 @@ export {
   type CanvasHostHandler,
   type CanvasHostServer,
 } from "./src/host/server.js";
+export {
+  buildCanvasDocumentEntryUrl,
+  createCanvasDocument,
+  resolveCanvasDocumentAssets,
+  resolveCanvasDocumentDir,
+  resolveCanvasHttpPathToLocalPath,
+} from "./src/documents.js";
 export {
   registerNodesCanvasCommands,
   type CanvasCliDependencies,

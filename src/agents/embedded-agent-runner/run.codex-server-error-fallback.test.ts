@@ -13,8 +13,6 @@ import {
   mockedRunEmbeddedAttempt,
   overflowBaseRunParams,
   resetRunOverflowCompactionHarnessMocks,
-  useOpenAIPlatformAuthFixture,
-  warmRunOverflowCompactionHarness,
 } from "./run.overflow-compaction.harness.js";
 
 let runEmbeddedAgent: typeof import("./run.js").runEmbeddedAgent;
@@ -22,12 +20,10 @@ let runEmbeddedAgent: typeof import("./run.js").runEmbeddedAgent;
 describe("runEmbeddedAgent Codex server_error fallback handoff", () => {
   beforeAll(async () => {
     ({ runEmbeddedAgent } = await loadRunOverflowCompactionHarness());
-    await warmRunOverflowCompactionHarness(runEmbeddedAgent);
   });
 
   beforeEach(() => {
     resetRunOverflowCompactionHarnessMocks();
-    useOpenAIPlatformAuthFixture();
     mockedGlobalHookRunner.hasHooks.mockImplementation(() => false);
   });
 
@@ -59,7 +55,6 @@ describe("runEmbeddedAgent Codex server_error fallback handoff", () => {
     const promise = runEmbeddedAgent({
       ...overflowBaseRunParams,
       runId: "run-codex-server-error-fallback",
-      agentHarnessRuntimeOverride: "openclaw",
       config: makeModelFallbackCfg({
         agents: {
           defaults: {

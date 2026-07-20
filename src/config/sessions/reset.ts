@@ -8,7 +8,10 @@ import { normalizeMessageChannel } from "../../utils/message-channel.js";
 import type { SessionConfig, SessionResetConfig } from "../types.base.js";
 /** Public reset policy exports plus helpers that classify direct, group, and thread sessions. */
 export {
+  DEFAULT_RESET_AT_HOUR,
+  DEFAULT_RESET_MODE,
   evaluateSessionFreshness,
+  resolveDailyResetAtMs,
   resolveSessionResetPolicy,
   type SessionFreshness,
   type SessionResetMode,
@@ -20,7 +23,7 @@ import type { SessionResetType } from "./reset-policy.js";
 const GROUP_SESSION_MARKERS = [":group:", ":channel:"];
 
 /** Returns true when a session key is known to represent a thread. */
-function isThreadSessionKey(sessionKey?: string | null): boolean {
+export function isThreadSessionKey(sessionKey?: string | null): boolean {
   return Boolean(resolveLoadedSessionThreadInfo(sessionKey).threadId);
 }
 

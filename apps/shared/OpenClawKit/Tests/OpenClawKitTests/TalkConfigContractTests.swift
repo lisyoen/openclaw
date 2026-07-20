@@ -9,6 +9,7 @@ private struct TalkConfigContractFixture: Decodable {
     struct SelectionCase: Decodable {
         let id: String
         let defaultProvider: String
+        let payloadValid: Bool
         let expectedSelection: ExpectedSelection?
         let talk: [String: AnyCodable]
 
@@ -68,7 +69,7 @@ private enum TalkConfigContractFixtureLoader {
 }
 
 struct TalkConfigContractTests {
-    @Test func `selection fixtures`() throws {
+    @Test func selectionFixtures() throws {
         for fixture in try TalkConfigContractFixtureLoader.load().selectionCases {
             let selection = TalkConfigParsing.selectProviderConfig(
                 fixture.gatewayResponseTalk,
@@ -82,10 +83,11 @@ struct TalkConfigContractTests {
             } else {
                 #expect(selection == nil)
             }
+            #expect(fixture.payloadValid == (selection != nil))
         }
     }
 
-    @Test func `timeout fixtures`() throws {
+    @Test func timeoutFixtures() throws {
         for fixture in try TalkConfigContractFixtureLoader.load().timeoutCases {
             #expect(
                 TalkConfigParsing.resolvedSilenceTimeoutMs(

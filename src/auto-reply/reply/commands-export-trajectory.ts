@@ -4,8 +4,19 @@ import { createExecTool } from "../../agents/bash-tools.js";
 import type { ExecToolDetails } from "../../agents/bash-tools.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import type { ExecApprovalRequest } from "../../infra/exec-approvals.js";
+import { pathExists } from "../../infra/fs-safe.js";
+import {
+  exportTrajectoryForCommand,
+  formatTrajectoryCommandExportSummary,
+  resolveTrajectoryCommandOutputDir,
+  type TrajectoryCommandExportSummary,
+} from "../../trajectory/command-export.js";
 import type { ReplyPayload } from "../types.js";
-import { parseExportCommandOutputPath } from "./commands-export-common.js";
+import {
+  isReplyPayload,
+  parseExportCommandOutputPath,
+  resolveExportCommandSessionTarget,
+} from "./commands-export-common.js";
 import {
   buildCurrentOpenClawCliArgv,
   buildCurrentOpenClawCliCommand,
@@ -15,7 +26,6 @@ import {
   deliverPrivateCommandReply,
   readCommandDeliveryTarget,
   readCommandMessageThreadId,
-  resolveCommandExecApprovalRoute,
   resolvePrivateCommandApprovalRouteExpiresAtMs,
   resolvePrivateCommandRouteTargets,
   type PrivateCommandRouteTarget,
@@ -114,6 +124,59 @@ async function buildExportTrajectoryApprovalReply(
   };
 }
 
+export async function buildExportTrajectoryReply(
+  params: HandleCommandsParams,
+): Promise<ReplyPayload> {
+  const args = parseExportCommandOutputPath(params.command.commandBodyNormalized, [
+    "export-trajectory",
+    "trajectory",
+  ]);
+  if (args.error) {
+    return { text: args.error };
+  }
+  const sessionTarget = resolveExportCommandSessionTarget(params);
+  if (isReplyPayload(sessionTarget)) {
+    return sessionTarget;
+  }
+  const { entry, sessionFile } = sessionTarget;
+
+  if (!(await pathExists(sessionFile))) {
+    return { text: "❌ Session file not found." };
+  }
+
+  let outputDir: string;
+  try {
+    outputDir = await resolveTrajectoryCommandOutputDir({
+      outputPath: args.outputPath,
+      workspaceDir: params.workspaceDir,
+      sessionId: entry.sessionId,
+    });
+  } catch (err) {
+    return {
+      text: `❌ Failed to resolve output path: ${formatErrorMessage(err)}`,
+    };
+  }
+
+  let summary: TrajectoryCommandExportSummary;
+  try {
+    summary = await exportTrajectoryForCommand({
+      outputDir,
+      sessionFile,
+      sessionId: entry.sessionId,
+      sessionKey: params.sessionKey,
+      workspaceDir: params.workspaceDir,
+    });
+  } catch (err) {
+    return {
+      text: `❌ Failed to export trajectory: ${formatErrorMessage(err)}`,
+    };
+  }
+
+  return {
+    text: formatTrajectoryCommandExportSummary(summary),
+  };
+}
+
 async function resolvePrivateTrajectoryTargetsForCommand(
   params: HandleCommandsParams,
   request: TrajectoryExportExecRequest,
@@ -173,6 +236,7 @@ async function requestTrajectoryExportApproval(
       sessionKey: params.sessionKey,
       config: params.cfg,
     });
+  const messageThreadId = readCommandMessageThreadId(params);
   try {
     const execTool = deps.createExecTool({
       host: "gateway",
@@ -190,10 +254,16 @@ async function requestTrajectoryExportApproval(
       sessionStore: params.cfg.session?.store,
       mainKey: params.cfg.session?.mainKey,
       sessionScope: params.cfg.session?.scope,
-      ...resolveCommandExecApprovalRoute({
-        commandParams: params,
-        privateApprovalTarget: options.privateApprovalTarget,
-      }),
+      messageProvider: options.privateApprovalTarget?.channel ?? params.command.channel,
+      currentChannelId: options.privateApprovalTarget?.to ?? readCommandDeliveryTarget(params),
+      currentThreadTs: options.privateApprovalTarget
+        ? options.privateApprovalTarget.threadId == null
+          ? undefined
+          : String(options.privateApprovalTarget.threadId)
+        : messageThreadId,
+      accountId: options.privateApprovalTarget
+        ? (options.privateApprovalTarget.accountId ?? undefined)
+        : (params.ctx.AccountId ?? undefined),
       notifyOnExit: params.cfg.tools?.exec?.notifyOnExit,
       notifyOnExitEmptySuccess: params.cfg.tools?.exec?.notifyOnExitEmptySuccess,
     });

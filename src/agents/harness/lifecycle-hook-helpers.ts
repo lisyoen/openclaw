@@ -64,6 +64,16 @@ function buildFinalizeRetryInstructionKey(instruction: string): string {
   return `instruction:${createHash("sha256").update(instruction).digest("hex")}`;
 }
 
+/** Clears before-finalize retry budgets globally or for one run. */
+export function clearAgentHarnessFinalizeRetryBudget(params?: { runId?: string }): void {
+  const budget = getFinalizeRetryBudget();
+  if (!params?.runId) {
+    budget.clear();
+    return;
+  }
+  budget.delete(params.runId);
+}
+
 /** Dispatches best-effort LLM input hooks for a harness attempt. */
 export function runAgentHarnessLlmInputHook(params: {
   event: PluginHookLlmInputEvent;
@@ -135,7 +145,7 @@ export async function awaitAgentHarnessAgentEndHook(params: {
 }
 
 /** Normalized before-finalize hook decision consumed by harness loops. */
-type AgentHarnessBeforeAgentFinalizeOutcome =
+export type AgentHarnessBeforeAgentFinalizeOutcome =
   | { action: "continue" }
   | { action: "revise"; reason: string }
   | { action: "finalize"; reason?: string };

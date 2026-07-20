@@ -25,7 +25,6 @@ import {
   writeCachedSearchPayload,
 } from "openclaw/plugin-sdk/provider-web-search";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { resolveGoogleApiClientHeaders } from "../google-api-client-header.js";
 import {
   resolveGeminiConfig,
   resolveGeminiBaseUrl,
@@ -74,8 +73,6 @@ const GEMINI_FRESHNESS_DAYS: Record<GeminiFreshness, number> = {
   year: 365,
 };
 
-const GEMINI_DAY_FRESHNESS_HINT = "Prioritize web sources published in the last 24 hours.";
-
 // Gemini's google_search.time_range_filter accepts second-precision RFC 3339
 // only. Despite the underlying google.protobuf.Timestamp type accepting "0, 3,
 // 6 or 9 fractional digits", the Search grounding endpoint rejects any
@@ -102,18 +99,11 @@ function freshnessStartTime(freshness: GeminiFreshness, now: Date): string {
   return toGeminiTimeRangeTimestamp(start);
 }
 
-function queryWithSoftFreshness(query: string, freshness?: "day"): string {
-  if (freshness !== "day") {
-    return query;
-  }
-  return `${query}\n\nSearch recency instruction: ${GEMINI_DAY_FRESHNESS_HINT} If no matching recent sources are available, state that limitation and use the most relevant available sources.`;
-}
-
 function resolveGeminiTimeRangeFilter(
   args: Record<string, unknown>,
   now = new Date(),
 ):
-  | { timeRangeFilter?: GeminiTimeRangeFilter; freshness?: "day" }
+  | { timeRangeFilter?: GeminiTimeRangeFilter }
   | {
       error:
         | "invalid_freshness"
@@ -143,13 +133,6 @@ function resolveGeminiTimeRangeFilter(
 
   const { freshness, dateAfter, dateBefore } = parsedTimeFilters;
   if (freshness) {
-    // Gemini rejects 24-hour google_search.timeRangeFilter windows, while
-    // wider freshness windows still preserve the hard grounding contract.
-    if (freshness === "day") {
-      return {
-        freshness,
-      };
-    }
     return {
       timeRangeFilter: {
         startTime: freshnessStartTime(freshness, now),
@@ -170,9 +153,9 @@ function resolveGeminiTimeRangeFilter(
   };
 }
 
-function resolveGeminiRuntimeApiKey(gemini?: GeminiConfig): string | undefined {
+export function resolveGeminiRuntimeApiKey(gemini?: GeminiConfig): string | undefined {
   return (
-    readConfiguredSecretString(gemini?.apiKey, "plugins.entries.google.config.webSearch.apiKey") ??
+    readConfiguredSecretString(gemini?.apiKey, "tools.web.search.gemini.apiKey") ??
     readProviderEnvValue(["GEMINI_API_KEY"]) ??
     readConfiguredSecretString(gemini?.providerApiKey, "models.providers.google.apiKey")
   );
@@ -201,12 +184,6 @@ async function runGeminiSearch(params: {
         headers: {
           "Content-Type": "application/json",
           "x-goog-api-key": params.apiKey,
-          ...resolveGoogleApiClientHeaders({
-            baseUrl: params.baseUrl,
-            api: "google-generative-ai",
-            capability: "other",
-            transport: "http",
-          }),
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: params.query }] }],
@@ -344,7 +321,6 @@ export async function executeGeminiSearch(
     resolveSearchCount(count, DEFAULT_SEARCH_COUNT),
     baseUrl,
     model,
-    timeRange.freshness,
     timeRange.timeRangeFilter?.startTime,
     timeRange.timeRangeFilter?.endTime,
   ]);
@@ -355,7 +331,7 @@ export async function executeGeminiSearch(
 
   const start = Date.now();
   const result = await runGeminiSearch({
-    query: queryWithSoftFreshness(query, timeRange.freshness),
+    query,
     apiKey,
     baseUrl,
     model,

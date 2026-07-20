@@ -1,41 +1,19 @@
-// Telegram plugin module resolves typed operator approvals through the Gateway.
-import {
-  resolveApprovalOverGateway,
-  type ApprovalResolveResult,
-} from "openclaw/plugin-sdk/approval-gateway-runtime";
+// Telegram plugin module implements exec approval resolver behavior.
+import { resolveApprovalOverGateway } from "openclaw/plugin-sdk/approval-gateway-runtime";
 import type { ExecApprovalReplyDecision } from "openclaw/plugin-sdk/approval-reply-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 
-type ResolveTelegramApprovalParams = {
+export type ResolveTelegramExecApprovalParams = {
   cfg: OpenClawConfig;
   approvalId: string;
-  approvalKind: "exec" | "plugin";
   decision: ExecApprovalReplyDecision;
   senderId?: string | null;
+  allowPluginFallback?: boolean;
   gatewayUrl?: string;
 };
 
-type ResolveTelegramLegacyApprovalParams = Omit<ResolveTelegramApprovalParams, "approvalKind"> & {
-  approvalKind: "exec" | "plugin";
-};
-
-export async function resolveTelegramApproval(
-  params: ResolveTelegramApprovalParams,
-): Promise<ApprovalResolveResult> {
-  return await resolveApprovalOverGateway({
-    cfg: params.cfg,
-    approvalId: params.approvalId,
-    approvalKind: params.approvalKind,
-    decision: params.decision,
-    senderId: params.senderId,
-    gatewayUrl: params.gatewayUrl,
-    clientDisplayName: `Telegram approval (${params.senderId?.trim() || "unknown"})`,
-  });
-}
-
-/** Compatibility resolver for command/value buttons that predate typed approval actions. */
-export async function resolveTelegramLegacyApproval(
-  params: ResolveTelegramLegacyApprovalParams,
+export async function resolveTelegramExecApproval(
+  params: ResolveTelegramExecApprovalParams,
 ): Promise<void> {
   await resolveApprovalOverGateway({
     cfg: params.cfg,
@@ -43,7 +21,7 @@ export async function resolveTelegramLegacyApproval(
     decision: params.decision,
     senderId: params.senderId,
     gatewayUrl: params.gatewayUrl,
-    resolveMethod: params.approvalKind,
+    allowPluginFallback: params.allowPluginFallback,
     clientDisplayName: `Telegram approval (${params.senderId?.trim() || "unknown"})`,
   });
 }

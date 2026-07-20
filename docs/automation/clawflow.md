@@ -3,10 +3,10 @@ summary: "Redirect to Task Flow"
 title: "ClawFlow"
 ---
 
-ClawFlow was renamed to [Task Flow](/automation/taskflow). Use that page for durable multi-step flow orchestration.
+ClawFlow was renamed to [Task flow](/automation/taskflow).
 
 ## Related
 
-- [Task Flow](/automation/taskflow)
+- [Task flow](/automation/taskflow)
 - [Standing orders](/automation/standing-orders)
 - [Hooks](/automation/hooks)

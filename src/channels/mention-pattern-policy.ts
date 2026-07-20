@@ -1,4 +1,3 @@
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
 /**
  * Mention-pattern policy resolver.
  *
@@ -41,6 +40,10 @@ function normalizeIdList(values?: string[]): Set<string> {
 }
 
 function isMentionPatternsPolicyConfig(value: unknown): value is MentionPatternsPolicyConfig {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 

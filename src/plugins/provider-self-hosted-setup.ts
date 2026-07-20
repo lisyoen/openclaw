@@ -1,3 +1,4 @@
+// Builds setup metadata for self-hosted provider plugins.
 import {
   findNormalizedProviderValue,
   normalizeProviderId,
@@ -10,7 +11,6 @@ import { uniqueStrings } from "@openclaw/normalization-core/string-normalization
 import type { ApiKeyCredential, AuthProfileCredential } from "../agents/auth-profiles/types.js";
 import { upsertAuthProfileWithLock } from "../agents/auth-profiles/upsert-with-lock.js";
 import { parseConfiguredModelVisibilityEntries } from "../agents/model-selection-shared.js";
-import { readProviderJsonResponse } from "../agents/provider-http-errors.js";
 import {
   SELF_HOSTED_DEFAULT_CONTEXT_WINDOW,
   SELF_HOSTED_DEFAULT_COST,
@@ -18,7 +18,6 @@ import {
 } from "../agents/self-hosted-provider-defaults.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-// Builds setup metadata for self-hosted provider plugins.
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -26,7 +25,7 @@ import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js
 import type { WizardPrompter } from "../wizard/prompts.js";
 import { applyAuthProfileConfig } from "./provider-auth-helpers.js";
 import type {
-  ProviderCatalogContext,
+  ProviderDiscoveryContext,
   ProviderAuthResult,
   ProviderAuthMethodNonInteractiveContext,
   ProviderNonInteractiveApiKeyResult,
@@ -39,12 +38,6 @@ export {
 } from "../agents/self-hosted-provider-defaults.js";
 
 const log = createSubsystemLogger("plugins/self-hosted-provider-setup");
-
-// Self-hosted provider base URLs are user-supplied and untrusted (an attacker
-// who can influence the configured endpoint, e.g. via SSRF, could serve an
-// unbounded JSON stream). Cap discovery response bodies before parsing so a
-// hostile or buggy endpoint cannot drive the setup wizard into OOM.
-const SELF_HOSTED_DISCOVERY_JSON_MAX_BYTES = 16 * 1024 * 1024;
 
 type OpenAICompatModelsResponse = {
   data?: Array<{
@@ -93,18 +86,6 @@ function readPositiveInteger(value: unknown): number | undefined {
   return Math.trunc(value);
 }
 
-async function readSelfHostedDiscoveryJson<T>(response: Response, label: string): Promise<T> {
-  return await readProviderJsonResponse<T>(response, `${label} discovery`, {
-    maxBytes: SELF_HOSTED_DISCOVERY_JSON_MAX_BYTES,
-  });
-}
-
-async function cancelUnreadResponseBody(response: Response): Promise<void> {
-  if (!response.bodyUsed) {
-    await response.body?.cancel().catch(() => undefined);
-  }
-}
-
 function resolveLlamaCppPropsUrl(baseUrl: string, modelId?: string): string {
   const parsed = new URL(baseUrl);
   const pathname = parsed.pathname.replace(/\/+$/, "");
@@ -143,13 +124,9 @@ async function discoverLlamaCppRuntimeContextTokens(params: {
     });
     try {
       if (!response.ok) {
-        await cancelUnreadResponseBody(response);
         return undefined;
       }
-      const data = await readSelfHostedDiscoveryJson<LlamaCppPropsResponse>(
-        response,
-        "llama.cpp /props",
-      );
+      const data = (await response.json()) as LlamaCppPropsResponse;
       return (
         readPositiveInteger(data.default_generation_settings?.n_ctx) ??
         readPositiveInteger(data.n_ctx)
@@ -190,14 +167,10 @@ export async function discoverOpenAICompatibleLocalModels(params: {
     });
     try {
       if (!response.ok) {
-        await cancelUnreadResponseBody(response);
         log.warn(`Failed to discover ${params.label} models: ${response.status}`);
         return [];
       }
-      const data = await readSelfHostedDiscoveryJson<OpenAICompatModelsResponse>(
-        response,
-        params.label,
-      );
+      const data = (await response.json()) as OpenAICompatModelsResponse;
       const models = data.data ?? [];
       if (models.length === 0) {
         log.warn(`No ${params.label} models found on local instance`);
@@ -427,7 +400,7 @@ export async function promptAndConfigureOpenAICompatibleSelfHostedProviderAuth(
 export async function discoverOpenAICompatibleSelfHostedProvider<
   T extends Record<string, unknown>,
 >(params: {
-  ctx: ProviderCatalogContext;
+  ctx: ProviderDiscoveryContext;
   providerId: string;
   buildProvider: (params: { apiKey?: string; baseUrl?: string }) => Promise<T>;
 }): Promise<{ provider: T & { apiKey: string } } | null> {

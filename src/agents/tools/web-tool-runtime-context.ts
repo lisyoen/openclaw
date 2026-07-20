@@ -16,10 +16,11 @@ type WebProviderKind = "fetch" | "search";
 
 type WebProviderRuntimeMetadata = RuntimeWebFetchMetadata | RuntimeWebSearchMetadata;
 
+type WebProviderContract = "webFetchProviders" | "webSearchProviders";
+
 type ResolvedWebToolRuntimeContext<TMetadata extends WebProviderRuntimeMetadata> = {
   config?: OpenClawConfig;
   preferRuntimeProviders: boolean;
-  providerSelectionId: string;
   runtimeMetadata?: TMetadata;
 };
 
@@ -35,21 +36,23 @@ function resolveRuntimeWebProviderId(metadata: WebProviderRuntimeMetadata | unde
   return metadata?.selectedProvider ?? metadata?.providerConfigured ?? "";
 }
 
+function resolveWebProviderContract(kind: WebProviderKind): WebProviderContract {
+  return kind === "fetch" ? "webFetchProviders" : "webSearchProviders";
+}
+
 function shouldPreferRuntimeProviders(params: {
   config?: OpenClawConfig;
   kind: WebProviderKind;
   providerSelectionId: string;
 }): boolean {
-  // Agent-side web_search must use the live runtime registry; runWebSearch
-  // applies manifest ownership only as a load-scope hint after that.
-  if (!params.providerSelectionId || params.kind === "search") {
+  if (!params.providerSelectionId) {
     return true;
   }
   // Built-in providers are handled by core; plugin-owned selections should route through plugins.
   return !resolveManifestContractOwnerPluginId({
-    contract: "webFetchProviders",
+    contract: resolveWebProviderContract(params.kind),
     value: params.providerSelectionId,
-    origin: "bundled",
+    ...(params.kind === "fetch" ? { origin: "bundled" as const } : {}),
     config: params.config,
   });
 }
@@ -80,7 +83,6 @@ function resolveWebToolRuntimeContext<TMetadata extends WebProviderRuntimeMetada
       kind: params.kind,
       providerSelectionId,
     }),
-    providerSelectionId,
     runtimeMetadata,
   };
 }
@@ -90,7 +92,9 @@ export function resolveWebSearchToolRuntimeContext(params: {
   config?: OpenClawConfig;
   lateBindRuntimeConfig?: boolean;
   runtimeWebSearch?: RuntimeWebSearchMetadata;
-}) {
+}): ResolvedWebToolRuntimeContext<RuntimeWebSearchMetadata> & {
+  runtimeWebSearch?: RuntimeWebSearchMetadata;
+} {
   const resolved = resolveWebToolRuntimeContext({
     capturedConfig: params.config,
     capturedRuntimeMetadata: params.runtimeWebSearch,
@@ -100,7 +104,7 @@ export function resolveWebSearchToolRuntimeContext(params: {
   return {
     config: resolved.config,
     preferRuntimeProviders: resolved.preferRuntimeProviders,
-    providerSelectionId: resolved.providerSelectionId,
+    runtimeMetadata: resolved.runtimeMetadata,
     runtimeWebSearch: resolved.runtimeMetadata,
   };
 }
@@ -110,7 +114,9 @@ export function resolveWebFetchToolRuntimeContext(params: {
   config?: OpenClawConfig;
   lateBindRuntimeConfig?: boolean;
   runtimeWebFetch?: RuntimeWebFetchMetadata;
-}) {
+}): ResolvedWebToolRuntimeContext<RuntimeWebFetchMetadata> & {
+  runtimeWebFetch?: RuntimeWebFetchMetadata;
+} {
   const resolved = resolveWebToolRuntimeContext({
     capturedConfig: params.config,
     capturedRuntimeMetadata: params.runtimeWebFetch,
@@ -120,7 +126,7 @@ export function resolveWebFetchToolRuntimeContext(params: {
   return {
     config: resolved.config,
     preferRuntimeProviders: resolved.preferRuntimeProviders,
-    providerSelectionId: resolved.providerSelectionId,
+    runtimeMetadata: resolved.runtimeMetadata,
     runtimeWebFetch: resolved.runtimeMetadata,
   };
 }

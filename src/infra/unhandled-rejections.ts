@@ -2,7 +2,6 @@
 import process from "node:process";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { restoreTerminalState } from "../../packages/terminal-core/src/restore.js";
-import { isAbortError } from "./abort-signal.js";
 import {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -48,13 +47,7 @@ const FATAL_ERROR_CODES = new Set([
   "ERR_WORKER_INITIALIZATION_FAILED",
 ]);
 
-const INVALID_CONFIG_ERROR_CODE = "INVALID_CONFIG";
-const CONFIG_ERROR_CODES = new Set([
-  INVALID_CONFIG_ERROR_CODE,
-  "MISSING_API_KEY",
-  "MISSING_CREDENTIALS",
-]);
-const EXIT_CONFIG_ERROR = 78;
+const CONFIG_ERROR_CODES = new Set(["INVALID_CONFIG", "MISSING_API_KEY", "MISSING_CREDENTIALS"]);
 
 // Network error codes that indicate transient failures (shouldn't crash the gateway)
 const TRANSIENT_NETWORK_CODES = new Set([
@@ -120,7 +113,6 @@ const TRANSIENT_NETWORK_MESSAGE_CODE_RE =
 const BENIGN_UNCAUGHT_EXCEPTION_NETWORK_MESSAGE_CODE_RE =
   /\b(ECONNREFUSED|ENETDOWN|EHOSTUNREACH|ENETUNREACH|EADDRNOTAVAIL|EAI_AGAIN|ENOTFOUND|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_DNS_RESOLVE_FAILED|UND_ERR_CONNECT|ERR_HTTP2_INVALID_SESSION)\b/i;
 const WS_PRE_HANDSHAKE_CLOSE_MESSAGE = "websocket was closed before the connection was established";
-const UNDICI_TERMINATED_TYPE_ERROR_MESSAGE = "terminated";
 
 const TRANSIENT_SQLITE_MESSAGE_CODE_RE =
   /\b(SQLITE_BUSY|SQLITE_CANTOPEN|SQLITE_IOERR|SQLITE_LOCKED)\b/i;
@@ -242,6 +234,26 @@ function extractErrorCodeWithCause(err: unknown): string | undefined {
     return direct;
   }
   return extractErrorCode(getErrorCause(err));
+}
+
+/**
+ * Checks if an error is an AbortError.
+ * These are typically intentional cancellations (e.g., during shutdown) and shouldn't crash.
+ */
+export function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  const name = "name" in err ? String(err.name) : "";
+  if (name === "AbortError") {
+    return true;
+  }
+  // Check for "This operation was aborted" message from Node's undici
+  const message = "message" in err && typeof err.message === "string" ? err.message : "";
+  if (message === "This operation was aborted") {
+    return true;
+  }
+  return false;
 }
 
 function isFatalError(err: unknown): boolean {
@@ -429,15 +441,6 @@ export function isTransientUnhandledRejectionError(err: unknown): boolean {
 
 function isBenignUncaughtNetworkException(err: unknown): boolean {
   for (const candidate of collectNestedUnhandledErrorCandidates(err)) {
-    // Undici emits this bare TypeError when a response body aborts after request start.
-    // Keep the shape exact so unrelated "terminated" errors still take the fatal path.
-    if (
-      candidate instanceof TypeError &&
-      normalizeLowercaseStringOrEmpty(candidate.message) === UNDICI_TERMINATED_TYPE_ERROR_MESSAGE
-    ) {
-      return true;
-    }
-
     const code = extractErrorCodeOrErrno(candidate);
     if (code && BENIGN_UNCAUGHT_EXCEPTION_NETWORK_CODES.has(code)) {
       return true;
@@ -473,7 +476,7 @@ export function registerUnhandledRejectionHandler(handler: UnhandledRejectionHan
   };
 }
 
-function isUnhandledRejectionHandled(reason: unknown): boolean {
+export function isUnhandledRejectionHandled(reason: unknown): boolean {
   for (const handler of handlers) {
     try {
       if (handler(reason)) {
@@ -513,17 +516,12 @@ export function isUncaughtExceptionHandled(error: unknown): boolean {
 }
 
 export function installUnhandledRejectionHandler(): void {
-  const exitWithTerminalRestore = (
-    reason: string,
-    error?: unknown,
-    hookReason = reason,
-    exitCode = 1,
-  ) => {
+  const exitWithTerminalRestore = (reason: string, error?: unknown, hookReason = reason) => {
     for (const message of runFatalErrorHooks({ reason: hookReason, error })) {
       console.error("[openclaw]", message);
     }
     restoreTerminalState(reason, { resumeStdinIfPaused: false });
-    process.exit(exitCode);
+    process.exit(1);
   };
 
   process.on("unhandledRejection", (reason, _promise) => {
@@ -546,9 +544,7 @@ export function installUnhandledRejectionHandler(): void {
 
     if (isConfigError(reason)) {
       console.error("[openclaw] CONFIGURATION ERROR - requires fix:", formatUncaughtError(reason));
-      const exitCode =
-        extractErrorCodeWithCause(reason) === INVALID_CONFIG_ERROR_CODE ? EXIT_CONFIG_ERROR : 1;
-      exitWithTerminalRestore("configuration error", reason, "configuration_error", exitCode);
+      exitWithTerminalRestore("configuration error", reason, "configuration_error");
       return;
     }
 

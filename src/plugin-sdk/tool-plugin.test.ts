@@ -1,8 +1,6 @@
 /**
  * Tests tool plugin schema helpers and SDK tool registration contracts.
  */
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { Type } from "typebox";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { createCapturedPluginRegistration } from "../plugins/captured-registration.js";
@@ -10,13 +8,6 @@ import { defineToolPlugin, getToolPluginMetadata } from "./tool-plugin.js";
 
 describe("defineToolPlugin", () => {
   it("registers declared tools and wraps plain object results", async () => {
-    const outputSchema = Type.Object(
-      {
-        symbol: Type.String(),
-        configured: Type.Boolean(),
-      },
-      { additionalProperties: false },
-    );
     const entry = defineToolPlugin({
       id: "stock-quotes",
       name: "Stock Quotes",
@@ -32,7 +23,6 @@ describe("defineToolPlugin", () => {
           parameters: Type.Object({
             symbol: Type.String(),
           }),
-          outputSchema,
           async execute(params, config) {
             expectTypeOf(params.symbol).toEqualTypeOf<string>();
             expectTypeOf(config.apiKey).toEqualTypeOf<string>();
@@ -54,13 +44,8 @@ describe("defineToolPlugin", () => {
       name: "quote",
       label: "Quote",
       description: "Fetch a quote.",
-      outputSchema,
     });
-    expect(getToolPluginMetadata(entry)?.tools[0]?.outputSchema).toBe(outputSchema);
-    const result = await expectDefined(
-      captured.tools[0],
-      "captured.tools[0] test invariant",
-    ).execute("call-1", { symbol: "OPEN" });
+    const result = await captured.tools[0].execute("call-1", { symbol: "OPEN" });
     expect(result.details).toEqual({ symbol: "OPEN", configured: true });
     expect(result.content).toEqual([
       { type: "text", text: JSON.stringify({ symbol: "OPEN", configured: true }, null, 2) },
@@ -85,10 +70,7 @@ describe("defineToolPlugin", () => {
 
     entry.register(captured.api);
 
-    const result = await expectDefined(
-      captured.tools[0],
-      "captured.tools[0] test invariant",
-    ).execute("call-1", { input: "hello" });
+    const result = await captured.tools[0].execute("call-1", { input: "hello" });
     expect(result).toEqual({
       content: [{ type: "text", text: "hello" }],
       details: "hello",

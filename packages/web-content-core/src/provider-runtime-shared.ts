@@ -56,12 +56,7 @@ function normalizeSecretInput(value: unknown): string {
   let latin1Only = "";
   for (const char of collapsed) {
     const codePoint = char.codePointAt(0);
-    const isControl =
-      typeof codePoint === "number" &&
-      ((codePoint >= 0x00 && codePoint <= 0x1f) ||
-        codePoint === 0x7f ||
-        (codePoint >= 0x80 && codePoint <= 0x9f));
-    if (typeof codePoint === "number" && codePoint <= 0xff && !isControl) {
+    if (typeof codePoint === "number" && codePoint <= 0xff) {
       latin1Only += char;
     }
   }
@@ -102,8 +97,7 @@ function coerceSecretRef(value: unknown): SecretRef | null {
         : null;
     }
     const match = ENV_SECRET_TEMPLATE_RE.exec(trimmed) ?? ENV_SECRET_SHORTHAND_RE.exec(trimmed);
-    const id = match?.[1];
-    return id ? { source: "env", provider: DEFAULT_SECRET_PROVIDER_ALIAS, id } : null;
+    return match ? { source: "env", provider: DEFAULT_SECRET_PROVIDER_ALIAS, id: match[1] } : null;
   }
   if (
     isRecord(value) &&
@@ -191,9 +185,7 @@ export function hasWebProviderEntryCredential<
   if (configuredRef && configuredRef.source !== "env") {
     return true;
   }
-  const fromConfig = configuredRef
-    ? ""
-    : normalizeSecretInput(normalizeSecretInputString(rawValue));
+  const fromConfig = normalizeSecretInput(normalizeSecretInputString(rawValue));
   if (fromConfig) {
     return true;
   }
@@ -220,9 +212,7 @@ export function hasWebProviderEntryCredential<
   if (fallbackRef && fallbackRef.source !== "env") {
     return true;
   }
-  const fallbackConfig = fallbackRef
-    ? ""
-    : normalizeSecretInput(normalizeSecretInputString(fallbackRawValue));
+  const fallbackConfig = normalizeSecretInput(normalizeSecretInputString(fallbackRawValue));
   if (fallbackConfig) {
     return true;
   }

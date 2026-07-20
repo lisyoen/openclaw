@@ -1,10 +1,9 @@
 // Builds grouped Vitest duration reports or compares two grouped reports.
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import pMap from "p-map";
 import { parsePositiveInt } from "./lib/numeric-options.mjs";
 import {
   buildGroupedTestComparison,
@@ -15,7 +14,6 @@ import {
   renderGroupedTestReport,
 } from "./lib/test-group-report.mjs";
 import { formatMs } from "./lib/vitest-report-cli-utils.mjs";
-import { resolveWindowsTaskkillPath } from "./lib/windows-taskkill.mjs";
 import { resolveVitestNodeArgs } from "./run-vitest.mjs";
 import {
   applyParallelVitestCachePaths,
@@ -29,7 +27,6 @@ const DEFAULT_TIMEOUT_KILL_GRACE_MS = 10_000;
 const DEFAULT_SPAWN_LOG_MAX_BYTES = 1024 * 1024 * 256;
 const DEFAULT_SPAWN_OUTPUT_MAX_BYTES = 1024 * 1024 * 64;
 const DEFAULT_SPAWN_OUTPUT_TAIL_BYTES = 1024 * 256;
-const PROCESS_GROUP_EXIT_POLL_MS = 25;
 
 function usage() {
   return [
@@ -65,7 +62,7 @@ function usage() {
 
 function readRequiredValue(argv, index, flag) {
   const value = argv[index + 1];
-  if (!value || value.startsWith("-")) {
+  if (!value || value.startsWith("--")) {
     throw new Error(`${flag} requires a value`);
   }
   return value;
@@ -96,14 +93,6 @@ export function parseTestGroupReportArgs(argv) {
     topFiles: 25,
     vitestArgs: [],
   };
-  const seenSingleValueFlags = new Set();
-  const setSingleValueFlag = (flag, apply) => {
-    if (seenSingleValueFlags.has(flag)) {
-      throw new Error(`${flag} was provided more than once`);
-    }
-    seenSingleValueFlags.add(flag);
-    apply();
-  };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -133,11 +122,10 @@ export function parseTestGroupReportArgs(argv) {
       continue;
     }
     if (arg === "--compare") {
-      const before = readRequiredValue(argv, index, "--compare");
-      const after = readRequiredValue(argv, index + 1, "--compare");
-      setSingleValueFlag(arg, () => {
-        args.compare = { before, after };
-      });
+      args.compare = {
+        before: readRequiredValue(argv, index, "--compare"),
+        after: readRequiredValue(argv, index + 1, "--compare"),
+      };
       index += 2;
       continue;
     }
@@ -147,66 +135,42 @@ export function parseTestGroupReportArgs(argv) {
       continue;
     }
     if (arg === "--group-by") {
-      const value = readRequiredValue(argv, index, "--group-by");
-      setSingleValueFlag(arg, () => {
-        args.groupBy = value;
-      });
+      args.groupBy = readRequiredValue(argv, index, "--group-by");
       index += 1;
       continue;
     }
     if (arg === "--output") {
-      const value = readRequiredValue(argv, index, "--output");
-      setSingleValueFlag(arg, () => {
-        args.output = value;
-      });
+      args.output = readRequiredValue(argv, index, "--output");
       index += 1;
       continue;
     }
     if (arg === "--limit") {
-      const value = readPositiveIntValue(argv, index, "--limit");
-      setSingleValueFlag(arg, () => {
-        args.limit = value;
-      });
+      args.limit = readPositiveIntValue(argv, index, "--limit");
       index += 1;
       continue;
     }
     if (arg === "--max-test-ms") {
-      const value = readPositiveIntValue(argv, index, "--max-test-ms");
-      setSingleValueFlag(arg, () => {
-        args.maxTestMs = value;
-      });
+      args.maxTestMs = readPositiveIntValue(argv, index, "--max-test-ms");
       index += 1;
       continue;
     }
     if (arg === "--timeout-ms") {
-      const value = readPositiveIntValue(argv, index, "--timeout-ms");
-      setSingleValueFlag(arg, () => {
-        args.timeoutMs = value;
-      });
+      args.timeoutMs = readPositiveIntValue(argv, index, "--timeout-ms");
       index += 1;
       continue;
     }
     if (arg === "--kill-grace-ms") {
-      const value = readPositiveIntValue(argv, index, "--kill-grace-ms");
-      setSingleValueFlag(arg, () => {
-        args.killGraceMs = value;
-      });
+      args.killGraceMs = readPositiveIntValue(argv, index, "--kill-grace-ms");
       index += 1;
       continue;
     }
     if (arg === "--concurrency") {
-      const value = readPositiveIntValue(argv, index, "--concurrency");
-      setSingleValueFlag(arg, () => {
-        args.concurrency = value;
-      });
+      args.concurrency = readPositiveIntValue(argv, index, "--concurrency");
       index += 1;
       continue;
     }
     if (arg === "--top-files") {
-      const value = readPositiveIntValue(argv, index, "--top-files");
-      setSingleValueFlag(arg, () => {
-        args.topFiles = value;
-      });
+      args.topFiles = readPositiveIntValue(argv, index, "--top-files");
       index += 1;
       continue;
     }
@@ -267,48 +231,6 @@ function formatSpawnError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function signalTestGroupReportChild(
-  child,
-  signal,
-  {
-    appendDiagnostic = () => {},
-    platform = process.platform,
-    runTaskkill = spawnSync,
-    useProcessGroup = platform !== "win32",
-  } = {},
-) {
-  if (useProcessGroup && typeof child.pid === "number") {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch (error) {
-      if (error && error.code !== "ESRCH") {
-        appendDiagnostic(
-          `[test-group-report] failed to send ${signal} to process group: ${formatSpawnError(error)}\n`,
-        );
-      }
-    }
-  }
-  if (platform === "win32" && typeof child.pid === "number") {
-    const args = ["/PID", String(child.pid), "/T"];
-    if (signal === "SIGKILL") {
-      args.push("/F");
-    }
-    const taskkillPath = resolveWindowsTaskkillPath();
-    const result = runTaskkill(taskkillPath, args, { stdio: "ignore" });
-    if (!result?.error && result?.status === 0) {
-      return;
-    }
-    if (signal !== "SIGKILL") {
-      const forceResult = runTaskkill(taskkillPath, [...args, "/F"], { stdio: "ignore" });
-      if (!forceResult?.error && forceResult?.status === 0) {
-        return;
-      }
-    }
-  }
-  child.kill(signal);
-}
-
 /**
  * Runs a command, captures text output, and terminates timed-out process groups.
  */
@@ -340,12 +262,23 @@ export function spawnText(command, args, options) {
     let timedOut = false;
     let settled = false;
     let killTimer = null;
-    let killGraceDeadline = null;
-    let killGraceMessage = null;
     let childClosedResult = null;
     let waitingForKillGrace = false;
-    const signalChild = (signal) =>
-      signalTestGroupReportChild(child, signal, { appendDiagnostic, useProcessGroup });
+    const signalChild = (signal) => {
+      if (useProcessGroup && typeof child.pid === "number") {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch (error) {
+          if (error && error.code !== "ESRCH") {
+            appendDiagnostic(
+              `[test-group-report] failed to send ${signal} to process group: ${formatSpawnError(error)}\n`,
+            );
+          }
+        }
+      }
+      child.kill(signal);
+    };
     const parentSignalHandlers = [];
     const cleanupParentSignalHandlers = () => {
       for (const { signal, handler } of parentSignalHandlers) {
@@ -356,7 +289,6 @@ export function spawnText(command, args, options) {
     const relayParentSignal = (signal) => {
       const handler = () => {
         signalChild(signal);
-        signalChild("SIGKILL");
         cleanupParentSignalHandlers();
         process.kill(process.pid, signal);
       };
@@ -367,9 +299,6 @@ export function spawnText(command, args, options) {
       relayParentSignal("SIGINT");
       relayParentSignal("SIGTERM");
       relayParentSignal("SIGHUP");
-    } else if (process.platform === "win32") {
-      relayParentSignal("SIGINT");
-      relayParentSignal("SIGTERM");
     }
     const processGroupIsAlive = () => {
       if (!useProcessGroup || typeof child.pid !== "number") {
@@ -382,54 +311,15 @@ export function spawnText(command, args, options) {
         return Boolean(error && error.code === "EPERM");
       }
     };
-    const waitForProcessGroupExit = async (timeoutMsToWait) => {
-      const deadlineAt = Date.now() + timeoutMsToWait;
-      while (Date.now() < deadlineAt) {
-        if (!processGroupIsAlive()) {
-          return true;
-        }
-        await new Promise((resolvePoll) => {
-          setTimeout(resolvePoll, PROCESS_GROUP_EXIT_POLL_MS);
-        });
-      }
-      return !processGroupIsAlive();
-    };
-    const finishAfterProcessGroupCleanup = async (result) => {
-      const graceRemainingMs =
-        killGraceDeadline === null ? killGraceMs : Math.max(0, killGraceDeadline - Date.now());
-      if (graceRemainingMs > 0) {
-        await waitForProcessGroupExit(graceRemainingMs);
-      }
-      if (settled) {
-        return;
-      }
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-      waitingForKillGrace = false;
-      killGraceDeadline = null;
-      if (processGroupIsAlive()) {
-        appendDiagnostic(killGraceMessage ?? "");
-        signalChild("SIGKILL");
-      }
-      killGraceMessage = null;
-      childClosedResult = null;
-      finish(result);
-    };
     const scheduleKill = (message) => {
       if (waitingForKillGrace) {
         return;
       }
       waitingForKillGrace = true;
-      killGraceDeadline = Date.now() + killGraceMs;
-      killGraceMessage = message;
       killTimer = setTimeout(() => {
         waitingForKillGrace = false;
         killTimer = null;
-        killGraceDeadline = null;
-        appendDiagnostic(killGraceMessage ?? message);
-        killGraceMessage = null;
+        appendDiagnostic(message);
         signalChild("SIGKILL");
         if (childClosedResult) {
           finish(childClosedResult);
@@ -563,9 +453,7 @@ export function spawnText(command, args, options) {
         timedOut,
       };
       if (waitingForKillGrace && processGroupIsAlive()) {
-        killTimer?.ref?.();
         childClosedResult = result;
-        void finishAfterProcessGroupCleanup(result);
         return;
       }
       finish(result);
@@ -597,9 +485,6 @@ async function runVitestJsonReport(params) {
     env: {
       ...process.env,
       ...params.env,
-      // The JSON reporter can stay silent for the entire config. The profiler
-      // owns the wall-clock timeout and process-group cleanup for this child.
-      OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS: "0",
       NODE_OPTIONS: [
         (params.env?.NODE_OPTIONS ?? process.env.NODE_OPTIONS)?.trim(),
         ...resolveVitestNodeArgs({ ...process.env, ...params.env }).filter(
@@ -642,7 +527,7 @@ function readReportInput(entry) {
   };
 }
 
-function readReportInputs(entries) {
+export function readReportInputs(entries) {
   const invalid = [];
   const missing = [];
   const reports = [];
@@ -912,35 +797,15 @@ export function resolveRunPlanConcurrency(args, runPlanCount) {
   return Math.min(2, runPlanCount);
 }
 
-function hasExplicitIsolationArg(args) {
-  return args.some(
-    (arg) => arg === "--isolate" || arg === "--no-isolate" || arg.startsWith("--isolate="),
-  );
-}
-
-/**
- * Gives full-suite duration reports one process lifetime per test file.
- * This prevents unrelated retained module graphs and GC pauses from being
- * attributed to whichever assertion happens to run next in a shared worker.
- */
-export function resolveReportVitestArgs(args) {
-  if (!args.fullSuite || hasExplicitIsolationArg(args.vitestArgs)) {
-    return args.vitestArgs;
-  }
-  return [...args.vitestArgs, "--isolate=true"];
-}
-
 /**
  * Builds concrete report run specs from parsed args and config plans.
  */
 export function resolveReportRunSpecs(args, runPlans, params = {}) {
   const concurrency = params.concurrency ?? resolveRunPlanConcurrency(args, runPlans.length);
   const env = params.env ?? process.env;
-  const vitestArgs = resolveReportVitestArgs(args);
   const specs = runPlans.map((plan) => ({
     ...plan,
     env: resolveFullSuiteVitestEnv(args, env, plan.label),
-    vitestArgs,
   }));
   if (concurrency <= 1) {
     return specs;
@@ -957,41 +822,22 @@ function printRunLine(run) {
   );
 }
 
-function printSlowTestsForRun(entry, maxTestMs) {
-  if (maxTestMs === null || !fs.existsSync(entry.reportPath)) {
-    return;
-  }
-  const input = readReportInputs([entry]).reports[0];
-  if (!input) {
-    return;
-  }
-  const report = buildGroupedTestReport({
-    groupBy: "area",
-    maxTestMs,
-    reports: [input],
-  });
-  for (const test of report.slowTests) {
-    console.log(
-      `[test-group-report] slow-test config=${test.config} duration=${formatMs(test.durationMs)} file=${test.file} name=${test.fullName}`,
-    );
-  }
-}
-
-export async function runReportPlans(params) {
+async function runReportPlans(params) {
   const concurrency = resolveRunPlanConcurrency(params.args, params.runPlans.length);
   const runSpecs = resolveReportRunSpecs(params.args, params.runPlans, { concurrency });
-  const runVitest = params.runVitestJsonReport ?? runVitestJsonReport;
+  const results = [];
+  results.length = runSpecs.length;
+  let nextIndex = 0;
   let failed = false;
   let exitCode = 0;
 
-  const results = await pMap(
-    runSpecs,
-    async (plan) => {
-      if (exitCode !== 0) {
-        return null;
-      }
+  async function worker() {
+    while (nextIndex < runSpecs.length && exitCode === 0) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const plan = runSpecs[index];
       const slug = sanitizePathSegment(plan.label);
-      const run = await runVitest({
+      const run = await runVitestJsonReport({
         config: plan.config,
         forwardedArgs: plan.forwardedArgs,
         env: plan.env,
@@ -1001,7 +847,7 @@ export async function runReportPlans(params) {
         rss: params.args.rss,
         timeoutMs: params.args.timeoutMs,
         killGraceMs: params.args.killGraceMs,
-        vitestArgs: plan.vitestArgs,
+        vitestArgs: params.args.vitestArgs,
       });
       printRunLine(run);
       let includeEntry = true;
@@ -1011,39 +857,33 @@ export async function runReportPlans(params) {
           console.error(
             `[test-group-report] missing JSON report for failed config; see ${run.logPath}`,
           );
+          exitCode = 1;
           includeEntry = false;
         } else {
-          try {
-            readReportInput({ config: plan.label, reportPath: run.reportPath, run });
-            console.error(
-              `[test-group-report] config failed; keeping partial report from ${run.reportPath}`,
-            );
-          } catch (error) {
-            const reason = error instanceof Error ? error.message : String(error);
-            console.error(
-              `[test-group-report] config failed; skipping unusable JSON report from ${run.reportPath} (${reason})`,
-            );
-            includeEntry = false;
-          }
+          console.error(
+            `[test-group-report] config failed; keeping partial report from ${run.reportPath}`,
+          );
         }
         if (!params.args.allowFailures) {
-          exitCode = run.status || 1;
+          exitCode = run.status;
         }
       }
-      const entry = includeEntry ? { config: plan.label, reportPath: run.reportPath, run } : null;
-      if (entry) {
-        printSlowTestsForRun(entry, params.args.maxTestMs);
-      }
-      return { entry, run };
-    },
-    { concurrency, stopOnError: true },
+      results[index] = includeEntry
+        ? { config: plan.label, reportPath: run.reportPath, run }
+        : null;
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: concurrency }, async () => {
+      await worker();
+    }),
   );
 
   return {
     failed,
     exitCode,
-    runEntries: results.flatMap((result) => (result?.entry ? [result.entry] : [])),
-    runs: results.flatMap((result) => (result ? [result.run] : [])),
+    runEntries: results.filter(Boolean),
   };
 }
 
@@ -1079,7 +919,6 @@ async function main() {
 
   const { reportDir, logDir } = resolveReportArtifactDirs(output);
   const runEntries = [];
-  const runs = [];
   const runPlans = resolveRunPlans(args);
   let failed = false;
   let exitCode = 0;
@@ -1096,7 +935,6 @@ async function main() {
     failed = result.failed;
     exitCode = result.exitCode;
     runEntries.push(...result.runEntries);
-    runs.push(...result.runs);
   }
 
   if (exitCode !== 0) {
@@ -1134,7 +972,7 @@ async function main() {
     ...report,
     command: "test-group-report",
     failed,
-    runs: runs.length > 0 ? runs : reportInputs.map((entry) => entry.run).filter(Boolean),
+    runs: reportInputs.map((entry) => entry.run).filter(Boolean),
     system: {
       node: process.version,
       platform: process.platform,

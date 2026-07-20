@@ -3,10 +3,6 @@ import OpenClawKit
 import Testing
 
 @Suite struct ShareToAgentDeepLinkTests {
-    @Test func appGroupIdentifierUsesCanonicalOpenClawGroup() {
-        #expect(OpenClawAppGroup.canonicalIdentifier == "group.ai.openclawfoundation.app.shared")
-    }
-
     @Test func buildMessageIncludesSharedFields() {
         let payload = SharedContentPayload(
             title: "Article",

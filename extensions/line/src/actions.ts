@@ -1,18 +1,7 @@
 // Line plugin module implements actions behavior.
 import type { messagingApi } from "@line/bot-sdk";
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 
 export type Action = messagingApi.Action;
-const LINE_ACTION_LABEL_LIMIT = 20;
-const LINE_ACTION_DATA_LIMIT = 300;
-
-export function truncateLineActionLabel(label: string, limit = LINE_ACTION_LABEL_LIMIT): string {
-  return truncateUtf16Safe(label, limit);
-}
-
-function truncateLineActionData(data: string): string {
-  return truncateUtf16Safe(data, LINE_ACTION_DATA_LIMIT);
-}
 
 /**
  * Create a message action (sends text when tapped)
@@ -20,7 +9,7 @@ function truncateLineActionData(data: string): string {
 export function messageAction(label: string, text?: string): Action {
   return {
     type: "message",
-    label: truncateLineActionLabel(label),
+    label: label.slice(0, 20),
     text: text ?? label,
   };
 }
@@ -31,7 +20,7 @@ export function messageAction(label: string, text?: string): Action {
 export function uriAction(label: string, uri: string): Action {
   return {
     type: "uri",
-    label: truncateLineActionLabel(label),
+    label: label.slice(0, 20),
     uri,
   };
 }
@@ -42,9 +31,9 @@ export function uriAction(label: string, uri: string): Action {
 export function postbackAction(label: string, data: string, displayText?: string): Action {
   return {
     type: "postback",
-    label: truncateLineActionLabel(label),
-    data: truncateLineActionData(data),
-    displayText: displayText === undefined ? undefined : truncateLineActionData(displayText),
+    label: label.slice(0, 20),
+    data: data.slice(0, 300),
+    displayText: displayText?.slice(0, 300),
   };
 }
 
@@ -63,8 +52,8 @@ export function datetimePickerAction(
 ): Action {
   return {
     type: "datetimepicker",
-    label: truncateLineActionLabel(label),
-    data: truncateLineActionData(data),
+    label: label.slice(0, 20),
+    data: data.slice(0, 300),
     mode,
     initial: options?.initial,
     max: options?.max,

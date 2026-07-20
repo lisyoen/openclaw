@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Client } from "../internal/discord.js";
 import { EMPTY_DISCORD_TEST_CONFIG } from "../test-support/config.js";
 import type { DiscordChannelConfigResolved } from "./allow-list.js";
-import { resolveDiscordMemberAllowed, resolveDiscordOwnerAllowFrom } from "./allow-list.js";
+import {
+  resolveDiscordMemberAllowed,
+  resolveDiscordOwnerAllowFrom,
+  resolveDiscordRoleAllowed,
+} from "./allow-list.js";
 import {
   clearGateways,
   getGateway,
@@ -20,15 +24,6 @@ import {
   resolveDiscordAutoThreadReplyPlan,
   resolveDiscordReplyDeliveryPlan,
 } from "./threading.js";
-
-function resolveDiscordRoleAllowed(params: { allowList?: string[]; memberRoleIds: string[] }) {
-  return resolveDiscordMemberAllowed({
-    userAllowList: [],
-    roleAllowList: params.allowList,
-    memberRoleIds: params.memberRoleIds,
-    userId: "unmatched-user",
-  });
-}
 
 describe("resolveDiscordOwnerAllowFrom", () => {
   it("returns undefined when no allowlist is configured", () => {

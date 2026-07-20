@@ -8,25 +8,8 @@ import {
   stripInternalRuntimeContext,
 } from "../agents/internal-runtime-context.js";
 import { resolveAgentSessionDirs } from "../agents/session-dirs.js";
-import { formatCliCommand } from "../cli/command-format.js";
 import { resolveStateDir } from "../config/paths.js";
-import {
-  isSessionTranscriptLeafControl,
-  mergeSessionTranscriptTreePaths,
-  mergeSessionTranscriptVisiblePathWithOpaqueAppendPath,
-  scanSessionTranscriptTree,
-  selectSessionTranscriptTreePathNodes,
-} from "../config/sessions/transcript-tree.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { HealthFinding, HealthRepairEffect } from "../flows/health-checks.js";
 import { shortenHomePath } from "../utils.js";
-import {
-  DoctorSqliteMaintenanceLockUnavailableError,
-  withDoctorSqliteMaintenanceLock,
-} from "./doctor-sqlite-maintenance-lock.js";
-import { isLegacyCodexProviderId } from "./doctor/shared/codex-route-model-ref.js";
-
-const SESSION_TRANSCRIPTS_CHECK_ID = "core/doctor/session-transcripts";
 
 type TranscriptEntry = Record<string, unknown> & {
   id?: unknown;
@@ -46,17 +29,7 @@ type TranscriptRepairResult = {
   reason?: string;
 };
 
-type SessionTranscriptHealthIssue = TranscriptRepairResult & {
-  broken: true;
-};
-
-type ActiveTranscriptPath = {
-  entries: TranscriptEntry[];
-  entriesToPersist: TranscriptEntry[];
-  terminalLeafControl: TranscriptEntry | null;
-  appendParentId: string | null;
-};
-
+const LEGACY_OPENAI_CODEX_PROVIDER_ID = "openai-codex";
 const OPENAI_PROVIDER_ID = "openai";
 const LEGACY_OPENAI_CODEX_RESPONSES_API = "openai-codex-responses";
 const OPENAI_CHATGPT_RESPONSES_API = "openai-chatgpt-responses";
@@ -93,10 +66,6 @@ function getMessage(entry: TranscriptEntry): Record<string, unknown> | null {
     : null;
 }
 
-function withSelectedParent(entry: TranscriptEntry, parentId: string | null): TranscriptEntry {
-  return entry.parentId === parentId ? entry : { ...entry, parentId };
-}
-
 function normalizeLegacyOpenAICodexTranscriptMetadata(entries: TranscriptEntry[]): number {
   let changed = 0;
   for (const entry of entries) {
@@ -105,7 +74,7 @@ function normalizeLegacyOpenAICodexTranscriptMetadata(entries: TranscriptEntry[]
       continue;
     }
     let touched = false;
-    if (isLegacyCodexProviderId(message.provider)) {
+    if (message.provider === LEGACY_OPENAI_CODEX_PROVIDER_ID) {
       message.provider = OPENAI_PROVIDER_ID;
       touched = true;
     }
@@ -137,65 +106,36 @@ function textFromContent(content: unknown): string | null {
   return text || null;
 }
 
-function selectActivePath(entries: TranscriptEntry[]): ActiveTranscriptPath | null {
+function selectActivePath(entries: TranscriptEntry[]): TranscriptEntry[] | null {
   const sessionEntries = entries.filter((entry) => entry.type !== "session");
-  const tree = scanSessionTranscriptTree(sessionEntries);
-  if (!tree.hasExplicitLeafUpdate) {
-    const byId = new Map<string, TranscriptEntry>();
-    for (const entry of sessionEntries) {
-      const id = getEntryId(entry);
-      if (id) {
-        byId.set(id, entry);
-      }
-    }
-    const active: TranscriptEntry[] = [];
-    const seen = new Set<string>();
-    let current = sessionEntries.at(-1);
-    while (current) {
-      const id = getEntryId(current);
-      if (!id || seen.has(id)) {
-        return null;
-      }
-      seen.add(id);
-      active.unshift(current);
-      const parentId = getParentId(current);
-      current = parentId ? byId.get(parentId) : undefined;
-    }
-    return active.length > 0
-      ? {
-          entries: active,
-          entriesToPersist: active,
-          terminalLeafControl: null,
-          appendParentId: getEntryId(active.at(-1) ?? {}),
-        }
-      : null;
-  }
-  if (!tree.hasLeafUpdate) {
+  const leaf = sessionEntries.at(-1);
+  const leafId = leaf ? getEntryId(leaf) : null;
+  if (!leaf || !leafId) {
     return null;
   }
-  const visiblePath = selectSessionTranscriptTreePathNodes(tree, tree.leafId);
-  const appendPath = selectSessionTranscriptTreePathNodes(tree, tree.appendParentId);
-  const visibleEntries = mergeSessionTranscriptTreePaths([visiblePath]).map((node) =>
-    withSelectedParent(node.entry, node.selectedParentId),
-  );
-  const persistedPath = mergeSessionTranscriptVisiblePathWithOpaqueAppendPath({
-    visiblePath,
-    appendPath,
-    appendParentId: tree.appendParentId,
-  });
-  const entriesToPersist = persistedPath.nodes.map((node) =>
-    withSelectedParent(node.entry, node.selectedParentId),
-  );
-  const lastLeafUpdateEntry = tree.nodes.findLast((node) => node.leafId !== undefined)?.entry;
-  const terminalLeafControl = isSessionTranscriptLeafControl(lastLeafUpdateEntry)
-    ? lastLeafUpdateEntry
-    : null;
-  return {
-    entries: visibleEntries,
-    entriesToPersist,
-    terminalLeafControl,
-    appendParentId: persistedPath.appendParentId,
-  };
+
+  const byId = new Map<string, TranscriptEntry>();
+  for (const entry of sessionEntries) {
+    const id = getEntryId(entry);
+    if (id) {
+      byId.set(id, entry);
+    }
+  }
+
+  const active: TranscriptEntry[] = [];
+  const seen = new Set<string>();
+  let current: TranscriptEntry | undefined = leaf;
+  while (current) {
+    const id = getEntryId(current);
+    if (!id || seen.has(id)) {
+      return null;
+    }
+    seen.add(id);
+    active.unshift(current);
+    const parentId = getParentId(current);
+    current = parentId ? byId.get(parentId) : undefined;
+  }
+  return active;
 }
 
 function hasBrokenPromptRewriteBranch(entries: TranscriptEntry[], activePath: TranscriptEntry[]) {
@@ -241,7 +181,7 @@ function hasBrokenPromptRewriteBranch(entries: TranscriptEntry[], activePath: Tr
 async function writeActiveTranscript(params: {
   filePath: string;
   entries: TranscriptEntry[];
-  activePath: ActiveTranscriptPath;
+  activePath: TranscriptEntry[];
 }): Promise<string> {
   const header = params.entries.find((entry) => entry.type === "session");
   if (!header) {
@@ -251,21 +191,7 @@ async function writeActiveTranscript(params: {
     .toISOString()
     .replace(/[:.]/g, "-")}.bak`;
   await fs.copyFile(params.filePath, backupPath);
-  const lastPersistedId = getEntryId(params.activePath.entriesToPersist.at(-1) ?? {});
-  const terminalLeafControl = params.activePath.terminalLeafControl
-    ? {
-        ...params.activePath.terminalLeafControl,
-        parentId: lastPersistedId,
-        appendParentId: params.activePath.appendParentId,
-      }
-    : null;
-  const next = [
-    header,
-    ...params.activePath.entriesToPersist,
-    ...(terminalLeafControl ? [terminalLeafControl] : []),
-  ]
-    .map((entry) => JSON.stringify(entry))
-    .join("\n");
+  const next = [header, ...params.activePath].map((entry) => JSON.stringify(entry)).join("\n");
   await fs.writeFile(params.filePath, `${next}\n`, "utf-8");
   return backupPath;
 }
@@ -284,7 +210,7 @@ async function writeTranscriptEntries(params: {
 }
 
 /** Repairs one transcript file by keeping the active branch and backing up the original file. */
-async function repairBrokenSessionTranscriptFile(params: {
+export async function repairBrokenSessionTranscriptFile(params: {
   filePath: string;
   shouldRepair: boolean;
 }): Promise<TranscriptRepairResult> {
@@ -317,14 +243,14 @@ async function repairBrokenSessionTranscriptFile(params: {
         reason: "no active branch",
       };
     }
-    const broken = hasBrokenPromptRewriteBranch(entries, activePath.entries);
+    const broken = hasBrokenPromptRewriteBranch(entries, activePath);
     if (!broken && legacyOpenAICodexEntries === 0) {
       return {
         filePath: params.filePath,
         broken: false,
         repaired: false,
         originalEntries: entries.length,
-        activeEntries: activePath.entries.length,
+        activeEntries: activePath.length,
         legacyOpenAICodexEntries,
       };
     }
@@ -334,7 +260,7 @@ async function repairBrokenSessionTranscriptFile(params: {
         broken: true,
         repaired: false,
         originalEntries: entries.length,
-        activeEntries: activePath.entries.length,
+        activeEntries: activePath.length,
         legacyOpenAICodexEntries,
       };
     }
@@ -350,7 +276,7 @@ async function repairBrokenSessionTranscriptFile(params: {
       broken: true,
       repaired: true,
       originalEntries: entries.length,
-      activeEntries: activePath.entries.length,
+      activeEntries: activePath.length,
       legacyOpenAICodexEntries,
       backupPath,
     };
@@ -385,62 +311,8 @@ async function listSessionTranscriptFiles(sessionDirs: string[]): Promise<string
   return files.toSorted((a, b) => a.localeCompare(b));
 }
 
-export async function detectSessionTranscriptHealthIssues(params?: {
-  sessionDirs?: string[];
-}): Promise<SessionTranscriptHealthIssue[]> {
-  let sessionDirs = params?.sessionDirs;
-  try {
-    sessionDirs ??= await resolveAgentSessionDirs(resolveStateDir(process.env));
-  } catch {
-    return [];
-  }
-
-  const files = await listSessionTranscriptFiles(sessionDirs);
-  const issues: SessionTranscriptHealthIssue[] = [];
-  for (const filePath of files) {
-    const result = await repairBrokenSessionTranscriptFile({ filePath, shouldRepair: false });
-    if (result.broken) {
-      issues.push(result as SessionTranscriptHealthIssue);
-    }
-  }
-  return issues;
-}
-
-export function sessionTranscriptIssueToHealthFinding(
-  issue: SessionTranscriptHealthIssue,
-): HealthFinding {
-  const metadata =
-    issue.legacyOpenAICodexEntries > 0
-      ? ` ${issue.legacyOpenAICodexEntries} legacy OpenAI Codex metadata entr${
-          issue.legacyOpenAICodexEntries === 1 ? "y" : "ies"
-        }`
-      : "";
-  return {
-    checkId: SESSION_TRANSCRIPTS_CHECK_ID,
-    severity: "info",
-    message: `Session transcript has legacy branch or provider metadata that can be cleaned up.${metadata}`,
-    path: issue.filePath,
-    fixHint:
-      "To clean up the advisory artifact, run `openclaw doctor --fix` to rewrite affected transcripts to their active branch.",
-  };
-}
-
-export function sessionTranscriptIssueToRepairEffect(
-  issue: SessionTranscriptHealthIssue,
-): HealthRepairEffect {
-  return {
-    kind: "file",
-    action: "would-rewrite-session-transcript",
-    target: issue.filePath,
-    dryRunSafe: false,
-  };
-}
-
 /** Scans session transcript files and reports or repairs legacy/broken transcript state. */
 export async function noteSessionTranscriptHealth(params?: {
-  cfg?: OpenClawConfig;
-  env?: NodeJS.ProcessEnv;
-  sessionSqlite?: boolean;
   shouldRepair?: boolean;
   sessionDirs?: string[];
 }) {
@@ -453,112 +325,41 @@ export async function noteSessionTranscriptHealth(params?: {
     return;
   }
 
-  const results: TranscriptRepairResult[] = [];
   const files = await listSessionTranscriptFiles(sessionDirs);
-  if (files.length > 0 && shouldRepair) {
-    for (const filePath of files) {
-      results.push(await repairBrokenSessionTranscriptFile({ filePath, shouldRepair }));
-    }
-  } else if (files.length > 0) {
-    results.push(...(await detectSessionTranscriptHealthIssues({ sessionDirs })));
+  if (files.length === 0) {
+    return;
+  }
+
+  const results: TranscriptRepairResult[] = [];
+  for (const filePath of files) {
+    results.push(await repairBrokenSessionTranscriptFile({ filePath, shouldRepair }));
   }
   const broken = results.filter((result) => result.broken);
-  if (broken.length > 0) {
-    const repairedCount = broken.filter((result) => result.repaired).length;
-    const lines = [
-      `- Found ${broken.length} transcript file${broken.length === 1 ? "" : "s"} with legacy state.`,
-      ...broken.slice(0, 20).map((result) => {
-        const backup = result.backupPath ? ` backup=${shortenHomePath(result.backupPath)}` : "";
-        const status = result.repaired ? "repaired" : "needs repair";
-        const metadata =
-          result.legacyOpenAICodexEntries > 0
-            ? ` openai-codex=${result.legacyOpenAICodexEntries}`
-            : "";
-        return `- ${shortenHomePath(result.filePath)} ${status} entries=${result.originalEntries}->${result.activeEntries + 1}${metadata}${backup}`;
-      }),
-    ];
-    if (broken.length > 20) {
-      lines.push(`- ...and ${broken.length - 20} more.`);
-    }
-    if (!shouldRepair) {
-      lines.push('- Run "openclaw doctor --fix" to rewrite affected files to their active branch.');
-    } else if (repairedCount > 0) {
-      lines.push(`- Repaired ${repairedCount} transcript file${repairedCount === 1 ? "" : "s"}.`);
-    }
-    note(lines.join("\n"), "Session transcripts");
-  }
-
-  if (params?.sessionDirs === undefined || params.sessionSqlite === true) {
-    await noteSessionSqliteMigrationHealth({
-      cfg: params?.cfg,
-      env: params?.env ?? process.env,
-      shouldRepair,
-    });
-  }
-}
-
-async function noteSessionSqliteMigrationHealth(params: {
-  cfg?: OpenClawConfig;
-  env: NodeJS.ProcessEnv;
-  shouldRepair: boolean;
-}): Promise<void> {
-  // Public doctor owns the operator-facing SQLite import; the targeted
-  // --session-sqlite subcommand remains the diagnostic/proof surface.
-  const { runDoctorSessionSqlite } = await import("./doctor-session-sqlite.js");
-  const runSessionSqlite = async () =>
-    await runDoctorSessionSqlite({
-      allAgents: true,
-      ...(params.cfg ? { cfg: params.cfg } : {}),
-      env: params.env,
-      mode: params.shouldRepair ? "import" : "dry-run",
-    });
-  let report: Awaited<ReturnType<typeof runSessionSqlite>>;
-  try {
-    report = params.shouldRepair
-      ? await withDoctorSqliteMaintenanceLock({
-          env: params.env,
-          operation: "session SQLite import",
-          run: runSessionSqlite,
-        })
-      : await runSessionSqlite();
-  } catch (error) {
-    if (!(error instanceof DoctorSqliteMaintenanceLockUnavailableError)) {
-      throw error;
-    }
-    note(
-      `- Skipped: Gateway or another SQLite maintenance command owns the state directory. Stop the Gateway, then run "${formatCliCommand("openclaw doctor --fix", params.env)}" for session-store maintenance.`,
-      "Session SQLite",
-    );
+  if (broken.length === 0) {
     return;
   }
-  if (
-    report.totals.legacyEntries === 0 &&
-    report.totals.unreferencedJsonlFiles === 0 &&
-    report.totals.issues === 0
-  ) {
-    return;
-  }
+
+  const repairedCount = broken.filter((result) => result.repaired).length;
   const lines = [
-    `- Legacy entries: ${report.totals.legacyEntries}; SQLite entries: ${report.totals.sqliteEntries}.`,
-    `- Transcript events: imported=${report.totals.importedTranscriptEvents}; validated=${report.totals.validatedTranscriptEvents}.`,
+    `- Found ${broken.length} transcript file${broken.length === 1 ? "" : "s"} with legacy state.`,
+    ...broken.slice(0, 20).map((result) => {
+      const backup = result.backupPath ? ` backup=${shortenHomePath(result.backupPath)}` : "";
+      const status = result.repaired ? "repaired" : "needs repair";
+      const metadata =
+        result.legacyOpenAICodexEntries > 0
+          ? ` openai-codex=${result.legacyOpenAICodexEntries}`
+          : "";
+      return `- ${shortenHomePath(result.filePath)} ${status} entries=${result.originalEntries}->${result.activeEntries + 1}${metadata}${backup}`;
+    }),
   ];
-  if (report.totals.archivedTranscriptFiles > 0) {
-    lines.push(
-      `- Archived ${report.totals.archivedTranscriptFiles} legacy transcript artifact(s).`,
-    );
+  if (broken.length > 20) {
+    lines.push(`- ...and ${broken.length - 20} more.`);
   }
-  if (report.totals.archivedUnreferencedJsonlFiles > 0) {
-    lines.push(
-      `- Archived ${report.totals.archivedUnreferencedJsonlFiles} unreferenced JSONL artifact(s).`,
-    );
+  if (!shouldRepair) {
+    lines.push('- Run "openclaw doctor --fix" to rewrite affected files to their active branch.');
+  } else if (repairedCount > 0) {
+    lines.push(`- Repaired ${repairedCount} transcript file${repairedCount === 1 ? "" : "s"}.`);
   }
-  if (report.totals.issues > 0) {
-    lines.push(`- Found ${report.totals.issues} session SQLite issue(s).`);
-  }
-  if (!params.shouldRepair) {
-    lines.push(
-      '- Run "openclaw doctor --fix" to migrate legacy session metadata/transcripts to SQLite.',
-    );
-  }
-  note(lines.join("\n"), "Session SQLite");
+
+  note(lines.join("\n"), "Session transcripts");
 }

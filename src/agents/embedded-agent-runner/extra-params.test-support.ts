@@ -1,41 +1,11 @@
 // Shared harness for extra-params wrapper tests.
+import type { ThinkLevel } from "../../auto-reply/thinking.shared.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { Context, Model, SimpleStreamOptions } from "../../llm/types.js";
-import type {
-  prepareProviderExtraParams,
-  resolveProviderExtraParamsForTransport,
-  wrapProviderStreamFn,
-} from "../../plugins/provider-hook-runtime.js";
 import type { StreamFn } from "../runtime/index.js";
-import { applyExtraParamsToAgent } from "./extra-params.js";
-import type { ProviderThinkLevel } from "./utils.js";
+import { testing as extraParamsTesting, applyExtraParamsToAgent } from "./extra-params.js";
 
-type ExtraParamsTestApi = {
-  setProviderRuntimeDepsForTest(
-    deps:
-      | Partial<{
-          prepareProviderExtraParams: typeof prepareProviderExtraParams;
-          resolveProviderExtraParamsForTransport: typeof resolveProviderExtraParamsForTransport;
-          wrapProviderStreamFn: typeof wrapProviderStreamFn;
-        }>
-      | undefined,
-  ): void;
-  resetProviderRuntimeDepsForTest(): void;
-};
-
-function getTestApi(): ExtraParamsTestApi {
-  const api = (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for("openclaw.extraParamsTestApi")
-  ];
-  if (!api) {
-    throw new Error("extra params test API is unavailable");
-  }
-  return api as ExtraParamsTestApi;
-}
-
-export const testing = getTestApi();
-
-type ExtraParamsCapture<TPayload extends Record<string, unknown>> = {
+export type ExtraParamsCapture<TPayload extends Record<string, unknown>> = {
   headers?: Record<string, string>;
   options?: SimpleStreamOptions;
   payload: TPayload;
@@ -67,8 +37,7 @@ type RunExtraParamsCaseParams<
   mockProviderRuntime?: boolean;
   options?: SimpleStreamOptions;
   payload: TPayload;
-  thinkingLevel?: ProviderThinkLevel;
-  workspaceDir?: string;
+  thinkingLevel?: ThinkLevel;
 };
 
 export function runExtraParamsCase<
@@ -90,7 +59,7 @@ export function runExtraParamsCase<
   const agent = { streamFn: baseStreamFn };
 
   if (params.mockProviderRuntime === true) {
-    testing.setProviderRuntimeDepsForTest({
+    extraParamsTesting.setProviderRuntimeDepsForTest({
       prepareProviderExtraParams: () => undefined,
       resolveProviderExtraParamsForTransport: () => undefined,
       wrapProviderStreamFn: () => undefined,
@@ -104,12 +73,10 @@ export function runExtraParamsCase<
       params.applyModelId ?? params.model.id,
       undefined,
       params.thinkingLevel,
-      undefined,
-      params.workspaceDir,
     );
   } finally {
     if (params.mockProviderRuntime === true) {
-      testing.resetProviderRuntimeDepsForTest();
+      extraParamsTesting.resetProviderRuntimeDepsForTest();
     }
   }
 

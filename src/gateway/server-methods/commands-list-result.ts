@@ -1,7 +1,6 @@
 // Command list serialization gathers chat, skill, and plugin commands into the
 // gateway protocol result while clamping names, descriptions, aliases, and args.
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type {
   CommandEntry,
   CommandsListResult,
@@ -37,7 +36,7 @@ type SerializedArg = NonNullable<CommandEntry["args"]>[number];
 type CommandNameSurface = "text" | "native";
 
 function clampString(value: string, maxLength: number): string {
-  return value.length > maxLength ? truncateUtf16Safe(value, maxLength) : value;
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
 }
 
 function trimClampNonEmpty(value: string, maxLength: number): string | null {
@@ -62,18 +61,6 @@ function resolveNativeName(cmd: ChatCommandDefinition, provider?: string): strin
       commandKey: cmd.key,
       defaultName: cmd.nativeName,
     }) ?? baseName
-  );
-}
-
-function supportsNativeProvider(cmd: ChatCommandDefinition, provider?: string): boolean {
-  if (!cmd.nativeProviders?.length) {
-    return true;
-  }
-  if (!provider) {
-    return true;
-  }
-  return cmd.nativeProviders.some(
-    (candidate) => normalizeOptionalLowercaseString(candidate) === provider,
   );
 }
 
@@ -225,13 +212,6 @@ export function buildCommandsListResult(params: {
 
   for (const cmd of chatCommands) {
     if (scopeFilter !== "both" && cmd.scope !== "both" && cmd.scope !== scopeFilter) {
-      continue;
-    }
-    if (
-      nameSurface === "native" &&
-      cmd.scope !== "text" &&
-      !supportsNativeProvider(cmd, provider)
-    ) {
       continue;
     }
     commands.push(

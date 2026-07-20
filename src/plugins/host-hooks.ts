@@ -2,6 +2,7 @@
 import type { OperatorScope } from "../gateway/operator-scopes.js";
 import type { AgentEventPayload, AgentEventStream } from "../infra/agent-events.js";
 import type {
+  PluginHookAgentContext,
   PluginHookBeforeToolCallEvent,
   PluginHookBeforeToolCallResult,
   PluginHookToolContext,
@@ -14,7 +15,7 @@ import type {
 } from "./host-hook-turn-types.js";
 
 export { isPluginJsonValue } from "./host-hook-json.js";
-export type { PluginJsonValue } from "./host-hook-json.js";
+export type { PluginJsonPrimitive, PluginJsonValue } from "./host-hook-json.js";
 export type {
   PluginAgentTurnPrepareEvent,
   PluginAgentTurnPrepareResult,
@@ -22,13 +23,14 @@ export type {
   PluginHeartbeatPromptContributionResult,
   PluginNextTurnInjection,
   PluginNextTurnInjectionEnqueueResult,
+  PluginNextTurnInjectionPlacement,
   PluginNextTurnInjectionRecord,
 } from "./host-hook-turn-types.js";
 
 /** Reason passed to plugin cleanup callbacks when host-owned state changes. */
 export type PluginHostCleanupReason = "disable" | "reset" | "delete" | "restart";
 
-type PluginSessionExtensionProjectionContext = {
+export type PluginSessionExtensionProjectionContext = {
   sessionKey: string;
   sessionId?: string;
   state: PluginJsonValue | undefined;
@@ -65,7 +67,15 @@ export type PluginSessionExtensionProjection = {
   value: PluginJsonValue;
 };
 
-type PluginToolPolicyDecision =
+export type PluginSessionExtensionPatchParams = {
+  key: string;
+  pluginId: string;
+  namespace: string;
+  value?: PluginJsonValue;
+  unset?: boolean;
+};
+
+export type PluginToolPolicyDecision =
   | PluginHookBeforeToolCallResult
   | {
       allow?: boolean;
@@ -89,28 +99,18 @@ export type PluginToolMetadataRegistration = {
   tags?: string[];
 };
 
-type PluginControlUiTabGroup = "control" | "agent";
+export type PluginCommandContinuation = {
+  continueAgent?: boolean;
+};
 
 export type PluginControlUiDescriptor = {
   id: string;
-  /** "tab" adds a Control UI sidebar tab; other surfaces attach to existing views. */
-  surface: "session" | "tool" | "run" | "settings" | "tab";
+  surface: "session" | "tool" | "run" | "settings";
   label: string;
   description?: string;
   placement?: string;
   schema?: PluginJsonValue;
   requiredScopes?: OperatorScope[];
-  /** Icon name hint for tab descriptors; unknown names fall back to a generic icon. */
-  icon?: string;
-  /**
-   * Gateway HTTP path (e.g. /plugins/<id>/panel) rendered in a sandboxed frame
-   * when the Control UI has no bundled view for this tab.
-   */
-  path?: string;
-  /** Sidebar group for tab descriptors; defaults to "control". */
-  group?: PluginControlUiTabGroup;
-  /** Sort order among plugin tabs; lower renders first. */
-  order?: number;
 };
 
 export type PluginSessionActionContext = {
@@ -217,17 +217,11 @@ export type PluginSessionSchedulerJobHandle = {
   kind: string;
 };
 
-type PluginSessionAttachmentFile = {
+export type PluginSessionAttachmentFile = {
   path: string;
 };
 
 export type PluginAttachmentChannelHints = {
-  parseMode?: "HTML";
-  silent?: boolean;
-  /** Require host detection to match this MIME before forcing document delivery. */
-  forceDocumentMime?: string;
-  threadId?: string | number;
-  /** @deprecated Put portable attachment hints directly on `channelHints`. */
   telegram?: {
     parseMode?: "HTML";
     disableNotification?: boolean;
@@ -237,7 +231,6 @@ export type PluginAttachmentChannelHints = {
      */
     forceDocumentMime?: string;
   };
-  /** @deprecated Use `channelHints.threadId`. */
   slack?: {
     threadTs?: string;
   };
@@ -264,6 +257,11 @@ export type PluginSessionAttachmentResult =
       count: number;
     }
   | { ok: false; error: string };
+
+export type PluginSessionTurnSchedule =
+  | { at: string | number | Date }
+  | { delayMs: number }
+  | { cron: string; tz?: string };
 
 type PluginSessionTurnScheduleCommonParams = {
   sessionKey: string;
@@ -333,3 +331,5 @@ export function buildPluginAgentTurnPrepareContext(params: {
     ...(append.length > 0 ? { appendContext: append.join("\n\n") } : {}),
   };
 }
+
+export type PluginHostHookRunContext = PluginHookAgentContext;

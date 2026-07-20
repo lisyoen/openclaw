@@ -20,11 +20,7 @@ export { EventHub, isGatewayEvent } from "./event-hub.js";
 export { normalizeGatewayEvent } from "./normalize.js";
 export { GatewayClientTransport, isConnectableTransport } from "./transport.js";
 export type {
-  AgentsCreateParams,
-  AgentsDeleteParams,
-  AgentsUpdateParams,
   AgentRunParams,
-  ApprovalDecisionParams,
   ApprovalMode,
   ArtifactQuery,
   ArtifactSummary,
@@ -32,7 +28,6 @@ export type {
   ArtifactsGetResult,
   ArtifactsListResult,
   ConnectableOpenClawTransport,
-  EnvironmentCreateParams,
   EnvironmentSelection,
   EnvironmentSummary,
   EnvironmentsListResult,
@@ -57,11 +52,7 @@ export type {
   TasksGetResult,
   TasksListParams,
   TasksListResult,
-  ToolsEffectiveParams,
   ToolInvokeParams,
   ToolInvokeResult,
   WorkspaceSelection,
-  WorkerEnvironmentMetadata,
-  WorkerEnvironmentState,
-  WorkerTunnelStatus,
 } from "./types.js";

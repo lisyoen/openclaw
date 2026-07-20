@@ -2,8 +2,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
-import { captureEnv, setTestEnvValue } from "./env.js";
+import { captureEnv } from "./env.js";
 import { cleanupSessionStateForTest } from "./session-state-cleanup.js";
 
 const HOME_ENV_KEYS = [
@@ -53,15 +52,15 @@ export async function createTempHomeEnv(prefix: string): Promise<TempHomeEnv> {
   await fs.mkdir(path.join(home, ".openclaw"), { recursive: true });
 
   const snapshot = captureEnv([...HOME_ENV_KEYS]);
-  setTestEnvValue("HOME", home);
-  setTestEnvValue("USERPROFILE", home);
-  setTestEnvValue("OPENCLAW_STATE_DIR", path.join(home, ".openclaw"));
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.OPENCLAW_STATE_DIR = path.join(home, ".openclaw");
 
   if (process.platform === "win32") {
     const match = home.match(/^([A-Za-z]:)(.*)$/);
     if (match) {
-      setTestEnvValue("HOMEDRIVE", expectDefined(match[1], "temp home regex capture 1"));
-      setTestEnvValue("HOMEPATH", match[2] || "\\");
+      process.env.HOMEDRIVE = match[1];
+      process.env.HOMEPATH = match[2] || "\\";
     }
   }
 

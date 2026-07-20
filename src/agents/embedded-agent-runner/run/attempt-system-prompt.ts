@@ -13,7 +13,7 @@ type ProviderSystemPromptTransform = (params: {
   context: ProviderTransformSystemPromptContext;
 }) => string;
 
-type BuildAttemptSystemPromptParams = {
+export type BuildAttemptSystemPromptParams = {
   isRawModelRun: boolean;
   embeddedSystemPrompt: EmbeddedSystemPromptParams;
   transformProviderSystemPrompt: ProviderSystemPromptTransform;
@@ -26,7 +26,7 @@ type BuildAttemptSystemPromptParams = {
 };
 
 /** System prompt pair used by an attempt: untransformed base plus provider-ready prompt. */
-type AttemptSystemPrompt = {
+export type AttemptSystemPrompt = {
   baseSystemPrompt: string;
   systemPrompt: string;
 };

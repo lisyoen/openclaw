@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { closeMemoryDatabase, openMemoryDatabaseAtPath } from "./manager-db.js";
+import { openMemoryDatabaseAtPath } from "./manager-db.js";
 import {
   enqueueMemoryTargetedSessionSync,
   runMemorySyncWithReadonlyRecovery,
@@ -13,8 +13,7 @@ import {
 
 type ReadonlyRecoveryHarness = MemoryReadonlyRecoveryState & {
   syncing: Promise<void> | null;
-  queuedArchiveFiles: Set<string>;
-  queuedSessions: Map<string, unknown>;
+  queuedSessionFiles: Set<string>;
   queuedSessionSync: Promise<void> | null;
   vectorDegradedWriteWarningShown: boolean;
   ensureProviderInitialized: ReturnType<typeof vi.fn>;
@@ -32,13 +31,11 @@ describe("memory manager readonly recovery", () => {
   let indexPath = "";
 
   function createQueuedSyncHarness(syncing: Promise<void>) {
-    const queuedArchiveFiles = new Set<string>();
-    const queuedSessions = new Map<string, never>();
+    const queuedSessionFiles = new Set<string>();
     let queuedSessionSync: Promise<void> | null = null;
     const sync = vi.fn(async () => {});
     return {
-      queuedArchiveFiles,
-      queuedSessions,
+      queuedSessionFiles,
       get queuedSessionSync() {
         return queuedSessionSync;
       },
@@ -46,8 +43,7 @@ describe("memory manager readonly recovery", () => {
       state: {
         isClosed: () => false,
         getSyncing: () => syncing,
-        getQueuedArchiveFiles: () => queuedArchiveFiles,
-        getQueuedSessions: () => queuedSessions,
+        getQueuedSessionFiles: () => queuedSessionFiles,
         getQueuedSessionSync: () => queuedSessionSync,
         setQueuedSessionSync: (value: Promise<void> | null) => {
           queuedSessionSync = value;
@@ -64,8 +60,7 @@ describe("memory manager readonly recovery", () => {
     const harness: ReadonlyRecoveryHarness = {
       closed: false,
       syncing: null,
-      queuedArchiveFiles: new Set<string>(),
-      queuedSessions: new Map<string, never>(),
+      queuedSessionFiles: new Set<string>(),
       queuedSessionSync: null,
       db: initialDb,
       vector: {
@@ -101,7 +96,7 @@ describe("memory manager readonly recovery", () => {
 
   async function runSyncWithReadonlyRecovery(
     harness: ReadonlyRecoveryHarness,
-    params?: { reason?: string; force?: boolean; archiveFiles?: string[] },
+    params?: { reason?: string; force?: boolean; sessionFiles?: string[] },
   ) {
     return await runMemorySyncWithReadonlyRecovery(harness, params);
   }
@@ -219,7 +214,7 @@ describe("memory manager readonly recovery", () => {
       | undefined;
     const busyTimeout = row?.busy_timeout ?? row?.timeout;
     expect(busyTimeout).toBe(5000);
-    closeMemoryDatabase(db);
+    db.close();
   });
 
   it("queues targeted session files behind an in-flight sync", async () => {
@@ -229,9 +224,11 @@ describe("memory manager readonly recovery", () => {
     });
     const harness = createQueuedSyncHarness(pendingSync);
 
-    const queued = enqueueMemoryTargetedSessionSync(harness.state, {
-      archiveFiles: ["  /tmp/first.jsonl ", "", "/tmp/second.jsonl"],
-    });
+    const queued = enqueueMemoryTargetedSessionSync(harness.state, [
+      "  /tmp/first.jsonl ",
+      "",
+      "/tmp/second.jsonl",
+    ]);
 
     expect(harness.sync).not.toHaveBeenCalled();
 
@@ -240,9 +237,8 @@ describe("memory manager readonly recovery", () => {
 
     expect(harness.sync).toHaveBeenCalledTimes(1);
     expect(harness.sync).toHaveBeenCalledWith({
-      reason: "queued-sessions",
-      sessions: [],
-      archiveFiles: ["/tmp/first.jsonl", "/tmp/second.jsonl"],
+      reason: "queued-session-files",
+      sessionFiles: ["/tmp/first.jsonl", "/tmp/second.jsonl"],
     });
     expect(harness.queuedSessionSync).toBeNull();
   });
@@ -254,12 +250,14 @@ describe("memory manager readonly recovery", () => {
     });
     const harness = createQueuedSyncHarness(pendingSync);
 
-    const first = enqueueMemoryTargetedSessionSync(harness.state, {
-      archiveFiles: ["/tmp/first.jsonl", "/tmp/second.jsonl"],
-    });
-    const second = enqueueMemoryTargetedSessionSync(harness.state, {
-      archiveFiles: ["/tmp/second.jsonl", "/tmp/third.jsonl"],
-    });
+    const first = enqueueMemoryTargetedSessionSync(harness.state, [
+      "/tmp/first.jsonl",
+      "/tmp/second.jsonl",
+    ]);
+    const second = enqueueMemoryTargetedSessionSync(harness.state, [
+      "/tmp/second.jsonl",
+      "/tmp/third.jsonl",
+    ]);
 
     expect(first).toBe(second);
 
@@ -268,9 +266,8 @@ describe("memory manager readonly recovery", () => {
 
     expect(harness.sync).toHaveBeenCalledTimes(1);
     expect(harness.sync).toHaveBeenCalledWith({
-      reason: "queued-sessions",
-      sessions: [],
-      archiveFiles: ["/tmp/first.jsonl", "/tmp/second.jsonl", "/tmp/third.jsonl"],
+      reason: "queued-session-files",
+      sessionFiles: ["/tmp/first.jsonl", "/tmp/second.jsonl", "/tmp/third.jsonl"],
     });
   });
 
@@ -281,9 +278,7 @@ describe("memory manager readonly recovery", () => {
     });
     const harness = createQueuedSyncHarness(pendingSync);
 
-    const queued = enqueueMemoryTargetedSessionSync(harness.state, {
-      archiveFiles: ["", "   "],
-    });
+    const queued = enqueueMemoryTargetedSessionSync(harness.state, ["", "   "]);
 
     expect(queued).toBe(pendingSync);
     releaseSync();

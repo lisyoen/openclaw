@@ -1,6 +1,16 @@
 import Commander
 import Foundation
 
+@MainActor
+struct ServiceRootCommand: ParsableCommand {
+    static var commandDescription: CommandDescription {
+        CommandDescription(
+            commandName: "service",
+            abstract: "Manage launchd agent",
+            subcommands: [ServiceInstall.self, ServiceUninstall.self, ServiceStatus.self])
+    }
+}
+
 private enum LaunchdHelper {
     static let label = "com.swabble.agent"
 
@@ -15,14 +25,14 @@ private enum LaunchdHelper {
             "Label": label,
             "ProgramArguments": [executable, "serve"],
             "RunAtLoad": true,
-            "KeepAlive": true,
+            "KeepAlive": true
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-        try data.write(to: self.plistURL)
+        try data.write(to: plistURL)
     }
 
     static func removePlist() throws {
-        try? FileManager.default.removeItem(at: self.plistURL)
+        try? FileManager.default.removeItem(at: plistURL)
     }
 }
 

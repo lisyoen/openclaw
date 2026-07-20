@@ -31,7 +31,6 @@ import {
   resolveHookSessionKey,
   resolveHookTargetAgentId,
 } from "../hooks.js";
-import { sendJson } from "../http-common.js";
 import { resolveRequestClientIp } from "../net.js";
 import { DEDUPE_MAX, DEDUPE_TTL_MS } from "../server-constants.js";
 
@@ -64,8 +63,20 @@ type HookReplayScope = {
   dispatchScope: Record<string, unknown>;
 };
 
-function resolveMappedHookExternalContentSource(params: { subPath: string; sessionKey: string }) {
-  if (params.subPath === "gmail") {
+function sendJson(res: ServerResponse, status: number, body: unknown) {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(body));
+}
+
+function resolveMappedHookExternalContentSource(params: {
+  subPath: string;
+  payload: Record<string, unknown>;
+  sessionKey: string;
+}) {
+  const payloadSource =
+    typeof params.payload.source === "string" ? params.payload.source.trim().toLowerCase() : "";
+  if (params.subPath === "gmail" || payloadSource === "gmail") {
     return "gmail" as const;
   }
   return resolveHookExternalContentSourceFromSession(params.sessionKey) ?? "webhook";
@@ -433,6 +444,7 @@ export function createHooksRequestHandler(
             allowUnsafeExternalContent: mapped.action.allowUnsafeExternalContent,
             externalContentSource: resolveMappedHookExternalContentSource({
               subPath,
+              payload: payload as Record<string, unknown>,
               sessionKey: sessionKey.value,
             }),
           });

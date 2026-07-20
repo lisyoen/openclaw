@@ -7,7 +7,7 @@ import {
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { parseStrictInteger } from "openclaw/plugin-sdk/number-runtime";
 import { normalizeProviderId } from "openclaw/plugin-sdk/provider-model-shared";
-import { getSessionEntry, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
+import { loadSessionStore, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import {
   normalizeOptionalString,
   normalizeStringifiedOptionalString,
@@ -45,11 +45,7 @@ function splitModelRef(modelRef?: string | null): { provider: string; model: str
   if (!match) {
     return null;
   }
-  const rawProvider = match[1];
-  if (!rawProvider) {
-    return null;
-  }
-  const provider = normalizeProviderId(rawProvider);
+  const provider = normalizeProviderId(match[1]);
   // Mattermost copy should normalize accidental whitespace around the model.
   const model = normalizeOptionalString(match[2]);
   if (!provider || !model) {
@@ -241,28 +237,21 @@ export function resolveMattermostModelPickerCurrentModel(params: {
   cfg: OpenClawConfig;
   route: { agentId: string; sessionKey: string };
   data: ModelsProviderData;
-  readConsistency?: "latest";
+  skipCache?: boolean;
 }): string {
   const fallback = `${params.data.resolvedDefault.provider}/${params.data.resolvedDefault.model}`;
   try {
     const storePath = resolveStorePath(params.cfg.session?.store, {
       agentId: params.route.agentId,
     });
-    const sessionEntry = getSessionEntry({
-      storePath,
-      sessionKey: params.route.sessionKey,
-      ...(params.readConsistency === "latest" ? { readConsistency: "latest" as const } : {}),
-    });
+    const sessionStore = params.skipCache
+      ? loadSessionStore(storePath, { skipCache: true })
+      : loadSessionStore(storePath);
+    const sessionEntry = sessionStore[params.route.sessionKey];
     const override = resolveStoredModelOverride({
       sessionEntry,
-      loadSessionEntry: (sessionKey) =>
-        getSessionEntry({
-          storePath,
-          sessionKey,
-          ...(params.readConsistency === "latest" ? { readConsistency: "latest" as const } : {}),
-        }),
+      sessionStore,
       sessionKey: params.route.sessionKey,
-      parentSessionKey: sessionEntry?.parentSessionKey,
       defaultProvider: params.data.resolvedDefault.provider,
     });
     if (!override?.model) {

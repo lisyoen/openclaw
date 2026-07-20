@@ -23,7 +23,6 @@ export {
   normalizeLmstudioConfiguredCatalogEntries,
   normalizeLmstudioConfiguredCatalogEntry,
   normalizeLmstudioProviderConfig,
-  prepareAppGuidedLmstudioSetup,
   prepareLmstudioDynamicModels,
   promptAndConfigureLmstudioInteractive,
   resolveLmstudioConfiguredApiKey,

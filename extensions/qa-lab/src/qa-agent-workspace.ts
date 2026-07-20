@@ -2,14 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { buildQaScenarioPlanMarkdown, readQaAgentIdentityMarkdown } from "./qa-agent-bootstrap.js";
-import {
-  readQaBootstrapScenarioCatalog,
-  readQaScenarioPackYamlSource,
-} from "./scenario-catalog.js";
-
-function resolveQaAgentWorkspaceRepoLinkType(platform: NodeJS.Platform = process.platform) {
-  return platform === "win32" ? "junction" : "dir";
-}
+import { readQaBootstrapScenarioCatalog, readQaScenarioPackMarkdown } from "./scenario-catalog.js";
 
 export async function seedQaAgentWorkspace(params: { workspaceDir: string; repoRoot?: string }) {
   const catalog = readQaBootstrapScenarioCatalog();
@@ -20,7 +13,7 @@ export async function seedQaAgentWorkspace(params: { workspaceDir: string; repoR
     ["IDENTITY.md", readQaAgentIdentityMarkdown()],
     ["QA_KICKOFF_TASK.md", kickoffTask],
     ["QA_SCENARIO_PLAN.md", buildQaScenarioPlanMarkdown()],
-    ["QA_SCENARIOS.yaml", readQaScenarioPackYamlSource()],
+    ["QA_SCENARIOS.md", readQaScenarioPackMarkdown()],
   ]);
 
   if (params.repoRoot) {
@@ -31,7 +24,7 @@ export async function seedQaAgentWorkspace(params: { workspaceDir: string; repoR
 - repo: ./repo/
 - kickoff: ./QA_KICKOFF_TASK.md
 - scenario plan: ./QA_SCENARIO_PLAN.md
-- scenario pack: ./QA_SCENARIOS.yaml
+- scenario pack: ./QA_SCENARIOS.md
 - identity: ./IDENTITY.md
 
 The mounted repo source should be available read-only under \`./repo/\`.
@@ -48,6 +41,6 @@ The mounted repo source should be available read-only under \`./repo/\`.
   if (params.repoRoot) {
     const repoLinkPath = path.join(params.workspaceDir, "repo");
     await fs.rm(repoLinkPath, { force: true, recursive: true });
-    await fs.symlink(params.repoRoot, repoLinkPath, resolveQaAgentWorkspaceRepoLinkType());
+    await fs.symlink(params.repoRoot, repoLinkPath, "dir");
   }
 }

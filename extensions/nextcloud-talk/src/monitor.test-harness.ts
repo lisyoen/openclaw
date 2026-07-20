@@ -1,9 +1,8 @@
 // Nextcloud Talk plugin module implements monitor harness behavior.
 import type { AddressInfo } from "node:net";
 import { afterEach } from "vitest";
-import { createNextcloudTalkWebhookServer as createRawNextcloudTalkWebhookServer } from "./monitor.js";
+import { createNextcloudTalkWebhookServer } from "./monitor.js";
 import type { NextcloudTalkWebhookServerOptions } from "./types.js";
-import { inspectNextcloudTalkWebhookEnvelope } from "./webhook-spool-state.js";
 
 type WebhookHarness = {
   webhookUrl: string;
@@ -21,13 +20,8 @@ afterEach(async () => {
   }
 });
 
-type TestWebhookServerOptions = Omit<NextcloudTalkWebhookServerOptions, "onWebhook"> & {
-  onWebhook?: NextcloudTalkWebhookServerOptions["onWebhook"];
-  onMessage?: (rawBody: string) => void | Promise<void>;
-};
-
 type StartWebhookServerParams = Omit<
-  TestWebhookServerOptions,
+  NextcloudTalkWebhookServerOptions,
   "port" | "host" | "path" | "secret"
 > & {
   path: string;
@@ -35,25 +29,6 @@ type StartWebhookServerParams = Omit<
   host?: string;
   port?: number;
 };
-
-async function acceptLegacyTestWebhook(
-  rawBody: string,
-  onMessage?: StartWebhookServerParams["onMessage"],
-): Promise<"accepted" | "ignored"> {
-  if (!inspectNextcloudTalkWebhookEnvelope(rawBody)) {
-    return "ignored";
-  }
-  await onMessage?.(rawBody);
-  return "accepted";
-}
-
-function createNextcloudTalkWebhookServer(options: TestWebhookServerOptions) {
-  const { onMessage, onWebhook, ...serverOptions } = options;
-  return createRawNextcloudTalkWebhookServer({
-    ...serverOptions,
-    onWebhook: onWebhook ?? (async (rawBody) => await acceptLegacyTestWebhook(rawBody, onMessage)),
-  });
-}
 
 export async function startWebhookServer(
   params: StartWebhookServerParams,

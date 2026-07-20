@@ -287,6 +287,7 @@ export async function createThreadForBinding(params: {
       params.channelId,
       {
         name: params.threadName,
+        autoArchiveMinutes: 60,
       },
       {
         cfg: params.cfg,

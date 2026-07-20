@@ -22,7 +22,7 @@ function toDecayLambda(halfLifeDays: number): number {
   return Math.LN2 / halfLifeDays;
 }
 
-function calculateTemporalDecayMultiplier(params: {
+export function calculateTemporalDecayMultiplier(params: {
   ageInDays: number;
   halfLifeDays: number;
 }): number {
@@ -34,7 +34,7 @@ function calculateTemporalDecayMultiplier(params: {
   return Math.exp(-lambda * clampedAge);
 }
 
-function applyTemporalDecayToScore(params: {
+export function applyTemporalDecayToScore(params: {
   score: number;
   ageInDays: number;
   halfLifeDays: number;

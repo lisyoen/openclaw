@@ -33,7 +33,7 @@ describe("fetchCodexUsage", () => {
     expect(result.windows).toHaveLength(0);
   });
 
-  it("parses windows, reset times, plan, and credit balance", async () => {
+  it("parses windows, reset times, and plan balance", async () => {
     const mockFetch = createProviderUsageFetch(async (_url, init) => {
       const headers = (init?.headers as Record<string, string> | undefined) ?? {};
       expect(headers["ChatGPT-Account-Id"]).toBe("acct-1");
@@ -60,8 +60,7 @@ describe("fetchCodexUsage", () => {
     const result = await fetchCodexUsage("token", "acct-1", 5000, mockFetch);
 
     expect(result.provider).toBe("openai");
-    expect(result.plan).toBe("Plus");
-    expect(result.billing).toEqual([{ type: "balance", amount: 12.5, unit: "credits" }]);
+    expect(result.plan).toBe("Plus ($12.50)");
     expect(result.windows).toEqual([
       { label: "3h", usedPercent: 35.5, resetAt: 1_700_000_000_000 },
       { label: "Day", usedPercent: 75, resetAt: 1_700_050_000_000 },
@@ -137,7 +136,7 @@ describe("fetchCodexUsage", () => {
     expect(result.windows).toEqual([{ label: "6h", usedPercent: 11, resetAt: undefined }]);
   });
 
-  it("keeps credits as a provider unit instead of assuming dollars", async () => {
+  it("builds a balance-only plan when credits exist without a plan type", async () => {
     const mockFetch = createProviderUsageFetch(async () =>
       makeResponse(200, {
         credits: { balance: "7.5" },
@@ -145,12 +144,11 @@ describe("fetchCodexUsage", () => {
     );
 
     const result = await fetchCodexUsage("token", undefined, 5000, mockFetch);
-    expect(result.plan).toBeUndefined();
-    expect(result.billing).toEqual([{ type: "balance", amount: 7.5, unit: "credits" }]);
+    expect(result.plan).toBe("$7.50");
     expect(result.windows).toStrictEqual([]);
   });
 
-  it("omits invalid credit strings", async () => {
+  it("falls back invalid credit strings to a zero balance", async () => {
     const mockFetch = createProviderUsageFetch(async () =>
       makeResponse(200, {
         plan_type: "Plus",
@@ -159,7 +157,6 @@ describe("fetchCodexUsage", () => {
     );
 
     const result = await fetchCodexUsage("token", undefined, 5000, mockFetch);
-    expect(result.plan).toBe("Plus");
-    expect(result.billing).toBeUndefined();
+    expect(result.plan).toBe("Plus ($0.00)");
   });
 });

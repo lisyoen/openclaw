@@ -21,7 +21,6 @@ import {
   writeBuildStamp as writeDistBuildStamp,
   writeRuntimePostBuildStamp as writeDistRuntimePostBuildStamp,
 } from "./lib/local-build-metadata.mjs";
-import { sleep } from "./lib/sleep.mjs";
 import {
   discoverStaticExtensionAssets,
   listStaticExtensionAssetSources,
@@ -43,10 +42,10 @@ const buildScript = "scripts/tsdown-build.mjs";
 const bundledPluginAssetsScript = "scripts/bundled-plugin-assets.mjs";
 const compilerArgs = [buildScript, "--no-clean"];
 const bundledPluginAssetBuildArgs = [bundledPluginAssetsScript, "--phase", "build"];
-const RUN_NODE_SIGNAL_FORCE_KILL_AFTER_MS = 5_000;
 
 const runtimePostBuildWatchedPaths = [
   "scripts/copy-bundled-plugin-metadata.mjs",
+  "scripts/copy-plugin-sdk-root-alias.mjs",
   "scripts/lib",
   "scripts/lib/local-build-metadata.mjs",
   "scripts/lib/local-build-metadata-paths.mjs",
@@ -57,6 +56,7 @@ const runtimePostBuildWatchedPaths = [
   "scripts/stage-bundled-plugin-runtime.mjs",
   "scripts/windows-cmd-helpers.mjs",
   "scripts/write-official-channel-catalog.mjs",
+  "src/plugin-sdk/root-alias.cjs",
   BUNDLED_PLUGIN_ROOT_DIR,
 ];
 const runtimePostBuildScriptPaths = new Set(
@@ -171,6 +171,9 @@ const hasDirtySourceTree = (deps) => {
 
 const isRuntimePostBuildRelevantPath = (repoPath) => {
   const normalizedPath = normalizePath(repoPath).replace(/^\.\/+/, "");
+  if (normalizedPath === "src/plugin-sdk/root-alias.cjs") {
+    return true;
+  }
   if (runtimePostBuildStaticAssetPaths.has(normalizedPath)) {
     return true;
   }
@@ -429,6 +432,10 @@ const readPackageJsonPluginSdkAliasFileNames = (deps) => {
 
   const fileNames = new Set();
   for (const exportKey of Object.keys(packageExports)) {
+    if (exportKey === "./plugin-sdk") {
+      fileNames.add("index.js");
+      continue;
+    }
     if (!exportKey.startsWith("./plugin-sdk/")) {
       continue;
     }
@@ -678,6 +685,11 @@ const parsePositiveIntegerEnv = (env, name, fallback) => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const sleep = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 const resolveRunNodeOutputLogPath = (deps) => {
   const outputLog = deps.env[RUN_NODE_OUTPUT_LOG_ENV]?.trim();
   if (!outputLog) {
@@ -917,37 +929,10 @@ const resolveRunNodeDiagnosticArgs = (deps) => {
   return args;
 };
 
-const shouldUseRunNodeChildProcessGroup = (deps) =>
-  deps.platform !== "win32" && deps.process.stdin?.isTTY !== true;
-
-const signalSpawnedProcess = (childProcess, signal, useProcessGroup, deps) => {
-  if (useProcessGroup && typeof childProcess.pid === "number") {
-    try {
-      deps.signalProcess(-childProcess.pid, signal);
-      return;
-    } catch (error) {
-      if (error?.code === "ESRCH" || error?.code === "EPERM") {
-        return;
-      }
-    }
-  }
-  try {
-    childProcess.kill?.(signal);
-  } catch {
-    // Best-effort only. Exit handling still happens via the child "exit" event.
-  }
-};
-
 const waitForSpawnedProcess = async (childProcess, deps) => {
   let forwardedSignal = null;
-  let forceKillTimer = null;
-  let cleanedForwardedSignalGroup = false;
-  const useProcessGroup = shouldUseRunNodeChildProcessGroup(deps);
 
   const cleanupSignals = () => {
-    if (forceKillTimer) {
-      clearTimeout(forceKillTimer);
-    }
     if (onSigInt) {
       deps.process.off("SIGINT", onSigInt);
     }
@@ -961,11 +946,11 @@ const waitForSpawnedProcess = async (childProcess, deps) => {
       return;
     }
     forwardedSignal = signal;
-    signalSpawnedProcess(childProcess, signal, useProcessGroup, deps);
-    forceKillTimer = setTimeout(() => {
-      forceKillTimer = null;
-      signalSpawnedProcess(childProcess, "SIGKILL", useProcessGroup, deps);
-    }, RUN_NODE_SIGNAL_FORCE_KILL_AFTER_MS);
+    try {
+      childProcess.kill?.(signal);
+    } catch {
+      // Best-effort only. Exit handling still happens via the child "exit" event.
+    }
   };
 
   const onSigInt = () => {
@@ -993,10 +978,6 @@ const waitForSpawnedProcess = async (childProcess, deps) => {
         settle({ exitCode: 1, exitSignal: null, forwardedSignal });
       });
       childProcess.on("exit", (exitCode, exitSignal) => {
-        if (forwardedSignal && !cleanedForwardedSignalGroup) {
-          cleanedForwardedSignalGroup = true;
-          signalSpawnedProcess(childProcess, "SIGKILL", useProcessGroup, deps);
-        }
         settle({ exitCode, exitSignal, forwardedSignal });
       });
     });
@@ -1017,10 +998,8 @@ const getInterruptedSpawnExitCode = (res) => {
 
 const runOpenClaw = async (deps) => {
   const diagnosticArgs = resolveRunNodeDiagnosticArgs(deps);
-  const useProcessGroup = shouldUseRunNodeChildProcessGroup(deps);
   const nodeProcess = deps.spawn(deps.execPath, [...diagnosticArgs, "openclaw.mjs", ...deps.args], {
     cwd: deps.cwd,
-    detached: useProcessGroup,
     env: deps.env,
     stdio: deps.outputTee ? ["inherit", "pipe", "pipe"] : "inherit",
   });
@@ -1318,7 +1297,6 @@ const shouldSkipWatchRuntimeSync = (deps, requirement) =>
   !hasMissingRequiredRuntimePostBuildOutput(deps);
 
 const isGatewayClientCommand = (args) =>
-  args[0] === "dashboard" ||
   (args[0] === "gateway" && (args[1] === "call" || args[1] === "status")) ||
   (args[0] === "agent" && !args.includes("--local"));
 
@@ -1375,13 +1353,11 @@ const shouldRunQaCoverageReportFromSource = (deps, buildRequirement) =>
 
 const runQaParityReportFromSource = async (deps) => {
   const sourceEntrypoint = path.join(deps.cwd, "scripts", "qa-parity-report.ts");
-  const useProcessGroup = shouldUseRunNodeChildProcessGroup(deps);
   const nodeProcess = deps.spawn(
     deps.execPath,
     ["--import", "tsx", sourceEntrypoint, ...deps.args.slice(2)],
     {
       cwd: deps.cwd,
-      detached: useProcessGroup,
       env: deps.env,
       stdio: deps.outputTee ? ["inherit", "pipe", "pipe"] : "inherit",
     },
@@ -1397,13 +1373,11 @@ const runQaParityReportFromSource = async (deps) => {
 
 const runQaCoverageReportFromSource = async (deps) => {
   const sourceEntrypoint = path.join(deps.cwd, "scripts", "qa-coverage-report.ts");
-  const useProcessGroup = shouldUseRunNodeChildProcessGroup(deps);
   const nodeProcess = deps.spawn(
     deps.execPath,
     ["--import", "tsx", sourceEntrypoint, ...deps.args.slice(2)],
     {
       cwd: deps.cwd,
-      detached: useProcessGroup,
       env: deps.env,
       stdio: deps.outputTee ? ["inherit", "pipe", "pipe"] : "inherit",
     },
@@ -1432,8 +1406,6 @@ export async function runNodeMain(params = {}) {
     cwd: params.cwd ?? process.cwd(),
     args: params.args ?? process.argv.slice(2),
     env: params.env ? { ...params.env } : { ...process.env },
-    platform: params.platform ?? process.platform,
-    signalProcess: params.signalProcess ?? ((pid, signal) => process.kill(pid, signal)),
     runRuntimePostBuild: params.runRuntimePostBuild ?? runRuntimePostBuild,
   };
 
@@ -1499,9 +1471,6 @@ export async function runNodeMain(params = {}) {
     }
 
     const buildExitCode = await withRunNodeBuildLock(deps, async () => {
-      if (shouldFastPathExistingDistForGatewayClient(deps)) {
-        return 0;
-      }
       const lockedBuildRequirement = resolveBuildRequirement(deps);
       if (!lockedBuildRequirement.shouldBuild) {
         const runtimePostBuildRequirement = resolveRuntimePostBuildRequirement(deps);
@@ -1527,7 +1496,6 @@ export async function runNodeMain(params = {}) {
         async () => {
           const assetBuild = deps.spawn(buildCmd, bundledPluginAssetBuildArgs, {
             cwd: deps.cwd,
-            detached: shouldUseRunNodeChildProcessGroup(deps),
             env: deps.env,
             stdio: ["inherit", "pipe", "pipe"],
           });
@@ -1543,7 +1511,6 @@ export async function runNodeMain(params = {}) {
 
           const build = deps.spawn(buildCmd, compilerArgs, {
             cwd: deps.cwd,
-            detached: shouldUseRunNodeChildProcessGroup(deps),
             env: {
               ...deps.env,
               [RUN_NODE_SKIP_DTS_BUILD_ENV]: deps.env[RUN_NODE_SKIP_DTS_BUILD_ENV] ?? "1",

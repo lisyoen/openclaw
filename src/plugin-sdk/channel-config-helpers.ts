@@ -1,10 +1,4 @@
-/**
- * Channel config adapter and DM-access helpers for plugin setup.
- *
- * Not part of the config-schema facade trio despite the similar name: those
- * export Zod schema builders, while this subpath owns config CRUD adapters,
- * config-write authorization, and DM access/policy resolution for accounts.
- */
+// Channel config helpers normalize account and channel config values for plugin setup.
 import { normalizeOptionalLowercaseString } from "../../packages/normalization-core/src/string-coerce.js";
 import { normalizeStringEntries } from "../../packages/normalization-core/src/string-normalization.js";
 import {

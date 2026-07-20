@@ -58,6 +58,14 @@ vi.mock("openclaw/plugin-sdk/setup", async () => {
   const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/setup")>(
     "openclaw/plugin-sdk/setup",
   );
+  const normalizeE164 = (value?: string | null) => {
+    const raw = (value ?? "").trim();
+    if (!raw) {
+      return "";
+    }
+    const digits = raw.replace(/[^\d+]/g, "");
+    return digits.startsWith("+") ? digits : `+${digits}`;
+  };
   return {
     ...actual,
     DEFAULT_ACCOUNT_ID,
@@ -72,6 +80,7 @@ vi.mock("openclaw/plugin-sdk/setup", async () => {
       }
       return [...normalized];
     },
+    normalizeE164,
     splitSetupEntries: splitSetupEntriesForMock,
     setSetupChannelEnabled: (cfg: OpenClawConfig, channel: string, enabled: boolean) => ({
       ...cfg,
@@ -202,26 +211,6 @@ describe("whatsapp setup wizard", () => {
     expect(prompt.validate("abc")).toBe("Invalid number: abc");
     expect(prompt.validate("whatsapp:")).toBe("Invalid number: whatsapp:");
     expect(prompt.validate("+1 (555) 555-0123")).toBeUndefined();
-  });
-
-  it("skips interactive linking when the client defers device linking", async () => {
-    hoisted.hasWebCredsSync.mockReturnValue(true);
-    const harness = createSeparatePhoneHarness({
-      selectValues: ["separate", "disabled"],
-    });
-
-    const result = await finalizeWhatsAppSetup({
-      cfg: {} as OpenClawConfig,
-      accountId: DEFAULT_ACCOUNT_ID,
-      forceAllowFrom: false,
-      prompter: harness.prompter,
-      runtime: createRuntime(),
-      options: { deferDeviceLinkToClient: true },
-    });
-
-    expect(hoisted.loginWeb).not.toHaveBeenCalled();
-    expect(harness.confirm).not.toHaveBeenCalled();
-    expectWhatsAppSeparatePhoneDisabledSetup(result.cfg, harness);
   });
 
   it("supports disabled DM policy for separate-phone setup", async () => {
@@ -420,9 +409,7 @@ describe("whatsapp setup wizard", () => {
       runtime,
     });
 
-    expect(hoisted.loginWeb).toHaveBeenCalledWith(false, undefined, runtime, DEFAULT_ACCOUNT_ID, {
-      beforeCredentialPersistence: undefined,
-    });
+    expect(hoisted.loginWeb).toHaveBeenCalledWith(false, undefined, runtime, DEFAULT_ACCOUNT_ID);
   });
 
   it("skips relink note when already linked and relink is declined", async () => {

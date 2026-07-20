@@ -4,18 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-async function createSymlinkedFile(targetPath: string, linkPath: string): Promise<boolean> {
-  try {
-    await fs.promises.writeFile(targetPath, "image-bytes");
-    await fs.promises.symlink(targetPath, linkPath, "file");
-    return true;
-  } catch {
-    await fs.promises.rm(linkPath, { force: true });
-    await fs.promises.rm(targetPath, { force: true });
-    return false;
-  }
-}
-
 const adapterMocks = vi.hoisted(() => ({
   fetchMedia: vi.fn(),
 }));
@@ -27,22 +15,14 @@ vi.mock("../adapter/index.js", () => ({
 }));
 
 import {
+  QQBOT_MEDIA_SSRF_POLICY,
   checkFileSize,
   downloadFile,
   fileExistsAsync,
-  formatFileSize,
   getImageMimeType,
   getMimeType,
   readFileAsync,
 } from "./file-utils.js";
-
-describe("formatFileSize", () => {
-  it("preserves compact binary-scaled upload labels", () => {
-    expect(formatFileSize(512)).toBe("512B");
-    expect(formatFileSize(1536)).toBe("1.5KB");
-    expect(formatFileSize(2 * 1024 * 1024)).toBe("2.0MB");
-  });
-});
 
 describe("qqbot file-utils MIME helpers", () => {
   it("uses the shared media MIME table for extension inference", () => {
@@ -93,20 +73,20 @@ describe("qqbot file-utils downloadFile", () => {
     expect(adapterMocks.fetchMedia).toHaveBeenCalledWith({
       url: "https://media.qq.com/assets/photo.png",
       filePathHint: "photo.png",
-      ssrfPolicy: {
-        hostnameAllowlist: [
-          "*.qpic.cn",
-          "*.qq.com",
-          "*.weiyun.com",
-          "*.qq.com.cn",
-          "*.ugcimg.cn",
-          "*.myqcloud.com",
-          "*.tencentcos.cn",
-          "*.tencentcos.com",
-        ],
-        allowRfc2544BenchmarkRange: true,
-      },
-      responseHeaderTimeoutMs: 120_000,
+      ssrfPolicy: QQBOT_MEDIA_SSRF_POLICY,
+    });
+    expect(QQBOT_MEDIA_SSRF_POLICY).toEqual({
+      hostnameAllowlist: [
+        "*.qpic.cn",
+        "*.qq.com",
+        "*.weiyun.com",
+        "*.qq.com.cn",
+        "*.ugcimg.cn",
+        "*.myqcloud.com",
+        "*.tencentcos.cn",
+        "*.tencentcos.com",
+      ],
+      allowRfc2544BenchmarkRange: true,
     });
   });
 
@@ -117,12 +97,11 @@ describe("qqbot file-utils downloadFile", () => {
     expect(adapterMocks.fetchMedia).not.toHaveBeenCalled();
   });
 
-  it("rejects symlinked local media helpers", async ({ skip }) => {
+  it.skipIf(process.platform === "win32")("rejects symlinked local media helpers", async () => {
     const targetPath = path.join(tempDir, "target.png");
     const linkPath = path.join(tempDir, "link.png");
-    if (!(await createSymlinkedFile(targetPath, linkPath))) {
-      skip("file symlinks are unavailable on this host");
-    }
+    await fs.promises.writeFile(targetPath, "image-bytes");
+    await fs.promises.symlink(targetPath, linkPath);
 
     expect(checkFileSize(linkPath).ok).toBe(false);
     await expect(readFileAsync(linkPath)).rejects.toThrow(/symbolic link|symlink|regular file/i);

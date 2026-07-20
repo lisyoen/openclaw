@@ -8,7 +8,6 @@ import { withEnv } from "../../test-utils/env.js";
 import {
   hasGenerationToolAvailability,
   isCapabilityProviderConfigured,
-  readBooleanToolParam,
   resolveMediaToolInboundRoots,
   resolveCapabilityModelConfigForTool,
   resolveMediaToolLocalRoots,
@@ -59,14 +58,6 @@ function createModelRegistryStub(resolve: (provider: string, modelId: string) =>
     },
   };
 }
-
-describe("readBooleanToolParam", () => {
-  it("parses booleans and true/false string tokens", () => {
-    expect(readBooleanToolParam({ audio: true }, "audio")).toBe(true);
-    expect(readBooleanToolParam({ audio: " FALSE " }, "audio")).toBe(false);
-    expect(readBooleanToolParam({ audio: "yes" }, "audio")).toBeUndefined();
-  });
-});
 
 describe("resolveMediaToolLocalRoots", () => {
   it("does not widen default local roots from media sources", () => {

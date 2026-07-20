@@ -7,9 +7,7 @@ import {
   summarizeTaskAuditFindings,
 } from "./task-registry.audit.js";
 import type { TaskRecord } from "./task-registry.types.js";
-
-const DEFAULT_TASK_RETENTION_MS = 7 * 24 * 60 * 60_000;
-const LOST_TASK_RETENTION_MS = 24 * 60 * 60_000;
+import { DEFAULT_TASK_RETENTION_MS, LOST_TASK_RETENTION_MS } from "./task-retention.js";
 
 function createTask(partial: Partial<TaskRecord>): TaskRecord {
   return {
@@ -198,21 +196,5 @@ describe("task-registry audit", () => {
     });
 
     expect(findings.map((finding) => finding.code)).toEqual(["lost"]);
-  });
-
-  it("does not flag count-retained cron history as missing cleanup", () => {
-    const findings = listTaskAuditFindings({
-      tasks: [
-        createTask({
-          taskId: "cron-history",
-          runtime: "cron",
-          status: "succeeded",
-          endedAt: Date.now() - 60_000,
-          cleanupAfter: undefined,
-        }),
-      ],
-    });
-
-    expect(findings).toEqual([]);
   });
 });

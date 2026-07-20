@@ -1,10 +1,5 @@
 // Qqbot plugin module implements message queue behavior.
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { formatErrorMessage } from "../utils/format.js";
-import { isQQBotAuthenticationFailure } from "./ingress-errors.js";
-import { buildQQBotMergedIngressLifecycle } from "./message-queue-ingress.js";
-import type { QQBotIngressLifecycle } from "./types.js";
 
 const DEFAULT_GLOBAL_QUEUE_SIZE = 1000;
 const DEFAULT_PER_PEER_QUEUE_SIZE = 20;
@@ -66,7 +61,6 @@ export interface QueuedMessage {
   mentions?: QueuedMention[];
   messageScene?: { source?: string; ext?: string[] };
   merge?: QueuedMergeInfo;
-  turnAdoptionLifecycle?: QQBotIngressLifecycle;
 }
 
 export function isMergedTurn(msg: QueuedMessage): msg is QueuedMessage & {
@@ -103,7 +97,6 @@ interface MessageQueue {
   getMessagePeerId: (msg: QueuedMessage) => string;
   clearUserQueue: (peerId: string) => number;
   executeImmediate: (msg: QueuedMessage) => void;
-  stop: () => Promise<void>;
 }
 
 function isGroupPeer(peerId: string): boolean {
@@ -133,16 +126,16 @@ function isSlashCommand(msg: QueuedMessage): boolean {
  *
  * A single-message batch is returned unchanged (no merge overhead).
  */
-function mergeGroupMessages(batch: QueuedMessage[]): QueuedMessage {
+export function mergeGroupMessages(batch: QueuedMessage[]): QueuedMessage {
   if (batch.length === 0) {
     throw new Error("mergeGroupMessages: empty batch");
   }
   if (batch.length === 1) {
-    return expectDefined(batch.at(0), "single-message merge batch");
+    return batch[0];
   }
 
-  const first = expectDefined(batch.at(0), "non-empty merge batch first message");
-  const last = expectDefined(batch.at(-1), "non-empty merge batch last message");
+  const first = batch[0];
+  const last = batch[batch.length - 1];
 
   const mergedContent = batch
     .map((m) => `[${m.senderName ?? m.senderId}]: ${m.content}`)
@@ -196,7 +189,6 @@ function mergeGroupMessages(batch: QueuedMessage[]): QueuedMessage {
     mentions: mergedMentions.length > 0 ? mergedMentions : undefined,
     messageScene: last.messageScene,
     merge: { count: batch.length, messages: batch },
-    turnAdoptionLifecycle: buildQQBotMergedIngressLifecycle(batch),
   };
 }
 
@@ -209,35 +201,8 @@ export function createMessageQueue(ctx: MessageQueueContext): MessageQueue {
 
   const userQueues = new Map<string, QueuedMessage[]>();
   const activeUsers = new Set<string>();
-  const activeTasks = new Set<Promise<void>>();
-  const ingressSettlements = new Set<Promise<void>>();
   let handleMessageFnRef: ((msg: QueuedMessage) => Promise<void>) | null = null;
   let totalEnqueued = 0;
-  let stopped = false;
-
-  const trackIngressSettlement = (
-    msg: QueuedMessage,
-    kind: "completed" | "abandoned",
-  ): Promise<void> => {
-    const lifecycle = msg.turnAdoptionLifecycle;
-    if (!lifecycle) {
-      return Promise.resolve();
-    }
-    const settlement = Promise.resolve(
-      kind === "completed" ? lifecycle.onAdopted() : lifecycle.onAbandoned(),
-    )
-      .catch((error: unknown) => {
-        log?.error(`Ingress ${kind} settlement failed: ${formatErrorMessage(error)}`);
-      })
-      .finally(() => ingressSettlements.delete(settlement));
-    ingressSettlements.add(settlement);
-    return settlement;
-  };
-
-  const trackTask = (task: Promise<void>): void => {
-    activeTasks.add(task);
-    void task.finally(() => activeTasks.delete(task));
-  };
 
   const getMessagePeerId = (msg: QueuedMessage): string => {
     if (msg.type === "guild") {
@@ -260,17 +225,9 @@ export function createMessageQueue(ctx: MessageQueueContext): MessageQueue {
   };
 
   const processOne = async (msg: QueuedMessage, peerId: string, label: string): Promise<void> => {
-    if (msg.turnAdoptionLifecycle?.abortSignal.aborted) {
-      await trackIngressSettlement(msg, "abandoned");
-      return;
-    }
     try {
       await handleMessageFnRef!(msg);
     } catch (err) {
-      const permanentFailure = isQQBotAuthenticationFailure(err);
-      // Deferred lifecycles cannot return errors to the drain. Permanent auth failures must
-      // tombstone here because releasing them would replay a turn that cannot succeed.
-      await trackIngressSettlement(msg, permanentFailure ? "completed" : "abandoned");
       log?.error(`${label} error for ${peerId}: ${formatErrorMessage(err)}`);
     }
   };
@@ -288,7 +245,7 @@ export function createMessageQueue(ctx: MessageQueueContext): MessageQueue {
 
     for (const cmd of commands) {
       log?.debug?.(
-        `Processing command independently for ${peerId}: ${truncateUtf16Safe((cmd.content ?? "").trim(), 50)}`,
+        `Processing command independently for ${peerId}: ${(cmd.content ?? "").trim().slice(0, 50)}`,
       );
       await processOne(cmd, peerId, "Command processor");
     }
@@ -337,36 +294,20 @@ export function createMessageQueue(ctx: MessageQueueContext): MessageQueue {
       }
     } finally {
       activeUsers.delete(peerId);
-      if (stopped || ctx.isAborted()) {
-        const abandoned = queue.splice(0);
-        totalEnqueued = Math.max(0, totalEnqueued - abandoned.length);
-        for (const msg of abandoned) {
-          void trackIngressSettlement(msg, "abandoned");
-        }
-        userQueues.delete(peerId);
-      } else if (queue.length === 0) {
-        userQueues.delete(peerId);
-      }
+      userQueues.delete(peerId);
 
       for (const [waitingPeerId, waitingQueue] of userQueues) {
-        if (stopped || ctx.isAborted()) {
-          break;
-        }
         if (activeUsers.size >= maxConcurrentUsers) {
           break;
         }
         if (waitingQueue.length > 0 && !activeUsers.has(waitingPeerId)) {
-          trackTask(drainUserQueue(waitingPeerId));
+          void drainUserQueue(waitingPeerId);
         }
       }
     }
   };
 
   const enqueue = (msg: QueuedMessage): void => {
-    if (stopped) {
-      void trackIngressSettlement(msg, "abandoned");
-      return;
-    }
     const peerId = getMessagePeerId(msg);
     const isGroup = isGroupPeer(peerId);
 
@@ -379,9 +320,6 @@ export function createMessageQueue(ctx: MessageQueueContext): MessageQueue {
     const maxSize = isGroup ? groupQueueSize : peerQueueSize;
     if (queue.length >= maxSize) {
       const dropped = evictOne(queue, isGroup);
-      if (dropped) {
-        void trackIngressSettlement(dropped, "abandoned");
-      }
       totalEnqueued = Math.max(0, totalEnqueued - 1);
       if (isGroup && dropped?.senderIsBot) {
         log?.info(`Queue full for ${peerId}, dropping bot message ${dropped.messageId}`, {
@@ -413,7 +351,7 @@ export function createMessageQueue(ctx: MessageQueueContext): MessageQueue {
       `Message enqueued for ${peerId}, user queue: ${queue.length}, active users: ${activeUsers.size}`,
     );
 
-    trackTask(drainUserQueue(peerId));
+    void drainUserQueue(peerId);
   };
 
   const startProcessor = (handleMessageFn: (msg: QueuedMessage) => Promise<void>): void => {
@@ -443,32 +381,17 @@ export function createMessageQueue(ctx: MessageQueueContext): MessageQueue {
       return 0;
     }
     const droppedCount = queue.length;
-    const dropped = queue.splice(0);
+    queue.length = 0;
     totalEnqueued = Math.max(0, totalEnqueued - droppedCount);
-    for (const msg of dropped) {
-      // Urgent commands intentionally supersede buffered work.
-      void trackIngressSettlement(msg, "completed");
-    }
     return droppedCount;
   };
 
   const executeImmediate = (msg: QueuedMessage): void => {
     if (handleMessageFnRef) {
-      trackTask(processOne(msg, getMessagePeerId(msg), "Immediate execution"));
+      handleMessageFnRef(msg).catch((err: unknown) => {
+        log?.error(`Immediate execution error: ${formatErrorMessage(err)}`);
+      });
     }
-  };
-
-  const stop = async (): Promise<void> => {
-    stopped = true;
-    for (const queue of userQueues.values()) {
-      for (const msg of queue.splice(0)) {
-        void trackIngressSettlement(msg, "abandoned");
-      }
-    }
-    userQueues.clear();
-    totalEnqueued = 0;
-    await Promise.allSettled(activeTasks);
-    await Promise.allSettled(ingressSettlements);
   };
 
   return {
@@ -478,6 +401,5 @@ export function createMessageQueue(ctx: MessageQueueContext): MessageQueue {
     getMessagePeerId,
     clearUserQueue,
     executeImmediate,
-    stop,
   };
 }

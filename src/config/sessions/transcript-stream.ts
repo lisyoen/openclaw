@@ -1,8 +1,6 @@
 // Transcript streaming reads large JSONL files forward or backward without whole-file buffering.
 import fs from "node:fs";
 import readline from "node:readline";
-import { hasErrnoCode } from "../../infra/errors.js";
-import { readFileRangeAsync } from "./file-range.js";
 
 // Shared streaming helpers for JSONL session transcripts.
 //
@@ -18,11 +16,11 @@ const DEFAULT_REVERSE_CHUNK_BYTES = 64 * 1024;
 const MAX_REVERSE_CHUNK_BYTES = 1024 * 1024;
 const MIN_REVERSE_CHUNK_BYTES = 1024;
 
-type TranscriptStreamOptions = {
+export type TranscriptStreamOptions = {
   signal?: AbortSignal;
 };
 
-type TranscriptReverseStreamOptions = TranscriptStreamOptions & {
+export type TranscriptReverseStreamOptions = TranscriptStreamOptions & {
   /** Bytes read per reverse scan chunk. Clamped to [1KiB, 1MiB]. */
   chunkBytes?: number;
 };
@@ -41,11 +39,8 @@ export async function* streamSessionTranscriptLines(
   let stat: fs.Stats;
   try {
     stat = await fs.promises.stat(filePath);
-  } catch (error) {
-    if (hasErrnoCode(error, "ENOENT")) {
-      return;
-    }
-    throw error;
+  } catch {
+    return;
   }
   if (!stat.isFile() || stat.size <= 0) {
     return;
@@ -76,7 +71,7 @@ export async function* streamSessionTranscriptLines(
  * Stream the non-empty, trimmed JSONL lines of a transcript file in reverse
  * (newest-first) order.
  *
- * Returns an empty async iterator if the file does not exist, is empty, or is
+ * Returns an empty async iterator if the file cannot be opened, is empty, or is
  * not a regular file. The implementation splits on newline bytes before UTF-8
  * decoding so multibyte characters survive arbitrary chunk boundaries.
  */
@@ -92,11 +87,8 @@ export async function* streamSessionTranscriptLinesReverse(
   let fileHandle: Awaited<ReturnType<typeof fs.promises.open>>;
   try {
     fileHandle = await fs.promises.open(filePath, "r");
-  } catch (error) {
-    if (hasErrnoCode(error, "ENOENT")) {
-      return;
-    }
-    throw error;
+  } catch {
+    return;
   }
   try {
     const stat = await fileHandle.stat();
@@ -145,4 +137,21 @@ export async function* streamSessionTranscriptLinesReverse(
 function decodeTrimmedLine(line: Buffer): string {
   const trimmed = line.toString("utf-8").trim();
   return trimmed;
+}
+
+async function readFileRangeAsync(
+  fileHandle: Awaited<ReturnType<typeof fs.promises.open>>,
+  position: number,
+  length: number,
+): Promise<Buffer> {
+  const buffer = Buffer.alloc(length);
+  let offset = 0;
+  while (offset < length) {
+    const { bytesRead } = await fileHandle.read(buffer, offset, length - offset, position + offset);
+    if (bytesRead <= 0) {
+      break;
+    }
+    offset += bytesRead;
+  }
+  return offset === length ? buffer : buffer.subarray(0, offset);
 }

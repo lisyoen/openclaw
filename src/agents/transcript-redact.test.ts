@@ -1,7 +1,5 @@
 // Transcript redaction tests cover structured and text transcript fields so
 // secrets do not persist in logs or replay artifacts.
-
-import { expectDefined } from "@openclaw/normalization-core";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -30,21 +28,6 @@ function cfg(mode: "tools" | "off", patterns?: string[]): OpenClawConfig {
   } satisfies OpenClawConfig;
 }
 
-function googleCompatCfg(): OpenClawConfig {
-  return {
-    ...cfg("tools"),
-    models: {
-      providers: {
-        "google-compatible-proxy": {
-          api: "openai-completions",
-          baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-          models: [],
-        },
-      },
-    },
-  } satisfies OpenClawConfig;
-}
-
 const EMAIL_PATTERN = String.raw`([\w]|[-.])+@([\w]|[-.])+\.\w+`;
 const IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAARcnVOZAAAAKIDABCDEFGHIJKLMNOP8JJRuAAAAABJRU5ErkJggg==";
@@ -56,10 +39,6 @@ const CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES =
   "gAAAAABpQnQrXzzZqcAfo3unbAY-ku84xgsvB0fpLkbDvSh3WS5qzfSCmcgwr8_abcdefghijvK2RyV2GQ4ohzcfYwhRwTvY76TvR7Tvr_";
 const GOOGLE_THOUGHT_SIGNATURE = Buffer.from(`thought-${"x".repeat(32)}`).toString("base64");
 const SHORT_GOOGLE_THOUGHT_SIGNATURE = "c2ln";
-const GOOGLE_CREDENTIAL_COLLISION = `AAAAAIza${"A".repeat(20)}`;
-const ALIBABA_CREDENTIAL_COLLISION = `AAAALTAI${"B".repeat(12)}`;
-const OPAQUE_CREDENTIAL_COLLISION = `signature.v2:${GOOGLE_CREDENTIAL_COLLISION}`;
-const OPENAI_COMPAT_OPAQUE_COLLISION = `SIG-${GOOGLE_CREDENTIAL_COLLISION}`;
 const COPILOT_CONNECTION_BOUND_ID = Buffer.from(`message-${"y".repeat(24)}`).toString("base64");
 const OPENAI_REASONING_REPLAY_METADATA = {
   v: 1,
@@ -76,10 +55,7 @@ describe("redactTranscriptMessage", () => {
   it("redacts text block matching default patterns (sk- token)", () => {
     const msg = textMessage("key is sk-abcdef1234567890xyz end");
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const text = expectDefined(
-      (msgContent(result) as Array<{ text: string }>)[0],
-      "(msgContent(result) as Array<{ text: string }>)[0] test invariant",
-    ).text;
+    const text = (msgContent(result) as Array<{ text: string }>)[0].text;
     expect(text).not.toContain("sk-abcdef1234567890xyz");
     expect(text).toContain("end");
   });
@@ -92,10 +68,7 @@ describe("redactTranscriptMessage", () => {
       ],
     } as unknown as AgentMessage;
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ thinking: string }>)[0],
-      "(msgContent(result) as Array<{ thinking: string }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ thinking: string }>)[0];
     expect(block.thinking).not.toContain("sk-abcdef1234567890xyz");
   });
 
@@ -147,10 +120,7 @@ describe("redactTranscriptMessage", () => {
       msg,
       cfg("tools", ["reasoning-1", "reasoning", "summary_text"]),
     );
-    const block = expectDefined(
-      (msgContent(result) as Array<{ thinking: string; thinkingSignature: string }>)[0],
-      "(msgContent(result) as Array<{ thinking: string; thinkingSignature: s... test invariant",
-    );
+    const block = (msgContent(result) as Array<{ thinking: string; thinkingSignature: string }>)[0];
     const replayItem = JSON.parse(block.thinkingSignature) as {
       id: string;
       type: string;
@@ -161,10 +131,8 @@ describe("redactTranscriptMessage", () => {
     };
     const blockMetadata = (block as unknown as { openclawReasoningReplay: Record<string, unknown> })
       .openclawReasoningReplay;
-    const rejectedSignature = expectDefined(
-      (msgContent(result) as Array<{ thinkingSignature: string }>)[1],
-      "(msgContent(result) as Array<{ thinkingSignature: string }>)[1] test invariant",
-    ).thinkingSignature;
+    const rejectedSignature = (msgContent(result) as Array<{ thinkingSignature: string }>)[1]
+      .thinkingSignature;
     expect(block.thinking).not.toContain("sk-abcdef1234567890xyz");
     expect(replayItem.id).toBe("reasoning-1");
     expect(replayItem.type).toBe("reasoning");
@@ -177,36 +145,6 @@ describe("redactTranscriptMessage", () => {
     expect(JSON.stringify(blockMetadata)).not.toContain("sk-abcdef1234567890xyz");
     expect(rejectedSignature).not.toContain("sk-abcdef1234567890xyz");
     expect(JSON.stringify(msgContent(result))).not.toContain("sk-abcdef1234567890xyz");
-  });
-
-  it("handles configured providers without explicit models", () => {
-    const msg = {
-      role: "assistant",
-      api: "openai-responses",
-      model: "gpt-5.5",
-      provider: "openai",
-      content: [{ type: "text", text: "visible", textSignature: "response-item-1" }],
-    } as unknown as AgentMessage;
-    const inputCfg = {
-      logging: { redactSensitive: "tools" },
-      models: { providers: { openai: { apiKey: "test-key" } } },
-    } as unknown as OpenClawConfig;
-
-    const result = redactTranscriptMessage(msg, inputCfg) as unknown as {
-      api: string;
-      model: string;
-      provider: string;
-      content: Array<{ textSignature: string }>;
-    };
-
-    expect(result).toMatchObject({
-      api: "openai-responses",
-      model: "gpt-5.5",
-      provider: "openai",
-    });
-    expect(expectDefined(result.content[0], "result.content[0] test invariant").textSignature).toBe(
-      "response-item-1",
-    );
   });
 
   it.each([
@@ -298,13 +236,8 @@ describe("redactTranscriptMessage", () => {
           SHORT_GOOGLE_THOUGHT_SIGNATURE,
         ]),
       );
-      const preservedBlock = expectDefined(
-        (msgContent(result) as Array<Record<string, string>>)[0],
-        "(msgContent(result) as Array<Record<string, string>>)[0] test invariant",
-      );
-      expect(
-        expectDefined(preservedBlock[signatureKey], "preservedBlock[signatureKey] test invariant"),
-      ).toBe(expectedSignature);
+      const preservedBlock = (msgContent(result) as Array<Record<string, string>>)[0];
+      expect(preservedBlock[signatureKey]).toBe(expectedSignature);
     },
   );
 
@@ -334,10 +267,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ thoughtSignature: string }>)[0],
-      "(msgContent(result) as Array<{ thoughtSignature: string }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ thoughtSignature: string }>)[0];
     expect(JSON.parse(block.thoughtSignature)).toEqual({
       type: "reasoning.encrypted",
       data: CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES,
@@ -369,10 +299,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ thoughtSignature: string }>)[0],
-      "(msgContent(result) as Array<{ thoughtSignature: string }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ thoughtSignature: string }>)[0];
     expect(JSON.parse(block.thoughtSignature)).toEqual({
       type: "reasoning.encrypted",
       data: CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES,
@@ -390,7 +317,7 @@ describe("redactTranscriptMessage", () => {
           type: "toolCall",
           id: "call_1",
           name: "send_request",
-          thoughtSignature: GOOGLE_THOUGHT_SIGNATURE,
+          thoughtSignature: CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES,
           arguments: {
             apiKey: "plainsecretvalue123",
             thinkingSignature: "sk-abcdef1234567890xyz",
@@ -412,16 +339,13 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (
-        msgContent(result) as Array<{
-          thoughtSignature: string;
-          arguments: Record<string, string>;
-        }>
-      )[0],
-      "( msgContent(result) as Array<{ thoughtSignature: string; arguments: ... test invariant",
-    );
-    expect(block.thoughtSignature).toBe(GOOGLE_THOUGHT_SIGNATURE);
+    const block = (
+      msgContent(result) as Array<{
+        thoughtSignature: string;
+        arguments: Record<string, string>;
+      }>
+    )[0];
+    expect(block.thoughtSignature).toBe(CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES);
     expect(JSON.stringify(block.arguments)).not.toContain("sk-abcdef1234567890xyz");
     expect(block.arguments.apiKey).toBe("plains…e123");
   });
@@ -445,28 +369,18 @@ describe("redactTranscriptMessage", () => {
         {
           type: "thinking",
           thinking: "secret sk-abcdef1234567890xyz",
-          thought_signature: SHORT_GOOGLE_THOUGHT_SIGNATURE,
+          thought_signature: CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES,
         },
       ],
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools", [GOOGLE_THOUGHT_SIGNATURE]));
     const blocks = msgContent(result) as Array<Record<string, string>>;
-    expect(expectDefined(blocks[0], "blocks[0] test invariant").text).not.toContain(
-      "sk-abcdef1234567890xyz",
-    );
-    expect(expectDefined(blocks[0], "blocks[0] test invariant").textSignature).toBe(
-      GOOGLE_THOUGHT_SIGNATURE,
-    );
-    expect(expectDefined(blocks[1], "blocks[1] test invariant").textSignature).not.toContain(
-      "sk-abcdef1234567890xyz",
-    );
-    expect(expectDefined(blocks[2], "blocks[2] test invariant").thinking).not.toContain(
-      "sk-abcdef1234567890xyz",
-    );
-    expect(expectDefined(blocks[2], "blocks[2] test invariant").thought_signature).toBe(
-      SHORT_GOOGLE_THOUGHT_SIGNATURE,
-    );
+    expect(blocks[0].text).not.toContain("sk-abcdef1234567890xyz");
+    expect(blocks[0].textSignature).toBe(GOOGLE_THOUGHT_SIGNATURE);
+    expect(blocks[1].textSignature).not.toContain("sk-abcdef1234567890xyz");
+    expect(blocks[2].thinking).not.toContain("sk-abcdef1234567890xyz");
+    expect(blocks[2].thought_signature).toBe(CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES);
   });
 
   it.each(["openai-responses", "openclaw-openai-responses-transport"])(
@@ -481,10 +395,7 @@ describe("redactTranscriptMessage", () => {
       } as unknown as AgentMessage;
 
       const result = redactTranscriptMessage(msg, cfg("tools", [COPILOT_CONNECTION_BOUND_ID]));
-      const block = expectDefined(
-        (msgContent(result) as Array<{ textSignature: string }>)[0],
-        "(msgContent(result) as Array<{ textSignature: string }>)[0] test invariant",
-      );
+      const block = (msgContent(result) as Array<{ textSignature: string }>)[0];
       expect(block.textSignature).toBe(textSignature);
     },
   );
@@ -514,21 +425,17 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const thinkingBlock = expectDefined(
-      (msgContent(result) as Array<{ thinking: string; thinkingSignature: string }>)[0],
-      "( msgContent(result) as Array<{ thinking: string; thinkingSignature: ... test invariant",
-    );
-    const redactedBlock = expectDefined(
-      (
-        msgContent(result) as Array<{
-          data: string;
-          signature: string;
-          thinkingSignature: string;
-          metadata: { accessToken: string };
-        }>
-      )[1],
-      "( msgContent(result) as Array<{ data: string; signature: string; thin... test invariant",
-    );
+    const thinkingBlock = (
+      msgContent(result) as Array<{ thinking: string; thinkingSignature: string }>
+    )[0];
+    const redactedBlock = (
+      msgContent(result) as Array<{
+        data: string;
+        signature: string;
+        thinkingSignature: string;
+        metadata: { accessToken: string };
+      }>
+    )[1];
     expect(thinkingBlock.thinking).not.toContain("sk-abcdef1234567890xyz");
     expect(thinkingBlock.thinkingSignature).toBe(CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES);
     expect(redactedBlock.data).toBe(CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES);
@@ -537,13 +444,14 @@ describe("redactTranscriptMessage", () => {
     expect(redactedBlock.metadata.accessToken).toBe("nested…t123");
   });
 
-  it("preserves credential-shaped bytes in recognized provider replay fields", () => {
+  it("redacts credential-shaped values even on provider signature fields", () => {
+    const googleApiKey = `AIza${"a".repeat(32)}`;
     const githubToken = `ghp_${"b".repeat(36)}`;
+    const awsAccessKey = "AKIAIOSFODNN7EXAMPLE";
     const encryptedDetail = JSON.stringify({
       type: "reasoning.encrypted",
       data: githubToken,
       id: "reasoning-encrypted-1",
-      secret: "sk-abcdef1234567890xyz",
     });
     const googleMsg = {
       role: "assistant",
@@ -555,27 +463,22 @@ describe("redactTranscriptMessage", () => {
           id: "call_1",
           name: "send_request",
           arguments: {},
-          thoughtSignature: GOOGLE_CREDENTIAL_COLLISION,
+          thoughtSignature: awsAccessKey,
         },
         {
-          type: "thinking",
-          thinking: "visible",
-          thinkingSignature: ALIBABA_CREDENTIAL_COLLISION,
+          type: "toolCall",
+          id: "call_2",
+          name: "send_request",
+          arguments: {},
+          thoughtSignature: googleApiKey,
         },
       ],
     } as unknown as AgentMessage;
     const anthropicMsg = {
       role: "assistant",
-      api: "bedrock-converse-stream",
-      provider: "amazon-bedrock",
-      content: [
-        {
-          type: "thinking",
-          thinking: "visible",
-          signature: OPENAI_COMPAT_OPAQUE_COLLISION,
-        },
-        { type: "redacted_thinking", data: githubToken },
-      ],
+      api: "anthropic-messages",
+      provider: "anthropic",
+      content: [{ type: "redacted_thinking", data: githubToken }],
     } as unknown as AgentMessage;
     const openAICompletionsMsg = {
       role: "assistant",
@@ -589,115 +492,8 @@ describe("redactTranscriptMessage", () => {
           arguments: {},
           thoughtSignature: encryptedDetail,
         },
-        {
-          type: "toolCall",
-          id: "call_secret",
-          name: "send_request",
-          arguments: {},
-          thoughtSignature: githubToken,
-        },
       ],
     } as unknown as AgentMessage;
-    const googleOpenAICompletionsMsg = {
-      role: "assistant",
-      api: "openclaw-openai-completions-transport",
-      model: "gemini-3.1-pro",
-      provider: "google-compatible-proxy",
-      content: [
-        {
-          type: "toolCall",
-          id: "call_2",
-          name: "send_request",
-          arguments: {},
-          thoughtSignature: OPENAI_COMPAT_OPAQUE_COLLISION,
-        },
-      ],
-    } as unknown as AgentMessage;
-    const openAIResponsesMsg = {
-      role: "assistant",
-      api: "openai-responses",
-      model: "gpt-5.5",
-      provider: "openai",
-      content: [
-        {
-          type: "thinking",
-          thinking: "visible",
-          thinkingSignature: JSON.stringify({
-            id: "reasoning-1",
-            type: "reasoning",
-            encrypted_content: GOOGLE_CREDENTIAL_COLLISION,
-            summary: [{ type: "summary_text", text: "secret sk-abcdef1234567890xyz" }],
-            secret: "sk-abcdef1234567890xyz",
-          }),
-        },
-      ],
-    } as unknown as AgentMessage;
-
-    const googleBlocks = msgContent(redactTranscriptMessage(googleMsg, cfg("tools"))) as Array<
-      Record<string, string>
-    >;
-    expect(expectDefined(googleBlocks[0], "googleBlocks[0] test invariant").thoughtSignature).toBe(
-      GOOGLE_CREDENTIAL_COLLISION,
-    );
-    expect(expectDefined(googleBlocks[1], "googleBlocks[1] test invariant").thinkingSignature).toBe(
-      ALIBABA_CREDENTIAL_COLLISION,
-    );
-
-    const anthropicBlocks = msgContent(
-      redactTranscriptMessage(anthropicMsg, cfg("tools")),
-    ) as Array<Record<string, string>>;
-    expect(expectDefined(anthropicBlocks[0], "anthropicBlocks[0] test invariant").signature).toBe(
-      OPENAI_COMPAT_OPAQUE_COLLISION,
-    );
-    expect(expectDefined(anthropicBlocks[1], "anthropicBlocks[1] test invariant").data).toBe(
-      githubToken,
-    );
-
-    const completionsBlocks = msgContent(
-      redactTranscriptMessage(openAICompletionsMsg, cfg("tools")),
-    ) as Array<{ thoughtSignature: string }>;
-    expect(
-      JSON.parse(
-        expectDefined(completionsBlocks[0], "completionsBlocks[0] test invariant").thoughtSignature,
-      ),
-    ).toEqual({
-      type: "reasoning.encrypted",
-      data: githubToken,
-      id: "reasoning-encrypted-1",
-    });
-    expect(
-      expectDefined(completionsBlocks[1], "completionsBlocks[1] test invariant").thoughtSignature,
-    ).not.toBe(githubToken);
-
-    const googleCompletionsBlock = expectDefined(
-      (
-        msgContent(
-          redactTranscriptMessage(googleOpenAICompletionsMsg, googleCompatCfg()),
-        ) as Array<{
-          thoughtSignature: string;
-        }>
-      )[0],
-      "( msgContent(redactTranscriptMessage(googleOpenAICompletionsMsg, goog... test invariant",
-    );
-    expect(googleCompletionsBlock.thoughtSignature).toBe(OPENAI_COMPAT_OPAQUE_COLLISION);
-
-    const responsesBlock = expectDefined(
-      (
-        msgContent(redactTranscriptMessage(openAIResponsesMsg, cfg("tools"))) as Array<{
-          thinkingSignature: string;
-        }>
-      )[0],
-      '( msgContent(redactTranscriptMessage(openAIResponsesMsg, cfg("tools")... test invariant',
-    );
-    expect(JSON.parse(responsesBlock.thinkingSignature)).toEqual({
-      id: "reasoning-1",
-      type: "reasoning",
-      summary: [],
-      encrypted_content: GOOGLE_CREDENTIAL_COLLISION,
-    });
-  });
-
-  it("keeps unknown and malformed replay fields credential-safe", () => {
     const customProviderMsg = {
       role: "assistant",
       api: "custom-provider-api",
@@ -707,81 +503,26 @@ describe("redactTranscriptMessage", () => {
         {
           type: "thinking",
           thinking: "visible",
-          thinkingSignature: ALIBABA_CREDENTIAL_COLLISION,
-        },
-        {
-          type: "toolCall",
-          id: "call_1",
-          name: "send_request",
-          arguments: {},
-          thoughtSignature: JSON.stringify({
-            type: "reasoning.encrypted",
-            data: GOOGLE_CREDENTIAL_COLLISION,
-            id: "reasoning-encrypted-1",
-          }),
+          thinkingSignature: awsAccessKey,
         },
       ],
     } as unknown as AgentMessage;
-    const malformedGoogleMsg = {
-      role: "assistant",
-      api: "google-generative-ai",
-      model: "gemini-3.1-pro",
-      provider: "google",
-      content: [
-        {
-          type: "toolCall",
-          id: "call_1",
-          name: "send_request",
-          arguments: {},
-          thoughtSignature: OPAQUE_CREDENTIAL_COLLISION,
-        },
-      ],
-    } as unknown as AgentMessage;
-    const malformedKnownOpaqueMessages = [
-      {
-        role: "assistant",
-        api: "anthropic-messages",
-        model: "claude-opus-4-8",
-        provider: "anthropic",
-        content: [
-          {
-            type: "thinking",
-            thinking: "visible",
-            thinkingSignature: "secret sk-abcdef1234567890xyz",
-          },
-        ],
-      },
-      {
-        role: "assistant",
-        api: "openai-completions",
-        model: "gemini-3.1-pro",
-        provider: "google",
-        content: [
-          {
-            type: "toolCall",
-            id: "call_1",
-            name: "send_request",
-            arguments: {},
-            thoughtSignature: "secret sk-abcdef1234567890xyz",
-          },
-        ],
-      },
-    ] as unknown as AgentMessage[];
 
     expect(
-      JSON.stringify(msgContent(redactTranscriptMessage(customProviderMsg, cfg("tools")))),
-    ).not.toContain(ALIBABA_CREDENTIAL_COLLISION);
+      JSON.stringify(msgContent(redactTranscriptMessage(googleMsg, cfg("tools")))),
+    ).not.toContain(awsAccessKey);
+    expect(
+      JSON.stringify(msgContent(redactTranscriptMessage(googleMsg, cfg("tools")))),
+    ).not.toContain(googleApiKey);
+    expect(
+      JSON.stringify(msgContent(redactTranscriptMessage(anthropicMsg, cfg("tools")))),
+    ).not.toContain(githubToken);
+    expect(
+      JSON.stringify(msgContent(redactTranscriptMessage(openAICompletionsMsg, cfg("tools")))),
+    ).not.toContain(githubToken);
     expect(
       JSON.stringify(msgContent(redactTranscriptMessage(customProviderMsg, cfg("tools")))),
-    ).not.toContain(GOOGLE_CREDENTIAL_COLLISION);
-    expect(
-      JSON.stringify(msgContent(redactTranscriptMessage(malformedGoogleMsg, cfg("tools")))),
-    ).not.toContain(OPAQUE_CREDENTIAL_COLLISION);
-    for (const message of malformedKnownOpaqueMessages) {
-      expect(
-        JSON.stringify(msgContent(redactTranscriptMessage(message, cfg("tools")))),
-      ).not.toContain("sk-abcdef1234567890xyz");
-    }
+    ).not.toContain(awsAccessKey);
   });
 
   it("redacts provider-shaped fields when the assistant route is missing", () => {
@@ -844,17 +585,10 @@ describe("redactTranscriptMessage", () => {
       cfg("tools", [CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES, SHORT_GOOGLE_THOUGHT_SIGNATURE]),
     );
     const blocks = msgContent(result) as Array<Record<string, string>>;
-    expect(
-      JSON.parse(
-        expectDefined(
-          expectDefined(blocks[0], "thinking block").thinkingSignature,
-          "thinking signature",
-        ),
-      ).encrypted_content,
-    ).toBe(CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES);
-    expect(expectDefined(blocks[1], "blocks[1] test invariant").thoughtSignature).toBe(
-      SHORT_GOOGLE_THOUGHT_SIGNATURE,
+    expect(JSON.parse(blocks[0].thinkingSignature).encrypted_content).toBe(
+      CIPHERTEXT_WITH_TOKEN_SHAPED_BYTES,
     );
+    expect(blocks[1].thoughtSignature).toBe(SHORT_GOOGLE_THOUGHT_SIGNATURE);
   });
 
   it("redacts provider-shaped fields outside direct assistant content blocks", () => {
@@ -887,10 +621,7 @@ describe("redactTranscriptMessage", () => {
       content: [{ type: "toolCallDelta", partialJson: '{"key":"sk-abcdef1234567890xyz"}' }],
     } as unknown as AgentMessage;
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ partialJson: string }>)[0],
-      "(msgContent(result) as Array<{ partialJson: string }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ partialJson: string }>)[0];
     expect(block.partialJson).not.toContain("sk-abcdef1234567890xyz");
   });
 
@@ -912,10 +643,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ arguments: unknown }>)[0],
-      "(msgContent(result) as Array<{ arguments: unknown }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ arguments: unknown }>)[0];
     const argumentsValue = block.arguments as {
       command: string;
       env: { nested: string[] };
@@ -928,10 +656,7 @@ describe("redactTranscriptMessage", () => {
     expect(argumentsValue.count).toBe(1);
     expect(serializedArguments).toContain("openclaw health");
     expect(block.arguments).not.toBe(
-      expectDefined(
-        (msgContent(msg) as Array<{ arguments: unknown }>)[0],
-        "(msgContent(msg) as Array<{ arguments: unknown }>)[0] test invariant",
-      ).arguments,
+      (msgContent(msg) as Array<{ arguments: unknown }>)[0].arguments,
     );
   });
 
@@ -954,10 +679,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ arguments: unknown }>)[0],
-      "(msgContent(result) as Array<{ arguments: unknown }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ arguments: unknown }>)[0];
     const argumentsValue = block.arguments as {
       apiKey: string;
       password: string;
@@ -993,10 +715,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ input: unknown }>)[0],
-      "(msgContent(result) as Array<{ input: unknown }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ input: unknown }>)[0];
     const inputValue = block.input as {
       apiKey: string;
       nested: { accessToken: string[] };
@@ -1030,10 +749,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ input: unknown }>)[0],
-      "(msgContent(result) as Array<{ input: unknown }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ input: unknown }>)[0];
     const inputValue = block.input as {
       password: string;
       nested: { accessToken: string[] };
@@ -1125,9 +841,7 @@ describe("redactTranscriptMessage", () => {
       nested: { accessToken: string[] };
       safe: string;
     };
-    expect(expectDefined(result.content[0], "result.content[0] test invariant").text).not.toContain(
-      "sk-abcdef1234567890xyz",
-    );
+    expect(result.content[0].text).not.toContain("sk-abcdef1234567890xyz");
     expect(serializedDetails).not.toContain("plainsecretvalue123");
     expect(serializedDetails).not.toContain("hunter2");
     expect(serializedDetails).not.toContain("nestedplainsecret123");
@@ -1161,12 +875,8 @@ describe("redactTranscriptMessage", () => {
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
     const content = msgContent(result) as Array<{ type: string; text?: string; data?: string }>;
-    expect(expectDefined(content[0], "content[0] test invariant").text).not.toContain(
-      "sk-abcdef1234567890xyz",
-    );
-    expect(expectDefined(content[1], "content[1] test invariant").data).toBe(
-      IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING,
-    );
+    expect(content[0].text).not.toContain("sk-abcdef1234567890xyz");
+    expect(content[1].data).toBe(IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING);
     expect(JSON.stringify(result)).not.toContain("sk-abcdef1234567890xyz");
   });
 
@@ -1184,7 +894,7 @@ describe("redactTranscriptMessage", () => {
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
     const content = msgContent(result) as Array<{ data: string }>;
-    expect(expectDefined(content[0], "content[0] test invariant").data).toBe("sk-abc…0xyz");
+    expect(content[0].data).toBe("sk-abc…0xyz");
   });
 
   it("preserves valid BMP image base64 while redacting adjacent text", () => {
@@ -1202,12 +912,8 @@ describe("redactTranscriptMessage", () => {
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
     const content = msgContent(result) as Array<{ type: string; text?: string; data?: string }>;
-    expect(expectDefined(content[0], "content[0] test invariant").text).not.toContain(
-      "sk-abcdef1234567890xyz",
-    );
-    expect(expectDefined(content[1], "content[1] test invariant").data).toBe(
-      BMP_BASE64_WITH_SECRET_TOKEN_SUBSTRING,
-    );
+    expect(content[0].text).not.toContain("sk-abcdef1234567890xyz");
+    expect(content[1].data).toBe(BMP_BASE64_WITH_SECRET_TOKEN_SUBSTRING);
   });
 
   it("preserves provider-style image base64 source data", () => {
@@ -1227,10 +933,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ source: { data: string }; apiKey: string }>)[0],
-      "(msgContent(result) as Array<{ source: { data: string }; apiKey: stri... test invariant",
-    );
+    const block = (msgContent(result) as Array<{ source: { data: string }; apiKey: string }>)[0];
     expect(block.source.data).toBe(IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING);
     expect(block.apiKey).toBe("plains…e123");
   });
@@ -1251,10 +954,9 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ source: { data: string; media_type: string } }>)[0],
-      "( msgContent(result) as Array<{ source: { data: string; media_type: s... test invariant",
-    );
+    const block = (
+      msgContent(result) as Array<{ source: { data: string; media_type: string } }>
+    )[0];
     expect(block.source.data).toBe(IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING);
     expect(block.source.media_type).toBe("image/png");
   });
@@ -1273,10 +975,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ image_url: string; data: string }>)[0],
-      "(msgContent(result) as Array<{ image_url: string; data: string }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ image_url: string; data: string }>)[0];
     expect(block.image_url).toBe(dataUrl);
     expect(block.data).toBe("AKIDAB…MNOP");
   });
@@ -1294,10 +993,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ image_url: string }>)[0],
-      "(msgContent(result) as Array<{ image_url: string }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ image_url: string }>)[0];
     expect(block.image_url).toBe(dataUrl);
   });
 
@@ -1315,10 +1011,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ image_url: string }>)[0],
-      "(msgContent(result) as Array<{ image_url: string }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ image_url: string }>)[0];
     expect(block.image_url).toBe(canonicalDataUrl);
   });
 
@@ -1335,10 +1028,7 @@ describe("redactTranscriptMessage", () => {
     } as unknown as AgentMessage;
 
     const result = redactTranscriptMessage(msg, cfg("tools"));
-    const block = expectDefined(
-      (msgContent(result) as Array<{ image_url: { url: string } }>)[0],
-      "(msgContent(result) as Array<{ image_url: { url: string } }>)[0] test invariant",
-    );
+    const block = (msgContent(result) as Array<{ image_url: { url: string } }>)[0];
     expect(block.image_url.url).toBe(dataUrl);
   });
 
@@ -1387,10 +1077,7 @@ describe("redactTranscriptMessage", () => {
   it("redacts using custom pattern without dropping default patterns", () => {
     const msg = textMessage("email peter@dc.io and key sk-abcdef1234567890xyz ok");
     const result = redactTranscriptMessage(msg, cfg("tools", [EMAIL_PATTERN]));
-    const text = expectDefined(
-      (msgContent(result) as Array<{ text: string }>)[0],
-      "(msgContent(result) as Array<{ text: string }>)[0] test invariant",
-    ).text;
+    const text = (msgContent(result) as Array<{ text: string }>)[0].text;
     expect(text).not.toContain("peter@dc.io");
     expect(text).not.toContain("sk-abcdef1234567890xyz");
     expect(text).toContain("ok");
@@ -1472,10 +1159,7 @@ describe("redactTranscriptMessage", () => {
   it("redacts with cfg=undefined (falls back to default patterns)", () => {
     const msg = textMessage("key is sk-abcdef1234567890xyz");
     const result = redactTranscriptMessage(msg, undefined);
-    const text = expectDefined(
-      (msgContent(result) as Array<{ text: string }>)[0],
-      "(msgContent(result) as Array<{ text: string }>)[0] test invariant",
-    ).text;
+    const text = (msgContent(result) as Array<{ text: string }>)[0].text;
     expect(text).not.toContain("sk-abcdef1234567890xyz");
   });
 
@@ -1487,4 +1171,3 @@ describe("redactTranscriptMessage", () => {
     expect(() => redactTranscriptMessage(msg, cfg("tools"))).not.toThrow();
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

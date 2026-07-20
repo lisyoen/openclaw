@@ -6,11 +6,13 @@ import {
   applyPreparedRuntimeAuthToModel,
   buildProviderRequestDispatcherPolicy,
   mergeModelProviderRequestOverrides,
+  mergeProviderRequestOverrides,
   resolveProviderRequestPolicyConfig,
   resolveProviderRequestConfig,
   resolveProviderRequestHeaders,
   sanitizeConfiguredModelProviderRequest,
   sanitizeConfiguredProviderRequest,
+  sanitizeRuntimeProviderRequestOverrides,
 } from "./provider-request-config.js";
 
 describe("provider request config", () => {
@@ -267,17 +269,15 @@ describe("provider request config", () => {
 
   it("rejects proxy and tls runtime auth overrides", () => {
     expect(() =>
-      applyPreparedRuntimeAuthToModel(
-        { provider: "custom-openai" },
-        {
-          request: {
-            proxy: {
-              mode: "explicit-proxy",
-              url: "http://proxy.internal:8443",
-            },
-          },
+      sanitizeRuntimeProviderRequestOverrides({
+        headers: {
+          "X-Tenant": "acme",
         },
-      ),
+        proxy: {
+          mode: "explicit-proxy",
+          url: "http://proxy.internal:8443",
+        },
+      }),
     ).toThrow(/runtime auth request overrides do not allow proxy or tls/i);
   });
 
@@ -412,7 +412,7 @@ describe("provider request config", () => {
 
   it("merges configured request overrides with later entries winning", () => {
     expect(
-      mergeModelProviderRequestOverrides(
+      mergeProviderRequestOverrides(
         {
           headers: {
             "X-Provider": "1",

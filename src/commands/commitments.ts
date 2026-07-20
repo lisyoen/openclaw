@@ -2,14 +2,13 @@
 import { timestampMsToIsoString } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { isRich, theme } from "../../packages/terminal-core/src/theme.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import {
   listCommitments,
   markCommitmentsStatus,
-  resolveCommitmentDatabasePath,
+  resolveCommitmentStorePath,
 } from "../commitments/store.js";
 import type { CommitmentRecord, CommitmentStatus } from "../commitments/types.js";
 import { getRuntimeConfig } from "../config/config.js";
@@ -25,7 +24,7 @@ const STATUS_VALUES = new Set<CommitmentStatus>([
 ]);
 
 function truncate(value: string, maxChars: number): string {
-  return value.length <= maxChars ? value : `${truncateUtf16Safe(value, maxChars - 1)}…`;
+  return value.length <= maxChars ? value : `${value.slice(0, maxChars - 1)}...`;
 }
 
 function safe(value: string): string {
@@ -113,14 +112,14 @@ export async function commitmentsListCommand(
       count: commitments.length,
       status: status ?? (opts.all ? null : "pending"),
       agentId: normalizeOptionalString(opts.agent) ?? null,
-      store: resolveCommitmentDatabasePath(),
+      store: resolveCommitmentStorePath(),
       commitments,
     });
     return;
   }
 
   runtime.log(info(`Commitments: ${commitments.length}`));
-  runtime.log(info(`Store: ${resolveCommitmentDatabasePath()}`));
+  runtime.log(info(`Store: ${resolveCommitmentStorePath()}`));
   if (status) {
     runtime.log(info(`Status filter: ${status}`));
   }

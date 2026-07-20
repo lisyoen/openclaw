@@ -3,8 +3,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { sortUniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { note } from "../../../../packages/terminal-core/src/note.js";
-import type { HealthFinding } from "../../../flows/health-checks.js";
-import { resolveOpenClawPackageRootSync } from "../../../infra/openclaw-root.js";
 import { shortenHomePath } from "../../../utils.js";
 
 const PLUGIN_RUNTIME_DEPS_MARKER = "plugin-runtime-deps";
@@ -29,7 +27,7 @@ interface StatsLike {
   isSymbolicLink(): boolean;
 }
 
-interface StalePluginRuntimeSymlink {
+export interface StalePluginRuntimeSymlink {
   /** Package or scoped package name for the stale symlink. */
   readonly name: string;
   /** Symlink path under the containing node_modules directory. */
@@ -38,7 +36,7 @@ interface StalePluginRuntimeSymlink {
   readonly target: string;
 }
 
-interface PluginRuntimeSymlinkOptions {
+export interface PluginRuntimeSymlinkOptions {
   /** Filesystem adapter for tests and doctor cleanup callers. */
   readonly fs?: FsLike;
   /** Roots already classified as stale by plugin dependency cleanup. */
@@ -55,7 +53,7 @@ const DEFAULT_FS: FsLike = {
 };
 
 /** Find global node_modules symlinks that still point at stale plugin-runtime deps. */
-async function collectStalePluginRuntimeSymlinks(
+export async function collectStalePluginRuntimeSymlinks(
   packageRoot: string | null | undefined,
   options: PluginRuntimeSymlinkOptions = {},
 ): Promise<StalePluginRuntimeSymlink[]> {
@@ -99,33 +97,6 @@ async function collectStalePluginRuntimeSymlinks(
   }
 
   return stale.toSorted((left, right) => left.name.localeCompare(right.name));
-}
-
-function stalePluginRuntimeSymlinkToHealthFinding(item: StalePluginRuntimeSymlink): HealthFinding {
-  return {
-    checkId: "core/doctor/stale-plugin-runtime-symlinks",
-    severity: "warning",
-    message: `Stale plugin-runtime symlink ${item.name} points at ${item.target}.`,
-    path: item.path,
-    target: item.path,
-    requirement: "stale-plugin-runtime-symlink-removed",
-    fixHint: "Run `openclaw doctor --fix` to remove stale plugin-runtime symlinks.",
-  };
-}
-
-export async function collectStalePluginRuntimeSymlinkHealthFindings(
-  params: { packageRoot?: string | null } & PluginRuntimeSymlinkOptions = {},
-): Promise<HealthFinding[]> {
-  const packageRoot =
-    params.packageRoot ??
-    resolveOpenClawPackageRootSync({
-      argv1: process.argv[1],
-      moduleUrl: import.meta.url,
-      cwd: process.cwd(),
-    });
-  return (await collectStalePluginRuntimeSymlinks(packageRoot, params)).map(
-    stalePluginRuntimeSymlinkToHealthFinding,
-  );
 }
 
 /** Emit a doctor note describing stale plugin-runtime symlinks, if any exist. */

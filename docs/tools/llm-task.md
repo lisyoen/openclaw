@@ -6,12 +6,13 @@ read_when:
 title: "LLM task"
 ---
 
-`llm-task` is a bundled **optional plugin tool** that runs a single JSON-only
-LLM call and returns structured output, optionally validated against a JSON
-Schema. It gives workflow engines like Lobster an LLM step without custom
-OpenClaw code per workflow.
+`llm-task` is an **optional plugin tool** that runs a JSON-only LLM task and
+returns structured output (optionally validated against JSON Schema).
 
-## Enable
+This is ideal for workflow engines like Lobster: you can add a single LLM step
+without writing custom OpenClaw code for each workflow.
+
+## Enable the plugin
 
 1. Enable the plugin:
 
@@ -25,7 +26,7 @@ OpenClaw code per workflow.
 }
 ```
 
-2. Allow the tool:
+2. Allow the optional tool:
 
 ```json
 {
@@ -35,9 +36,7 @@ OpenClaw code per workflow.
 }
 ```
 
-`alsoAllow` adds `llm-task` on top of the active tool profile without
-restricting other core tools. Use `tools.allow` only if you want a restrictive
-allowlist mode instead.
+Use `tools.allow` only when you want restrictive allowlist mode.
 
 ## Config (optional)
 
@@ -49,9 +48,9 @@ allowlist mode instead.
         "enabled": true,
         "config": {
           "defaultProvider": "openai",
-          "defaultModel": "gpt-5.6-sol",
+          "defaultModel": "gpt-5.5",
           "defaultAuthProfileId": "main",
-          "allowedModels": ["openai/gpt-5.6-sol"],
+          "allowedModels": ["openai/gpt-5.5"],
           "maxTokens": 800,
           "timeoutMs": 30000
         }
@@ -61,39 +60,36 @@ allowlist mode instead.
 }
 ```
 
-`allowedModels` is an allowlist of `provider/model` strings; a request for any
-other model is rejected. All other keys are per-call fallbacks used when the
-tool call omits that parameter.
+`allowedModels` is an allowlist of `provider/model` strings. If set, any request
+outside the list is rejected.
 
 ## Tool parameters
 
-| Parameter       | Type   | Notes                                                                                                                                         |
-| --------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `prompt`        | string | Required. Task instruction for the LLM.                                                                                                       |
-| `input`         | any    | Optional payload; serialized to JSON and appended to the prompt.                                                                              |
-| `schema`        | object | Optional JSON Schema the parsed output must validate against.                                                                                 |
-| `provider`      | string | Overrides `defaultProvider` / the agent's default provider.                                                                                   |
-| `model`         | string | Overrides `defaultModel`; accepts bare model ids, aliases, or a `provider/model` ref (a duplicate provider prefix is stripped automatically). |
-| `thinking`      | string | Reasoning level (e.g. `low`, `medium`); must be one supported by the resolved model.                                                          |
-| `authProfileId` | string | Overrides `defaultAuthProfileId`.                                                                                                             |
-| `temperature`   | number | Best-effort; not all providers honor it.                                                                                                      |
-| `maxTokens`     | number | Best-effort cap on output tokens.                                                                                                             |
-| `timeoutMs`     | number | Run timeout; default `30000`.                                                                                                                 |
+- `prompt` (string, required)
+- `input` (any, optional)
+- `schema` (object, optional JSON Schema)
+- `provider` (string, optional)
+- `model` (string, optional)
+- `thinking` (string, optional)
+- `authProfileId` (string, optional)
+- `temperature` (number, optional)
+- `maxTokens` (number, optional)
+- `timeoutMs` (number, optional)
+
+`thinking` accepts the standard OpenClaw reasoning presets, such as `low` or `medium`.
 
 ## Output
 
-Returns `details.json` (the parsed, schema-validated JSON) plus `details.provider`
-and `details.model` naming what actually ran.
+Returns `details.json` containing the parsed JSON (and validates against
+`schema` when provided).
 
 ## Example: Lobster workflow step
 
 ### Important limitation
 
-The example below assumes the **standalone Lobster CLI** is running where
-`openclaw.invoke` already has the correct gateway URL/auth context.
+The example below assumes the **standalone Lobster CLI** is running in an environment where `openclaw.invoke` already has the correct gateway URL/auth context.
 
-For the bundled **embedded** Lobster runner inside OpenClaw, this nested CLI
-pattern is **not currently reliable**:
+For the bundled **embedded** Lobster runner inside OpenClaw, this nested CLI pattern is **not currently reliable**:
 
 ```lobster
 openclaw.invoke --tool llm-task --action json --args-json '{ ... }'
@@ -128,13 +124,11 @@ openclaw.invoke --tool llm-task --action json --args-json '{
 
 ## Safety notes
 
-- **JSON-only**: the model is instructed to return only a JSON value, no code
-  fences, no commentary.
-- **No tools**: the underlying run has tools disabled, so the model cannot call
-  out mid-task.
-- Treat output as untrusted unless you validate it with `schema`.
-- Put approvals before any side-effecting step (send, post, exec) that consumes
-  this output.
+- The tool is **JSON-only** and instructs the model to output only JSON (no
+  code fences, no commentary).
+- No tools are exposed to the model for this run.
+- Treat output as untrusted unless you validate with `schema`.
+- Put approvals before any side-effecting step (send, post, exec).
 
 ## Related
 

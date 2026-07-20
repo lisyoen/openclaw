@@ -6,14 +6,30 @@ import type {
   ChannelMessageToolDiscovery,
 } from "openclaw/plugin-sdk/channel-contract";
 import type { DiscordActionConfig, OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { extractToolSend } from "openclaw/plugin-sdk/tool-send";
 import { inspectDiscordAccount } from "./account-inspect.js";
 import { createDiscordActionGate, listDiscordAccountIds } from "./accounts.js";
 import { readDiscordComponentSpec } from "./components.js";
 import { withDiscordInboundEventDeliveryMetadata } from "./inbound-event-delivery.js";
-import { isTrustedRequesterGuildAdminAction } from "./trusted-requester-actions.js";
+
+const trustedRequesterGuildAdminActions = new Set<ChannelMessageActionName>([
+  "emoji-upload",
+  "sticker-upload",
+  "role-add",
+  "role-remove",
+  "channel-create",
+  "channel-edit",
+  "channel-delete",
+  "channel-move",
+  "category-create",
+  "category-edit",
+  "category-delete",
+  "event-create",
+  "timeout",
+  "kick",
+  "ban",
+]);
 
 const localExecutionActions = new Set<ChannelMessageActionName>([
   "send",
@@ -29,9 +45,14 @@ function resolveDiscordActionExecutionMode({ action }: { action: ChannelMessageA
   return localExecutionActions.has(action) ? "local" : "gateway";
 }
 
-const loadDiscordChannelActionsRuntime = createLazyRuntimeModule(
-  () => import("./channel-actions.runtime.js"),
-);
+let discordChannelActionsRuntimePromise:
+  | Promise<typeof import("./channel-actions.runtime.js")>
+  | undefined;
+
+async function loadDiscordChannelActionsRuntime() {
+  discordChannelActionsRuntimePromise ??= import("./channel-actions.runtime.js");
+  return await discordChannelActionsRuntimePromise;
+}
 
 function listDiscoverableDiscordAccounts(cfg: OpenClawConfig) {
   return listDiscordAccountIds(cfg)
@@ -181,7 +202,8 @@ export const discordMessageActions: ChannelMessageActionAdapter = {
   resolveExecutionMode: resolveDiscordActionExecutionMode,
   describeMessageTool: describeDiscordMessageTool,
   requiresTrustedRequesterSender: ({ action, toolContext }) =>
-    Boolean(toolContext) && isTrustedRequesterGuildAdminAction(action),
+    normalizeOptionalString(toolContext?.currentChannelProvider)?.toLowerCase() === "discord" &&
+    trustedRequesterGuildAdminActions.has(action),
   extractToolSend: ({ args }) => {
     const action = normalizeOptionalString(args.action) ?? "";
     if (action === "sendMessage") {
@@ -243,16 +265,13 @@ export const discordMessageActions: ChannelMessageActionAdapter = {
     params,
     cfg,
     accountId,
-    requesterAccountId,
     requesterSenderId,
-    senderIsOwner,
     toolContext,
     mediaAccess,
     mediaLocalRoots,
     mediaReadFile,
     sessionKey,
     inboundEventKind,
-    conversationReadOrigin,
   }) => {
     return await (
       await loadDiscordChannelActionsRuntime()
@@ -262,15 +281,12 @@ export const discordMessageActions: ChannelMessageActionAdapter = {
       cfg,
       accountId,
       requesterSenderId,
-      senderIsOwner,
       toolContext,
       mediaAccess,
       mediaLocalRoots,
       mediaReadFile,
       ...(sessionKey ? { sessionKey } : {}),
       ...(inboundEventKind ? { inboundEventKind } : {}),
-      ...(requesterAccountId ? { requesterAccountId } : {}),
-      ...(conversationReadOrigin ? { conversationReadOrigin } : {}),
     });
   },
 };

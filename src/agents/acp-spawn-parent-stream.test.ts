@@ -1,11 +1,13 @@
-/** Tests ACP child-to-parent stream relay notices and routing. */
+/** Tests ACP child-to-parent stream relay notices, routing, and log path resolution. */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { mergeMockedModule } from "../test-utils/vitest-module-mocks.js";
 
 const enqueueSystemEventMock = vi.fn();
 const requestHeartbeatMock = vi.fn();
-const recordAcpParentStreamEventsMock = vi.fn();
+const readAcpSessionEntryMock = vi.fn();
+const resolveSessionFilePathMock = vi.fn();
+const resolveSessionFilePathOptionsMock = vi.fn();
 
 vi.mock("../infra/system-events.js", () => ({
   enqueueSystemEvent: (...args: unknown[]) => enqueueSystemEventMock(...args),
@@ -22,18 +24,32 @@ vi.mock("../infra/heartbeat-wake.js", async () => {
   );
 });
 
-vi.mock("./acp-parent-stream-store.sqlite.js", async () => {
+vi.mock("../acp/runtime/session-meta.js", async () => {
   return await mergeMockedModule(
-    await vi.importActual<typeof import("./acp-parent-stream-store.sqlite.js")>(
-      "./acp-parent-stream-store.sqlite.js",
+    await vi.importActual<typeof import("../acp/runtime/session-meta.js")>(
+      "../acp/runtime/session-meta.js",
     ),
     () => ({
-      recordAcpParentStreamEvents: (...args: unknown[]) => recordAcpParentStreamEventsMock(...args),
+      readAcpSessionEntry: (...args: unknown[]) => readAcpSessionEntryMock(...args),
+    }),
+  );
+});
+
+vi.mock("../config/sessions/paths.js", async () => {
+  return await mergeMockedModule(
+    await vi.importActual<typeof import("../config/sessions/paths.js")>(
+      "../config/sessions/paths.js",
+    ),
+    () => ({
+      resolveSessionFilePath: (...args: unknown[]) => resolveSessionFilePathMock(...args),
+      resolveSessionFilePathOptions: (...args: unknown[]) =>
+        resolveSessionFilePathOptionsMock(...args),
     }),
   );
 });
 
 let emitAgentEvent: typeof import("../infra/agent-events.js").emitAgentEvent;
+let resolveAcpSpawnStreamLogPath: typeof import("./acp-spawn-parent-stream.js").resolveAcpSpawnStreamLogPath;
 let startAcpSpawnParentStreamRelay: typeof import("./acp-spawn-parent-stream.js").startAcpSpawnParentStreamRelay;
 
 const progressCommentaryDeliveryContext = {
@@ -87,14 +103,17 @@ function firstMockCall(
 describe("startAcpSpawnParentStreamRelay", () => {
   beforeAll(async () => {
     ({ emitAgentEvent } = await import("../infra/agent-events.js"));
-    ({ startAcpSpawnParentStreamRelay } = await import("./acp-spawn-parent-stream.js"));
+    ({ resolveAcpSpawnStreamLogPath, startAcpSpawnParentStreamRelay } =
+      await import("./acp-spawn-parent-stream.js"));
   });
 
   beforeEach(() => {
     enqueueSystemEventMock.mockClear();
     requestHeartbeatMock.mockClear();
-    recordAcpParentStreamEventsMock.mockReset();
-    recordAcpParentStreamEventsMock.mockImplementation(() => undefined);
+    readAcpSessionEntryMock.mockReset();
+    resolveSessionFilePathMock.mockReset();
+    resolveSessionFilePathOptionsMock.mockReset();
+    resolveSessionFilePathOptionsMock.mockImplementation((value: unknown) => value);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-04T01:00:00.000Z"));
   });
@@ -200,50 +219,6 @@ describe("startAcpSpawnParentStreamRelay", () => {
         sessionKey: "agent:main:main",
       },
     ]);
-    relay.dispose();
-  });
-
-  it("backs off and caps SQLite diagnostic retries", () => {
-    recordAcpParentStreamEventsMock
-      .mockImplementationOnce(() => {
-        throw new Error("database unavailable");
-      })
-      .mockImplementation(() => undefined);
-    const relay = startAcpSpawnParentStreamRelay({
-      runId: "run-diagnostic-retry",
-      parentSessionKey: "agent:main:main",
-      childSessionKey: "agent:codex:acp:diagnostic-retry",
-      childSessionId: "session-diagnostic-retry",
-      agentId: "codex",
-      streamFlushMs: 120_000,
-      noOutputNoticeMs: 120_000,
-    });
-
-    emitAgentEvent({
-      runId: "run-diagnostic-retry",
-      stream: "assistant",
-      data: { delta: "first" },
-    });
-    vi.advanceTimersByTime(1_000);
-    expect(recordAcpParentStreamEventsMock).toHaveBeenCalledTimes(1);
-
-    for (let index = 0; index < 300; index += 1) {
-      emitAgentEvent({
-        runId: "run-diagnostic-retry",
-        stream: "assistant",
-        data: { delta: `event-${index}` },
-      });
-    }
-    expect(recordAcpParentStreamEventsMock).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(1_999);
-    expect(recordAcpParentStreamEventsMock).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(1);
-
-    expect(recordAcpParentStreamEventsMock).toHaveBeenCalledTimes(2);
-    const retried = recordAcpParentStreamEventsMock.mock.calls[1]?.[0] as
-      | { events?: unknown[] }
-      | undefined;
-    expect(retried?.events).toHaveLength(256);
     relay.dispose();
   });
 
@@ -534,52 +509,6 @@ describe("startAcpSpawnParentStreamRelay", () => {
     relay.dispose();
   });
 
-  it("relays the latest replaceable assistant snapshot instead of superseded drafts", () => {
-    const relay = startAcpSpawnParentStreamRelay({
-      runId: "run-replaceable-assistant",
-      parentSessionKey: "agent:main:main",
-      childSessionKey: "agent:codex:acp:child-replaceable-assistant",
-      agentId: "codex",
-      streamFlushMs: 10,
-      noOutputNoticeMs: 120_000,
-      emitStartNotice: false,
-    });
-
-    emitAgentEvent({
-      runId: "run-replaceable-assistant",
-      stream: "assistant",
-      data: {
-        text: "coordination draft",
-        delta: "coordination draft",
-        replaceable: true,
-      },
-    });
-    emitAgentEvent({
-      runId: "run-replaceable-assistant",
-      stream: "assistant",
-      data: {
-        text: "final answer",
-        delta: "",
-        replace: true,
-        replaceable: true,
-      },
-    });
-    emitAgentEvent({
-      runId: "run-replaceable-assistant",
-      stream: "lifecycle",
-      data: {
-        phase: "end",
-        startedAt: 1_000,
-        endedAt: 2_000,
-      },
-    });
-
-    const texts = collectedTexts();
-    expectNoTextWithFragment(texts, "coordination draft");
-    expectTextWithFragment(texts, "codex: final answer");
-    relay.dispose();
-  });
-
   it("relays commentary-phase assistant text in parent progress mode by default", () => {
     const relay = startAcpSpawnParentStreamRelay({
       runId: "run-commentary-default",
@@ -781,7 +710,7 @@ describe("startAcpSpawnParentStreamRelay", () => {
     relay.dispose();
   });
 
-  it("omits already flushed preamble item progress from later prefix snapshots", () => {
+  it("emits full preamble item progress after the previous snapshot flushed", () => {
     const relay = startAcpSpawnParentStreamRelay({
       runId: "run-preamble-item-after-flush",
       parentSessionKey: "agent:main:main",
@@ -815,7 +744,7 @@ describe("startAcpSpawnParentStreamRelay", () => {
     });
     vi.advanceTimersByTime(15);
 
-    expect(collectedTexts()).toEqual(["codex: Checking", "codex: the app-server stream"]);
+    expect(collectedTexts()).toEqual(["codex: Checking", "codex: Checking the app-server stream"]);
     relay.dispose();
   });
 
@@ -1016,7 +945,7 @@ describe("startAcpSpawnParentStreamRelay", () => {
     relay.dispose();
   });
 
-  it("applies account streaming mode opt-outs", () => {
+  it("applies legacy account streamMode opt-outs", () => {
     const relay = startAcpSpawnParentStreamRelay({
       runId: "run-account-stream-mode-off",
       parentSessionKey: "agent:main:main",
@@ -1033,7 +962,7 @@ describe("startAcpSpawnParentStreamRelay", () => {
             },
             accounts: {
               work: {
-                streaming: { mode: "off" },
+                streamMode: "off",
               },
             },
           },
@@ -1431,35 +1360,33 @@ describe("startAcpSpawnParentStreamRelay", () => {
     relay.dispose();
   });
 
-  it.each([
-    {
-      name: "preview cutoff",
-      delta: `${"a".repeat(218)}😀tail`,
-      expected: `${"a".repeat(218)}…`,
-    },
-    {
-      name: "retained buffer start",
-      delta: `😀${"b".repeat(3_999)}`,
-      expected: `${"b".repeat(219)}…`,
-    },
-  ])("keeps $name on UTF-16 boundaries", ({ delta, expected }) => {
-    const relay = startAcpSpawnParentStreamRelay({
-      runId: "run-utf16-safe",
-      parentSessionKey: "agent:main:main",
-      childSessionKey: "agent:codex:acp:utf16-safe",
-      agentId: "codex",
-      streamFlushMs: 0,
-      noOutputNoticeMs: 120_000,
+  it("resolves ACP spawn stream log path from session metadata", () => {
+    readAcpSessionEntryMock.mockReturnValue({
+      storePath: "/tmp/openclaw/agents/codex/sessions/sessions.json",
+      entry: {
+        sessionId: "sess-123",
+        sessionFile: "/tmp/openclaw/agents/codex/sessions/sess-123.jsonl",
+      },
+    });
+    resolveSessionFilePathMock.mockReturnValue(
+      "/tmp/openclaw/agents/codex/sessions/sess-123.jsonl",
+    );
+
+    const resolved = resolveAcpSpawnStreamLogPath({
+      childSessionKey: "agent:codex:acp:child-1",
     });
 
-    emitAgentEvent({
-      runId: "run-utf16-safe",
-      stream: "assistant",
-      data: { delta },
+    expect(resolved).toBe("/tmp/openclaw/agents/codex/sessions/sess-123.acp-stream.jsonl");
+    expect(readAcpSessionEntryMock).toHaveBeenCalledWith({
+      sessionKey: "agent:codex:acp:child-1",
     });
-
-    expect(collectedTexts()[1]).toBe(`codex: ${expected}`);
-    relay.dispose();
+    expect(resolveSessionFilePathMock).toHaveBeenCalledTimes(1);
+    const [sessionId, entry, options] = firstMockCall(
+      resolveSessionFilePathMock,
+      "session file path resolution",
+    ) as [string, { sessionId?: unknown }, { storePath?: unknown }];
+    expect(sessionId).toBe("sess-123");
+    expect(entry.sessionId).toBe("sess-123");
+    expect(options.storePath).toBe("/tmp/openclaw/agents/codex/sessions/sessions.json");
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

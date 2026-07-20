@@ -138,10 +138,7 @@ function listConfiguredBundledDependencyNames(packageJson) {
   return [];
 }
 
-/**
- * Resolve an npm command invocation for plugin package scripts.
- * @internal Directly tested script implementation detail.
- */
+/** Resolve an npm command invocation for plugin package scripts. */
 export function resolvePluginNpmCommand(args, params = {}) {
   return resolveNpmRunner({
     comSpec: params.comSpec,
@@ -298,7 +295,7 @@ function installMissingOptionalBundledDependencies(params) {
       {
         cwd: params.packageDir,
         env: process.env,
-        stdio: ["ignore", "ignore", "inherit"],
+        stdio: ["ignore", "inherit", "inherit"],
       },
     );
     if (result.error) {
@@ -410,10 +407,7 @@ function installPackageLocalBundledDependencies(params) {
   };
 }
 
-/**
- * Build the package.json that should be used while packaging a plugin for npm.
- * @internal Directly tested script implementation detail.
- */
+/** Build the package.json that should be used while packaging a plugin for npm. */
 export function resolveAugmentedPluginNpmPackageJson(params) {
   const repoRoot = path.resolve(params.repoRoot ?? ".");
   const packageDir = resolvePackageDir(repoRoot, params.packageDir);
@@ -577,10 +571,7 @@ export function mergeGeneratedChannelConfigs(manifest, generatedChannelConfigs) 
   };
 }
 
-/**
- * Build the plugin manifest that should be used while packaging a plugin for npm.
- * @internal Directly tested script implementation detail.
- */
+/** Build the plugin manifest that should be used while packaging a plugin for npm. */
 export function resolveAugmentedPluginNpmManifest(params) {
   const repoRoot = path.resolve(params.repoRoot ?? ".");
   const packageDir = resolvePackageDir(repoRoot, params.packageDir);
@@ -610,10 +601,7 @@ export function resolveAugmentedPluginNpmManifest(params) {
   };
 }
 
-/**
- * Temporarily write augmented manifest/package metadata while a packaging callback runs.
- * @internal Directly tested script implementation detail.
- */
+/** Temporarily write augmented manifest/package metadata while a packaging callback runs. */
 export function withAugmentedPluginNpmManifestForPackage(params, callback) {
   const repoRoot = path.resolve(params.repoRoot ?? ".");
   const packageDir = resolvePackageDir(repoRoot, params.packageDir);
@@ -706,11 +694,7 @@ function readRunPackageDir(argv) {
   return packageDir;
 }
 
-/** @internal Directly tested script implementation detail. */
 export function parseRunArgs(argv) {
-  if (argv[0] === "--help" || argv[0] === "-h") {
-    return { help: true, packageDir: "", command: "", args: [] };
-  }
   if (argv[0] !== "--run") {
     throw new Error(RUN_USAGE);
   }
@@ -718,9 +702,6 @@ export function parseRunArgs(argv) {
   const separatorIndex = argv.indexOf("--", 2);
   if (!packageDir || separatorIndex === -1 || separatorIndex === argv.length - 1) {
     throw new Error(RUN_USAGE);
-  }
-  if (separatorIndex !== 2) {
-    throw new Error(`unexpected plugin npm package manifest run argument: ${argv[2]}`);
   }
   return {
     packageDir,
@@ -730,12 +711,7 @@ export function parseRunArgs(argv) {
 }
 
 function main(argv = process.argv.slice(2)) {
-  const parsedArgs = parseRunArgs(argv);
-  if (parsedArgs.help) {
-    console.log(RUN_USAGE);
-    return 0;
-  }
-  const { packageDir, command, args } = parsedArgs;
+  const { packageDir, command, args } = parseRunArgs(argv);
   return withAugmentedPluginNpmManifestForPackage(
     {
       packageDir,

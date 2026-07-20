@@ -1,18 +1,17 @@
-import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import { splitShellArgs } from "../utils/shell-argv.js";
 import { buildCommandPayloadCandidates } from "./command-analysis/risks.js";
-import { explainShellCommand } from "./command-explainer/extract.js";
+import { analyzeShellCommand } from "./exec-approvals-analysis.js";
 
 type ParsedExecApprovalCommand = {
   approvalId: string;
   decision: "allow-once" | "allow-always" | "deny";
 };
 
-type UnsafeExecControlShellCommandKind = "approve" | "channel-login";
+export type UnsafeExecControlShellCommandKind = "approve" | "channel-login";
 
-function parseExecApprovalShellCommand(raw: string): ParsedExecApprovalCommand | null {
+export function parseExecApprovalShellCommand(raw: string): ParsedExecApprovalCommand | null {
   const normalized = raw.trimStart();
   const match = normalized.match(
     /^\/approve(?:@[^\s]+)?\s+([A-Za-z0-9][A-Za-z0-9._:-]*)\s+(allow-once|allow-always|always|deny)\b/i,
@@ -21,7 +20,7 @@ function parseExecApprovalShellCommand(raw: string): ParsedExecApprovalCommand |
     return null;
   }
   return {
-    approvalId: expectDefined(match[1], "exec control command guard regex capture 1"),
+    approvalId: match[1],
     decision:
       normalizeLowercaseStringOrEmpty(match[2]) === "always"
         ? "allow-always"
@@ -58,7 +57,7 @@ function stripOpenClawPackageRunner(argv: string[]): string[] {
   if (commandName === "npx" || commandName === "bunx") {
     let idx = 1;
     while (idx < argv.length) {
-      const token = expectDefined(argv[idx], "argv entry at idx");
+      const token = argv[idx];
       if (token === "--") {
         idx += 1;
         break;
@@ -78,7 +77,7 @@ function stripOpenClawPackageRunner(argv: string[]): string[] {
   return argv;
 }
 
-function parseOpenClawChannelsLoginShellCommand(raw: string): boolean {
+export function parseOpenClawChannelsLoginShellCommand(raw: string): boolean {
   const argv = splitShellArgs(raw);
   if (!argv) {
     return false;
@@ -91,25 +90,17 @@ function parseOpenClawChannelsLoginShellCommand(raw: string): boolean {
   );
 }
 
-export async function detectUnsafeExecControlShellCommand(
+export function detectUnsafeExecControlShellCommand(
   command: string,
-): Promise<UnsafeExecControlShellCommandKind | null> {
+): UnsafeExecControlShellCommandKind | null {
   const rawCommand = command.trim();
-  const candidates = await (async () => {
-    try {
-      const explanation = await explainShellCommand(rawCommand);
-      if (explanation.ok) {
-        const commands = [...explanation.topLevelCommands, ...explanation.nestedCommands];
-        return commands.flatMap((step) => buildCommandPayloadCandidates(step.argv));
-      }
-    } catch {
-      // Fall back to line-local shell splitting below.
-    }
-    return normalizeStringEntries(rawCommand.split(/\r?\n/)).flatMap((line) => {
-      const argv = splitShellArgs(line);
-      return argv ? buildCommandPayloadCandidates(argv) : [line];
-    });
-  })();
+  const analysis = analyzeShellCommand({ command: rawCommand });
+  const candidates = analysis.ok
+    ? analysis.segments.flatMap((segment) => buildCommandPayloadCandidates(segment.argv))
+    : normalizeStringEntries(rawCommand.split(/\r?\n/)).flatMap((line) => {
+        const argv = splitShellArgs(line);
+        return argv ? buildCommandPayloadCandidates(argv) : [line];
+      });
   for (const candidate of candidates) {
     if (parseExecApprovalShellCommand(candidate)) {
       return "approve";
@@ -121,8 +112,8 @@ export async function detectUnsafeExecControlShellCommand(
   return null;
 }
 
-export async function rejectUnsafeExecControlShellCommand(command: string): Promise<void> {
-  const unsafeKind = await detectUnsafeExecControlShellCommand(command);
+export function rejectUnsafeExecControlShellCommand(command: string): void {
+  const unsafeKind = detectUnsafeExecControlShellCommand(command);
   if (unsafeKind === "approve") {
     throw new Error(
       [

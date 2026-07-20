@@ -6,7 +6,8 @@ read_when:
   - You want to run models via Kilo Gateway in OpenClaw
 ---
 
-Kilo Gateway routes requests to many models behind a single OpenAI-compatible endpoint and API key.
+Kilo Gateway provides a **unified API** that routes requests to many models behind a single
+endpoint and API key. It is OpenAI-compatible, so most OpenAI SDKs work by switching the base URL.
 
 | Property | Value                              |
 | -------- | ---------------------------------- |
@@ -15,18 +16,11 @@ Kilo Gateway routes requests to many models behind a single OpenAI-compatible en
 | API      | OpenAI-compatible                  |
 | Base URL | `https://api.kilo.ai/api/gateway/` |
 
-## Install plugin
-
-```bash
-openclaw plugins install @openclaw/kilocode-provider
-openclaw gateway restart
-```
-
-## Setup
+## Getting started
 
 <Steps>
   <Step title="Create an account">
-    Go to [app.kilo.ai](https://app.kilo.ai), sign in or create an account, then generate an API key.
+    Go to [app.kilo.ai](https://app.kilo.ai), sign in or create an account, then navigate to API Keys and generate a new key.
   </Step>
   <Step title="Run onboarding">
     ```bash
@@ -47,20 +41,39 @@ openclaw gateway restart
   </Step>
 </Steps>
 
-## Default model and catalog
+## Default model
 
-The default model is `kilocode/kilo-auto/balanced`, Kilo Gateway's balanced smart-routing tier.
-OpenClaw does not publish a task-to-upstream-model mapping for it; routing behind
-`kilo-auto/balanced` is owned by Kilo Gateway.
+The default model is `kilocode/kilo/auto`, a provider-owned smart-routing
+model managed by Kilo Gateway.
 
-At startup OpenClaw queries `GET https://api.kilo.ai/api/gateway/models` and merges discovered models
-ahead of a static fallback catalog. The static fallback contains only
-`kilocode/kilo-auto/balanced` (`Auto Balanced`, `input: ["text", "image"]`, `reasoning: true`,
-`contextWindow: 1000000`, `maxTokens: 65536`).
+<Note>
+OpenClaw treats `kilocode/kilo/auto` as the stable default ref, but does not
+publish a source-backed task-to-upstream-model mapping for that route. Exact
+upstream routing behind `kilocode/kilo/auto` is owned by Kilo Gateway, not
+hard-coded in OpenClaw.
+</Note>
 
-Any model on the gateway is addressable as `kilocode/<upstream-id>` (for example
-`kilocode/anthropic/claude-sonnet-4`, `kilocode/openai/gpt-5.5`). Run `/models kilocode` or
-`openclaw models list --provider kilocode` to see the full discovered list.
+## Built-in catalog
+
+OpenClaw dynamically discovers available models from the Kilo Gateway at startup. Use
+`/models kilocode` to see the full list of models available with your account.
+
+Any model available on the gateway can be used with the `kilocode/` prefix:
+
+| Model ref                                | Notes                              |
+| ---------------------------------------- | ---------------------------------- |
+| `kilocode/kilo/auto`                     | Default — smart routing            |
+| `kilocode/anthropic/claude-sonnet-4`     | Anthropic via Kilo                 |
+| `kilocode/openai/gpt-5.5`                | OpenAI via Kilo                    |
+| `kilocode/google/gemini-3.1-pro-preview` | Google via Kilo                    |
+| ...and many more                         | Use `/models kilocode` to list all |
+
+<Tip>
+At startup, OpenClaw queries `GET https://api.kilo.ai/api/gateway/models` and merges
+discovered models ahead of the static fallback catalog. The bundled fallback always
+includes `kilocode/kilo/auto` (`Kilo Auto`) with `input: ["text", "image"]`,
+`reasoning: true`, `contextWindow: 1000000`, and `maxTokens: 128000`.
+</Tip>
 
 ## Config example
 
@@ -69,41 +82,40 @@ Any model on the gateway is addressable as `kilocode/<upstream-id>` (for example
   env: { KILOCODE_API_KEY: "<your-kilocode-api-key>" }, // pragma: allowlist secret
   agents: {
     defaults: {
-      model: { primary: "kilocode/kilo-auto/balanced" },
+      model: { primary: "kilocode/kilo/auto" },
     },
   },
 }
 ```
 
-## Behavior notes
-
 <AccordionGroup>
   <Accordion title="Transport and compatibility">
-    Kilo Gateway is OpenRouter-compatible, so it uses the proxy-style OpenAI-compatible request
-    path rather than native OpenAI request shaping (no `store`, no OpenAI reasoning-effort payload).
+    Kilo Gateway is documented in source as OpenRouter-compatible, so it stays on
+    the proxy-style OpenAI-compatible path rather than native OpenAI request shaping.
 
-    - Gemini-backed Kilo refs stay on the proxy-Gemini path: OpenClaw sanitizes Gemini thought
-      signatures there but does not enable native Gemini replay validation or bootstrap rewrites.
-    - Requests use a Bearer token built from your API key.
+    - Gemini-backed Kilo refs stay on the proxy-Gemini path, so OpenClaw keeps
+      Gemini thought-signature sanitation there without enabling native Gemini
+      replay validation or bootstrap rewrites.
+    - Kilo Gateway uses a Bearer token with your API key under the hood.
 
   </Accordion>
 
   <Accordion title="Stream wrapper and reasoning">
-    The Kilo stream wrapper adds an `X-KILOCODE-FEATURE` request header (default `openclaw`,
-    override with the `KILOCODE_FEATURE` env var) and normalizes reasoning-effort payloads for
-    models that support it.
+    Kilo's shared stream wrapper adds the provider app header and normalizes
+    proxy reasoning payloads for supported concrete model refs.
 
     <Warning>
-    `kilocode/kilo-auto/balanced` and `x-ai/*` refs skip reasoning-effort injection. Use a concrete
-    model ref such as `kilocode/anthropic/claude-sonnet-4` if you need reasoning support.
+    `kilocode/kilo/auto` and other proxy-reasoning-unsupported hints skip reasoning
+    injection. If you need reasoning support, use a concrete model ref such as
+    `kilocode/anthropic/claude-sonnet-4`.
     </Warning>
 
   </Accordion>
 
   <Accordion title="Troubleshooting">
-    - If model discovery fails at startup, OpenClaw falls back to the static catalog containing `kilocode/kilo-auto/balanced`.
+    - If model discovery fails at startup, OpenClaw falls back to the bundled static catalog containing `kilocode/kilo/auto`.
     - Confirm your API key is valid and that your Kilo account has the desired models enabled.
-    - When Gateway runs as a daemon, ensure `KILOCODE_API_KEY` is available to that process (for example in `~/.openclaw/.env` or via `env.shellEnv`).
+    - When the Gateway runs as a daemon, ensure `KILOCODE_API_KEY` is available to that process (for example in `~/.openclaw/.env` or via `env.shellEnv`).
 
   </Accordion>
 </AccordionGroup>

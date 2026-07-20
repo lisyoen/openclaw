@@ -28,8 +28,6 @@ export function createWebChannelStatusController(statusSink?: (status: WebChanne
     lastMessageAt: null,
     lastEventAt: null,
     lastError: null,
-    busy: false,
-    lastRunActivityAt: null,
     healthState: "starting",
   };
 
@@ -50,7 +48,6 @@ export function createWebChannelStatusController(statusSink?: (status: WebChanne
       }
       status.lastError = null;
       status.healthState = "healthy";
-      status.terminalDisconnect = undefined;
       emit();
     },
     noteInbound(at = Date.now()) {
@@ -68,17 +65,6 @@ export function createWebChannelStatusController(statusSink?: (status: WebChanne
         return;
       }
       Object.assign(status, createTransportActivityStatusPatch(at));
-      emit();
-    },
-    noteBusy(busy: boolean, at = Date.now()) {
-      if (status.busy === busy && status.lastRunActivityAt === at) {
-        return;
-      }
-      status.busy = busy;
-      status.lastRunActivityAt = at;
-      if (status.connected && busy) {
-        status.healthState = "healthy";
-      }
       emit();
     },
     noteWatchdogStale(at = Date.now()) {
@@ -120,8 +106,6 @@ export function createWebChannelStatusController(statusSink?: (status: WebChanne
       status.running = false;
       status.connected = false;
       status.lastEventAt = at;
-      status.terminalDisconnect =
-        status.healthState === "logged-out" || status.healthState === "conflict";
       if (!isTerminalHealthState(status.healthState)) {
         status.healthState = "stopped";
       }

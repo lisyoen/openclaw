@@ -1,4 +1,5 @@
 // Qa Channel plugin module implements channel base behavior.
+import { getChatChannelMeta } from "openclaw/plugin-sdk/channel-plugin-common";
 import {
   listQaChannelAccountIds,
   resolveDefaultQaChannelAccountId,
@@ -12,16 +13,15 @@ import type { CoreConfig } from "./types.js";
 
 export const QA_CHANNEL_ID = "qa-channel" as const;
 
-// qa-channel is synthetic and never in the bundled chat-meta catalog; it owns
-// its metadata instead of spreading a lookup that could only ever be undefined.
+export const qaChannelSetupMeta = { ...getChatChannelMeta(QA_CHANNEL_ID) };
 export const qaChannelRuntimeMeta = {
+  ...qaChannelSetupMeta,
   id: QA_CHANNEL_ID,
   label: "QA Channel",
   selectionLabel: "QA Channel",
   docsPath: "/channels/qa-channel",
   blurb: "Synthetic QA channel for OpenClaw QA runs.",
 };
-const qaChannelSetupMeta = qaChannelRuntimeMeta;
 
 type QaChannelPluginBase = Pick<
   ChannelPlugin<ResolvedQaChannelAccount>,

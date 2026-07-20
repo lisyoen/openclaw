@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { describe, expect, it } from "vitest";
 import {
   imessageApprovalCapability,
+  imessageNativeApprovalAdapter,
   shouldSuppressLocalIMessageExecApprovalPrompt,
 } from "./approval-native.js";
 
@@ -72,7 +73,6 @@ function buildPluginRequest(
 
 function nativeShouldHandle(params: {
   cfg: OpenClawConfig;
-  approvalKind: "exec" | "plugin";
   request: ExecApprovalRequest | PluginApprovalRequest;
   accountId?: string | null;
 }) {
@@ -80,7 +80,6 @@ function nativeShouldHandle(params: {
     cfg: params.cfg,
     accountId: params.accountId ?? "default",
     context: {},
-    approvalKind: params.approvalKind,
     request: params.request,
   });
 }
@@ -113,7 +112,7 @@ describe("imessage approval capability", () => {
     const pluginRequest = buildPluginRequest("+15551230000");
 
     expect(
-      imessageApprovalCapability?.getActionAvailabilityState?.({
+      imessageNativeApprovalAdapter.auth?.getActionAvailabilityState?.({
         cfg,
         accountId: "default",
         action: "approve",
@@ -128,8 +127,8 @@ describe("imessage approval capability", () => {
         request: execRequest,
       }).enabled,
     ).toBe(false);
-    expect(nativeShouldHandle({ cfg, approvalKind: "exec", request: execRequest })).toBe(false);
-    expect(nativeShouldHandle({ cfg, approvalKind: "plugin", request: pluginRequest })).toBe(false);
+    expect(nativeShouldHandle({ cfg, request: execRequest })).toBe(false);
+    expect(nativeShouldHandle({ cfg, request: pluginRequest })).toBe(false);
   });
 
   it("allows session-mode exec delivery for matching iMessage origins", () => {
@@ -150,33 +149,21 @@ describe("imessage approval capability", () => {
       supportsApproverDmSurface: false,
       notifyOriginWhenDmOnly: true,
     });
-    expect(nativeShouldHandle({ cfg, approvalKind: "exec", request })).toBe(true);
+    expect(nativeShouldHandle({ cfg, request })).toBe(true);
   });
 
   it("keeps exec and plugin forwarding gates independent", () => {
     const execOnly = buildConfig({ approvals: { exec: { enabled: true } } });
     const pluginOnly = buildConfig({ approvals: { plugin: { enabled: true } } });
 
+    expect(nativeShouldHandle({ cfg: execOnly, request: buildPluginRequest("+15551230000") })).toBe(
+      false,
+    );
+    expect(nativeShouldHandle({ cfg: pluginOnly, request: buildExecRequest("+15551230000") })).toBe(
+      false,
+    );
     expect(
-      nativeShouldHandle({
-        cfg: execOnly,
-        approvalKind: "plugin",
-        request: buildPluginRequest("+15551230000"),
-      }),
-    ).toBe(false);
-    expect(
-      nativeShouldHandle({
-        cfg: pluginOnly,
-        approvalKind: "exec",
-        request: buildExecRequest("+15551230000"),
-      }),
-    ).toBe(false);
-    expect(
-      nativeShouldHandle({
-        cfg: pluginOnly,
-        approvalKind: "plugin",
-        request: buildPluginRequest("+15551230000"),
-      }),
+      nativeShouldHandle({ cfg: pluginOnly, request: buildPluginRequest("+15551230000") }),
     ).toBe(true);
   });
 
@@ -188,7 +175,7 @@ describe("imessage approval capability", () => {
       sessionKey: "agent:main:slack:channel:c123",
     });
 
-    expect(nativeShouldHandle({ cfg, approvalKind: "exec", request })).toBe(false);
+    expect(nativeShouldHandle({ cfg, request })).toBe(false);
     expect(
       imessageApprovalCapability.native?.describeDeliveryCapabilities({
         cfg,
@@ -268,7 +255,7 @@ describe("imessage approval capability", () => {
     const request = buildExecRequest("+15551230000");
 
     expect(
-      imessageApprovalCapability?.getActionAvailabilityState?.({
+      imessageNativeApprovalAdapter.auth?.getActionAvailabilityState?.({
         cfg,
         accountId: "default",
         action: "approve",
@@ -282,7 +269,7 @@ describe("imessage approval capability", () => {
         context: {},
       }),
     ).toBe(false);
-    expect(nativeShouldHandle({ cfg, approvalKind: "exec", request })).toBe(false);
+    expect(nativeShouldHandle({ cfg, request })).toBe(false);
   });
 
   it("disables delivery when the iMessage channel is disabled", () => {
@@ -300,7 +287,7 @@ describe("imessage approval capability", () => {
         request,
       }).enabled,
     ).toBe(false);
-    expect(nativeShouldHandle({ cfg, approvalKind: "exec", request })).toBe(false);
+    expect(nativeShouldHandle({ cfg, request })).toBe(false);
   });
 
   it("renders thumbs-only reaction hints in exec approval prompts", () => {
@@ -411,7 +398,7 @@ describe("imessage approval capability", () => {
     });
 
     expect(
-      imessageApprovalCapability?.getActionAvailabilityState?.({
+      imessageNativeApprovalAdapter.auth?.getActionAvailabilityState?.({
         cfg,
         accountId: "default",
         action: "approve",
@@ -432,10 +419,8 @@ describe("imessage approval capability", () => {
       approvals: { exec: { enabled: true, sessionFilter: ["telegram"] } },
     });
 
-    expect(nativeShouldHandle({ cfg: blockedByAgent, approvalKind: "exec", request })).toBe(false);
-    expect(nativeShouldHandle({ cfg: blockedBySession, approvalKind: "exec", request })).toBe(
-      false,
-    );
+    expect(nativeShouldHandle({ cfg: blockedByAgent, request })).toBe(false);
+    expect(nativeShouldHandle({ cfg: blockedBySession, request })).toBe(false);
   });
 
   it("matches account-scoped top-level iMessage targets only for that account", () => {
@@ -455,7 +440,7 @@ describe("imessage approval capability", () => {
     });
 
     expect(
-      imessageApprovalCapability?.getActionAvailabilityState?.({
+      imessageNativeApprovalAdapter.auth?.getActionAvailabilityState?.({
         cfg,
         accountId: "default",
         action: "approve",
@@ -463,7 +448,7 @@ describe("imessage approval capability", () => {
       }),
     ).toEqual({ kind: "disabled" });
     expect(
-      imessageApprovalCapability?.getActionAvailabilityState?.({
+      imessageNativeApprovalAdapter.auth?.getActionAvailabilityState?.({
         cfg,
         accountId: "work",
         action: "approve",

@@ -18,7 +18,7 @@ import type {
 export type * from "./qa-channel-protocol.js";
 
 type QaTargetParts = {
-  chatType: "direct" | "channel" | "group";
+  chatType: "direct" | "channel";
   conversationId: string;
   threadId?: string;
 };

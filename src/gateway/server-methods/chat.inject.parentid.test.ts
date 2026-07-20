@@ -1,65 +1,24 @@
 // Chat transcript parent-id tests protect gateway-injected assistant appends so
 // compaction history remains connected and transcript listeners receive updates.
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  appendTranscriptMessageSync,
-  loadTranscriptEvents,
-  replaceSessionEntry,
-} from "../../config/sessions/session-accessor.js";
 import { onSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
-import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { appendInjectedAssistantMessageToTranscript } from "./chat-transcript-inject.js";
+import { createTranscriptFixtureSync } from "./chat.test-helpers.js";
 
-type SqliteTranscriptFixture = {
-  agentId: string;
-  dir: string;
-  sessionKey: string;
-  sessionId: string;
-  storePath: string;
-};
-
-async function createSqliteTranscriptFixture(params: {
-  prefix: string;
-  sessionId: string;
-}): Promise<SqliteTranscriptFixture> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), params.prefix));
-  const sessionKey = "main";
-  const agentId = "main";
-  const storePath = path.join(dir, "sessions.json");
-  await replaceSessionEntry(
-    { agentId, sessionKey, storePath },
-    { sessionId: params.sessionId, updatedAt: Date.now() },
-  );
-  return { agentId, dir, sessionKey, sessionId: params.sessionId, storePath };
+function readTranscriptLines(transcriptPath: string): string[] {
+  const lines: string[] = [];
+  for (const line of fs.readFileSync(transcriptPath, "utf-8").split(/\r?\n/)) {
+    if (line.length > 0) {
+      lines.push(line);
+    }
+  }
+  return lines;
 }
 
-async function cleanupFixture(fixture: { dir: string }) {
-  closeOpenClawAgentDatabasesForTest();
-  closeOpenClawStateDatabaseForTest();
-  fs.rmSync(fixture.dir, { recursive: true, force: true });
-}
-
-async function readTranscriptEvents(
-  fixture: SqliteTranscriptFixture,
-): Promise<Record<string, unknown>[]> {
-  return (await loadTranscriptEvents({
-    agentId: fixture.agentId,
-    sessionId: fixture.sessionId,
-    sessionKey: fixture.sessionKey,
-    storePath: fixture.storePath,
-  })) as Record<string, unknown>[];
-}
-
-async function appendHelloAndRequireId(fixture: SqliteTranscriptFixture): Promise<string> {
+async function appendHelloAndRequireId(transcriptPath: string): Promise<string> {
   const appended = await appendInjectedAssistantMessageToTranscript({
-    agentId: fixture.agentId,
-    sessionId: fixture.sessionId,
-    sessionKey: fixture.sessionKey,
-    storePath: fixture.storePath,
+    transcriptPath,
     message: "hello",
   });
   expect(appended.ok).toBe(true);
@@ -72,75 +31,69 @@ async function appendHelloAndRequireId(fixture: SqliteTranscriptFixture): Promis
   return messageId;
 }
 
-async function readLastTranscriptRecord(
-  fixture: SqliteTranscriptFixture,
-): Promise<Record<string, unknown>> {
-  const events = await readTranscriptEvents(fixture);
-  expect(events.length).toBeGreaterThanOrEqual(2);
-  return events.at(-1) as Record<string, unknown>;
+function readLastTranscriptRecord(transcriptPath: string): Record<string, unknown> {
+  const lines = readTranscriptLines(transcriptPath);
+  expect(lines.length).toBeGreaterThanOrEqual(2);
+  return JSON.parse(lines.at(-1) as string) as Record<string, unknown>;
 }
 
 // Guardrail: Gateway-injected assistant transcript messages must attach to the
 // current leaf with a `parentId` and must not sever compaction history.
 describe("gateway chat.inject transcript writes", () => {
   it("appends a agent session entry that includes parentId", async () => {
-    const fixture = await createSqliteTranscriptFixture({
+    const { dir, transcriptPath } = createTranscriptFixtureSync({
       prefix: "openclaw-chat-inject-",
       sessionId: "sess-1",
     });
 
     try {
-      await appendHelloAndRequireId(fixture);
-      const last = await readLastTranscriptRecord(fixture);
+      await appendHelloAndRequireId(transcriptPath);
+      const last = readLastTranscriptRecord(transcriptPath);
       expect(last.type).toBe("message");
 
-      // Gateway appends must go through the transcript accessor so parent links
-      // stay connected for compaction and chat.history projection.
+      // The regression we saw: raw jsonl appends omitted this field entirely.
       expect(Object.hasOwn(last, "parentId")).toBe(true);
       expect(last).toHaveProperty("id");
       expect(last).toHaveProperty("message");
     } finally {
-      await cleanupFixture(fixture);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("preserves parent links after an oversized transcript row", async () => {
-    const fixture = await createSqliteTranscriptFixture({
+  it("uses raw append for oversized append-only transcripts", async () => {
+    const { dir, transcriptPath } = createTranscriptFixtureSync({
       prefix: "openclaw-chat-inject-large-",
       sessionId: "sess-1",
     });
 
     try {
-      const existing = appendTranscriptMessageSync(
-        {
-          agentId: fixture.agentId,
-          sessionId: fixture.sessionId,
-          sessionKey: fixture.sessionKey,
-          storePath: fixture.storePath,
-        },
-        {
+      fs.appendFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          type: "message",
+          id: "legacy-large-message",
           message: {
             role: "assistant",
             content: [{ type: "text", text: "x".repeat(9 * 1024 * 1024) }],
           },
-        },
+        })}\n`,
+        "utf-8",
       );
 
-      const messageId = await appendHelloAndRequireId(fixture);
-      const last = await readLastTranscriptRecord(fixture);
+      const messageId = await appendHelloAndRequireId(transcriptPath);
+      const last = readLastTranscriptRecord(transcriptPath);
 
-      expect(existing).toBeDefined();
       expect(last.type).toBe("message");
       expect(last).toHaveProperty("id", messageId);
       expect(last).toHaveProperty("message");
-      expect(last).toHaveProperty("parentId", existing?.messageId);
+      expect(Object.hasOwn(last, "parentId")).toBe(false);
     } finally {
-      await cleanupFixture(fixture);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
   it("emits and returns the redacted injected assistant message", async () => {
-    const fixture = await createSqliteTranscriptFixture({
+    const { dir, transcriptPath } = createTranscriptFixtureSync({
       prefix: "openclaw-chat-inject-redact-",
       sessionId: "sess-redact",
     });
@@ -150,10 +103,9 @@ describe("gateway chat.inject transcript writes", () => {
 
     try {
       const appended = await appendInjectedAssistantMessageToTranscript({
-        agentId: fixture.agentId,
-        sessionId: fixture.sessionId,
+        transcriptPath,
         sessionKey: "global",
-        storePath: fixture.storePath,
+        agentId: "work",
         message: `Here is your key: ${fakeApiKey}`,
         config: { logging: { redactSensitive: "tools" } },
       });
@@ -161,15 +113,16 @@ describe("gateway chat.inject transcript writes", () => {
       expect(appended.ok).toBe(true);
       expect(JSON.stringify(appended.message)).not.toContain(fakeApiKey);
       expect(updates).toHaveLength(1);
-      expect(updates[0]).toMatchObject({ sessionKey: "global", agentId: "main" });
+      expect(updates[0]).toMatchObject({ sessionKey: "global", agentId: "work" });
 
-      const last = (await readLastTranscriptRecord(fixture)) as { message?: unknown };
+      const lines = readTranscriptLines(transcriptPath);
+      const last = JSON.parse(lines.at(-1) as string) as { message?: unknown };
       expect(JSON.stringify(last.message)).not.toContain(fakeApiKey);
       expect(updates[0]?.message).toEqual(last.message);
       expect(JSON.stringify(updates[0]?.message)).not.toContain(fakeApiKey);
     } finally {
       unsubscribe();
-      await cleanupFixture(fixture);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

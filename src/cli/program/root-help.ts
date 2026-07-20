@@ -9,7 +9,7 @@ import {
   collectUniqueCommandDescriptors,
 } from "./command-descriptor-utils.js";
 import { getCoreCliCommandDescriptors } from "./core-command-descriptors.js";
-import { configureProgramHelp, formatProgramHelpOutput } from "./help.js";
+import { configureProgramHelp } from "./help.js";
 import { getSubCliEntries } from "./subcli-descriptors.js";
 
 /** Options for rendering root help without fully registering the live CLI. */
@@ -60,8 +60,17 @@ async function buildRootHelpProgram(renderOptions?: RootHelpRenderOptions): Prom
 export async function renderRootHelpText(renderOptions?: RootHelpRenderOptions): Promise<string> {
   const program = await buildRootHelpProgram(renderOptions);
   let output = "";
-  program.configureOutput({ writeOut: (chunk) => (output += formatProgramHelpOutput(chunk)) });
-  program.outputHelp();
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  const captureWrite: typeof process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  process.stdout.write = captureWrite;
+  try {
+    program.outputHelp();
+  } finally {
+    process.stdout.write = originalWrite;
+  }
   return output;
 }
 

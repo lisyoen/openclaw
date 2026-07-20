@@ -90,36 +90,15 @@ function normalizeDeepgramEncoding(
 }
 
 function normalizeDeepgramRealtimeBaseUrl(value?: string): string {
-  const resolved = normalizeOptionalString(value ?? process.env.DEEPGRAM_BASE_URL);
-  if (!resolved) {
-    return DEFAULT_DEEPGRAM_AUDIO_BASE_URL;
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(resolved);
-  } catch {
-    throw new Error("Invalid Deepgram baseUrl: value is not a valid URL");
-  }
-  const { protocol } = parsed;
-  if (protocol !== "http:" && protocol !== "https:" && protocol !== "ws:" && protocol !== "wss:") {
-    // Endpoint URLs can contain userinfo or sensitive query values. Keep the
-    // error actionable without echoing the configured value.
-    throw new Error(
-      `Invalid Deepgram baseUrl: unsupported scheme "${protocol}" (expected http, https, ws, or wss)`,
-    );
-  }
-  return resolved;
+  return (
+    normalizeOptionalString(value ?? process.env.DEEPGRAM_BASE_URL) ??
+    DEFAULT_DEEPGRAM_AUDIO_BASE_URL
+  );
 }
 
 function toDeepgramRealtimeWsUrl(config: DeepgramRealtimeTranscriptionSessionConfig): string {
   const url = new URL(normalizeDeepgramRealtimeBaseUrl(config.baseUrl));
-  // Self-hosted Deepgram may explicitly use ws:// without TLS. Translate only
-  // matching HTTP schemes so direct WebSocket endpoints keep their contract.
-  if (url.protocol === "http:") {
-    url.protocol = "ws:";
-  } else if (url.protocol === "https:") {
-    url.protocol = "wss:";
-  }
+  url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
   url.pathname = `${url.pathname.replace(/\/+$/, "")}/listen`;
   url.searchParams.set("model", config.model);
   url.searchParams.set("encoding", config.encoding);
@@ -268,3 +247,9 @@ export function buildDeepgramRealtimeTranscriptionProvider(): RealtimeTranscript
     },
   };
 }
+
+export const testing = {
+  normalizeProviderConfig,
+  toDeepgramRealtimeWsUrl,
+};
+export { testing as __testing };

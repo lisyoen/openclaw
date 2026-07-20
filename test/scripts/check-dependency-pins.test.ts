@@ -18,7 +18,7 @@ const nestedGitEnvKeys = [
 ] as const;
 
 function createNestedGitEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
+  const env = {
     ...process.env,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0",

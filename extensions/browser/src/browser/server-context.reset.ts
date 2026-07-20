@@ -5,19 +5,15 @@ import fs from "node:fs";
 import type { ResolvedBrowserProfile } from "./config.js";
 import { BrowserResetUnsupportedError } from "./errors.js";
 import { getBrowserProfileCapabilities } from "./profile-capabilities.js";
-import {
-  assertProfileLifecycleContext,
-  beginProfileTransition,
-} from "./server-context.lifecycle.js";
-import type { BrowserServerState } from "./server-context.types.js";
+import { closePlaywrightBrowserConnectionForProfile } from "./server-context.lifecycle.js";
 import type { ProfileRuntimeState } from "./server-context.types.js";
 import { movePathToTrash } from "./trash.js";
 
 type ResetDeps = {
   profile: ResolvedBrowserProfile;
-  state: () => BrowserServerState;
-  runtime: ProfileRuntimeState;
-  configRevision: number;
+  getProfileState: () => ProfileRuntimeState;
+  stopRunningBrowser: () => Promise<{ stopped: boolean }>;
+  isHttpReachable: (timeoutMs?: number) => Promise<boolean>;
   resolveOpenClawUserDataDir: (profileName: string) => string;
 };
 
@@ -28,9 +24,9 @@ type ResetOps = {
 /** Builds the reset-profile operation for one resolved browser profile. */
 export function createProfileResetOps({
   profile,
-  state,
-  runtime,
-  configRevision,
+  getProfileState,
+  stopRunningBrowser,
+  isHttpReachable,
   resolveOpenClawUserDataDir,
 }: ResetDeps): ResetOps {
   const capabilities = getBrowserProfileCapabilities(profile);
@@ -42,25 +38,27 @@ export function createProfileResetOps({
     }
 
     const userDataDir = resolveOpenClawUserDataDir(profile.name);
-    assertProfileLifecycleContext({ state: state(), runtime, configRevision });
-    runtime.managedLaunchFailure = undefined;
-    let result: { moved: boolean; from: string; to?: string } = {
-      moved: false,
-      from: userDataDir,
-    };
-    await beginProfileTransition({
-      state: state(),
-      runtime,
-      reason: "profile reset requested",
-      afterCleanup: async () => {
-        if (!fs.existsSync(userDataDir)) {
-          return;
-        }
-        const moved = await movePathToTrash(userDataDir);
-        result = { moved: true, from: userDataDir, to: moved };
-      },
-    });
-    return result;
+    const profileState = getProfileState();
+    profileState.managedLaunchFailure = undefined;
+    profileState.ensureBrowserAvailable = null;
+    const httpReachable = await isHttpReachable(300);
+    if (httpReachable && !profileState.running) {
+      // Port in use but not by us - kill it.
+      await closePlaywrightBrowserConnectionForProfile(profile.cdpUrl);
+    }
+
+    if (profileState.running) {
+      await stopRunningBrowser();
+    }
+
+    await closePlaywrightBrowserConnectionForProfile(profile.cdpUrl);
+
+    if (!fs.existsSync(userDataDir)) {
+      return { moved: false, from: userDataDir };
+    }
+
+    const moved = await movePathToTrash(userDataDir);
+    return { moved: true, from: userDataDir, to: moved };
   };
 
   return { resetProfile };

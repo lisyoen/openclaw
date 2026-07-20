@@ -6,6 +6,7 @@ type SlackReplyToMode = "off" | "first" | "all" | "batched";
 type SlackReplyToModeAccount = {
   replyToMode?: SlackReplyToMode;
   replyToModeByChatType?: SlackAccountConfig["replyToModeByChatType"];
+  dm?: { replyToMode?: SlackReplyToMode };
 };
 
 function normalizeSlackChatType(raw?: string): "direct" | "group" | "channel" | undefined {
@@ -29,6 +30,9 @@ export function resolveSlackReplyToMode(
   const normalized = normalizeSlackChatType(chatType ?? undefined);
   if (normalized && account.replyToModeByChatType?.[normalized] !== undefined) {
     return account.replyToModeByChatType[normalized] ?? "off";
+  }
+  if (normalized === "direct" && account.dm?.replyToMode !== undefined) {
+    return account.dm.replyToMode;
   }
   return account.replyToMode ?? "off";
 }

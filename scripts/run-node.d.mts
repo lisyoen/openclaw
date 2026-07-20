@@ -1,7 +1,6 @@
 export const runNodeWatchedPaths: string[];
 export function isBuildRelevantRunNodePath(repoPath: string): boolean;
 export function isRestartRelevantRunNodePath(repoPath: string): boolean;
-export function listRequiredRuntimePostBuildOutputs(deps: Record<string, unknown>): string[];
 export function resolveBuildRequirement(deps: {
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -48,7 +47,6 @@ export function runNodeMain(params?: {
   fs?: unknown;
   stderr?: { write: (value: string) => void };
   process?: NodeJS.Process;
-  signalProcess?: (pid: number, signal?: NodeJS.Signals | number) => boolean | void;
   execPath?: string;
   cwd?: string;
   args?: string[];

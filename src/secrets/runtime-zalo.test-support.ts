@@ -1,9 +1,9 @@
 /** Test bootstrap shim for Zalo runtime-secret surface coverage. */
 import { vi } from "vitest";
-import { loadChannelSecretContractApi } from "./channel-contract-api.js";
+import { loadBundledChannelSecretContractApi } from "./channel-contract-api.js";
 
 /** Test-only bootstrap registry mock for Zalo secret surface tests. */
-const zaloSecrets = loadChannelSecretContractApi({ channelId: "zalo", config: {} });
+const zaloSecrets = loadBundledChannelSecretContractApi("zalo");
 if (!zaloSecrets?.collectRuntimeConfigAssignments) {
   throw new Error("Missing Zalo secret contract api");
 }

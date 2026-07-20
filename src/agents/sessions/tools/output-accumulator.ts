@@ -12,14 +12,13 @@ import {
   truncateTail,
 } from "./truncate.js";
 
-interface OutputAccumulatorOptions {
+export interface OutputAccumulatorOptions {
   maxLines?: number;
   maxBytes?: number;
   tempFilePrefix?: string;
-  transformDecodedText?: (text: string) => string;
 }
 
-interface OutputSnapshot {
+export interface OutputSnapshot {
   content: string;
   truncation: TruncationResult;
   fullOutputPath?: string;
@@ -41,10 +40,9 @@ export class OutputAccumulator {
   private readonly maxBytes: number;
   private readonly maxRollingBytes: number;
   private readonly tempFilePrefix: string;
-  private readonly transformDecodedText?: (text: string) => string;
   private readonly decoder = new TextDecoder();
 
-  private spillChunks: Buffer[] = [];
+  private rawChunks: Buffer[] = [];
   private tailText = "";
   private tailBytes = 0;
   private tailStartsAtLineBoundary = true;
@@ -64,44 +62,33 @@ export class OutputAccumulator {
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
     this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
     this.tempFilePrefix = options.tempFilePrefix ?? "openclaw-output";
-    this.transformDecodedText = options.transformDecodedText;
   }
 
-  append(data: Buffer): string {
+  append(data: Buffer): void {
     if (this.finished) {
       throw new Error("Cannot append to a finished output accumulator");
     }
 
     this.totalRawBytes += data.length;
-    const decodedText = this.decoder.decode(data, { stream: true });
-    const text = this.transformDecodedText?.(decodedText) ?? decodedText;
-    this.appendDecodedText(text);
+    this.appendDecodedText(this.decoder.decode(data, { stream: true }));
 
-    // Transformed output must spill exactly what callers see so sanitization
-    // cannot be bypassed by reading the full-output file.
-    const spillChunk = this.transformDecodedText ? Buffer.from(text, "utf-8") : data;
     if (this.tempFileStream || this.shouldUseTempFile()) {
       this.ensureTempFile();
+      this.tempFileStream?.write(data);
+    } else if (data.length > 0) {
+      this.rawChunks.push(data);
     }
-    this.appendSpillChunk(spillChunk);
-    return text;
   }
 
-  finish(): string {
+  finish(): void {
     if (this.finished) {
-      return "";
+      return;
     }
     this.finished = true;
-    const decodedText = this.decoder.decode();
-    const text = this.transformDecodedText?.(decodedText) ?? decodedText;
-    this.appendDecodedText(text);
-    if (this.transformDecodedText && text.length > 0) {
-      this.appendSpillChunk(Buffer.from(text, "utf-8"));
-    }
+    this.appendDecodedText(this.decoder.decode());
     if (this.shouldUseTempFile()) {
       this.ensureTempFile();
     }
-    return text;
   }
 
   snapshot(options: { persistIfTruncated?: boolean } = {}): OutputSnapshot {
@@ -200,16 +187,12 @@ export class OutputAccumulator {
     }
 
     let start = buffer.length - this.maxRollingBytes;
-    while (start < buffer.length) {
-      const byte = buffer.at(start);
-      if (byte === undefined || (byte & 0xc0) !== 0x80) {
-        break;
-      }
+    while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) {
       start++;
     }
 
     this.tailStartsAtLineBoundary =
-      start === 0 ? this.tailStartsAtLineBoundary : buffer.at(start - 1) === 0x0a;
+      start === 0 ? this.tailStartsAtLineBoundary : buffer[start - 1] === 0x0a;
     this.tailText = buffer.subarray(start).toString("utf-8");
     this.tailBytes = byteLength(this.tailText);
   }
@@ -231,17 +214,6 @@ export class OutputAccumulator {
     );
   }
 
-  private appendSpillChunk(chunk: Buffer): void {
-    if (chunk.length === 0) {
-      return;
-    }
-    if (this.tempFileStream) {
-      this.tempFileStream.write(chunk);
-    } else {
-      this.spillChunks.push(chunk);
-    }
-  }
-
   private ensureTempFile(): void {
     if (this.tempFilePath) {
       return;
@@ -249,9 +221,9 @@ export class OutputAccumulator {
     const tempFile = createPrivateTempWriteStream(this.tempFilePrefix);
     this.tempFilePath = tempFile.path;
     this.tempFileStream = tempFile.stream;
-    for (const chunk of this.spillChunks) {
+    for (const chunk of this.rawChunks) {
       this.tempFileStream.write(chunk);
     }
-    this.spillChunks = [];
+    this.rawChunks = [];
   }
 }

@@ -7,13 +7,9 @@ import {
   resolveIntegerOption,
   resolveNonNegativeIntegerOption,
 } from "@openclaw/normalization-core/number-coercion";
-import {
-  normalizeOptionalLowercaseString,
-  normalizeOptionalString,
-} from "@openclaw/normalization-core/string-coerce";
+import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
-import { resolveStorePath } from "../config/sessions.js";
-import { listSessionEntries } from "../config/sessions/session-accessor.js";
+import { loadSessionStore, resolveStorePath } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   isAcpSessionKey,
@@ -25,6 +21,7 @@ import {
   normalizeInheritedToolDenylist,
 } from "./inherited-tool-deny.js";
 import { getSubagentDepthFromSessionStore } from "./subagent-depth.js";
+import { normalizeSubagentSessionKey } from "./subagent-session-key.js";
 
 /** Resolved role for a main session, orchestrating subagent, or leaf subagent. */
 export type SubagentSessionRole = "main" | "orchestrator" | "leaf";
@@ -87,17 +84,9 @@ function isSameAgentSessionStore(leftSessionKey: string, rightSessionKey: string
   return Boolean(leftAgentId) && leftAgentId === rightAgentId;
 }
 
-function readSessionStore(
-  storePath: string,
-  agentId: string,
-): Record<string, SessionCapabilityEntry> {
+function readSessionStore(storePath: string): Record<string, SessionCapabilityEntry> {
   try {
-    return Object.fromEntries(
-      listSessionEntries({ agentId, storePath, clone: false }).map(({ sessionKey, entry }) => [
-        sessionKey,
-        entry,
-      ]),
-    );
+    return loadSessionStore(storePath);
   } catch {
     return {};
   }
@@ -107,14 +96,14 @@ function findEntryBySessionId(
   store: SessionCapabilityStore,
   sessionId: string,
 ): SessionCapabilityEntry | undefined {
-  const normalizedSessionId = normalizeOptionalString(sessionId);
+  const normalizedSessionId = normalizeSubagentSessionKey(sessionId);
   if (!normalizedSessionId) {
     return undefined;
   }
   for (const entry of Object.values(store)) {
     // Older callers may know the session id but not the exact store key, so
     // persisted entries are searchable by their normalized embedded sessionId.
-    const candidateSessionId = normalizeOptionalString(entry?.sessionId);
+    const candidateSessionId = normalizeSubagentSessionKey(entry?.sessionId);
     if (candidateSessionId === normalizedSessionId) {
       return entry;
     }
@@ -138,7 +127,7 @@ function resolveSessionCapabilityEntry(params: {
     return undefined;
   }
   const storePath = resolveStorePath(params.cfg.session?.store, { agentId: parsed.agentId });
-  const store = readSessionStore(storePath, parsed.agentId);
+  const store = readSessionStore(storePath);
   return store[params.sessionKey] ?? findEntryBySessionId(store, params.sessionKey);
 }
 
@@ -150,7 +139,7 @@ export function resolveSubagentCapabilityStore(
     store?: SessionCapabilityStore;
   },
 ): SessionCapabilityStore | undefined {
-  const normalizedSessionKey = normalizeOptionalString(sessionKey);
+  const normalizedSessionKey = normalizeSubagentSessionKey(sessionKey);
   if (!normalizedSessionKey) {
     return opts?.store;
   }
@@ -165,7 +154,7 @@ export function resolveSubagentCapabilityStore(
     return undefined;
   }
   const storePath = resolveStorePath(opts.cfg.session?.store, { agentId: parsed.agentId });
-  return readSessionStore(storePath, parsed.agentId);
+  return readSessionStore(storePath);
 }
 
 /** Resolve depth-derived role/scope booleans for a subagent position. */
@@ -212,7 +201,7 @@ function isStoredSubagentEnvelopeSession(
   },
   visited = new Set<string>(),
 ): boolean {
-  const normalizedSessionKey = normalizeOptionalString(params.sessionKey);
+  const normalizedSessionKey = normalizeSubagentSessionKey(params.sessionKey);
   if (!normalizedSessionKey || visited.has(normalizedSessionKey)) {
     return false;
   }
@@ -239,7 +228,7 @@ function isStoredSubagentEnvelopeSession(
     return true;
   }
 
-  const spawnedBy = normalizeOptionalString(entry?.spawnedBy);
+  const spawnedBy = normalizeSubagentSessionKey(entry?.spawnedBy);
   if (!spawnedBy) {
     return false;
   }
@@ -267,7 +256,7 @@ export function isSubagentEnvelopeSession(
     entry?: SessionCapabilityEntry;
   },
 ): boolean {
-  const normalizedSessionKey = normalizeOptionalString(sessionKey);
+  const normalizedSessionKey = normalizeSubagentSessionKey(sessionKey);
   if (!normalizedSessionKey) {
     return false;
   }
@@ -297,7 +286,7 @@ export function resolveStoredSubagentCapabilities(
     store?: SessionCapabilityStore;
   },
 ) {
-  const normalizedSessionKey = normalizeOptionalString(sessionKey);
+  const normalizedSessionKey = normalizeSubagentSessionKey(sessionKey);
   const maxSpawnDepth =
     opts?.cfg?.agents?.defaults?.subagents?.maxSpawnDepth ?? DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH;
   if (!normalizedSessionKey) {
@@ -350,7 +339,7 @@ export function resolveStoredSubagentInheritedToolDenylist(
     store?: SessionCapabilityStore;
   },
 ): string[] {
-  const normalizedSessionKey = normalizeOptionalString(sessionKey);
+  const normalizedSessionKey = normalizeSubagentSessionKey(sessionKey);
   if (!normalizedSessionKey || !shouldInspectStoredSubagentEnvelope(normalizedSessionKey)) {
     return [];
   }
@@ -371,7 +360,7 @@ export function resolveStoredSubagentInheritedToolAllowlist(
     store?: SessionCapabilityStore;
   },
 ): string[] {
-  const normalizedSessionKey = normalizeOptionalString(sessionKey);
+  const normalizedSessionKey = normalizeSubagentSessionKey(sessionKey);
   if (!normalizedSessionKey || !shouldInspectStoredSubagentEnvelope(normalizedSessionKey)) {
     return [];
   }

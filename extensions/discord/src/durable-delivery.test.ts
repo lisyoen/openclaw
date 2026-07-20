@@ -41,19 +41,24 @@ describe("durable Discord delivery", () => {
     setActivePluginRegistry(createEmptyPluginRegistry());
   });
 
-  it("does not replay earlier chunks when a later platform send fails", async () => {
+  it("fans out planned text chunks and retries a transient failure on a later chunk", async () => {
     hoisted.sendMessageDiscordMock
       .mockResolvedValueOnce({
         messageId: "msg-chunk-1",
         channelId: "ch-1",
       })
-      .mockRejectedValueOnce(Object.assign(new Error("discord 500"), { status: 500 }));
+      .mockRejectedValueOnce(Object.assign(new Error("discord 500"), { status: 500 }))
+      .mockResolvedValueOnce({
+        messageId: "msg-chunk-2",
+        channelId: "ch-1",
+      });
 
     const result = await sendDurableMessageBatch({
       cfg: {
         channels: {
           discord: {
             token: "test-token",
+            retry: { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 },
           },
         },
       },
@@ -68,21 +73,31 @@ describe("durable Discord delivery", () => {
       skipQueue: true,
     });
 
-    expect(result.status).toBe("partial_failed");
-    if (result.status !== "partial_failed") {
-      throw new Error("expected durable Discord send to report a partial failure");
+    expect(result.status).toBe("sent");
+    if (result.status !== "sent") {
+      throw new Error("expected durable Discord send to succeed");
     }
     expect(
       result.results.map((entry) => ({
         channel: entry.channel,
         messageId: entry.messageId,
       })),
-    ).toEqual([{ channel: "discord", messageId: "msg-chunk-1" }]);
-    expect(result.receipt.platformMessageIds).toEqual(["msg-chunk-1"]);
-    expect(result.sentBeforeError).toBe(true);
-    expect(hoisted.sendMessageDiscordMock).toHaveBeenCalledTimes(2);
+    ).toEqual([
+      { channel: "discord", messageId: "msg-chunk-1" },
+      { channel: "discord", messageId: "msg-chunk-2" },
+    ]);
+    expect(result.receipt.platformMessageIds).toEqual(["msg-chunk-1", "msg-chunk-2"]);
+    expect(result.payloadOutcomes).toEqual([
+      {
+        index: 0,
+        status: "sent",
+        results: result.results,
+      },
+    ]);
+    expect(hoisted.sendMessageDiscordMock).toHaveBeenCalledTimes(3);
     expect(hoisted.sendMessageDiscordMock.mock.calls.map((call) => call[1])).toEqual([
       "first chunk",
+      "second chunk",
       "second chunk",
     ]);
   });

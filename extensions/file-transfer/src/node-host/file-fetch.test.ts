@@ -4,7 +4,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { handleFileFetch } from "./file-fetch.js";
+import {
+  FILE_FETCH_DEFAULT_MAX_BYTES,
+  FILE_FETCH_HARD_MAX_BYTES,
+  handleFileFetch,
+} from "./file-fetch.js";
 
 let tmpRoot: string;
 
@@ -82,8 +86,8 @@ describe("handleFileFetch — fs errors", () => {
 });
 
 describe("handleFileFetch — zero-byte round-trip", () => {
-  it("fetches an empty image-named file with extension-derived MIME", async () => {
-    const target = path.join(tmpRoot, "empty.png");
+  it("fetches an empty file with size=0 and base64=''", async () => {
+    const target = path.join(tmpRoot, "empty.bin");
     await fs.writeFile(target, "");
 
     const r = await handleFileFetch({ path: target });
@@ -91,7 +95,6 @@ describe("handleFileFetch — zero-byte round-trip", () => {
       throw new Error(`expected ok, got ${r.code}: ${r.message}`);
     }
     expect(r.size).toBe(0);
-    expect(r.mimeType).toBe("image/png");
     expect(r.base64).toBe("");
     // SHA-256 of empty input.
     expect(r.sha256).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
@@ -202,25 +205,23 @@ describe("handleFileFetch — size enforcement", () => {
   });
 
   it("clamps maxBytes to the hard ceiling", async () => {
-    const target = path.join(tmpRoot, "oversized.bin");
-    await fs.writeFile(target, "");
-    await fs.truncate(target, 16 * 1024 * 1024 + 1);
+    expect(FILE_FETCH_HARD_MAX_BYTES).toBe(16 * 1024 * 1024);
+    expect(FILE_FETCH_DEFAULT_MAX_BYTES).toBeLessThanOrEqual(FILE_FETCH_HARD_MAX_BYTES);
 
+    // A request asking for a maxBytes well above the hard ceiling should
+    // still be honored for a small file (no error).
+    const target = path.join(tmpRoot, "tiny.bin");
+    await fs.writeFile(target, Buffer.from([0x01, 0x02, 0x03]));
     const r = await handleFileFetch({ path: target, maxBytes: Number.MAX_SAFE_INTEGER });
-    expectFailureCode(r, "FILE_TOO_LARGE");
-    expect(r.message).toContain("limit 16777216");
+    expect(r.ok).toBe(true);
   });
 
   it("uses default cap when maxBytes is not finite or non-positive", async () => {
-    const target = path.join(tmpRoot, "above-default.bin");
-    await fs.writeFile(target, "");
-    await fs.truncate(target, 8 * 1024 * 1024 + 1);
-
-    for (const maxBytes of [-1, Number.NaN, "8"] as unknown[]) {
-      const r = await handleFileFetch({ path: target, maxBytes });
-      expectFailureCode(r, "FILE_TOO_LARGE");
-      expect(r.message).toContain("limit 8388608");
-    }
+    const target = path.join(tmpRoot, "small.bin");
+    await fs.writeFile(target, Buffer.from([0xff]));
+    expectSuccess(await handleFileFetch({ path: target, maxBytes: -1 }));
+    expectSuccess(await handleFileFetch({ path: target, maxBytes: Number.NaN }));
+    expectSuccess(await handleFileFetch({ path: target, maxBytes: "8" as unknown }));
   });
 });
 

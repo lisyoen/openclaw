@@ -16,7 +16,7 @@ type TelegramPollingLeaseEntry = {
 
 type TelegramPollingLeaseRegistry = Map<string, TelegramPollingLeaseEntry>;
 
-type TelegramPollingLease = {
+export type TelegramPollingLease = {
   tokenFingerprint: string;
   waitedForPrevious: boolean;
   replacedStoppingPrevious: boolean;
@@ -221,4 +221,8 @@ export async function releaseStoppedTelegramPollingLease(
   registry.delete(fingerprint);
   existing.resolveDone();
   return true;
+}
+
+export function resetTelegramPollingLeasesForTests(): void {
+  pollingLeaseRegistry().clear();
 }

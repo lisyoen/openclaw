@@ -3,4 +3,8 @@ import "./fs-safe-defaults.js";
 
 // Atomic sibling temp writes preserve target-directory permissions and avoid
 // cross-device rename behavior.
-export { writeSiblingTempFile } from "@openclaw/fs-safe/advanced";
+export {
+  writeSiblingTempFile,
+  type WriteSiblingTempFileOptions,
+  type WriteSiblingTempFileResult,
+} from "@openclaw/fs-safe/advanced";

@@ -24,14 +24,7 @@ export const mattermostSetupPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
     media: true,
     nativeCommands: true,
   },
-  reload: {
-    configPrefixes: ["channels.mattermost"],
-    /**
-     * accounts.default is promoted; named resolution merges only channel-wide fields
-     * plus the selected account. Runtime monitor, debounce, and ingress use accountId.
-     */
-    accountScopedRestart: true,
-  },
+  reload: { configPrefixes: ["channels.mattermost"] },
   configSchema: MattermostChannelConfigSchema,
   config: {
     ...mattermostConfigAdapter,
@@ -39,7 +32,7 @@ export const mattermostSetupPlugin: ChannelPlugin<ResolvedMattermostAccount> = {
     describeAccount: describeMattermostAccount,
   },
   gateway: {
-    resolveGatewayAuthBypassPaths: resolveMattermostGatewayAuthBypassPaths,
+    resolveGatewayAuthBypassPaths: ({ cfg }) => resolveMattermostGatewayAuthBypassPaths(cfg),
   },
   setup: mattermostSetupAdapter,
   setupWizard: mattermostSetupWizard,

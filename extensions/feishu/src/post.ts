@@ -130,7 +130,6 @@ function renderElement(
   imageKeys: string[],
   mediaKeys: Array<{ fileKey: string; fileName?: string }>,
   mentionedOpenIds: string[],
-  renderMediaPlaceholders: boolean,
 ): string {
   if (!isRecord(element)) {
     return escapeMarkdownText(toStringOrEmpty(element));
@@ -156,7 +155,7 @@ function renderElement(
       if (imageKey) {
         imageKeys.push(imageKey);
       }
-      return renderMediaPlaceholders ? "![image]" : "";
+      return "![image]";
     }
     case "media": {
       const fileKey = normalizeFeishuExternalKey(toStringOrEmpty(element.file_key));
@@ -164,7 +163,7 @@ function renderElement(
         const fileName = toStringOrEmpty(element.file_name) || undefined;
         mediaKeys.push({ fileKey, fileName });
       }
-      return renderMediaPlaceholders ? "[media]" : "";
+      return "[media]";
     }
     case "emotion":
       return renderEmotionElement(element);
@@ -232,10 +231,7 @@ function resolvePostPayload(parsed: unknown): PostPayload | null {
   return resolveLocalePayload(parsed);
 }
 
-export function parsePostContent(
-  content: string,
-  options: { renderMediaPlaceholders?: boolean; emptyTextFallback?: string } = {},
-): PostParseResult {
+export function parsePostContent(content: string): PostParseResult {
   try {
     const parsed = JSON.parse(content);
     const payload = resolvePostPayload(parsed);
@@ -259,13 +255,7 @@ export function parsePostContent(
       }
       let renderedParagraph = "";
       for (const element of paragraph) {
-        renderedParagraph += renderElement(
-          element,
-          imageKeys,
-          mediaKeys,
-          mentionedOpenIds,
-          options.renderMediaPlaceholders !== false,
-        );
+        renderedParagraph += renderElement(element, imageKeys, mediaKeys, mentionedOpenIds);
       }
       paragraphs.push(renderedParagraph);
     }
@@ -275,7 +265,7 @@ export function parsePostContent(
     const textContent = [title, body].filter(Boolean).join("\n\n").trim();
 
     return {
-      textContent: textContent || (options.emptyTextFallback ?? FALLBACK_POST_TEXT),
+      textContent: textContent || FALLBACK_POST_TEXT,
       imageKeys,
       mediaKeys,
       mentionedOpenIds,

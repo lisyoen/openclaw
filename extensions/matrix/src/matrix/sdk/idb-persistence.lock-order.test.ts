@@ -6,7 +6,10 @@ import path from "node:path";
 import { resetPluginStateStoreForTests } from "openclaw/plugin-sdk/plugin-state-test-runtime";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { installMatrixTestRuntime } from "../../test-runtime.js";
-import { MATRIX_IDB_PERSIST_INTERVAL_MS } from "./idb-persistence-lock.js";
+import {
+  computeMinimumRetryWindowMs,
+  MATRIX_IDB_PERSIST_INTERVAL_MS,
+} from "./idb-persistence-lock.js";
 import { clearAllIndexedDbState, seedDatabase } from "./idb-persistence.test-helpers.js";
 
 const { withFileLockMock } = vi.hoisted(() => ({
@@ -31,20 +34,6 @@ type CapturedLockOptions =
   typeof import("./idb-persistence-lock.js").MATRIX_IDB_SNAPSHOT_LOCK_OPTIONS;
 const DATABASE_PREFIX = "openclaw-matrix-lock-order-test";
 const cryptoDatabaseName = `${DATABASE_PREFIX}::matrix-sdk-crypto`;
-
-function minimumRetryWindowMs(options: CapturedLockOptions): number {
-  let total = 0;
-  for (let attempt = 0; attempt < options.retries.retries; attempt += 1) {
-    total += Math.min(
-      options.retries.maxTimeout,
-      Math.max(
-        options.retries.minTimeout,
-        options.retries.minTimeout * options.retries.factor ** attempt,
-      ),
-    );
-  }
-  return total;
-}
 
 beforeAll(async () => {
   ({ persistIdbToDisk, restoreIdbFromDisk } = await import("./idb-persistence.js"));
@@ -99,7 +88,9 @@ describe("Matrix IndexedDB persistence lock ordering", () => {
 
     expect(capturedOptions).toHaveLength(1);
     for (const options of capturedOptions) {
-      expect(minimumRetryWindowMs(options)).toBeGreaterThanOrEqual(MATRIX_IDB_PERSIST_INTERVAL_MS);
+      expect(computeMinimumRetryWindowMs(options.retries)).toBeGreaterThanOrEqual(
+        MATRIX_IDB_PERSIST_INTERVAL_MS,
+      );
       expect(options.stale).toBe(5 * 60_000);
     }
   });

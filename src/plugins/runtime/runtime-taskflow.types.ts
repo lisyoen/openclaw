@@ -16,7 +16,7 @@ export type ManagedTaskFlowRecord = TaskFlowRecord & {
   controllerId: string;
 };
 
-type ManagedTaskFlowMutationErrorCode =
+export type ManagedTaskFlowMutationErrorCode =
   | "not_found"
   | "not_managed"
   | "revision_conflict"
@@ -33,7 +33,7 @@ export type ManagedTaskFlowMutationResult =
       current?: TaskFlowRecord;
     };
 
-type ManagedTaskFlowCreateParams = {
+export type ManagedTaskFlowCreateParams = {
   controllerId: string;
   goal: string;
   status?: ManagedTaskFlowRecord["status"];
@@ -47,7 +47,7 @@ type ManagedTaskFlowCreateParams = {
   endedAt?: number | null;
 };
 
-type BoundTaskFlowTaskRunResult =
+export type BoundTaskFlowTaskRunResult =
   | {
       created: true;
       flow: ManagedTaskFlowRecord;
@@ -60,7 +60,7 @@ type BoundTaskFlowTaskRunResult =
       flow?: TaskFlowRecord;
     };
 
-type BoundTaskFlowCancelResult = {
+export type BoundTaskFlowCancelResult = {
   found: boolean;
   cancelled: boolean;
   reason?: string;

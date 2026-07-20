@@ -11,9 +11,9 @@ type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
 type ModelTransportDebugEnv = NodeJS.ProcessEnv;
 
 /** Payload debug detail levels accepted by `OPENCLAW_DEBUG_MODEL_PAYLOAD`. */
-type ModelPayloadDebugMode = "off" | "summary" | "tools" | "full-redacted";
+export type ModelPayloadDebugMode = "off" | "summary" | "tools" | "full-redacted";
 /** SSE debug detail levels accepted by `OPENCLAW_DEBUG_SSE`. */
-type ModelSseDebugMode = "off" | "events" | "peek";
+export type ModelSseDebugMode = "off" | "events" | "peek";
 
 function normalizeEnv(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -59,7 +59,7 @@ export function resolveModelSseDebugMode(
 }
 
 /** Returns whether any model transport debug channel is enabled. */
-function isModelTransportDebugEnabled(env: ModelTransportDebugEnv = process.env): boolean {
+export function isModelTransportDebugEnabled(env: ModelTransportDebugEnv = process.env): boolean {
   return (
     isTruthyEnv(env.OPENCLAW_DEBUG_MODEL_TRANSPORT) ||
     resolveModelPayloadDebugMode(env) !== "off" ||
@@ -68,13 +68,9 @@ function isModelTransportDebugEnabled(env: ModelTransportDebugEnv = process.env)
   );
 }
 
-function isModelFetchMetadataMessage(message: string): boolean {
-  return message.startsWith("[model-fetch]");
-}
-
-/** Emits model-fetch metadata at info level by default; other diagnostics require debug env. */
+/** Emits transport diagnostics at info level only when debug env explicitly enables them. */
 export function emitModelTransportDebug(log: SubsystemLogger, message: string): void {
-  if (isModelFetchMetadataMessage(message) || isModelTransportDebugEnabled()) {
+  if (isModelTransportDebugEnabled()) {
     log.info(message);
     return;
   }

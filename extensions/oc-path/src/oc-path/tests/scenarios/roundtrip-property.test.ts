@@ -1,5 +1,4 @@
 // OC Path tests cover roundtrip property plugin behavior.
-import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import { emitMd } from "../../emit.js";
 import { parseMd } from "../../parse.js";
@@ -92,10 +91,7 @@ function generateCorpus(count: number): string[] {
     seed = (seed * 1664525 + 1013904223) % 2 ** 32;
     return seed / 2 ** 32;
   };
-  const choose = <T>(arr: readonly T[]): T => {
-    const index = Math.floor(rand() * arr.length);
-    return expectDefined(arr[index], `round-trip corpus choice ${index}`);
-  };
+  const choose = <T>(arr: readonly T[]): T => arr[Math.floor(rand() * arr.length)];
 
   const headings = ["Boundaries", "Tools", "Memory", "Identity", "User", "Heartbeat", "Skills"];
   const fmKeys = ["name", "description", "tier", "enabled", "timeout", "url"];

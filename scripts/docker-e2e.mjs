@@ -1,7 +1,7 @@
 // Docker E2E CI helper.
 // Converts scheduler JSON into GitHub Actions outputs and compact markdown
 // summaries so the workflow does not duplicate Docker E2E planning logic.
-import { readDockerE2eJsonArtifact } from "./lib/docker-e2e-json-artifacts.mjs";
+import fs from "node:fs";
 
 function usage() {
   return [
@@ -13,7 +13,7 @@ function usage() {
 }
 
 function readJson(file) {
-  return readDockerE2eJsonArtifact(file);
+  return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
 function boolOutput(value) {

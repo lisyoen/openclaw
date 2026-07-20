@@ -54,7 +54,7 @@ export type SlackAllowListMatch = AllowlistMatch<
 type SlackAllowListSource = Exclude<SlackAllowListMatch["matchSource"], undefined>;
 
 export function resolveSlackAllowListMatch(params: {
-  allowList: readonly string[];
+  allowList: string[];
   id?: string;
   name?: string;
   allowNameMatching?: boolean;

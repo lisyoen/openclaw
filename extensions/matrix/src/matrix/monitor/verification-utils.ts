@@ -25,7 +25,7 @@ export function isMatrixVerificationRequestMsgType(msgtype: unknown): boolean {
   return trimMaybeString(msgtype) === VERIFICATION_REQUEST_MSGTYPE;
 }
 
-function isMatrixVerificationNoticeBody(body: unknown): boolean {
+export function isMatrixVerificationNoticeBody(body: unknown): boolean {
   const text = trimMaybeString(body);
   return VERIFICATION_NOTICE_PREFIXES.some((prefix) => text.startsWith(prefix));
 }

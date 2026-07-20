@@ -2,23 +2,18 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { normalizeAgentId } from "@openclaw/normalization-core/agent-id";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
-} from "@openclaw/normalization-core/string-coerce";
-import {
   normalizeStringEntries,
   uniqueStrings,
-} from "@openclaw/normalization-core/string-normalization";
-export { normalizeAgentId };
+} from "./string-utils.js";
 export { splitShellArgs } from "./openclaw-runtime-io.js";
 
 // Shared OpenClaw config helpers used by memory host, QMD, and agent context code.
 
 /** Chat shape used by memory send-policy matching. */
-type ChatType = "direct" | "group" | "channel";
-type DmScope = "main" | "per-peer" | "per-channel-peer" | "per-account-channel-peer";
+export type ChatType = "direct" | "group" | "channel";
 /** Memory backend selected by user config. */
 export type MemoryBackend = "builtin" | "qmd";
 /** Citation injection behavior for memory search results. */
@@ -29,16 +24,16 @@ export type MemoryQmdSearchMode = "query" | "search" | "vsearch";
 export type MemoryQmdStartupMode = "off" | "idle" | "immediate";
 
 /** Action returned by a session send-policy rule. */
-type SessionSendPolicyAction = "allow" | "deny";
+export type SessionSendPolicyAction = "allow" | "deny";
 /** Match criteria for one memory send-policy rule. */
-type SessionSendPolicyMatch = {
+export type SessionSendPolicyMatch = {
   channel?: string;
   chatType?: ChatType;
   keyPrefix?: string;
   rawKeyPrefix?: string;
 };
 /** One ordered rule in session send-policy config. */
-type SessionSendPolicyRule = {
+export type SessionSendPolicyRule = {
   action: SessionSendPolicyAction;
   match?: SessionSendPolicyMatch;
 };
@@ -63,14 +58,14 @@ export type MemoryQmdMcporterConfig = {
 };
 
 /** QMD session export config. */
-type MemoryQmdSessionConfig = {
+export type MemoryQmdSessionConfig = {
   enabled?: boolean;
   exportDir?: string;
   retentionDays?: number;
 };
 
 /** QMD update, debounce, startup, and timeout config. */
-type MemoryQmdUpdateConfig = {
+export type MemoryQmdUpdateConfig = {
   interval?: string;
   debounceMs?: number;
   onBoot?: boolean;
@@ -84,7 +79,7 @@ type MemoryQmdUpdateConfig = {
 };
 
 /** Search and injection limits for QMD memory results. */
-type MemoryQmdLimitsConfig = {
+export type MemoryQmdLimitsConfig = {
   maxResults?: number;
   maxSnippetChars?: number;
   maxInjectedChars?: number;
@@ -107,16 +102,15 @@ export type MemoryQmdConfig = {
 };
 
 /** Top-level memory config shared by host and runtime callers. */
-type MemoryConfig = {
+export type MemoryConfig = {
   backend?: MemoryBackend;
   citations?: MemoryCitationsMode;
   qmd?: MemoryQmdConfig;
 };
 
 /** Per-agent memory search enablement and extra collection paths. */
-type MemorySearchConfig = {
+export type MemorySearchConfig = {
   enabled?: boolean;
-  rememberAcrossConversations?: boolean;
   extraPaths?: string[];
   qmd?: {
     extraCollections?: MemoryQmdIndexPath[];
@@ -124,13 +118,13 @@ type MemorySearchConfig = {
 };
 
 /** Agent context limits that bound memory file reads. */
-type AgentContextLimitsConfig = {
+export type AgentContextLimitsConfig = {
   memoryGetMaxChars?: number;
   memoryGetDefaultLines?: number;
 };
 
 /** Secret reference accepted by provider header config. */
-type SecretInput =
+export type SecretInput =
   | string
   | {
       source: string;
@@ -157,10 +151,6 @@ export type OpenClawConfig = {
     };
     list?: AgentConfig[];
   };
-  session?: {
-    dmScope?: DmScope;
-  };
-  bindings?: unknown[];
   memory?: MemoryConfig;
   models?: {
     providers?: Record<
@@ -174,37 +164,52 @@ export type OpenClawConfig = {
   };
 };
 
-export function resolveRememberAcrossConversations(cfg: OpenClawConfig, agentId: string): boolean {
-  const defaults = cfg.agents?.defaults?.memorySearch;
-  const overrides = resolveAgentConfig(cfg, agentId)?.memorySearch;
-  const explicit = overrides?.rememberAcrossConversations ?? defaults?.rememberAcrossConversations;
-  if (explicit !== undefined) {
-    return explicit;
+/** Root memory filename used in agent workspaces. */
+export const CANONICAL_ROOT_MEMORY_FILENAME = "MEMORY.md";
+
+const DEFAULT_AGENT_ID = "main";
+const VALID_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const INVALID_CHARS_RE = /[^a-z0-9_-]+/g;
+const LEADING_DASH_RE = /^-+/;
+const TRAILING_DASH_RE = /-+$/;
+const LEGACY_STATE_DIRNAMES = [".clawdbot"] as const;
+const NEW_STATE_DIRNAME = ".openclaw";
+const DURATION_MULTIPLIERS: Record<string, number> = {
+  ms: 1,
+  s: 1000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+};
+
+/** Round parsed durations and reject values outside the safe integer range. */
+function roundDurationMs(raw: string, value: number): number {
+  const rounded = Math.round(value);
+  if (!Number.isSafeInteger(rounded)) {
+    throw new Error(`invalid duration: ${raw}`);
   }
-  // Recall is per-agent/private-shaped, not per-sender. Any DM isolation signals a
-  // multi-user install, where silently recalling across senders would leak context.
+  return rounded;
+}
+
+/** Normalize user or config agent ids to the filesystem-safe canonical form. */
+export function normalizeAgentId(value: string | undefined | null): string {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) {
+    return DEFAULT_AGENT_ID;
+  }
+  const normalized = normalizeLowercaseStringOrEmpty(trimmed);
+  if (VALID_ID_RE.test(trimmed)) {
+    return normalized;
+  }
   return (
-    (cfg.session?.dmScope === undefined || cfg.session.dmScope === "main") &&
-    !cfg.bindings?.some((binding) => {
-      if (!binding || typeof binding !== "object") {
-        return false;
-      }
-      const session = (binding as { session?: unknown }).session;
-      return (
-        Boolean(session) &&
-        typeof session === "object" &&
-        (session as { dmScope?: unknown }).dmScope !== undefined
-      );
-    })
+    normalized
+      .replace(INVALID_CHARS_RE, "-")
+      .replace(LEADING_DASH_RE, "")
+      .replace(TRAILING_DASH_RE, "")
+      .slice(0, 64) || DEFAULT_AGENT_ID
   );
 }
 
-/** Root memory filename used in agent workspaces. */
-export const MEMORY_HOST_ROOT_FILENAME = "MEMORY.md";
-
-const DEFAULT_AGENT_ID = "main";
-const LEGACY_STATE_DIRNAMES = [".clawdbot"] as const;
-const NEW_STATE_DIRNAME = ".openclaw";
 /** Treat shell-placeholder home values as absent. */
 function normalizeHomeValue(value: string | undefined): string | undefined {
   const trimmed = normalizeOptionalString(value);
@@ -235,8 +240,8 @@ function resolveRequiredHomeDir(
   return rawHome ? path.resolve(rawHome) : path.resolve(process.cwd());
 }
 
-/** Resolve standalone memory-host paths without importing core home-directory policy. */
-export function resolveMemoryHostUserPath(
+/** Resolve absolute user paths, including "~" against the effective OpenClaw home. */
+export function resolveUserPath(
   input: string,
   env: NodeJS.ProcessEnv = process.env,
   homedir: () => string = os.homedir,
@@ -257,13 +262,13 @@ function legacyStateDirs(homedir: () => string): string[] {
 }
 
 /** Resolve the current state root while preserving shipped legacy installs when present. */
-function resolveStateDir(
+export function resolveStateDir(
   env: NodeJS.ProcessEnv = process.env,
   homedir: () => string = os.homedir,
 ): string {
   const override = env.OPENCLAW_STATE_DIR?.trim();
   if (override) {
-    return resolveMemoryHostUserPath(override, env, homedir);
+    return resolveUserPath(override, env, homedir);
   }
   const effectiveHome = () => resolveRequiredHomeDir(env, homedir);
   const nextDir = path.join(effectiveHome(), NEW_STATE_DIRNAME);
@@ -320,7 +325,7 @@ function stripNullBytes(value: string): string {
 }
 
 /** Resolve the workspace directory for an agent id and config defaults. */
-export function resolveMemoryHostAgentWorkspaceDir(
+export function resolveAgentWorkspaceDir(
   cfg: OpenClawConfig,
   agentId: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -328,22 +333,22 @@ export function resolveMemoryHostAgentWorkspaceDir(
   const id = normalizeAgentId(agentId);
   const configured = resolveAgentConfig(cfg, id)?.workspace?.trim();
   if (configured) {
-    return stripNullBytes(resolveMemoryHostUserPath(configured, env));
+    return stripNullBytes(resolveUserPath(configured, env));
   }
   const fallback = cfg.agents?.defaults?.workspace?.trim();
   if (id === resolveDefaultAgentId(cfg)) {
     return stripNullBytes(
-      fallback ? resolveMemoryHostUserPath(fallback, env) : resolveDefaultAgentWorkspaceDir(env),
+      fallback ? resolveUserPath(fallback, env) : resolveDefaultAgentWorkspaceDir(env),
     );
   }
   if (fallback) {
-    return stripNullBytes(path.join(resolveMemoryHostUserPath(fallback, env), id));
+    return stripNullBytes(path.join(resolveUserPath(fallback, env), id));
   }
   return stripNullBytes(path.join(resolveStateDir(env), `workspace-${id}`));
 }
 
 /** Resolve context limits for an agent with defaults fallback. */
-export function resolveMemoryHostAgentContextLimits(
+export function resolveAgentContextLimits(
   cfg: OpenClawConfig | undefined,
   agentId?: string | null,
 ): AgentContextLimitsConfig | undefined {
@@ -355,10 +360,10 @@ export function resolveMemoryHostAgentContextLimits(
 }
 
 /** Resolve enabled memory search config plus deduplicated extra paths for an agent. */
-export function resolveMemoryHostSearchPathConfig(
+export function resolveMemorySearchConfig(
   cfg: OpenClawConfig,
   agentId: string,
-): { enabled: boolean; rememberAcrossConversations: boolean; extraPaths: string[] } | null {
+): { enabled: boolean; extraPaths: string[] } | null {
   const defaults = cfg.agents?.defaults?.memorySearch;
   const overrides = resolveAgentConfig(cfg, agentId)?.memorySearch;
   const enabled = overrides?.enabled ?? defaults?.enabled ?? true;
@@ -371,7 +376,48 @@ export function resolveMemoryHostSearchPathConfig(
   ]);
   return {
     enabled,
-    rememberAcrossConversations: resolveRememberAcrossConversations(cfg, agentId),
     extraPaths: uniqueStrings(rawPaths),
   };
+}
+
+/** Parse compact duration strings such as "500ms", "5s", or "1h30m" into milliseconds. */
+export function parseDurationMs(
+  raw: string,
+  opts?: { defaultUnit?: "ms" | "s" | "m" | "h" | "d" },
+): number {
+  const trimmed = normalizeLowercaseStringOrEmpty(normalizeOptionalString(raw) ?? "");
+  if (!trimmed) {
+    throw new Error("invalid duration (empty)");
+  }
+  const single = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)?$/.exec(trimmed);
+  if (single) {
+    const value = Number(single[1]);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    const unit = single[2] ?? opts?.defaultUnit ?? "ms";
+    return roundDurationMs(raw, value * (DURATION_MULTIPLIERS[unit] ?? 1));
+  }
+
+  let totalMs = 0;
+  let consumed = 0;
+  const tokenRe = /(\d+(?:\.\d+)?)(ms|s|m|h|d)/g;
+  for (const match of trimmed.matchAll(tokenRe)) {
+    const [full, valueRaw, unitRaw] = match;
+    const index = match.index ?? -1;
+    if (!full || !valueRaw || !unitRaw || index !== consumed) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    const value = Number(valueRaw);
+    const multiplier = DURATION_MULTIPLIERS[unitRaw];
+    if (!Number.isFinite(value) || value < 0 || !multiplier) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    totalMs += value * multiplier;
+    consumed += full.length;
+  }
+  if (consumed !== trimmed.length || consumed === 0) {
+    throw new Error(`invalid duration: ${raw}`);
+  }
+  return roundDurationMs(raw, totalMs);
 }

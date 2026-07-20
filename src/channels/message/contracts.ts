@@ -22,19 +22,19 @@ import {
 /**
  * Proof callback used to verify one declared durable-final delivery capability.
  */
-type DurableFinalCapabilityProof = () => Promise<void> | void;
+export type DurableFinalCapabilityProof = () => Promise<void> | void;
 
 /**
  * Proof callbacks keyed by durable-final delivery capability.
  */
-type DurableFinalCapabilityProofMap = Partial<
+export type DurableFinalCapabilityProofMap = Partial<
   Record<DurableFinalDeliveryCapability, DurableFinalCapabilityProof>
 >;
 
 /**
  * Verification result for one durable-final delivery capability.
  */
-type DurableFinalCapabilityProofResult = {
+export type DurableFinalCapabilityProofResult = {
   capability: DurableFinalDeliveryCapability;
   status: "verified" | "not_declared";
 };
@@ -42,43 +42,43 @@ type DurableFinalCapabilityProofResult = {
 /**
  * Proof callback used to verify one live-preview finalizer capability.
  */
-type LivePreviewFinalizerCapabilityProof = () => Promise<void> | void;
+export type LivePreviewFinalizerCapabilityProof = () => Promise<void> | void;
 
 /**
  * Proof callback used to verify one live message capability.
  */
-type ChannelMessageLiveCapabilityProof = () => Promise<void> | void;
+export type ChannelMessageLiveCapabilityProof = () => Promise<void> | void;
 
 /**
  * Proof callback used to verify one receive acknowledgement policy.
  */
-type ChannelMessageReceiveAckPolicyProof = () => Promise<void> | void;
+export type ChannelMessageReceiveAckPolicyProof = () => Promise<void> | void;
 
 /**
  * Proof callbacks keyed by live-preview finalizer capability.
  */
-type LivePreviewFinalizerCapabilityProofMap = Partial<
+export type LivePreviewFinalizerCapabilityProofMap = Partial<
   Record<LivePreviewFinalizerCapability, LivePreviewFinalizerCapabilityProof>
 >;
 
 /**
  * Proof callbacks keyed by live message capability.
  */
-type ChannelMessageLiveCapabilityProofMap = Partial<
+export type ChannelMessageLiveCapabilityProofMap = Partial<
   Record<ChannelMessageLiveCapability, ChannelMessageLiveCapabilityProof>
 >;
 
 /**
  * Proof callbacks keyed by receive acknowledgement policy.
  */
-type ChannelMessageReceiveAckPolicyProofMap = Partial<
+export type ChannelMessageReceiveAckPolicyProofMap = Partial<
   Record<ChannelMessageReceiveAckPolicy, ChannelMessageReceiveAckPolicyProof>
 >;
 
 /**
  * Verification result for one live-preview finalizer capability.
  */
-type LivePreviewFinalizerCapabilityProofResult = {
+export type LivePreviewFinalizerCapabilityProofResult = {
   capability: LivePreviewFinalizerCapability;
   status: "verified" | "not_declared";
 };
@@ -86,7 +86,7 @@ type LivePreviewFinalizerCapabilityProofResult = {
 /**
  * Verification result for one live message capability.
  */
-type ChannelMessageLiveCapabilityProofResult = {
+export type ChannelMessageLiveCapabilityProofResult = {
   capability: ChannelMessageLiveCapability;
   status: "verified" | "not_declared";
 };
@@ -94,15 +94,46 @@ type ChannelMessageLiveCapabilityProofResult = {
 /**
  * Verification result for one receive acknowledgement policy.
  */
-type ChannelMessageReceiveAckPolicyProofResult = {
+export type ChannelMessageReceiveAckPolicyProofResult = {
   policy: ChannelMessageReceiveAckPolicy;
   status: "verified" | "not_declared";
 };
 
 /**
+ * Lists declared durable-final delivery capabilities in stable contract order.
+ */
+export function listDeclaredDurableFinalCapabilities(
+  capabilities: DurableFinalDeliveryRequirementMap | undefined,
+): DurableFinalDeliveryCapability[] {
+  return durableFinalDeliveryCapabilities.filter(
+    (capability) => capabilities?.[capability] === true,
+  );
+}
+
+/**
+ * Lists declared live-preview finalizer capabilities in stable contract order.
+ */
+export function listDeclaredLivePreviewFinalizerCapabilities(
+  capabilities: LivePreviewFinalizerCapabilityMap | undefined,
+): LivePreviewFinalizerCapability[] {
+  return livePreviewFinalizerCapabilities.filter(
+    (capability) => capabilities?.[capability] === true,
+  );
+}
+
+/**
+ * Lists declared live message capabilities in stable contract order.
+ */
+export function listDeclaredChannelMessageLiveCapabilities(
+  capabilities: Partial<Record<ChannelMessageLiveCapability, boolean>> | undefined,
+): ChannelMessageLiveCapability[] {
+  return channelMessageLiveCapabilities.filter((capability) => capabilities?.[capability] === true);
+}
+
+/**
  * Lists declared receive acknowledgement policies, including the default policy fallback.
  */
-function listDeclaredReceiveAckPolicies(
+export function listDeclaredReceiveAckPolicies(
   receive: ChannelMessageAdapterShape["receive"] | undefined,
 ): ChannelMessageReceiveAckPolicy[] {
   const declared = receive?.supportedAckPolicies?.length
@@ -144,7 +175,7 @@ export async function verifyDurableFinalCapabilityProofs(params: {
 /**
  * Verifies proof callbacks for every declared live-preview finalizer capability.
  */
-async function verifyLivePreviewFinalizerCapabilityProofs(params: {
+export async function verifyLivePreviewFinalizerCapabilityProofs(params: {
   adapterName: string;
   capabilities?: LivePreviewFinalizerCapabilityMap;
   proofs: LivePreviewFinalizerCapabilityProofMap;
@@ -170,7 +201,7 @@ async function verifyLivePreviewFinalizerCapabilityProofs(params: {
 /**
  * Verifies proof callbacks for every declared live message capability.
  */
-async function verifyChannelMessageLiveCapabilityProofs(params: {
+export async function verifyChannelMessageLiveCapabilityProofs(params: {
   adapterName: string;
   capabilities?: Partial<Record<ChannelMessageLiveCapability, boolean>>;
   proofs: ChannelMessageLiveCapabilityProofMap;
@@ -196,7 +227,7 @@ async function verifyChannelMessageLiveCapabilityProofs(params: {
 /**
  * Verifies proof callbacks for every declared receive acknowledgement policy.
  */
-async function verifyChannelMessageReceiveAckPolicyProofs(params: {
+export async function verifyChannelMessageReceiveAckPolicyProofs(params: {
   adapterName: string;
   receive?: ChannelMessageAdapterShape["receive"];
   proofs: ChannelMessageReceiveAckPolicyProofMap;

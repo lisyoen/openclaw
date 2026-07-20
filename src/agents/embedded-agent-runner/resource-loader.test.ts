@@ -1,7 +1,10 @@
 // Coverage for embedded resource loader discovery restrictions.
 import { describe, expect, it, vi } from "vitest";
 import { DefaultResourceLoader } from "../sessions/index.js";
-import { createEmbeddedAgentResourceLoader } from "./resource-loader.js";
+import {
+  createEmbeddedAgentResourceLoader,
+  EMBEDDED_AGENT_RESOURCE_LOADER_DISCOVERY_OPTIONS,
+} from "./resource-loader.js";
 
 vi.mock("../sessions/index.js", () => ({
   // Constructor mock captures options so tests can assert discovery policy
@@ -36,11 +39,7 @@ describe("createEmbeddedAgentResourceLoader", () => {
       agentDir: "/agent",
       settingsManager,
       extensionFactories,
-      noExtensions: true,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
+      ...EMBEDDED_AGENT_RESOURCE_LOADER_DISCOVERY_OPTIONS,
     });
   });
 });

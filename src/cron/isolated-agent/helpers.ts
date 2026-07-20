@@ -13,7 +13,7 @@ type DeliveryPayload = Pick<
 >;
 
 /** Normalized cron run payload state used for summaries, delivery, and failure classification. */
-type CronPayloadOutcome = {
+export type CronPayloadOutcome = {
   summary?: string;
   outputText?: string;
   synthesizedText?: string;
@@ -92,7 +92,7 @@ export function pickSummaryFromOutput(text: string | undefined) {
 }
 
 /** Picks the last non-error payload text suitable for cron run summaries. */
-function pickSummaryFromPayloads(
+export function pickSummaryFromPayloads(
   payloads: Array<{ text?: string | undefined; isError?: boolean }>,
 ) {
   for (let i = payloads.length - 1; i >= 0; i--) {
@@ -162,7 +162,7 @@ function payloadHasStructuredDeliveryContent(payload: DeliveryPayload | null | u
 }
 
 /** Picks the last payload with deliverable outbound content, preferring non-error payloads. */
-function pickLastDeliverablePayload(payloads: DeliveryPayload[]) {
+export function pickLastDeliverablePayload(payloads: DeliveryPayload[]) {
   for (let i = payloads.length - 1; i >= 0; i--) {
     if (payloads[i]?.isError) {
       continue;
@@ -180,7 +180,7 @@ function pickLastDeliverablePayload(payloads: DeliveryPayload[]) {
 }
 
 /** Selects deliverable cron payloads while preserving multi-payload successful responses. */
-function pickDeliverablePayloads(payloads: DeliveryPayload[]): DeliveryPayload[] {
+export function pickDeliverablePayloads(payloads: DeliveryPayload[]): DeliveryPayload[] {
   const successfulDeliverablePayloads = payloads.filter(
     (payload) => payload != null && payload.isError !== true && isDeliverablePayload(payload),
   );
@@ -289,6 +289,7 @@ export function resolveCronPayloadOutcome(params: {
   const hasRecoveredToolWarning =
     !params.runLevelError &&
     params.failureSignal?.fatalForCron !== true &&
+    params.preferFinalAssistantVisibleText === true &&
     normalizedFinalAssistantVisibleText !== undefined &&
     !hasStructuredDeliveryPayloads &&
     errorPayloads.length > 0 &&
@@ -308,7 +309,7 @@ export function resolveCronPayloadOutcome(params: {
   // A final assistant answer can replace textual warning payloads, but never
   // structured/media payloads that carry the actual delivery content.
   const shouldUseFinalAssistantVisibleText =
-    (params.preferFinalAssistantVisibleText === true || hasRecoveredToolWarning) &&
+    params.preferFinalAssistantVisibleText === true &&
     normalizedFinalAssistantVisibleText !== undefined &&
     !hasFatalStructuredErrorPayload &&
     !hasStructuredDeliveryPayloads;

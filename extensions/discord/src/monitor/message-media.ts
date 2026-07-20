@@ -1,11 +1,8 @@
 // Discord plugin module implements message media behavior.
 import { StickerFormatType, type APIAttachment, type APIStickerItem } from "discord-api-types/v10";
-import {
-  formatMediaPlaceholderText,
-  type MediaPlaceholderTextFact,
-} from "openclaw/plugin-sdk/channel-inbound";
-import { getFileExtension, normalizeMimeType } from "openclaw/plugin-sdk/media-mime";
+import { getFileExtension } from "openclaw/plugin-sdk/media-mime";
 import { saveRemoteMedia, type FetchLike } from "openclaw/plugin-sdk/media-runtime";
+import { buildMediaPayload } from "openclaw/plugin-sdk/reply-payload";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import type { SsrFPolicy } from "openclaw/plugin-sdk/ssrf-runtime";
 import {
@@ -21,6 +18,7 @@ import {
   resolveDiscordReferencedReplyMessage,
   resolveDiscordSnapshotStickers,
 } from "./message-forwarded.js";
+import { mergeAbortSignals } from "./timeouts.js";
 
 const DISCORD_CDN_HOSTNAMES = [
   "cdn.discordapp.com",
@@ -50,12 +48,12 @@ const AUDIO_ATTACHMENT_EXTENSIONS = new Set([
 const DISCORD_STICKER_ASSET_BASE_URL = "https://media.discordapp.net/stickers";
 
 export type DiscordMediaInfo = {
-  path?: string;
+  path: string;
   contentType?: string;
-  kind?: "audio" | "document" | "image" | "sticker";
+  placeholder: string;
 };
 
-type DiscordMediaResolveOptions = {
+export type DiscordMediaResolveOptions = {
   fetchImpl?: FetchLike;
   ssrfPolicy?: SsrFPolicy;
   readIdleTimeoutMs?: number;
@@ -75,66 +73,6 @@ function isDiscordAudioAttachmentFileName(fileName?: string | null): boolean {
 
 function hasDiscordVoiceAttachmentFields(attachment: APIAttachment): boolean {
   return typeof attachment.duration_secs === "number" || typeof attachment.waveform === "string";
-}
-
-const NON_DEFINITIVE_MEDIA_TYPES = new Set([
-  "application/octet-stream",
-  "binary/octet-stream",
-  // Discord can report this container type without identifying whether it holds audio or video.
-  "application/ogg",
-]);
-
-function isDefinitiveMediaType(contentType: string | null | undefined): boolean {
-  const normalized = normalizeMimeType(contentType);
-  return Boolean(normalized && !NON_DEFINITIVE_MEDIA_TYPES.has(normalized));
-}
-
-function resolveEffectiveMediaType(params: {
-  declaredContentType?: string | null;
-  fetchedContentType?: string | null;
-}): string | undefined {
-  if (isDefinitiveMediaType(params.fetchedContentType)) {
-    return params.fetchedContentType ?? undefined;
-  }
-  if (isDefinitiveMediaType(params.declaredContentType)) {
-    return params.declaredContentType ?? undefined;
-  }
-  return params.fetchedContentType ?? params.declaredContentType ?? undefined;
-}
-
-function resolveDiscordMediaClassification(params: {
-  attachment: APIAttachment;
-  fetchedContentType?: string | null;
-}): { contentType?: string; kind?: "audio" | "document" | "image" } {
-  const contentType = resolveEffectiveMediaType({
-    declaredContentType: params.attachment.content_type,
-    fetchedContentType: params.fetchedContentType,
-  });
-  const mime = normalizeMimeType(contentType);
-  const audioKind =
-    mime?.startsWith("audio/") ||
-    hasDiscordVoiceAttachmentFields(params.attachment) ||
-    (isDiscordAudioAttachmentFileName(params.attachment.filename ?? params.attachment.url) &&
-      !isDefinitiveMediaType(contentType))
-      ? "audio"
-      : undefined;
-  const kind =
-    audioKind ??
-    (!isDefinitiveMediaType(contentType)
-      ? isImageAttachment(params.attachment)
-        ? "image"
-        : "document"
-      : undefined);
-
-  return {
-    // Inbound projection prefers MIME over kind. A native voice classification
-    // or filename fallback must replace a non-definitive MIME rather than be masked by it.
-    contentType:
-      (audioKind && !mime?.startsWith("audio/")) || (kind && !isDefinitiveMediaType(contentType))
-        ? undefined
-        : contentType,
-    ...(kind ? { kind } : {}),
-  };
 }
 
 function mergeHostnameList(...lists: Array<string[] | undefined>): string[] | undefined {
@@ -316,12 +254,10 @@ async function fetchDiscordMedia(params: {
   originalFilename?: string;
 }) {
   const timeoutAbortController = params.totalTimeoutMs ? new AbortController() : undefined;
-  const signal =
-    params.abortSignal && timeoutAbortController
-      ? AbortSignal.any([params.abortSignal, timeoutAbortController.signal])
-      : (params.abortSignal ?? timeoutAbortController?.signal);
+  const signal = mergeAbortSignals([params.abortSignal, timeoutAbortController?.signal]);
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
   const savePromise = saveRemoteMedia({
     url: params.url,
     filePathHint: params.filePathHint,
@@ -338,6 +274,7 @@ async function fetchDiscordMedia(params: {
     }
     throw error;
   });
+
   try {
     if (!params.totalTimeoutMs) {
       return await savePromise;
@@ -379,7 +316,6 @@ async function appendResolvedMediaFromAttachments(params: {
       logVerbose(
         `${params.errorPrefix} ${attachment.id ?? attachment.filename ?? "attachment"}: missing url`,
       );
-      params.out.push(resolveDiscordMediaClassification({ attachment }));
       continue;
     }
     try {
@@ -395,20 +331,18 @@ async function appendResolvedMediaFromAttachments(params: {
         fallbackContentType: attachment.content_type,
         originalFilename: attachment.filename,
       });
-      const classification = resolveDiscordMediaClassification({
-        attachment,
-        fetchedContentType: saved.contentType,
-      });
       params.out.push({
         path: saved.path,
-        ...classification,
+        contentType: saved.contentType,
+        placeholder: inferPlaceholder(attachment),
       });
     } catch (err) {
       const id = attachment.id ?? attachmentUrl;
       logVerbose(`${params.errorPrefix} ${id}: ${String(err)}`);
-      const classification = resolveDiscordMediaClassification({ attachment });
       params.out.push({
-        ...classification,
+        path: attachmentUrl,
+        contentType: attachment.content_type,
+        placeholder: inferPlaceholder(attachment),
       });
     }
   }
@@ -501,7 +435,7 @@ async function appendResolvedMediaFromStickers(params: {
         params.out.push({
           path: saved.path,
           contentType: saved.contentType,
-          kind: "sticker",
+          placeholder: "<media:sticker>",
         });
         lastError = null;
         break;
@@ -514,12 +448,33 @@ async function appendResolvedMediaFromStickers(params: {
       const fallback = candidates[0];
       if (fallback) {
         params.out.push({
+          path: fallback.url,
           contentType: inferStickerContentType(sticker),
-          kind: "sticker",
+          placeholder: "<media:sticker>",
         });
       }
     }
   }
+}
+
+function inferPlaceholder(attachment: APIAttachment): string {
+  const mime = attachment.content_type ?? "";
+  if (mime.startsWith("image/")) {
+    return "<media:image>";
+  }
+  if (mime.startsWith("video/")) {
+    return "<media:video>";
+  }
+  if (mime.startsWith("audio/")) {
+    return "<media:audio>";
+  }
+  if (hasDiscordVoiceAttachmentFields(attachment)) {
+    return "<media:audio>";
+  }
+  if (isDiscordAudioAttachmentFileName(attachment.filename ?? attachment.url)) {
+    return "<media:audio>";
+  }
+  return "<media:document>";
 }
 
 function isImageAttachment(attachment: APIAttachment): boolean {
@@ -534,23 +489,48 @@ function isImageAttachment(attachment: APIAttachment): boolean {
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$/.test(name);
 }
 
-function resolveDiscordTextMediaFacts(params: {
-  attachments?: APIAttachment[];
-  stickers?: APIStickerItem[];
-}): MediaPlaceholderTextFact[] {
-  return [
-    ...(params.attachments ?? []).map((attachment) => {
-      const classification = resolveDiscordMediaClassification({ attachment });
-      return classification;
-    }),
-    ...(params.stickers ?? []).map(() => ({ kind: "sticker" as const })),
-  ];
+function buildDiscordAttachmentPlaceholder(attachments?: APIAttachment[]): string {
+  if (!attachments || attachments.length === 0) {
+    return "";
+  }
+  const count = attachments.length;
+  const allImages = attachments.every(isImageAttachment);
+  const label = allImages ? "image" : "file";
+  const suffix = count === 1 ? label : `${label}s`;
+  const tag = allImages ? "<media:image>" : "<media:document>";
+  return `${tag} (${count} ${suffix})`;
 }
 
-/** Renders native Discord media only for transcript surfaces that cannot carry facts. */
-export function formatDiscordMediaText(params: {
+function buildDiscordStickerPlaceholder(stickers?: APIStickerItem[]): string {
+  if (!stickers || stickers.length === 0) {
+    return "";
+  }
+  const count = stickers.length;
+  const label = count === 1 ? "sticker" : "stickers";
+  return `<media:sticker> (${count} ${label})`;
+}
+
+export function buildDiscordMediaPlaceholder(params: {
   attachments?: APIAttachment[];
   stickers?: APIStickerItem[];
 }): string {
-  return formatMediaPlaceholderText(resolveDiscordTextMediaFacts(params));
+  const attachmentText = buildDiscordAttachmentPlaceholder(params.attachments);
+  const stickerText = buildDiscordStickerPlaceholder(params.stickers);
+  if (attachmentText && stickerText) {
+    return `${attachmentText}\n${stickerText}`;
+  }
+  return attachmentText || stickerText || "";
+}
+
+export function buildDiscordMediaPayload(
+  mediaList: Array<{ path: string; contentType?: string }>,
+): {
+  MediaPath?: string;
+  MediaType?: string;
+  MediaUrl?: string;
+  MediaPaths?: string[];
+  MediaUrls?: string[];
+  MediaTypes?: string[];
+} {
+  return buildMediaPayload(mediaList);
 }

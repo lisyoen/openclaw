@@ -19,13 +19,17 @@ import type {
 import { formatCliCommand } from "../../cli/command-format.js";
 import { formatUnknownChannelMessage } from "../../cli/error-format.js";
 import { parseTimeoutMsWithFallback } from "../../cli/parse-timeout.js";
-import { readConfigFileSnapshot } from "../../config/config.js";
-import type { OpenClawConfig } from "../../config/config.js";
+import { commitConfigWithPendingPluginInstalls } from "../../cli/plugins-install-record-commit.js";
+import { refreshPluginRegistryAfterConfigMutation } from "../../cli/plugins-registry-refresh.js";
+import {
+  readConfigFileSnapshot,
+  replaceConfigFile,
+  type OpenClawConfig,
+} from "../../config/config.js";
 import { danger } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { defaultRuntime, type RuntimeEnv, writeRuntimeJson } from "../../runtime.js";
 import { resolveInstallableChannelPlugin } from "../channel-setup/channel-plugin-resolution.js";
-import { persistResolvedChannelPluginConfig } from "./plugin-config-persistence.js";
 import { formatChannelAccountLabel, requireValidConfig } from "./shared.js";
 
 export type ChannelsCapabilitiesOptions = {
@@ -48,93 +52,6 @@ type ChannelCapabilitiesReport = {
   probe?: unknown;
   diagnostics?: ChannelCapabilitiesDiagnostics;
 };
-
-const CHANNEL_CAPABILITIES_TIMEOUT_MAX_MS = 30_000;
-
-type ChannelCapabilitiesStepResult<T> =
-  | { kind: "value"; value: T }
-  | { kind: "error"; error: unknown }
-  | { kind: "timeout" };
-
-function resolveChannelCapabilitiesTimeoutMs(timeoutMs: number) {
-  return Math.min(timeoutMs, CHANNEL_CAPABILITIES_TIMEOUT_MAX_MS);
-}
-
-async function raceChannelCapabilitiesStep<T>(params: {
-  timeoutMs: number;
-  run: () => Promise<T> | T;
-}): Promise<ChannelCapabilitiesStepResult<T>> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<ChannelCapabilitiesStepResult<T>>((resolve) => {
-    timeout = setTimeout(() => resolve({ kind: "timeout" }), params.timeoutMs);
-    timeout.unref?.();
-  });
-  const resultPromise: Promise<ChannelCapabilitiesStepResult<T>> = Promise.resolve()
-    .then(params.run)
-    .then(
-      (value): ChannelCapabilitiesStepResult<T> => ({ kind: "value", value }),
-      (error: unknown): ChannelCapabilitiesStepResult<T> => ({ kind: "error", error }),
-    );
-  const result = await Promise.race([resultPromise, timeoutPromise]);
-  if (timeout) {
-    clearTimeout(timeout);
-  }
-  return result;
-}
-
-async function runChannelCapabilitiesProbe(params: {
-  timeoutMs: number;
-  run: () => unknown;
-}): Promise<unknown> {
-  const result = await raceChannelCapabilitiesStep(params);
-  switch (result.kind) {
-    case "value":
-      return result.value;
-    case "timeout":
-      return {
-        ok: false,
-        timedOut: true,
-        error: `probe timed out after ${params.timeoutMs}ms`,
-      };
-    case "error":
-      return { ok: false, error: formatErrorMessage(result.error) };
-  }
-  return undefined;
-}
-
-async function runChannelCapabilitiesDiagnostics(params: {
-  timeoutMs: number;
-  run: () =>
-    | Promise<ChannelCapabilitiesDiagnostics | undefined>
-    | ChannelCapabilitiesDiagnostics
-    | undefined;
-}): Promise<ChannelCapabilitiesDiagnostics | undefined> {
-  const result = await raceChannelCapabilitiesStep(params);
-  switch (result.kind) {
-    case "value":
-      return result.value;
-    case "timeout":
-      return {
-        lines: [
-          {
-            text: `Diagnostics: timed out after ${params.timeoutMs}ms`,
-            tone: "error",
-          },
-        ],
-        details: { timedOut: true },
-      };
-    case "error":
-      return {
-        lines: [
-          {
-            text: `Diagnostics: failed (${formatErrorMessage(result.error)})`,
-            tone: "error",
-          },
-        ],
-      };
-  }
-  return undefined;
-}
 
 function formatSupport(capabilities?: ChannelCapabilities) {
   if (!capabilities) {
@@ -240,29 +157,25 @@ async function resolveChannelReports(params: {
       : (resolvedAccount as { enabled?: boolean }).enabled !== false;
     let probe: unknown;
     if (configured && enabled && plugin.status?.probeAccount) {
-      probe = await runChannelCapabilitiesProbe({
-        timeoutMs,
-        run: () =>
-          plugin.status?.probeAccount?.({
-            account: resolvedAccount,
-            timeoutMs,
-            cfg,
-          }),
-      });
+      try {
+        probe = await plugin.status.probeAccount({
+          account: resolvedAccount,
+          timeoutMs,
+          cfg,
+        });
+      } catch (err) {
+        probe = { ok: false, error: formatErrorMessage(err) };
+      }
     }
 
     const diagnostics =
-      configured && enabled && plugin.status?.buildCapabilitiesDiagnostics
-        ? await runChannelCapabilitiesDiagnostics({
+      configured && enabled
+        ? await plugin.status?.buildCapabilitiesDiagnostics?.({
+            account: resolvedAccount,
             timeoutMs,
-            run: () =>
-              plugin.status?.buildCapabilitiesDiagnostics?.({
-                account: resolvedAccount,
-                timeoutMs,
-                cfg,
-                probe,
-                target: params.target,
-              }),
+            cfg,
+            probe,
+            target: params.target,
           })
         : undefined;
     const discoveredActions = resolveMessageActionDiscoveryForPlugin({
@@ -308,9 +221,7 @@ export async function channelsCapabilitiesCommand(
     return;
   }
   let cfg = loadedCfg;
-  const timeoutMs = resolveChannelCapabilitiesTimeoutMs(
-    parseTimeoutMsWithFallback(opts.timeout, 10_000),
-  );
+  const timeoutMs = parseTimeoutMsWithFallback(opts.timeout, 10_000);
   const rawChannel = normalizeLowercaseStringOrEmpty(opts.channel);
   const rawTarget = normalizeOptionalString(opts.target) ?? "";
 
@@ -347,11 +258,35 @@ export async function channelsCapabilitiesCommand(
             allowInstall: true,
           });
           if (resolved.configChanged) {
-            cfg = await persistResolvedChannelPluginConfig({
-              resolved,
-              baseHash: (await sourceSnapshotPromise)?.hash,
-              runtime,
-            });
+            cfg = resolved.cfg;
+            const shouldMovePluginInstalls = Boolean(
+              cfg.plugins?.installs && Object.keys(cfg.plugins.installs).length > 0,
+            );
+            if (shouldMovePluginInstalls) {
+              const committed = await commitConfigWithPendingPluginInstalls({
+                nextConfig: cfg,
+                baseHash: (await sourceSnapshotPromise)?.hash,
+              });
+              cfg = committed.config;
+              await refreshPluginRegistryAfterConfigMutation({
+                config: cfg,
+                reason: "source-changed",
+                installRecords: committed.installRecords,
+                logger: { warn: (message) => runtime.log(message) },
+              });
+            } else {
+              await replaceConfigFile({
+                nextConfig: cfg,
+                baseHash: (await sourceSnapshotPromise)?.hash,
+              });
+              if (resolved.pluginInstalled) {
+                await refreshPluginRegistryAfterConfigMutation({
+                  config: cfg,
+                  reason: "source-changed",
+                  logger: { warn: (message) => runtime.log(message) },
+                });
+              }
+            }
           }
           return resolved.plugin ? [resolved.plugin] : null;
         })();
@@ -415,12 +350,10 @@ export async function channelsCapabilitiesCommand(
       const enabledLabel = report.enabled === false ? "disabled" : "enabled";
       lines.push(`Status: ${configuredLabel}, ${enabledLabel}`);
     }
-    const formattedProbeLines = report.plugin.status?.formatCapabilitiesProbe?.({
-      probe: report.probe,
-    });
-    const probeLines = formattedProbeLines?.length
-      ? formattedProbeLines
-      : formatGenericProbeLines(report.probe);
+    const probeLines =
+      report.plugin.status?.formatCapabilitiesProbe?.({
+        probe: report.probe,
+      }) ?? formatGenericProbeLines(report.probe);
     if (probeLines.length > 0) {
       lines.push(...probeLines.map(renderDisplayLine));
     } else if (report.configured && report.enabled) {

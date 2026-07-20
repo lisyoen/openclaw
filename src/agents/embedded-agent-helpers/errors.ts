@@ -1,4 +1,3 @@
-import { isConfiguredContextSizeOverflowError } from "@openclaw/ai/internal/runtime";
 /**
  * Classifies provider/runtime failures and formats assistant-facing error text.
  */
@@ -6,7 +5,6 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
 } from "@openclaw/normalization-core/string-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { AssistantMessage } from "../../llm/types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -17,7 +15,10 @@ import {
   parseApiErrorInfo,
 } from "../../shared/assistant-error-format.js";
 export {
+  extractLeadingHttpStatus,
   formatRawAssistantErrorForUi,
+  isCloudflareOrHtmlErrorPage,
+  isGenericProviderInternalError,
   parseApiErrorInfo,
 } from "../../shared/assistant-error-format.js";
 import { classifyOAuthRefreshFailure } from "../auth-profiles/oauth-refresh-failure.js";
@@ -58,23 +59,22 @@ export {
   formatRateLimitOrOverloadedErrorCopy,
   getApiErrorPayloadFingerprint,
   isRawApiErrorPayload,
+  sanitizeUserFacingText,
 } from "./sanitize-user-facing-text.js";
 
 export {
   isAuthErrorMessage,
+  isAuthPermanentErrorMessage,
   isBillingErrorMessage,
   isOverloadedErrorMessage,
   isRateLimitErrorMessage,
+  isServerErrorMessage,
   isTimeoutErrorMessage,
 } from "./failover-matches.js";
 
 const log = createSubsystemLogger("errors");
 const sandboxToolPolicyAuditMessages = new WeakSet<AssistantMessage>();
 export const GENERIC_ASSISTANT_ERROR_TEXT = "LLM request failed.";
-export const AUTH_INVALID_TOKEN_USER_TEXT =
-  "Authentication failed (provider returned HTTP 401). " +
-  "Your provider token may have expired — try the request again in a moment. " +
-  "If the failure persists, re-authenticate this provider.";
 const PROVIDER_SCHEMA_REJECTION_USER_TEXT =
   "LLM request failed: provider rejected the request schema or tool payload.";
 const MODEL_NOT_FOUND_USER_TEXT =
@@ -126,7 +126,6 @@ export function isContextOverflowError(errorMessage?: string): boolean {
     hasContextWindow && (lower.includes("ran out of room") || lower.includes("ran out of space"));
   return (
     lower.includes("request_too_large") ||
-    isConfiguredContextSizeOverflowError(errorMessage) ||
     (lower.includes("invalid_argument") && lower.includes("maximum number of tokens")) ||
     lower.includes("request exceeds the maximum size") ||
     lower.includes("context length exceeded") ||
@@ -302,7 +301,7 @@ function normalizeFailoverDetailString(value: string | undefined): string | unde
     return undefined;
   }
   return trimmed.length > MAX_FAILOVER_DETAIL_CHARS
-    ? truncateUtf16Safe(trimmed, MAX_FAILOVER_DETAIL_CHARS)
+    ? trimmed.slice(0, MAX_FAILOVER_DETAIL_CHARS)
     : trimmed;
 }
 
@@ -449,8 +448,6 @@ const AUTH_INVALID_TOKEN_HINT_RE =
   /\bunauthorized\b|\b(?:invalid|incorrect|expired|stale)[_\s-]?api[_\s-]?key\b|\b(?:invalid|incorrect|expired|stale)\s+(?:token|jwt|credential|api[_\s-]?key)\b|\b(?:token|jwt|credential|api[_\s-]?key)\s+(?:is\s+)?(?:invalid|incorrect|expired|stale)\b/i;
 const HTML_BODY_RE = /^\s*(?:<!doctype\s+html\b|<html\b)/i;
 const HTML_CLOSE_RE = /<\/html>/i;
-const CLOUDFLARE_CHALLENGE_RE =
-  /Enable\s+JavaScript\s+and\s+cookies\s+to\s+continue|cf-browser-verification|__cf_challenge|cdn-cgi\/challenge-platform|challenge-error-text/i;
 const PROXY_ERROR_RE =
   /\bproxyconnect\b|\bhttps?_proxy\b|\b407\b|\bproxy authentication required\b|\btunnel connection failed\b|\bconnect tunnel\b|\bsocks proxy\b|\bproxy error\b/i;
 const DNS_ERROR_RE = /\benotfound\b|\beai_again\b|\bgetaddrinfo\b|\bno such host\b|\bdns\b/i;
@@ -516,10 +513,6 @@ function isHtmlErrorResponse(raw: string, status?: number): boolean {
   }
   const rest = extractLeadingHttpStatus(candidate)?.rest ?? candidate;
   return HTML_BODY_RE.test(rest) && HTML_CLOSE_RE.test(rest);
-}
-
-function isCloudflareChallengeResponse(message: string): boolean {
-  return CLOUDFLARE_CHALLENGE_RE.test(message);
 }
 
 function isTransportHtmlErrorStatus(status: number | undefined): boolean {
@@ -727,10 +720,7 @@ function toReasonClassification(reason: FailoverReason): FailoverClassification 
 function failoverReasonFromClassification(
   classification: FailoverClassification | null,
 ): FailoverReason | null {
-  if (!classification) {
-    return null;
-  }
-  return classification.kind === "reason" ? classification.reason : "context_overflow";
+  return classification?.kind === "reason" ? classification.reason : null;
 }
 
 export function isTransientHttpError(raw: string): boolean {
@@ -743,6 +733,39 @@ export function isTransientHttpError(raw: string): boolean {
     return false;
   }
   return TRANSIENT_HTTP_ERROR_CODES.has(status.code);
+}
+
+export function classifyFailoverReasonFromHttpStatus(
+  status: number | undefined,
+  message?: string,
+  opts?: { provider?: string },
+): FailoverReason | null {
+  const hasProviderStatusSignal = Boolean(opts?.provider && typeof status === "number");
+  const messageClassification = message
+    ? classifyFailoverClassificationFromMessage(message, opts?.provider, {
+        includeProviderPluginHooks: !hasProviderStatusSignal,
+      })
+    : null;
+  const providerPluginReason = hasProviderStatusSignal
+    ? classifyProviderPluginError({
+        errorMessage: message ?? "",
+        provider: opts?.provider,
+        status,
+      })
+    : null;
+  const effectiveMessageClassification = providerPluginReason
+    ? toReasonClassification(providerPluginReason)
+    : messageClassification;
+  return failoverReasonFromClassification(
+    classifyFailoverClassificationFromHttpStatus(
+      status,
+      message,
+      effectiveMessageClassification,
+      status,
+      opts?.provider,
+      { preserveProviderSignalClassification: providerPluginReason !== null },
+    ),
+  );
 }
 
 function classifyFailoverClassificationFromHttpStatus(
@@ -820,8 +843,7 @@ function classifyFailoverClassificationFromHttpStatus(
       messageReason === "session_expired" ||
       messageReason === "billing" ||
       messageReason === "auth_permanent" ||
-      messageReason === "auth" ||
-      messageReason === "format"
+      messageReason === "auth"
     ) {
       return messageClassification;
     }
@@ -869,8 +891,6 @@ function classifyFailoverClassificationFromHttpStatus(
   return null;
 }
 
-// Only cross-provider structured codes classify in core; provider-native
-// mappings belong to provider hooks.
 function classifyFailoverReasonFromCode(raw: string | undefined): FailoverReason | null {
   const normalized = raw?.trim().toUpperCase();
   if (!normalized) {
@@ -895,26 +915,6 @@ function classifyFailoverReasonFromCode(raw: string | undefined): FailoverReason
     default:
       return TIMEOUT_ERROR_CODES.has(normalized) ? "timeout" : null;
   }
-}
-
-function classifyFailoverReasonFromErrorType(raw: string | undefined): FailoverReason | null {
-  const normalized = normalizeOptionalLowercaseString(raw);
-  switch (normalized) {
-    case "server_error":
-    case "upstream_error":
-      return "server_error";
-    case "overloaded_error":
-      return "overloaded";
-    default:
-      return null;
-  }
-}
-
-function classifyFailoverClassificationFromErrorType(
-  raw: string | undefined,
-): FailoverClassification | null {
-  const reason = classifyFailoverReasonFromErrorType(raw);
-  return reason ? toReasonClassification(reason) : null;
 }
 
 function isProvider(provider: string | undefined, match: string): boolean {
@@ -960,7 +960,7 @@ function isBilling429MessageForProvider(raw: string, provider: string | undefine
 // stream ends with stopReason === "aborted" | "error" without specific info. Treat
 // it as a transient transport failure so the configured fallback chain rotates
 // instead of returning the bare string to the user (#71620).
-export function isGenericUnknownStreamErrorMessage(raw: string): boolean {
+function isGenericUnknownStreamError(raw: string): boolean {
   return /^\s*an unknown error occurred\.?\s*$/i.test(raw);
 }
 
@@ -990,27 +990,6 @@ function isExactUnknownNoDetailsError(raw: string): boolean {
   );
 }
 
-function isClaudeCliLoggedOutError(raw: string, provider?: string): boolean {
-  // This upstream phrase is generic prose. Provider identity must come from
-  // the runner metadata so other providers cannot inherit Claude CLI policy.
-  if (normalizeOptionalLowercaseString(provider)?.trim() !== "claude-cli") {
-    return false;
-  }
-  return /\bnot logged in\b\s*·\s*please run \/login\b/i.test(raw);
-}
-
-function isUnsupportedImageInputErrorMessage(raw: string | undefined): boolean {
-  const normalized = normalizeOptionalLowercaseString(raw);
-  if (!normalized) {
-    return false;
-  }
-  return (
-    /\bdoes not support image inputs?\b/.test(normalized) ||
-    /\bunsupported image input\b/.test(normalized) ||
-    (/\bno endpoints found\b/.test(normalized) && /\bsupport image input\b/.test(normalized))
-  );
-}
-
 function classifyFailoverClassificationFromMessage(
   raw: string,
   provider?: string,
@@ -1021,9 +1000,6 @@ function classifyFailoverClassificationFromMessage(
   }
   if (isImageSizeError(raw)) {
     return null;
-  }
-  if (isUnsupportedImageInputErrorMessage(raw)) {
-    return toReasonClassification("format");
   }
   if (isCliSessionExpiredErrorMessage(raw)) {
     return toReasonClassification("session_expired");
@@ -1078,9 +1054,6 @@ function classifyFailoverClassificationFromMessage(
   // Auth classifiers run before the broad isJsonApiInternalServerError check so that
   // provider errors like {"type":"api_error","message":"invalid api key"} are
   // correctly classified as "auth" rather than "timeout".
-  if (isClaudeCliLoggedOutError(raw, provider)) {
-    return toReasonClassification("auth");
-  }
   const oauthRefreshFailure = classifyOAuthRefreshFailure(raw);
   if (oauthRefreshFailure?.reason) {
     return toReasonClassification("auth_permanent");
@@ -1091,7 +1064,7 @@ function classifyFailoverClassificationFromMessage(
   if (isAuthErrorMessage(raw)) {
     return toReasonClassification("auth");
   }
-  if (isGenericUnknownStreamErrorMessage(raw)) {
+  if (isGenericUnknownStreamError(raw)) {
     return toReasonClassification("timeout");
   }
   if (isOpenRouterProviderReturnedError(raw, provider)) {
@@ -1203,14 +1176,9 @@ export function classifyFailoverSignal(signal: FailoverSignal): FailoverClassifi
           errorType: signal.errorType,
         })
       : null;
-  const messageOrDetailClassification = mergeMessageAndDetailClassification(
-    messageClassification,
-    detailClassification,
-  );
-  const errorTypeClassification = classifyFailoverClassificationFromErrorType(signal.errorType);
   const effectiveMessageClassification = providerPluginReason
     ? toReasonClassification(providerPluginReason)
-    : (messageOrDetailClassification ?? errorTypeClassification);
+    : mergeMessageAndDetailClassification(messageClassification, detailClassification);
   const codeReason = classifyFailoverReasonFromCode(signal.code);
   if (codeReason === "auth_permanent") {
     return toReasonClassification(codeReason);
@@ -1238,9 +1206,8 @@ export function classifyProviderRuntimeFailureKind(
   const normalizedSignal = typeof signal === "string" ? { message: signal } : signal;
   const message = normalizedSignal.message?.trim() ?? "";
   const status = inferSignalStatus(normalizedSignal);
-  const hasStructuredErrorSignal = Boolean(normalizedSignal.code || normalizedSignal.errorType);
 
-  if (!message && typeof status !== "number" && !hasStructuredErrorSignal) {
+  if (!message && typeof status !== "number") {
     return "empty_response";
   }
   if (normalizedSignal.code === "refresh_contention") {
@@ -1268,13 +1235,6 @@ export function classifyProviderRuntimeFailureKind(
     return "proxy";
   }
   if (message && isHtmlErrorResponse(message, status)) {
-    // Cloudflare challenge pages block programmatic requests at the CDN layer.
-    // These are upstream gateway blocks, not authentication failures — surface
-    // the more accurate "upstream_html" message, which already mentions
-    // "CDN or gateway (e.g. Cloudflare) blocked the request".
-    if (status === 403 && isCloudflareChallengeResponse(message)) {
-      return "upstream_html";
-    }
     return status === 401 || status === 403 ? "auth_html" : "upstream_html";
   }
   const failoverClassification = classifyFailoverSignal({
@@ -1364,15 +1324,7 @@ export function classifyAssistantFailoverReason(
 
 export function formatAssistantErrorText(
   msg: AssistantMessage,
-  opts?: {
-    cfg?: OpenClawConfig;
-    sessionKey?: string;
-    provider?: string;
-    model?: string;
-    /** Credential auth mode (e.g. "oauth", "token", "api_key", "aws-sdk").
-     * When "oauth" or "token", billing copy omits API-key language (#80877). */
-    authMode?: string;
-  },
+  opts?: { cfg?: OpenClawConfig; sessionKey?: string; provider?: string; model?: string },
 ): string | undefined {
   // Also format errors if errorMessage is present, even if stopReason isn't "error"
   const raw = (msg.errorMessage ?? "").trim();
@@ -1459,7 +1411,11 @@ export function formatAssistantErrorText(
   }
 
   if (providerRuntimeFailureKind === "auth_invalid_token") {
-    return AUTH_INVALID_TOKEN_USER_TEXT;
+    return (
+      "Authentication failed (provider returned HTTP 401). " +
+      "Your provider token may have expired — try the request again in a moment. " +
+      "If the failure persists, re-authenticate this provider."
+    );
   }
 
   if (providerRuntimeFailureKind === "upstream_html") {
@@ -1525,10 +1481,10 @@ export function formatAssistantErrorText(
     isOpenRouterKeyLimitExceededError(raw, opts?.provider) ||
     isOpenRouterKeyBudgetLimitExceededError(raw, opts?.provider)
   ) {
-    return formatBillingErrorMessage(opts?.provider, opts?.model ?? msg.model, opts?.authMode);
+    return formatBillingErrorMessage(opts?.provider, opts?.model ?? msg.model);
   }
   if (isBilling429MessageForProvider(raw, opts?.provider)) {
-    return formatBillingErrorMessage(opts?.provider, opts?.model ?? msg.model, opts?.authMode);
+    return formatBillingErrorMessage(opts?.provider, opts?.model ?? msg.model);
   }
 
   const transientCopy = formatRateLimitOrOverloadedErrorCopy(raw);
@@ -1550,7 +1506,7 @@ export function formatAssistantErrorText(
   }
 
   if (isBillingErrorMessage(raw)) {
-    return formatBillingErrorMessage(opts?.provider, opts?.model ?? msg.model, opts?.authMode);
+    return formatBillingErrorMessage(opts?.provider, opts?.model ?? msg.model);
   }
 
   if (providerRuntimeFailureKind === "schema") {
@@ -1574,12 +1530,12 @@ export function formatAssistantErrorText(
 
   // Never return raw unhandled errors - log for debugging but return safe message
   if (raw.length > 600) {
-    log.warn(`Long error truncated: ${truncateUtf16Safe(raw, 200)}`);
+    log.warn(`Long error truncated: ${raw.slice(0, 200)}`);
   }
-  return raw.length > 600 ? `${truncateUtf16Safe(raw, 600)}…` : raw;
+  return raw.length > 600 ? `${raw.slice(0, 600)}…` : raw;
 }
 
-function isRawAssistantErrorPassthrough(params: {
+export function isRawAssistantErrorPassthrough(params: {
   friendlyError?: string;
   rawError?: string;
 }): boolean {
@@ -1596,7 +1552,7 @@ function isRawAssistantErrorPassthrough(params: {
     friendlyError.startsWith("HTTP ");
   return (
     friendlyError === rawError ||
-    (rawError.length > 600 && friendlyError === `${truncateUtf16Safe(rawError, 600)}…`) ||
+    (rawError.length > 600 && friendlyError === `${rawError.slice(0, 600)}…`) ||
     Boolean(parsedMessage && hasRawDerivedProviderPrefix) ||
     Boolean(leadingStatusRest && friendlyError.startsWith("HTTP "))
   );
@@ -1604,14 +1560,7 @@ function isRawAssistantErrorPassthrough(params: {
 
 export function formatUserFacingAssistantErrorText(
   msg: AssistantMessage,
-  opts?: {
-    cfg?: OpenClawConfig;
-    sessionKey?: string;
-    provider?: string;
-    model?: string;
-    /** Credential auth mode for billing copy (#80877). */
-    authMode?: string;
-  },
+  opts?: { cfg?: OpenClawConfig; sessionKey?: string; provider?: string; model?: string },
 ): string {
   const friendlyError = formatAssistantErrorText(msg, opts);
   const rawError = msg.errorMessage?.trim();
@@ -1645,7 +1594,7 @@ const IMAGE_DIMENSION_ERROR_RE =
 const IMAGE_DIMENSION_PATH_RE = /messages\.(\d+)\.content\.(\d+)\.image/i;
 const IMAGE_SIZE_ERROR_RE = /image exceeds\s*(\d+(?:\.\d+)?)\s*mb/i;
 
-function isMissingToolCallInputError(raw: string): boolean {
+export function isMissingToolCallInputError(raw: string): boolean {
   if (!raw) {
     return false;
   }
@@ -1693,17 +1642,8 @@ function isStructuredServerErrorMessage(raw: string): boolean {
   if (!raw) {
     return false;
   }
-  const parsedType = normalizeOptionalLowercaseString(parseApiErrorInfo(raw)?.type);
-  if (parsedType === "server_error" || parsedType === "upstream_error") {
-    return true;
-  }
   const value = normalizeLowercaseStringOrEmpty(raw);
-  return (
-    value.includes('"type":"server_error"') ||
-    value.includes('"code":"server_error"') ||
-    value.includes('"type":"upstream_error"') ||
-    value.includes('"code":"upstream_error"')
-  );
+  return value.includes('"type":"server_error"') || value.includes('"code":"server_error"');
 }
 
 export function parseImageDimensionError(raw: string): {
@@ -1729,7 +1669,7 @@ export function parseImageDimensionError(raw: string): {
   };
 }
 
-function isImageDimensionErrorMessage(raw: string): boolean {
+export function isImageDimensionErrorMessage(raw: string): boolean {
   return Boolean(parseImageDimensionError(raw));
 }
 
@@ -1751,7 +1691,7 @@ export function parseImageSizeError(raw: string): {
   };
 }
 
-function isImageSizeError(errorMessage?: string): boolean {
+export function isImageSizeError(errorMessage?: string): boolean {
   if (!errorMessage) {
     return false;
   }
@@ -1768,6 +1708,8 @@ export function isAuthAssistantError(msg: AssistantMessage | undefined): boolean
   }
   return isAuthErrorMessage(msg.errorMessage ?? "");
 }
+
+export { isModelNotFoundErrorMessage };
 
 function isCliSessionExpiredErrorMessage(raw: string): boolean {
   if (!raw) {
@@ -1810,4 +1752,3 @@ export function isFailoverErrorMessage(raw: string, opts?: { provider?: string }
 export function isFailoverAssistantError(msg: AssistantMessage | undefined): boolean {
   return classifyAssistantFailoverReason(msg) !== null;
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

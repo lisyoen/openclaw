@@ -19,42 +19,7 @@ function trimTrailingApiV1(baseUrl: string) {
   return baseUrl.replace(/\/v1\/?$/i, "");
 }
 
-const DEFAULT_OPENAI_MODEL_IDS = ["gpt-5.6-luna", "gpt-5.6-luna-alt"] as const;
-
-function selectedOpenAiModelIds(
-  primaryProviderId: string,
-  selectedModelRefs: readonly (string | undefined)[],
-) {
-  const selected = selectedModelRefs.flatMap((modelRef) => {
-    const slash = modelRef?.indexOf("/") ?? -1;
-    if (!modelRef || slash <= 0 || slash === modelRef.length - 1) {
-      return [];
-    }
-    const providerId = modelRef.slice(0, slash);
-    return providerId === primaryProviderId || providerId === "openai"
-      ? [modelRef.slice(slash + 1)]
-      : [];
-  });
-  return selected.length > 0 ? [...new Set(selected)] : [...DEFAULT_OPENAI_MODEL_IDS];
-}
-
-function createMockOpenAiTextModel(id: string): ModelProviderConfig["models"][number] {
-  return {
-    id,
-    name: id,
-    api: "openai-responses",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: ZERO_COST,
-    contextWindow: 128_000,
-    maxTokens: 4096,
-  };
-}
-
-function createMockOpenAiResponsesProvider(
-  baseUrl: string,
-  modelIds: readonly string[],
-): ModelProviderConfig {
+function createMockOpenAiResponsesProvider(baseUrl: string): ModelProviderConfig {
   return {
     baseUrl,
     apiKey: "test",
@@ -63,7 +28,26 @@ function createMockOpenAiResponsesProvider(
       allowPrivateNetwork: true,
     },
     models: [
-      ...modelIds.map(createMockOpenAiTextModel),
+      {
+        id: "gpt-5.5",
+        name: "gpt-5.5",
+        api: "openai-responses",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: ZERO_COST,
+        contextWindow: 128_000,
+        maxTokens: 4096,
+      },
+      {
+        id: "gpt-5.5-alt",
+        name: "gpt-5.5-alt",
+        api: "openai-responses",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: ZERO_COST,
+        contextWindow: 128_000,
+        maxTokens: 4096,
+      },
       {
         id: "gpt-image-1",
         name: "gpt-image-1",
@@ -111,29 +95,11 @@ function createMockAnthropicMessagesProvider(baseUrl: string): ModelProviderConf
   };
 }
 
-export function createMockProviderMap(
-  primaryProviderId: string,
-  providerBaseUrl: string,
-  selectedModelRefs: readonly (string | undefined)[] = [],
-) {
-  const primaryProvider = createMockOpenAiResponsesProvider(
-    providerBaseUrl,
-    selectedOpenAiModelIds(primaryProviderId, selectedModelRefs),
-  );
+export function createMockProviderMap(primaryProviderId: string, providerBaseUrl: string) {
+  const primaryProvider = createMockOpenAiResponsesProvider(providerBaseUrl);
   return {
     [primaryProviderId]: primaryProvider,
     openai: cloneProvider(primaryProvider),
     anthropic: createMockAnthropicMessagesProvider(providerBaseUrl),
   };
-}
-
-export function listMockOpenAiServerModelIds(selectedModelRefs: readonly string[] = []) {
-  return [
-    ...selectedOpenAiModelIds("mock-openai", selectedModelRefs),
-    "gpt-image-1",
-    "gpt-4o-transcribe",
-    "text-embedding-3-small",
-    "claude-opus-4-8",
-    "claude-sonnet-4-6",
-  ];
 }

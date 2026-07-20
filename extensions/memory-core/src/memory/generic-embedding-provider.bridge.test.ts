@@ -20,7 +20,7 @@ import {
   restoreRegisteredMemoryEmbeddingProviders,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createEmbeddingProvider, resolveEmbeddingProviderIndexIdentity } from "./embeddings.js";
+import { createEmbeddingProvider } from "./embeddings.js";
 
 type CapturedCall = {
   kind: "embed" | "embedBatch";
@@ -76,24 +76,6 @@ describe("memory-core generic embedding provider bridge", () => {
           id: "virtual-generic",
           transport: "remote",
           defaultModel: "virtual-default",
-          resolveIndexIdentity: (options) => ({
-            model: options.model,
-            cacheKeyData: {
-              provider: "virtual-generic",
-              model: options.model,
-              dimensions: options.dimensions,
-            },
-            aliases: [
-              {
-                model: "virtual-model-legacy",
-                cacheKeyData: {
-                  provider: "virtual-generic",
-                  model: "virtual-model-legacy",
-                  dimensions: options.dimensions,
-                },
-              },
-            ],
-          }),
           create: async (options) => {
             expect(options.model).toBe("virtual-model");
             expect(options.dimensions).toBe(7);
@@ -124,16 +106,6 @@ describe("memory-core generic embedding provider bridge", () => {
                   model: options.model,
                   dimensions: options.dimensions,
                 },
-                indexIdentityAliases: [
-                  {
-                    model: "virtual-model-legacy",
-                    cacheKeyData: {
-                      provider: "virtual-generic",
-                      model: "virtual-model-legacy",
-                      dimensions: options.dimensions,
-                    },
-                  },
-                ],
               },
             };
           },
@@ -148,25 +120,6 @@ describe("memory-core generic embedding provider bridge", () => {
       "virtual-generic",
     ]);
     expect(listRegisteredMemoryEmbeddingProviders()).toEqual([]);
-
-    expect(resolveEmbeddingProviderIndexIdentity(createOptions(config))).toEqual({
-      provider: { id: "virtual-generic", model: "virtual-model" },
-      cacheKeyData: {
-        provider: "virtual-generic",
-        model: "virtual-model",
-        dimensions: 7,
-      },
-      aliases: [
-        {
-          model: "virtual-model-legacy",
-          cacheKeyData: {
-            provider: "virtual-generic",
-            model: "virtual-model-legacy",
-            dimensions: 7,
-          },
-        },
-      ],
-    });
 
     const result = await createEmbeddingProvider(createOptions(config));
 
@@ -185,16 +138,6 @@ describe("memory-core generic embedding provider bridge", () => {
         model: "virtual-model",
         dimensions: 7,
       },
-      indexIdentityAliases: [
-        {
-          model: "virtual-model-legacy",
-          cacheKeyData: {
-            provider: "virtual-generic",
-            model: "virtual-model-legacy",
-            dimensions: 7,
-          },
-        },
-      ],
     });
 
     await expect(result.provider?.embedQuery("query")).resolves.toEqual([1, 2, 3]);

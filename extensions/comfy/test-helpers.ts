@@ -17,7 +17,7 @@ type ComfyCloudJobResponseOptions = {
   filename: string;
   outputKind: "gifs" | "images";
   promptId: string;
-  redirectLocation?: string;
+  redirectLocation: string;
 };
 
 export function buildComfyConfig(config: Record<string, unknown>): OpenClawConfig {
@@ -78,6 +78,14 @@ export function mockComfyCloudJobResponses(
           },
         },
       }),
+    )
+    .mockResolvedValueOnce(
+      fetchGuardResponse(
+        new Response(null, {
+          status: 302,
+          headers: { location: options.redirectLocation },
+        }),
+      ),
     )
     .mockResolvedValueOnce(
       fetchGuardResponse(

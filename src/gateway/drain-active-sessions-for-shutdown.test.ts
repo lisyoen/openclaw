@@ -29,7 +29,6 @@ vi.mock("../plugins/hook-runner-global.js", () => ({
 }));
 
 vi.mock("./session-transcript-files.fs.js", () => ({
-  extractGeneratedTranscriptSessionId: vi.fn(() => undefined),
   resolveStableSessionEndTranscript: vi.fn(() => ({
     sessionFile: undefined,
     transcriptArchived: false,
@@ -52,7 +51,7 @@ const {
   emitGatewaySessionEndPluginHook,
   emitGatewaySessionStartPluginHook,
 } = await import("./session-reset-service.js");
-const { forgetActiveSessionForShutdown, listActiveSessionsForShutdown } =
+const { clearActiveSessionsForShutdownTracker, listActiveSessionsForShutdown } =
   await import("./active-sessions-shutdown-tracker.js");
 
 const cfg: OpenClawConfig = {};
@@ -74,21 +73,15 @@ function trackSessionForShutdown(params: { sessionId: string; sessionKey?: strin
   });
 }
 
-function clearTrackedSessions(): void {
-  for (const entry of listActiveSessionsForShutdown()) {
-    forgetActiveSessionForShutdown(entry.sessionId);
-  }
-}
-
 beforeEach(() => {
-  clearTrackedSessions();
+  clearActiveSessionsForShutdownTracker();
   runSessionEndMock.mockClear();
   hasHooksMock.mockClear();
   hasHooksMock.mockImplementation((name: string) => name === "session_end");
 });
 
 afterEach(() => {
-  clearTrackedSessions();
+  clearActiveSessionsForShutdownTracker();
 });
 
 describe("drainActiveSessionsForShutdown", () => {

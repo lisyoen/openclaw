@@ -25,10 +25,6 @@ export async function resolveCronSkillsSnapshot(params: {
 
   const runtime = await loadSkillsSnapshotRuntime();
   const skillFilter = runtime.resolveEffectiveAgentSkillFilter(params.config, params.agentId);
-  const nodeSkills = runtime.resolveNodeExecEligibility({
-    cfg: params.config,
-    agentId: params.agentId,
-  });
   return runtime.resolveReusableWorkspaceSkillSnapshot({
     workspaceDir: params.workspaceDir,
     config: params.config,
@@ -36,9 +32,11 @@ export async function resolveCronSkillsSnapshot(params: {
     existingSnapshot: params.existingSnapshot,
     skillFilter,
     eligibility: {
-      nodeSkills,
       remote: runtime.getRemoteSkillEligibility({
-        advertiseExecNode: nodeSkills.canExec,
+        advertiseExecNode: runtime.canExecRequestNode({
+          cfg: params.config,
+          agentId: params.agentId,
+        }),
       }),
     },
     watch: false,

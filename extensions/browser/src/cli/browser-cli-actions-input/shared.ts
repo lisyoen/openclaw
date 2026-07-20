@@ -3,8 +3,6 @@
  */
 import fs from "node:fs/promises";
 import type { Command } from "commander";
-import { addTimerTimeoutGraceMs } from "openclaw/plugin-sdk/number-runtime";
-import { BROWSER_ACTION_TRANSPORT_SLACK_MS } from "../../browser/act-policy.js";
 import { callBrowserRequest, type BrowserParentOpts } from "../browser-cli-shared.js";
 import {
   danger,
@@ -19,15 +17,14 @@ type BrowserActionContext = {
   profile: string | undefined;
 };
 
+const BROWSER_ACTION_TIMEOUT_SLACK_MS = 5000;
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS = 20000;
 
 /** Adds gateway slack to a Browser action timeout so route work can finish cleanly. */
 export function withBrowserActionTimeoutSlack(timeoutMs: number | undefined): number {
   return (
-    addTimerTimeoutGraceMs(
-      timeoutMs ?? DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
-      BROWSER_ACTION_TRANSPORT_SLACK_MS,
-    ) ?? 1
+    Math.max(1, Math.floor(timeoutMs ?? DEFAULT_BROWSER_ACTION_TIMEOUT_MS)) +
+    BROWSER_ACTION_TIMEOUT_SLACK_MS
   );
 }
 
@@ -97,12 +94,7 @@ export async function readFields(opts: {
   if (!payload.trim()) {
     throw new Error("fields are required");
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch (cause) {
-    throw new Error("fields must be valid JSON.", { cause });
-  }
+  const parsed = JSON.parse(payload) as unknown;
   if (!Array.isArray(parsed)) {
     throw new Error("fields must be an array");
   }

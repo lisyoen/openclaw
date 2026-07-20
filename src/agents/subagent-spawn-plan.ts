@@ -5,7 +5,6 @@
  */
 import { formatThinkingLevels } from "../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { FastMode } from "../shared/fast-mode.js";
 import {
   resolveDefaultModelForAgent,
   resolveSubagentConfiguredModelSelection,
@@ -60,7 +59,6 @@ export function resolveSubagentModelAndThinkingPlan(params: {
   modelOverride?: string;
   thinkingOverrideRaw?: string;
   callerThinkingRaw?: string;
-  fastMode?: FastMode;
 }) {
   const resolvedModel = resolveSubagentSpawnModelSelection({
     cfg: params.cfg,
@@ -129,7 +127,6 @@ export function resolveSubagentModelAndThinkingPlan(params: {
           }
         : {}),
       ...thinkingPlan.initialSessionPatch,
-      ...(params.fastMode !== undefined ? { fastMode: params.fastMode } : {}),
     },
   };
 }

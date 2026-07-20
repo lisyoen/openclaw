@@ -1,6 +1,4 @@
 // Bridge builder for users upgrading from bundled plugins to external plugin packages.
-import path from "node:path";
-import { buildBundledPluginLoadPathAliases } from "../plugins/bundled-load-path-aliases.js";
 import type { ExternalizedBundledPluginBridge } from "../plugins/externalized-bundled-plugins.js";
 import { readPersistedInstalledPluginIndex } from "../plugins/installed-plugin-index-store.js";
 import type { InstalledPluginIndexRecord } from "../plugins/installed-plugin-index.js";
@@ -11,11 +9,6 @@ import {
   getOfficialExternalPluginCatalogManifest,
   resolveOfficialExternalPluginInstall,
 } from "../plugins/official-external-plugin-catalog.js";
-
-type PersistedBundledPluginRecoveryLocation = {
-  pluginId: string;
-  loadPaths: readonly string[];
-};
 
 function buildBridgeFromPersistedBundledRecord(
   record: InstalledPluginIndexRecord,
@@ -81,25 +74,5 @@ export async function listPersistedBundledPluginLocationBridges(options: {
       manifestByPluginId.get(record.pluginId),
     );
     return bridge ? [bridge] : [];
-  });
-}
-
-/** List exact previous bundled paths that an explicit plugin reinstall may recover. */
-export async function listPersistedBundledPluginRecoveryLocations(options: {
-  env?: NodeJS.ProcessEnv;
-}): Promise<readonly PersistedBundledPluginRecoveryLocation[]> {
-  const index = await readPersistedInstalledPluginIndex(options);
-  if (!index) {
-    return [];
-  }
-  return index.plugins.flatMap((record) => {
-    const rootDir = record.rootDir.trim();
-    if (record.origin !== "bundled" || !path.isAbsolute(rootDir)) {
-      return [];
-    }
-    const loadPaths = Array.from(
-      new Set([rootDir, ...buildBundledPluginLoadPathAliases(rootDir).map((alias) => alias.path)]),
-    );
-    return [{ pluginId: record.pluginId, loadPaths }];
   });
 }

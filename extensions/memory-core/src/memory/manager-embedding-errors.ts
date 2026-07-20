@@ -1,11 +1,11 @@
 // Memory Core plugin module implements manager embedding errors behavior.
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 
-const MEMORY_EMBEDDING_OPERATION_ERROR_CODE = "MEMORY_EMBEDDING_OPERATION_FAILED";
+export const MEMORY_EMBEDDING_OPERATION_ERROR_CODE = "MEMORY_EMBEDDING_OPERATION_FAILED";
 
-type MemoryEmbeddingOperationKind = "query" | "batch" | "structured-batch";
+export type MemoryEmbeddingOperationKind = "query" | "batch" | "structured-batch";
 
-type MemoryEmbeddingOperationError = Error & {
+export type MemoryEmbeddingOperationError = Error & {
   code: typeof MEMORY_EMBEDDING_OPERATION_ERROR_CODE;
   operation: MemoryEmbeddingOperationKind;
   providerId?: string;

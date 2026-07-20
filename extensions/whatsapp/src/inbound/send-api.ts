@@ -163,7 +163,6 @@ export function createWebSendApi(params: {
         fromMe: sendOptions?.quotedMessageKey?.fromMe,
         participant: sendOptions?.quotedMessageKey?.participant,
         messageText: sendOptions?.quotedMessageKey?.messageText,
-        media: sendOptions?.quotedMessageKey?.media,
       });
       const result = quotedOpts
         ? await params.sock.sendMessage(jid, payload, quotedOpts)

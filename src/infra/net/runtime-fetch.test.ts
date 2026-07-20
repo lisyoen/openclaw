@@ -2,8 +2,7 @@
 // calls reach undici's dispatcher-aware fetch.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchWithRuntimeDispatcher } from "./runtime-fetch.js";
-
-const TEST_UNDICI_RUNTIME_DEPS_KEY = "__OPENCLAW_TEST_UNDICI_RUNTIME_DEPS__";
+import { TEST_UNDICI_RUNTIME_DEPS_KEY } from "./undici-runtime.js";
 
 class RuntimeFormData {
   readonly records: Array<{

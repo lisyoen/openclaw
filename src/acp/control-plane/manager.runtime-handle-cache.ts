@@ -9,9 +9,10 @@ import type {
   AcpRuntimeStatus,
 } from "@openclaw/acp-core/runtime/types";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import type { ActiveTurnState, SessionAcpMeta } from "./manager.types.js";
-import { DEFAULT_ACP_RUNTIME_IDLE_TTL_MS, normalizeActorKey } from "./manager.utils.js";
+import { normalizeActorKey, resolveRuntimeIdleTtlMs } from "./manager.utils.js";
 import { RuntimeCache, type CachedRuntimeState } from "./runtime-cache.js";
 import { normalizeText } from "./runtime-options.js";
 import type { SessionActorQueue } from "./session-actor-queue.js";
@@ -43,10 +44,10 @@ export class ManagerRuntimeHandleCache {
   }
 
   /** Returns cache counters used by ACP manager observability snapshots. */
-  getObservabilitySnapshot() {
+  getObservabilitySnapshot(cfg: OpenClawConfig) {
     return {
       activeSessions: this.runtimeCache.size(),
-      idleTtlMs: DEFAULT_ACP_RUNTIME_IDLE_TTL_MS,
+      idleTtlMs: resolveRuntimeIdleTtlMs(cfg),
       evictedTotal: this.evictedRuntimeCount,
       ...(this.lastEvictedAt ? { lastEvictedAt: this.lastEvictedAt } : {}),
     };
@@ -83,10 +84,11 @@ export class ManagerRuntimeHandleCache {
 
   /** Closes handles that exceeded the configured idle TTL without racing active turns. */
   async evictIdle(params: {
+    cfg: OpenClawConfig;
     actorQueue: SessionActorQueue;
     activeTurnBySession: Map<string, ActiveTurnState>;
   }): Promise<void> {
-    const idleTtlMs = DEFAULT_ACP_RUNTIME_IDLE_TTL_MS;
+    const idleTtlMs = resolveRuntimeIdleTtlMs(params.cfg);
     if (idleTtlMs <= 0 || this.runtimeCache.size() === 0) {
       return;
     }

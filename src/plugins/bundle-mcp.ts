@@ -32,11 +32,11 @@ export type BundleMcpDiagnostic = {
   message: string;
 };
 
-type EnabledBundleMcpConfigResult = {
+export type EnabledBundleMcpConfigResult = {
   config: BundleMcpConfig;
   diagnostics: BundleMcpDiagnostic[];
 };
-type BundleMcpRuntimeSupport = {
+export type BundleMcpRuntimeSupport = {
   hasSupportedStdioServer: boolean;
   supportedServerNames: string[];
   unsupportedServerNames: string[];

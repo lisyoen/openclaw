@@ -2,7 +2,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 
 /** Allocates temp directories under reusable roots with explicit cleanup control. */
 export function createTrackedTempDirs() {
@@ -59,7 +58,7 @@ export function createTrackedTempDirs() {
       );
       await Promise.all(
         roots.flatMap((dir, i) =>
-          expectDefined(dirlists[i], "dirlists entry at i").map((entry) =>
+          dirlists[i].map((entry) =>
             fs.rm(path.join(dir, entry), { recursive: true, force: true }),
           ),
         ),

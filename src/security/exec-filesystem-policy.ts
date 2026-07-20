@@ -1,7 +1,10 @@
 // Resolves filesystem policy for exec and sandbox tool use.
-import { resolveConfiguredToolPolicies } from "../agents/agent-tools.policy.js";
+import { pickSandboxToolPolicy } from "../agents/sandbox-tool-policy.js";
 import { resolveSandboxConfigForAgent } from "../agents/sandbox/config.js";
+import { resolveSandboxToolPolicyForAgent } from "../agents/sandbox/tool-policy.js";
+import type { SandboxToolPolicy } from "../agents/sandbox/types.js";
 import { isToolAllowedByPolicies } from "../agents/tool-policy-match.js";
+import { resolveToolProfilePolicy } from "../agents/tool-policy.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { AgentToolsConfig, ExecToolConfig } from "../config/types.tools.js";
 
@@ -9,7 +12,7 @@ const MUTATING_FS_TOOLS = ["write", "edit", "apply_patch"] as const;
 const RUNTIME_TOOLS = ["exec", "process"] as const;
 
 /** Scope where exec-like tools remain available while mutating filesystem tools are disabled. */
-type ExecFilesystemPolicyDriftHit = {
+export type ExecFilesystemPolicyDriftHit = {
   scopeLabel: string;
   runtimeTools: string[];
   disabledFilesystemTools: string[];
@@ -17,6 +20,36 @@ type ExecFilesystemPolicyDriftHit = {
   sandboxWorkspaceAccess: "none" | "ro" | "rw";
   execHost: NonNullable<ExecToolConfig["host"]>;
 };
+
+function resolveToolPolicies(params: {
+  cfg: OpenClawConfig;
+  agentTools?: AgentToolsConfig;
+  sandboxMode: "off" | "non-main" | "all";
+  agentId?: string;
+}): SandboxToolPolicy[] {
+  const policies: SandboxToolPolicy[] = [];
+  const profile = params.agentTools?.profile ?? params.cfg.tools?.profile;
+  const profilePolicy = resolveToolProfilePolicy(profile);
+  if (profilePolicy) {
+    policies.push(profilePolicy);
+  }
+
+  const globalPolicy = pickSandboxToolPolicy(params.cfg.tools ?? undefined);
+  if (globalPolicy) {
+    policies.push(globalPolicy);
+  }
+
+  const agentPolicy = pickSandboxToolPolicy(params.agentTools);
+  if (agentPolicy) {
+    policies.push(agentPolicy);
+  }
+
+  if (params.sandboxMode === "all") {
+    policies.push(resolveSandboxToolPolicyForAgent(params.cfg, params.agentId));
+  }
+
+  return policies;
+}
 
 function resolveExecHost(params: {
   globalExec?: ExecToolConfig;
@@ -80,7 +113,7 @@ export function collectExecFilesystemPolicyDriftHits(
       continue;
     }
 
-    const policies = resolveConfiguredToolPolicies({
+    const policies = resolveToolPolicies({
       cfg,
       agentTools: context.tools,
       sandboxMode: sandbox.mode,

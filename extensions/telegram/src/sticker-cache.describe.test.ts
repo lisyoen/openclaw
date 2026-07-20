@@ -1,4 +1,4 @@
-// Telegram tests cover sticker cache describe plugin behavior.
+// Telegram tests cover sticker cacheescribe plugin behavior.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { describeStickerImage } from "./sticker-cache.js";
 
@@ -28,8 +28,6 @@ const mocks = vi.hoisted(() => {
     })),
     resolveAutoMediaKeyProviders: vi.fn(() => ["minimax-cn", "minimax"]),
     resolveDefaultMediaModel: vi.fn(() => "MiniMax-VL-01"),
-    resolveAgentDir: vi.fn(() => "/tmp/agent"),
-    resolveAgentWorkspaceDir: vi.fn(() => "/tmp/workspace"),
     resolveDefaultModelForAgent: vi.fn(() => ({
       provider: "minimax-cn",
       model: "MiniMax-M2.7",
@@ -39,11 +37,9 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("openclaw/plugin-sdk/agent-runtime", () => ({
   findModelInCatalog: mocks.findModelInCatalog,
-  loadPreparedModelCatalog: mocks.loadModelCatalog,
+  loadModelCatalog: mocks.loadModelCatalog,
   modelSupportsVision: mocks.modelSupportsVision,
   resolveApiKeyForProvider: mocks.resolveApiKeyForProvider,
-  resolveAgentDir: mocks.resolveAgentDir,
-  resolveAgentWorkspaceDir: mocks.resolveAgentWorkspaceDir,
   resolveDefaultModelForAgent: mocks.resolveDefaultModelForAgent,
 }));
 

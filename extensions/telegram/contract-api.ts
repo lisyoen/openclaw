@@ -15,5 +15,4 @@ export {
 export type {
   TelegramInteractiveHandlerContext,
   TelegramInteractiveHandlerRegistration,
-  TelegramInteractiveHandlerResult,
 } from "./src/interactive-dispatch.js";

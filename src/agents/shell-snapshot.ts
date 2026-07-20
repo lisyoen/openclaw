@@ -63,7 +63,7 @@ type ShellSnapshot = {
   path: string;
 };
 
-type ShellSnapshotWrapOptions = {
+export type ShellSnapshotWrapOptions = {
   command: string;
   shell: string;
   shellArgs: string[];
@@ -102,7 +102,14 @@ export async function maybeWrapCommandWithShellSnapshot(
   }
 }
 
-function resolveShellSnapshotDir(env: Record<string, string | undefined> = process.env): string {
+export function resetShellSnapshotCacheForTests(): void {
+  snapshotCache.clear();
+  cleanupPromise = null;
+}
+
+export function resolveShellSnapshotDir(
+  env: Record<string, string | undefined> = process.env,
+): string {
   return path.join(resolveStateDir(env as NodeJS.ProcessEnv), "cache", "shell-snapshots");
 }
 
@@ -433,15 +440,16 @@ async function runShell(opts: {
   cwd: string;
   env: Record<string, string | undefined>;
   timeoutMs: number;
-}): Promise<{ status: number | null }> {
+}): Promise<{ status: number | null; stdout: string }> {
   return await new Promise((resolve) => {
     const child = spawn(opts.shell, [...opts.shellArgs, opts.command], {
       cwd: opts.cwd,
       detached: process.platform !== "win32",
       env: opts.env,
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
     });
+    let stdout = "";
     let settled = false;
     const finish = (status: number | null) => {
       if (settled) {
@@ -449,13 +457,18 @@ async function runShell(opts: {
       }
       settled = true;
       clearTimeout(timeout);
-      killProcessTree(child.pid ?? 0, { graceMs: 0, detached: true });
-      resolve({ status });
+      killProcessTree(child.pid ?? 0, { graceMs: 0 });
+      child.stdout.destroy();
+      resolve({ status, stdout });
     };
     const timeout = setTimeout(() => {
-      killProcessTree(child.pid ?? 0, { graceMs: 250, detached: true });
+      killProcessTree(child.pid ?? 0, { graceMs: 250 });
       finish(null);
     }, opts.timeoutMs);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
     child.on("error", () => {
       finish(null);
     });

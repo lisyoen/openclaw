@@ -38,12 +38,6 @@ export const LEGACY_CONFIG_MIGRATIONS_AUDIO: LegacyConfigMigrationSpec[] = [
   defineLegacyConfigMigration({
     id: "audio.transcription-v2",
     describe: "Move audio.transcription to tools.media.audio.models",
-    legacyRules: [
-      {
-        path: ["audio", "transcription"],
-        message: "Use tools.media.audio.models instead.",
-      },
-    ],
     apply: (raw, changes) => {
       const audio = getRecord(raw.audio);
       if (audio?.transcription === undefined) {

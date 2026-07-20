@@ -8,12 +8,8 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureFullEnv } from "../../test-utils/env.js";
-import { SANDBOX_COMMAND_MAX_BUFFER_BYTES } from "./constants.js";
 
-const { spawnMock, spawnCommandMock } = vi.hoisted(() => ({
-  spawnMock: vi.fn(),
-  spawnCommandMock: vi.fn(),
-}));
+const spawnMock = vi.hoisted(() => vi.fn());
 
 type MockChildProcess = EventEmitter & {
   stdin: PassThrough;
@@ -38,11 +34,6 @@ vi.mock("node:child_process", async () => {
     spawn: spawnMock,
   };
 });
-
-vi.mock("../../process/exec.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../process/exec.js")>()),
-  spawnCommand: spawnCommandMock,
-}));
 
 function mockSuccessfulSpawnCalls(times = 1) {
   let chain = spawnMock;
@@ -69,19 +60,6 @@ function spawnOptionsAt(index: number): SpawnOptions {
   return options;
 }
 
-function spawnCommandOptions(): {
-  baseEnv: Record<string, string>;
-  maxBuffer?: number;
-} {
-  const options = spawnCommandMock.mock.calls[0]?.[1] as
-    | { baseEnv?: Record<string, string>; maxBuffer?: number }
-    | undefined;
-  if (!options?.baseEnv) {
-    throw new Error("expected spawnCommand options");
-  }
-  return { ...options, baseEnv: options.baseEnv };
-}
-
 let runSshSandboxCommand: typeof import("./ssh.js").runSshSandboxCommand;
 let uploadDirectoryToSshTarget: typeof import("./ssh.js").uploadDirectoryToSshTarget;
 
@@ -93,13 +71,6 @@ describe("ssh subprocess env sanitization", () => {
     envSnapshot = captureFullEnv();
     vi.resetModules();
     vi.clearAllMocks();
-    spawnCommandMock.mockResolvedValue({
-      failed: false,
-      isCanceled: false,
-      exitCode: 0,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.alloc(0),
-    });
     ({ runSshSandboxCommand, uploadDirectoryToSshTarget } = await import("./ssh.js"));
   });
 
@@ -113,7 +84,9 @@ describe("ssh subprocess env sanitization", () => {
   });
 
   it("filters blocked secrets before spawning ssh commands", async () => {
-    process.env.OPENAI_API_KEY = "x";
+    mockSuccessfulSpawnCalls();
+
+    process.env.OPENAI_API_KEY = "sk-test-secret";
     process.env.LANG = "en_US.UTF-8";
 
     await runSshSandboxCommand({
@@ -125,65 +98,15 @@ describe("ssh subprocess env sanitization", () => {
       remoteCommand: "true",
     });
 
-    const options = spawnCommandOptions();
-    const baseEnv = options.baseEnv;
-    expect(baseEnv.OPENAI_API_KEY).toBeUndefined();
-    expect(baseEnv.LANG).toBe("en_US.UTF-8");
-    expect(options.maxBuffer).toBe(SANDBOX_COMMAND_MAX_BUFFER_BYTES);
-  });
-
-  it("rejects transport failures even when ssh exits zero", async () => {
-    spawnCommandMock.mockResolvedValueOnce(
-      Object.assign(new Error("ssh stream failed"), {
-        failed: true,
-        isCanceled: false,
-        exitCode: 0,
-        stdout: Buffer.alloc(0),
-        stderr: Buffer.alloc(0),
-      }),
-    );
-
-    await expect(
-      runSshSandboxCommand({
-        session: {
-          command: "ssh",
-          configPath: "/tmp/openclaw-test-ssh-config",
-          host: "openclaw-sandbox",
-        },
-        remoteCommand: "true",
-      }),
-    ).rejects.toThrow("ssh stream failed");
-  });
-
-  it("rejects transport failures even when ssh exits nonzero", async () => {
-    spawnCommandMock.mockResolvedValueOnce(
-      Object.assign(new Error("ssh stream failed"), {
-        cause: new Error("ssh stream failed"),
-        failed: true,
-        isCanceled: false,
-        exitCode: 7,
-        stdout: Buffer.alloc(0),
-        stderr: Buffer.alloc(0),
-      }),
-    );
-
-    await expect(
-      runSshSandboxCommand({
-        session: {
-          command: "ssh",
-          configPath: "/tmp/openclaw-test-ssh-config",
-          host: "openclaw-sandbox",
-        },
-        remoteCommand: "false",
-        allowFailure: true,
-      }),
-    ).rejects.toThrow("ssh stream failed");
+    const env = spawnOptionsAt(0).env;
+    expect(env?.OPENAI_API_KEY).toBeUndefined();
+    expect(env?.LANG).toBe("en_US.UTF-8");
   });
 
   it("filters blocked secrets before spawning ssh uploads", async () => {
     mockSuccessfulSpawnCalls(2);
 
-    process.env.ANTHROPIC_API_KEY = "x";
+    process.env.ANTHROPIC_API_KEY = "sk-test-secret";
     process.env.NODE_ENV = "test";
     const localDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-ssh-upload-env-"));
     tempDirs.push(localDir);

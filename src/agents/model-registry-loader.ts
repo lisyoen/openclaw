@@ -1,20 +1,44 @@
-/** Lifecycle-backed model-registry view for command paths. */
+/**
+ * Shared model-registry loader for agent paths that need auth storage and
+ * plugin metadata resolved together before model discovery.
+ */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import {
-  loadPreparedAgentModelRegistry,
-  type LoadPreparedAgentModelRegistryOptions,
-} from "./prepared-model-registry.js";
+import { discoverAuthStorage, discoverModels } from "./agent-model-discovery.js";
+import { resolveDefaultAgentDir } from "./agent-scope.js";
+import { resolveModelPluginMetadataSnapshot } from "./model-discovery-context.js";
 import type { ModelRegistry } from "./sessions/index.js";
 
-/** Options controlling the prepared registry view. */
-type LoadAgentModelRegistryOptions = LoadPreparedAgentModelRegistryOptions & {
+/** Options controlling model discovery, credential reads, and normalization. */
+export type LoadAgentModelRegistryOptions = {
+  providerFilter?: string;
+  normalizeModels?: boolean;
   readOnly?: boolean;
+  skipCredentials?: boolean;
+  workspaceDir?: string;
 };
 
-/** Forks a registry from the generation prepared by the owning command lifecycle. */
-export async function loadAgentModelRegistry(
+/** Load the agent model registry with optional provider filtering/normalization. */
+export function loadAgentModelRegistry(
   config: OpenClawConfig,
   options: LoadAgentModelRegistryOptions = {},
-): Promise<{ agentDir: string; config: OpenClawConfig; registry: ModelRegistry }> {
-  return await loadPreparedAgentModelRegistry(config, options);
+): { agentDir: string; registry: ModelRegistry } {
+  const agentDir = resolveDefaultAgentDir(config);
+  const authStorage = discoverAuthStorage(agentDir, {
+    readOnly: options.readOnly ?? true,
+    skipCredentials: options.skipCredentials,
+    config,
+    workspaceDir: options.workspaceDir,
+  });
+  const pluginMetadataSnapshot = resolveModelPluginMetadataSnapshot({
+    config,
+    workspaceDir: options.workspaceDir,
+  });
+  const registry = discoverModels(authStorage, agentDir, {
+    config,
+    ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
+    providerFilter: options.providerFilter,
+    ...(options.workspaceDir ? { workspaceDir: options.workspaceDir } : {}),
+    normalizeModels: options.normalizeModels,
+  });
+  return { agentDir, registry };
 }

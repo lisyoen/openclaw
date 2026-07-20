@@ -1,5 +1,4 @@
 // Whatsapp plugin module implements creds persistence behavior.
-import { enqueueKeyedTask } from "openclaw/plugin-sdk/keyed-async-queue";
 import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { replaceFileAtomic } from "openclaw/plugin-sdk/security-runtime";
 import { assertWebCredsPathRegularFileOrMissing, resolveWebCredsPath } from "./creds-files.js";
@@ -49,17 +48,18 @@ export function enqueueCredsSave(
   saveCreds: () => Promise<void> | void,
   onError: (error: unknown) => void,
 ): void {
-  void enqueueKeyedTask({
-    tails: credsSaveQueues,
-    key: authDir,
-    task: async () => {
-      try {
-        await saveCreds();
-      } catch (error) {
-        onError(error);
+  const previous = credsSaveQueues.get(authDir) ?? Promise.resolve();
+  const next = previous
+    .then(() => saveCreds())
+    .catch((error: unknown) => {
+      onError(error);
+    })
+    .finally(() => {
+      if (credsSaveQueues.get(authDir) === next) {
+        credsSaveQueues.delete(authDir);
       }
-    },
-  });
+    });
+  credsSaveQueues.set(authDir, next);
 }
 
 export function waitForCredsSaveQueue(authDir?: string): Promise<void> {

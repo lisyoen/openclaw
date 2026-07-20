@@ -6,8 +6,6 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { BundleMcpConfig, BundleMcpServerConfig } from "../../plugins/bundle-mcp.js";
 import { isValidAgentId, normalizeAgentId } from "../../routing/session-key.js";
 import { buildCodexMcpServersConfig, normalizeCodexMcpServerConfig } from "../codex-mcp-config.js";
-import { requiresMcpBearerProjection, resolveMcpBearerBundleConfig } from "../mcp-auth-profile.js";
-import { partitionMcpServersByConnectionScope } from "../mcp-connection-resolver.js";
 import { isRecord } from "./bundle-mcp-adapter-shared.js";
 import { serializeTomlInlineValue } from "./toml-inline.js";
 
@@ -27,9 +25,6 @@ type CodexThreadConfigObject = { [key: string]: CodexThreadConfigValue };
 
 type CodexUserMcpServersProjectionOptions = {
   agentId?: string;
-  agentDir?: string;
-  allowLiteralOAuthProjection?: boolean;
-  onServerUnavailable?: (serverName: string, error: unknown) => void;
 };
 
 function normalizeAgentIds(value: unknown): string[] {
@@ -88,9 +83,7 @@ export function buildCodexUserMcpServersThreadConfigPatch(
   options?: CodexUserMcpServersProjectionOptions,
 ): { mcp_servers: CodexThreadConfigObject } | undefined {
   const userServers = normalizeConfiguredMcpServers(cfg?.mcp?.servers);
-  // Fail-closed: requester-scoped servers never enter harness-native MCP config.
-  const { staticServers } = partitionMcpServersByConnectionScope(userServers);
-  const entries = Object.entries(staticServers);
+  const entries = Object.entries(userServers);
   if (entries.length === 0) {
     return undefined;
   }
@@ -102,66 +95,13 @@ export function buildCodexUserMcpServersThreadConfigPatch(
     if (!isCodexMcpServerAllowedForAgent(server as BundleMcpServerConfig, options)) {
       continue;
     }
-    mcp_servers[name] = normalizeCodexMcpServerConfig(name, server) as CodexThreadConfigObject;
+    mcp_servers[name] = normalizeCodexMcpServerConfig(
+      name,
+      server as BundleMcpServerConfig,
+    ) as CodexThreadConfigObject;
   }
   if (Object.keys(mcp_servers).length === 0) {
     return undefined;
   }
   return { mcp_servers };
-}
-
-/** Async runtime projection that resolves OpenClaw-managed MCP bearer tokens. */
-export async function buildCodexUserMcpServersThreadConfigPatchForRuntime(
-  cfg: OpenClawConfig | undefined,
-  options?: CodexUserMcpServersProjectionOptions,
-): Promise<{ mcp_servers: CodexThreadConfigObject } | undefined> {
-  const userServers = normalizeConfiguredMcpServers(cfg?.mcp?.servers);
-  // Fail-closed: requester-scoped servers never enter harness-native MCP config.
-  const { staticServers } = partitionMcpServersByConnectionScope(userServers);
-  const entries = Object.entries(staticServers);
-  if (entries.length === 0) {
-    return undefined;
-  }
-  let allowedServers = Object.fromEntries(
-    entries.filter(
-      ([, server]) =>
-        server.enabled !== false &&
-        isCodexMcpServerAllowedForAgent(server as BundleMcpServerConfig, options),
-    ),
-  ) as BundleMcpConfig["mcpServers"];
-  if (Object.keys(allowedServers).length === 0) {
-    return undefined;
-  }
-  if (options?.allowLiteralOAuthProjection === false) {
-    const remoteSafeServers: BundleMcpConfig["mcpServers"] = {};
-    for (const [serverName, server] of Object.entries(allowedServers)) {
-      if (requiresMcpBearerProjection(server)) {
-        options.onServerUnavailable?.(
-          serverName,
-          new Error(
-            `MCP OAuth bearer projection is only supported for local app-server connections.`,
-          ),
-        );
-        continue;
-      }
-      remoteSafeServers[serverName] = server;
-    }
-    allowedServers = remoteSafeServers;
-  }
-  if (Object.keys(allowedServers).length === 0) {
-    return undefined;
-  }
-  const resolvedConfig = await resolveMcpBearerBundleConfig({
-    config: { mcpServers: allowedServers },
-    cfg,
-    agentDir: options?.agentDir,
-    tokenProjection: "literal",
-    omitUnavailableOAuthServers: true,
-    onServerUnavailable: options?.onServerUnavailable,
-  });
-  const mcp_servers: CodexThreadConfigObject = {};
-  for (const [name, server] of Object.entries(resolvedConfig.config.mcpServers)) {
-    mcp_servers[name] = normalizeCodexMcpServerConfig(name, server) as CodexThreadConfigObject;
-  }
-  return Object.keys(mcp_servers).length === 0 ? undefined : { mcp_servers };
 }

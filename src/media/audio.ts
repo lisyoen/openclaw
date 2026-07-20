@@ -3,10 +3,10 @@ import { getFileExtension, normalizeMimeType } from "@openclaw/media-core/mime";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 
 /** File extensions accepted by channel voice-message upload paths. */
-const VOICE_MESSAGE_AUDIO_EXTENSIONS = new Set([".oga", ".ogg", ".opus", ".mp3", ".m4a"]);
+export const VOICE_MESSAGE_AUDIO_EXTENSIONS = new Set([".oga", ".ogg", ".opus", ".mp3", ".m4a"]);
 
 /** MIME types compatible with voice-message upload paths. */
-const VOICE_MESSAGE_MIME_TYPES = new Set([
+export const VOICE_MESSAGE_MIME_TYPES = new Set([
   "audio/ogg",
   "audio/opus",
   "audio/mpeg",

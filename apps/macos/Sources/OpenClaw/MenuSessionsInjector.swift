@@ -27,6 +27,7 @@ final class MenuSessionsInjector: NSObject, NSMenuDelegate {
     private var cacheUpdatedAt: Date?
     private let refreshIntervalSeconds: TimeInterval = 12
     private var cachedUsageSummary: GatewayUsageSummary?
+    private var cachedUsageErrorText: String?
     private var usageCacheUpdatedAt: Date?
     private let usageRefreshIntervalSeconds: TimeInterval = 30
     private var cachedCostSummary: GatewayCostUsageSummary?
@@ -325,7 +326,7 @@ extension MenuSessionsInjector {
 
             if rows.isEmpty {
                 menu.insertItem(
-                    self.makeMessageItem(text: "No active threads", symbolName: "minus", width: width),
+                    self.makeMessageItem(text: "No active sessions", symbolName: "minus", width: width),
                     at: cursor)
                 cursor += 1
             } else {
@@ -348,7 +349,7 @@ extension MenuSessionsInjector {
             headerItem.tag = self.tag
             headerItem.isEnabled = false
             let statusText = isConnected
-                ? (self.cachedErrorText ?? "Loading threads…")
+                ? (self.cachedErrorText ?? "Loading sessions…")
                 : self.controlChannelStatusText(for: channelState)
             headerItem.view = self.makeHostedView(
                 rootView: AnyView(MenuSessionsHeaderView(
@@ -362,7 +363,7 @@ extension MenuSessionsInjector {
             if !isConnected {
                 menu.insertItem(
                     self.makeMessageItem(
-                        text: "Connect the gateway to see threads",
+                        text: "Connect the gateway to see sessions",
                         symbolName: "bolt.slash",
                         width: width),
                     at: cursor)
@@ -405,8 +406,8 @@ extension MenuSessionsInjector {
     }
 
     private func sessionsSubtitle(count: Int) -> String {
-        if count == 1 { return "1 thread · 24h" }
-        return "\(count) threads · 24h"
+        if count == 1 { return "1 session · 24h" }
+        return "\(count) sessions · 24h"
     }
 
     private func insertUsageSection(into menu: NSMenu, at cursor: Int, width: CGFloat) -> Int {
@@ -535,7 +536,7 @@ extension MenuSessionsInjector {
     private func controlChannelStatusText(for state: ControlChannel.ConnectionState) -> String {
         switch state {
         case .connected:
-            "Loading threads…"
+            "Loading sessions…"
         case .connecting:
             "Connecting…"
         case let .degraded(message):
@@ -776,6 +777,7 @@ extension MenuSessionsInjector {
             self.cachedUsageSummary = try await UsageLoader.loadSummary()
         } catch {
             self.cachedUsageSummary = nil
+            self.cachedUsageErrorText = nil
         }
         self.usageCacheUpdatedAt = Date()
     }
@@ -816,10 +818,10 @@ extension MenuSessionsInjector {
             case .gatewayUnavailable:
                 return "No connection to gateway"
             case .decodeFailed:
-                return "Threads unavailable"
+                return "Sessions unavailable"
             }
         }
-        return "Threads unavailable"
+        return "Sessions unavailable"
     }
 
     private static func menuStatusText(_ text: String) -> String {
@@ -1041,6 +1043,16 @@ extension MenuSessionsInjector {
             rootView: AnyView(NodeMenuMultilineView(label: label, value: value, width: width)),
             width: width)
         return item
+    }
+
+    private func formatVersionLabel(_ version: String) -> String {
+        let trimmed = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return version }
+        if trimmed.hasPrefix("v") { return trimmed }
+        if let first = trimmed.unicodeScalars.first, CharacterSet.decimalDigits.contains(first) {
+            return "v\(trimmed)"
+        }
+        return trimmed
     }
 
     @objc
@@ -1281,8 +1293,9 @@ extension MenuSessionsInjector {
         self.cacheUpdatedAt = Date()
     }
 
-    func setTestingUsageSummary(_ summary: GatewayUsageSummary?) {
+    func setTestingUsageSummary(_ summary: GatewayUsageSummary?, errorText: String? = nil) {
         self.cachedUsageSummary = summary
+        self.cachedUsageErrorText = errorText
         self.usageCacheUpdatedAt = Date()
     }
 
@@ -1298,6 +1311,10 @@ extension MenuSessionsInjector {
 
     func testingControlChannelStatusText(for state: ControlChannel.ConnectionState) -> String {
         self.controlChannelStatusText(for: state)
+    }
+
+    func testingMenuStatusText(_ text: String) -> String {
+        Self.menuStatusText(text)
     }
 
     func testingFindInsertIndex(in menu: NSMenu) -> Int? {

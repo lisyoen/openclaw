@@ -1,16 +1,17 @@
 // Nextcloud Talk plugin module implements monitor runtime behavior.
+import os from "node:os";
 import { resolveLoggerBackedRuntime } from "openclaw/plugin-sdk/extension-shared";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveNextcloudTalkAccount } from "./accounts.js";
 import { handleNextcloudTalkInbound } from "./inbound.js";
-import { createNextcloudTalkWebhookServer } from "./monitor.js";
+import {
+  createNextcloudTalkWebhookServer,
+  processNextcloudTalkReplayGuardedMessage,
+} from "./monitor.js";
+import { createNextcloudTalkReplayGuard } from "./replay-guard.js";
 import { getNextcloudTalkRuntime } from "./runtime.js";
 import type { CoreConfig, NextcloudTalkInboundMessage } from "./types.js";
-import {
-  createNextcloudTalkWebhookSpool,
-  type NextcloudTalkIngressLifecycle,
-} from "./webhook-spool.js";
 
 const DEFAULT_WEBHOOK_PORT = 8788;
 const DEFAULT_WEBHOOK_HOST = "0.0.0.0";
@@ -29,18 +30,13 @@ type NextcloudTalkMonitorOptions = {
   config?: CoreConfig;
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
-  onMessage?: (
-    message: NextcloudTalkInboundMessage,
-    lifecycle: NextcloudTalkIngressLifecycle,
-  ) => void | Promise<void>;
+  onMessage?: (message: NextcloudTalkInboundMessage) => void | Promise<void>;
   statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
-  createSpool?: typeof createNextcloudTalkWebhookSpool;
-  createServer?: typeof createNextcloudTalkWebhookServer;
 };
 
 export async function monitorNextcloudTalkProvider(
   opts: NextcloudTalkMonitorOptions,
-): Promise<{ stop: () => Promise<void> }> {
+): Promise<{ stop: () => void }> {
   const core = getNextcloudTalkRuntime();
   const cfg = opts.config ?? (core.config.current() as CoreConfig);
   const account = resolveNextcloudTalkAccount({
@@ -65,33 +61,16 @@ export async function monitorNextcloudTalkProvider(
     accountId: account.accountId,
   });
   const expectedBackendOrigin = normalizeOrigin(account.baseUrl);
-  const spool = (opts.createSpool ?? createNextcloudTalkWebhookSpool)({
-    accountId: account.accountId,
-    runtime,
-    abortSignal: opts.abortSignal,
-    deliver: async (message, lifecycle) => {
-      core.channel.activity.record({
-        channel: "nextcloud-talk",
-        accountId: account.accountId,
-        direction: "inbound",
-        at: message.timestamp,
-      });
-      if (opts.onMessage) {
-        await opts.onMessage(message, lifecycle);
-      } else {
-        await handleNextcloudTalkInbound({
-          message,
-          account,
-          config: cfg,
-          runtime,
-          statusSink: opts.statusSink,
-          turnAdoptionLifecycle: lifecycle,
-        });
-      }
+  const replayGuard = createNextcloudTalkReplayGuard({
+    stateDir: core.state.resolveStateDir(process.env, os.homedir),
+    onDiskError: (error) => {
+      logger.warn(
+        `[nextcloud-talk:${account.accountId}] replay guard disk error: ${String(error)}`,
+      );
     },
   });
 
-  const server = (opts.createServer ?? createNextcloudTalkWebhookServer)({
+  const { start, stop } = createNextcloudTalkWebhookServer({
     port,
     host,
     path,
@@ -103,39 +82,50 @@ export async function monitorNextcloudTalkProvider(
       const backendOrigin = normalizeOrigin(backend);
       return backendOrigin === expectedBackendOrigin;
     },
-    onWebhook: spool.receive,
+    processMessage: async (message) => {
+      const result = await processNextcloudTalkReplayGuardedMessage({
+        replayGuard,
+        accountId: account.accountId,
+        message,
+        handleMessage: async () => {
+          core.channel.activity.record({
+            channel: "nextcloud-talk",
+            accountId: account.accountId,
+            direction: "inbound",
+            at: message.timestamp,
+          });
+          if (opts.onMessage) {
+            await opts.onMessage(message);
+          } else {
+            await handleNextcloudTalkInbound({
+              message,
+              account,
+              config: cfg,
+              runtime,
+              statusSink: opts.statusSink,
+            });
+          }
+        },
+      });
+      if (result === "duplicate") {
+        logger.warn(
+          `[nextcloud-talk:${account.accountId}] replayed webhook ignored room=${message.roomToken} messageId=${message.messageId}`,
+        );
+      }
+    },
+    onMessage: async () => {},
     onError: (error) => {
       logger.error(`[nextcloud-talk:${account.accountId}] webhook error: ${error.message}`);
     },
     abortSignal: opts.abortSignal,
   });
 
-  let stopPromise: Promise<void> | undefined;
-  const stop = () => {
-    stopPromise ??= (async () => {
-      await server.stop();
-      await spool.stop();
-    })();
-    return stopPromise;
-  };
-
-  if (opts.abortSignal && !opts.abortSignal.aborted) {
-    opts.abortSignal.addEventListener("abort", () => void stop(), { once: true });
-  }
-
   if (opts.abortSignal?.aborted) {
-    await stop();
     return { stop };
   }
-  try {
-    await spool.ready();
-    await server.start();
-  } catch (error) {
-    await stop();
-    throw error;
-  }
+  await start();
   if (opts.abortSignal?.aborted) {
-    await stop();
+    stop();
     return { stop };
   }
 

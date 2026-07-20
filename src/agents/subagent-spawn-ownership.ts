@@ -10,7 +10,7 @@ import {
   resolveMainSessionAlias,
 } from "./tools/sessions-helpers.js";
 
-type SubagentSpawnOwnership = {
+export type SubagentSpawnOwnership = {
   controllerSessionKey: string;
   threadBindingRequesterSessionKey: string;
   completionRequesterSessionKey: string;

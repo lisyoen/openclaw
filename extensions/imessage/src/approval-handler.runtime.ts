@@ -15,14 +15,13 @@ import type {
 } from "openclaw/plugin-sdk/approval-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import {
-  buildIMessageApprovalConversationKeyForTarget,
   registerIMessageApprovalReactionTarget,
   unregisterIMessageApprovalReactionTarget,
   type IMessageApprovalConversationKey,
 } from "./approval-reactions.js";
 import { normalizeIMessageMessagingTarget } from "./normalize.js";
 import { sendMessageIMessage } from "./send.js";
-import { parseIMessageTarget } from "./targets.js";
+import { normalizeIMessageHandle, parseIMessageTarget } from "./targets.js";
 
 const log = createSubsystemLogger("imessage/approvals");
 
@@ -60,6 +59,25 @@ function buildPendingPayload(params: {
     text: pendingContent.reactionPayload.text ?? "",
     allowedDecisions: pendingContent.reactionPayload.allowedDecisions,
   };
+}
+
+function buildConversationKeyForTarget(to: string): IMessageApprovalConversationKey | null {
+  try {
+    const parsed = parseIMessageTarget(to);
+    if (parsed.kind === "chat_id") {
+      return { chatId: parsed.chatId };
+    }
+    if (parsed.kind === "chat_guid") {
+      return { chatGuid: parsed.chatGuid };
+    }
+    if (parsed.kind === "chat_identifier") {
+      return { chatIdentifier: parsed.chatIdentifier };
+    }
+    const handle = normalizeIMessageHandle(parsed.to);
+    return handle ? { handle } : null;
+  } catch {
+    return null;
+  }
 }
 
 function shouldThreadApprovalUpdate(to: string): boolean {
@@ -118,10 +136,9 @@ export const imessageApprovalNativeRuntime = createChannelApprovalNativeRuntimeA
         target: prepared,
       };
     },
-    deliverPending: async ({ cfg, preparedTarget, pendingPayload, view }) => {
+    deliverPending: async ({ cfg, preparedTarget, pendingPayload }) => {
       const result = await sendMessageIMessage(preparedTarget.to, pendingPayload.text, {
         config: cfg,
-        approvalKind: view.approvalKind,
         ...(preparedTarget.accountId ? { accountId: preparedTarget.accountId } : {}),
       });
       // Approval reaction bindings must use the GUID-only id (matches the
@@ -132,7 +149,7 @@ export const imessageApprovalNativeRuntime = createChannelApprovalNativeRuntimeA
       if (!guid) {
         return null;
       }
-      const conversation = buildIMessageApprovalConversationKeyForTarget(preparedTarget.to);
+      const conversation = buildConversationKeyForTarget(preparedTarget.to);
       if (!conversation) {
         return null;
       }
@@ -179,7 +196,6 @@ export const imessageApprovalNativeRuntime = createChannelApprovalNativeRuntimeA
         conversation: entry.conversation,
         messageId: entry.messageId,
         approvalId: request.id,
-        approvalKind: view.approvalKind,
         allowedDecisions: pendingPayload.allowedDecisions,
         ttlMs,
       })

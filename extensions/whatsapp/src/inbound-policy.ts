@@ -11,15 +11,14 @@ import type {
   OpenClawConfig,
 } from "openclaw/plugin-sdk/config-contracts";
 import { resolveDefaultGroupPolicy } from "openclaw/plugin-sdk/runtime-group-policy";
+import { resolveGroupSessionKey } from "openclaw/plugin-sdk/session-store-runtime";
 import { resolveWhatsAppAccount, type ResolvedWhatsAppAccount } from "./accounts.js";
 import { getSelfIdentity, getSenderIdentity } from "./identity.js";
-import { requireWhatsAppInboundAdmission } from "./inbound/admission.js";
-import { resolveWhatsAppGroupConversationId } from "./inbound/group-conversation.js";
-import type { AdmittedWebInboundMessage } from "./inbound/types.js";
+import type { WebInboundMessage } from "./inbound/types.js";
 import { resolveWhatsAppRuntimeGroupPolicy } from "./runtime-group-policy.js";
 import { isSelfChatMode, normalizeE164 } from "./text-runtime.js";
 
-type ResolvedWhatsAppInboundPolicy = {
+export type ResolvedWhatsAppInboundPolicy = {
   account: ResolvedWhatsAppAccount;
   dmPolicy: DmPolicy;
   groupPolicy: GroupPolicy;
@@ -39,6 +38,16 @@ function normalizeWhatsAppIngressPhone(value: string): string | null {
     return null;
   }
   return normalizeE164(trimmed);
+}
+
+function resolveGroupConversationId(conversationId: string): string {
+  return (
+    resolveGroupSessionKey({
+      From: conversationId,
+      ChatType: "group",
+      Provider: "whatsapp",
+    })?.id ?? conversationId
+  );
 }
 
 function maybeSamePhoneDmAllowFrom(params: {
@@ -113,14 +122,14 @@ export function resolveWhatsAppInboundPolicy(params: {
       resolveChannelGroupPolicy({
         cfg: resolvedGroupCfg,
         channel: "whatsapp",
-        groupId: resolveWhatsAppGroupConversationId(conversationId),
+        groupId: resolveGroupConversationId(conversationId),
         hasGroupAllowFrom: groupAllowFrom.length > 0,
       }),
     resolveConversationRequireMention: (conversationId) =>
       resolveChannelGroupRequireMention({
         cfg: resolvedGroupCfg,
         channel: "whatsapp",
-        groupId: resolveWhatsAppGroupConversationId(conversationId),
+        groupId: resolveGroupConversationId(conversationId),
       }),
   };
 }
@@ -162,7 +171,6 @@ export async function resolveWhatsAppIngressAccess(params: {
     policy: {
       groupAllowFromFallbackToAllowFrom: false,
     },
-    providerMissingFallbackApplied: params.policy.providerMissingFallbackApplied,
     allowFrom: dmAllowFrom,
     groupAllowFrom: params.policy.groupAllowFrom,
     command: params.includeCommand === true ? {} : undefined,
@@ -171,27 +179,25 @@ export async function resolveWhatsAppIngressAccess(params: {
 
 export async function resolveWhatsAppCommandAuthorized(params: {
   cfg: OpenClawConfig;
-  msg: AdmittedWebInboundMessage;
+  msg: WebInboundMessage;
   policy?: ResolvedWhatsAppInboundPolicy;
-  authDir?: string;
 }): Promise<boolean> {
   const useAccessGroups = params.cfg.commands?.useAccessGroups !== false;
   if (!useAccessGroups) {
     return true;
   }
 
-  const self = getSelfIdentity(params.msg, params.authDir);
-  const admission = requireWhatsAppInboundAdmission(params.msg);
+  const self = getSelfIdentity(params.msg);
   const policy =
     params.policy ??
     resolveWhatsAppInboundPolicy({
       cfg: params.cfg,
-      accountId: admission.accountId,
+      accountId: params.msg.accountId,
       selfE164: self.e164 ?? null,
     });
-  const isGroup = admission.conversation.kind === "group";
-  const sender = getSenderIdentity(params.msg, params.authDir);
-  const dmSender = sender.e164 ?? admission.conversation.id;
+  const isGroup = params.msg.chatType === "group";
+  const sender = getSenderIdentity(params.msg);
+  const dmSender = sender.e164 ?? params.msg.from ?? "";
   const groupSender = sender.e164 ?? "";
   if (!normalizeE164(isGroup ? groupSender : dmSender)) {
     return false;
@@ -201,7 +207,7 @@ export async function resolveWhatsAppCommandAuthorized(params: {
     cfg: params.cfg,
     policy,
     isGroup,
-    conversationId: admission.conversation.id,
+    conversationId: params.msg.conversationId ?? params.msg.platform.chatJid ?? params.msg.from,
     senderId: isGroup ? groupSender : dmSender,
     dmSenderId: dmSender,
     includeCommand: true,

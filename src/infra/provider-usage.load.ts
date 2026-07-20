@@ -1,17 +1,13 @@
 // Loads provider usage snapshots from built-in and plugin providers.
 import { getRuntimeConfig, type OpenClawConfig } from "../config/config.js";
-import {
-  listProviderUsagePluginDescriptors,
-  resolveProviderUsageSnapshotWithPlugin,
-  type ProviderUsagePluginDescriptor,
-} from "../plugins/provider-runtime.js";
+import { resolveProviderUsageSnapshotWithPlugin } from "../plugins/provider-runtime.js";
 import { resolveFetch } from "./fetch.js";
-import { resolveProxyFetchFromEnv } from "./net/proxy-fetch.js";
 import { type ProviderAuth, resolveProviderAuths } from "./provider-usage.auth.js";
 import {
   DEFAULT_TIMEOUT_MS,
   ignoredErrors,
-  resolveProviderUsageDisplayName,
+  PROVIDER_LABELS,
+  usageProviders,
   withTimeout,
 } from "./provider-usage.shared.js";
 import type {
@@ -30,7 +26,7 @@ async function fetchProviderUsageSnapshotFallback(params: {
   void params.fetchFn;
   return {
     provider: params.auth.provider,
-    displayName: resolveProviderUsageDisplayName(params.auth.provider),
+    displayName: PROVIDER_LABELS[params.auth.provider] ?? params.auth.provider,
     windows: [],
     error: "Unsupported provider",
   };
@@ -72,9 +68,6 @@ async function fetchProviderUsageSnapshot(params: {
       token: params.auth.token,
       accountId: params.auth.accountId,
       authProfileId: params.auth.authProfileId,
-      subscriptionType: params.auth.subscriptionType,
-      rateLimitTier: params.auth.rateLimitTier,
-      email: params.auth.email,
       timeoutMs: params.timeoutMs,
       fetchFn: params.fetchFn,
     },
@@ -97,33 +90,13 @@ export async function loadProviderUsageSummary(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const config = opts.config ?? getRuntimeConfig();
   const env = opts.env ?? process.env;
-  const fetchFn = opts.fetch
-    ? resolveFetch(opts.fetch)
-    : (resolveProxyFetchFromEnv(env) ?? resolveFetch());
+  const fetchFn = resolveFetch(opts.fetch);
   if (!fetchFn) {
     throw new Error("fetch is not available");
   }
 
-  const descriptors: ProviderUsagePluginDescriptor[] = opts.providers
-    ? opts.providers.map((provider) => ({
-        provider,
-        displayName: resolveProviderUsageDisplayName(provider),
-      }))
-    : opts.auth
-      ? opts.auth.map((auth) => ({
-          provider: auth.provider,
-          displayName: resolveProviderUsageDisplayName(auth.provider),
-        }))
-      : listProviderUsagePluginDescriptors({
-          config,
-          workspaceDir: opts.workspaceDir,
-          env,
-        });
-  const displayNames = new Map(
-    descriptors.map((descriptor) => [descriptor.provider, descriptor.displayName]),
-  );
   const auths = await resolveProviderAuths({
-    providers: descriptors.map((descriptor) => descriptor.provider),
+    providers: opts.providers ?? usageProviders,
     auth: opts.auth,
     agentDir: opts.agentDir,
     config,
@@ -137,8 +110,7 @@ export async function loadProviderUsageSummary(
   const tasks = auths.map((auth) => {
     const failureSnapshot = (error: string): ProviderUsageSnapshot => ({
       provider: auth.provider,
-      displayName:
-        displayNames.get(auth.provider) ?? resolveProviderUsageDisplayName(auth.provider),
+      displayName: PROVIDER_LABELS[auth.provider] ?? auth.provider,
       windows: [],
       error,
     });
@@ -155,8 +127,7 @@ export async function loadProviderUsageSummary(
       timeoutMs + 1000,
       {
         provider: auth.provider,
-        displayName:
-          displayNames.get(auth.provider) ?? resolveProviderUsageDisplayName(auth.provider),
+        displayName: PROVIDER_LABELS[auth.provider],
         windows: [],
         error: "Timeout",
       },
@@ -169,12 +140,6 @@ export async function loadProviderUsageSummary(
   const snapshots = await Promise.all(tasks);
   const providers = snapshots.filter((entry) => {
     if (entry.windows.length > 0) {
-      return true;
-    }
-    if (entry.billing && entry.billing.length > 0) {
-      return true;
-    }
-    if (entry.costHistory?.daily.length) {
       return true;
     }
     if (entry.summary?.trim()) {

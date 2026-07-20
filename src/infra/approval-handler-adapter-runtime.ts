@@ -29,7 +29,6 @@ export function createLazyChannelApprovalNativeRuntimeAdapter<
   isConfigured: ChannelApprovalNativeAvailabilityAdapter["isConfigured"];
   shouldHandle: ChannelApprovalNativeAvailabilityAdapter["shouldHandle"];
   eventKinds?: readonly ExecApprovalChannelRuntimeEventKind[];
-  /** @deprecated Trusted compatibility override; omit to derive ownership from the payload. */
   resolveApprovalKind?: ChannelApprovalNativeRuntimeAdapter["resolveApprovalKind"];
 }): ChannelApprovalNativeRuntimeAdapter<
   TPendingPayload,

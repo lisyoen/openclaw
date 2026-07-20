@@ -53,7 +53,7 @@ const CAPABILITY_VITEST_SHIM_ALIASES = [
   },
 ] as const;
 
-function buildVitestCapabilityShimAliasMap(): Record<string, string> {
+export function buildVitestCapabilityShimAliasMap(): Record<string, string> {
   return Object.fromEntries(
     CAPABILITY_VITEST_SHIM_ALIASES.flatMap(({ subpath, target }) => {
       const targetPath = fileURLToPath(target);
@@ -74,8 +74,13 @@ function applyVitestCapabilityAliasOverrides(params: {
     return params.aliasMap;
   }
 
+  const {
+    "openclaw/plugin-sdk": _ignoredLegacyRootAlias,
+    "@openclaw/plugin-sdk": _ignoredScopedRootAlias,
+    ...scopedAliasMap
+  } = params.aliasMap;
   return {
-    ...params.aliasMap,
+    ...scopedAliasMap,
     // Capability contract loads only need a narrow SDK slice. Keep those
     // helpers on a tiny source graph so Vitest does not pull the dist chunk
     // bundle that also drags Matrix/WhatsApp code into these tests.
@@ -90,7 +95,7 @@ function shouldApplyVitestCapabilityAliasOverrides(params: {
   return Boolean(params.env?.VITEST && params.pluginSdkResolution === "dist");
 }
 
-function buildBundledCapabilityRuntimeConfig(
+export function buildBundledCapabilityRuntimeConfig(
   pluginIds: readonly string[],
   env?: PluginLoadOptions["env"],
 ): PluginLoadOptions["config"] {
@@ -119,7 +124,7 @@ function resolvePluginModuleExport(moduleExport: unknown): {
     const definition = resolved as OpenClawPluginDefinition;
     return {
       definition,
-      register: definition.register,
+      register: definition.register ?? definition.activate,
     };
   }
   return {};
@@ -350,7 +355,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
       record.agentHarnessIds.push(...captured.agentHarnesses.map((entry) => entry.id));
       record.toolNames.push(...captured.tools.map((entry) => entry.name));
 
-      registry.cliBackends.push(
+      registry.cliBackends?.push(
         ...captured.cliBackends.map((backend) => ({
           pluginId: record.id,
           pluginName: record.name,

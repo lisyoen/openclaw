@@ -6,6 +6,9 @@
   "enabledByDefault": true,
   "providers": ["deepinfra"],
   "providerCatalogEntry": "./provider-discovery.ts",
+  "providerAuthEnvVars": {
+    "deepinfra": ["DEEPINFRA_API_KEY"]
+  },
   "providerEndpoints": [
     {
       "endpointClass": "deepinfra-native",
@@ -182,7 +185,6 @@
       "provider": "deepinfra",
       "method": "api-key",
       "choiceId": "deepinfra-api-key",
-      "appGuidedSecret": true,
       "choiceLabel": "DeepInfra API key",
       "choiceHint": "Unified API for open source models",
       "groupId": "deepinfra",

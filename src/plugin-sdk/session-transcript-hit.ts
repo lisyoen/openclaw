@@ -1,24 +1,10 @@
 // Session transcript hit helpers describe and load matched transcript snippets for plugins.
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeOptionalString } from "../../packages/normalization-core/src/string-coerce.js";
 import { uniqueStrings } from "../../packages/normalization-core/src/string-normalization.js";
 import { parseUsageCountedSessionIdFromFileName } from "../config/sessions/artifacts.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { normalizeAgentId } from "../routing/session-key.js";
-export {
-  formatSessionTranscriptMemoryHitKey,
-  parseSessionTranscriptMemoryHitKey,
-  resolveSessionTranscriptMemoryHitKeyToSessionKeys,
-} from "./session-transcript-memory-hit.js";
-export type {
-  ResolveSessionTranscriptMemoryHitKeyParams,
-  SessionTranscriptIdentity,
-  SessionTranscriptMemoryHitIdentity,
-  SessionTranscriptMemoryHitKey,
-  SessionTranscriptMemoryHitKeyParams,
-  SessionTranscriptReadParams,
-} from "./session-transcript-memory-hit.js";
 
 export { loadCombinedSessionStoreForGateway } from "../config/sessions/combined-store-gateway.js";
 
@@ -41,9 +27,7 @@ function restoreQmdNormalizedArchiveName(mdStem: string): string | null {
     return null;
   }
   const [, sessionId, reason, timestamp] = match;
-  const restoredTimestamp = restoreQmdNormalizedArchiveTimestamp(
-    expectDefined(timestamp, "session transcript hit timestamp"),
-  );
+  const restoredTimestamp = restoreQmdNormalizedArchiveTimestamp(timestamp);
   return restoredTimestamp ? `${sessionId}.jsonl.${reason}.${restoredTimestamp}` : null;
 }
 

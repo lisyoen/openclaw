@@ -2,13 +2,16 @@
 import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { FollowupRun, QueueSettings } from "./queue.js";
-import { enqueueFollowupRun, scheduleFollowupDrain } from "./queue.js";
+import {
+  enqueueFollowupRun,
+  resetRecentQueuedMessageIdDedupe,
+  scheduleFollowupDrain,
+} from "./queue.js";
 import {
   createDeferred,
   createQueueTestRun as createRun,
   installQueueRuntimeErrorSilencer,
 } from "./queue.test-helpers.js";
-import { resetRecentQueuedMessageIdDedupe } from "./queue/enqueue.test-support.js";
 
 installQueueRuntimeErrorSilencer();
 
@@ -152,47 +155,6 @@ describe("followup queue deduplication", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("deduplicates redelivery after reply policy changes", async () => {
-    const key = `test-dedup-policy-change-${Date.now()}`;
-    const { calls, done, runFollowup } = createFollowupCollector();
-
-    expect(
-      enqueueFollowupRun(
-        key,
-        createRun({
-          prompt: "first",
-          messageId: "same-id",
-          originatingChannel: "slack",
-          originatingTo: "U123",
-          originatingReplyToId: "101.001",
-          originatingReplyToMode: "off",
-          originatingChatType: "direct",
-        }),
-        collectSettings,
-      ),
-    ).toBe(true);
-
-    scheduleFollowupDrain(key, runFollowup);
-    await done.promise;
-
-    expect(
-      enqueueFollowupRun(
-        key,
-        createRun({
-          prompt: "redelivery",
-          messageId: "same-id",
-          originatingChannel: "slack",
-          originatingTo: "U123",
-          originatingReplyToId: "101.001",
-          originatingReplyToMode: "first",
-          originatingChatType: "direct",
-        }),
-        collectSettings,
-      ),
-    ).toBe(false);
-    expect(calls).toHaveLength(1);
-  });
-
   it("deduplicates same message_id across distinct enqueue module instances", async () => {
     const enqueueA = await importFreshModule<typeof import("./queue/enqueue.js")>(
       import.meta.url,
@@ -206,7 +168,8 @@ describe("followup queue deduplication", () => {
     const key = `test-dedup-cross-module-${Date.now()}`;
     const { calls, done, runFollowup } = createFollowupCollector();
 
-    resetRecentQueuedMessageIdDedupe();
+    enqueueA.resetRecentQueuedMessageIdDedupe();
+    enqueueB.resetRecentQueuedMessageIdDedupe();
 
     try {
       expect(
@@ -243,7 +206,8 @@ describe("followup queue deduplication", () => {
       expect(calls).toHaveLength(1);
     } finally {
       clearSessionQueues([key]);
-      resetRecentQueuedMessageIdDedupe();
+      enqueueA.resetRecentQueuedMessageIdDedupe();
+      enqueueB.resetRecentQueuedMessageIdDedupe();
     }
   });
 

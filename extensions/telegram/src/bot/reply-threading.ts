@@ -1,6 +1,5 @@
 // Telegram plugin module implements reply threading behavior.
 import type { ReplyToMode } from "openclaw/plugin-sdk/config-contracts";
-import { isSingleUseReplyToMode } from "openclaw/plugin-sdk/reply-reference";
 
 export type DeliveryProgress = {
   hasReplied: boolean;
@@ -49,24 +48,17 @@ export async function sendChunkedTelegramReplyText<
   }) => Promise<void>;
 }): Promise<void> {
   const applyDelivered = params.markDelivered ?? markDelivered;
-  const suppressSingleUseReply =
-    params.chunks.length > 1 && isSingleUseReplyToMode(params.replyToMode);
   for (let i = 0; i < params.chunks.length; i += 1) {
     const chunk = params.chunks[i];
     if (!chunk) {
       continue;
     }
     const isFirstChunk = i === 0;
-    // Telegram Desktop can render long formatted native-reply chunks as
-    // unsupported messages. Multi-part `first` replies consume the reply target
-    // without adding native reply params, preserving visible text.
-    const replyToMessageId = suppressSingleUseReply
-      ? undefined
-      : resolveReplyToForSend({
-          replyToId: params.replyToId,
-          replyToMode: params.replyToMode,
-          progress: params.progress,
-        });
+    const replyToMessageId = resolveReplyToForSend({
+      replyToId: params.replyToId,
+      replyToMode: params.replyToMode,
+      progress: params.progress,
+    });
     const shouldAttachQuote =
       Boolean(replyToMessageId) &&
       Boolean(params.replyQuoteText) &&
@@ -78,10 +70,7 @@ export async function sendChunkedTelegramReplyText<
       replyMarkup: isFirstChunk ? params.replyMarkup : undefined,
       replyQuoteText: shouldAttachQuote ? params.replyQuoteText : undefined,
     });
-    markReplyApplied(
-      params.progress,
-      suppressSingleUseReply && isFirstChunk ? params.replyToId : replyToMessageId,
-    );
+    markReplyApplied(params.progress, replyToMessageId);
     applyDelivered(params.progress);
   }
 }

@@ -14,7 +14,6 @@ export {
   readProviderJsonArrayFieldResponse,
   readProviderJsonObjectResponse,
   readProviderJsonResponse,
-  readProviderTextResponse,
   readResponseTextLimited,
   truncateErrorDetail,
 } from "../agents/provider-http-errors.js";

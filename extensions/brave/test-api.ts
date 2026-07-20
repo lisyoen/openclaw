@@ -16,3 +16,4 @@ export const testing = {
   resolveBraveMode,
   mapBraveLlmContextResults,
 } as const;
+export { testing as __testing };

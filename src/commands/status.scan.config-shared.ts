@@ -7,12 +7,14 @@ import type { OpenClawConfig } from "../config/types.js";
 import { resolveGatewayAuthTokenSourceConflict } from "../gateway/auth-token-source-conflict.js";
 
 /** Returns true when tests should avoid the missing-config cold-start fast path. */
-function shouldSkipStatusScanMissingConfigFastPath(env: NodeJS.ProcessEnv = process.env): boolean {
+export function shouldSkipStatusScanMissingConfigFastPath(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
   return env.VITEST === "true" || env.VITEST_POOL_ID !== undefined || env.NODE_ENV === "test";
 }
 
 /** Returns whether status should treat this run as a no-config cold start. */
-function resolveStatusScanColdStart(params?: {
+export function resolveStatusScanColdStart(params?: {
   env?: NodeJS.ProcessEnv;
   allowMissingConfigFastPath?: boolean;
 }): boolean {

@@ -1,21 +1,17 @@
 import Foundation
 
 struct TalkRealtimeClientCreateParams: Encodable {
-    var sessionKey: String?
-    var voiceSessionId: String?
     var mode = "realtime"
     var provider: String?
     var transport = "webrtc"
     var brain = "agent-consult"
     var model: String?
     var voice: String?
-    var capabilities: [String]
 }
 
 struct TalkRealtimeClientSession: Decodable {
     let provider: String
     let transport: String
-    let voiceSessionId: String?
     let clientSecret: String
     let offerUrl: String?
     let offerHeaders: [String: String]?
@@ -28,25 +24,6 @@ struct TalkRealtimeClientSession: Decodable {
     }
 }
 
-enum TalkRealtimeTranscriptRole: String, Encodable {
-    case user
-    case assistant
-}
-
-struct TalkRealtimeTranscriptParams: Encodable {
-    let sessionKey: String
-    let voiceSessionId: String
-    let entryId: String
-    let role: TalkRealtimeTranscriptRole
-    let text: String
-    let timestamp: Double?
-}
-
-struct TalkRealtimeClientCloseParams: Encodable {
-    let sessionKey: String
-    let voiceSessionId: String
-}
-
 struct TalkRealtimeToolCallResponse: Decodable {
     let runId: String?
     let idempotencyKey: String?
@@ -54,7 +31,6 @@ struct TalkRealtimeToolCallResponse: Decodable {
 
 struct TalkRealtimeServerEvent: Decodable {
     let type: String
-    let error: TalkRealtimeServerError?
     let itemId: String?
     let item: TalkRealtimeServerItem?
     let callId: String?
@@ -66,7 +42,6 @@ struct TalkRealtimeServerEvent: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case type
-        case error
         case itemId = "item_id"
         case item
         case callId = "call_id"
@@ -92,15 +67,6 @@ struct TalkRealtimeServerEvent: Decodable {
     var resolvedArguments: String? {
         self.arguments ?? self.item?.arguments
     }
-
-    var isMaximumDurationError: Bool {
-        guard self.type == "error", let message = self.error?.message?.lowercased() else { return false }
-        return message.contains("session") && message.contains("maximum duration")
-    }
-}
-
-struct TalkRealtimeServerError: Decodable {
-    let message: String?
 }
 
 struct TalkRealtimeServerItem: Decodable {

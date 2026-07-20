@@ -1,8 +1,7 @@
-import {
-  listSessionEntries,
-  loadTranscriptEventsSync,
-} from "openclaw/plugin-sdk/session-store-runtime";
 // Qa Lab plugin module implements runtime parity behavior.
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import {
   asFiniteNumber as readFiniteNumber,
@@ -14,8 +13,6 @@ import {
   scanGatewayLogSentinels,
   type GatewayLogSentinelFinding,
 } from "./gateway-log-sentinel.js";
-import { discardIgnoredResponseBody } from "./ignored-response-body.js";
-import * as parity from "./parity-shared.js";
 
 export type RuntimeId = "openclaw" | "codex";
 
@@ -33,10 +30,6 @@ export type RuntimeParityUsage = {
   cacheRead?: number;
   cacheWrite?: number;
 };
-
-export type RuntimeParityUsagePolicy =
-  | { expectation: "assistant-message-required" }
-  | { expectation: "not-applicable"; reason: string };
 
 export type RuntimeParityCell = {
   runtime: RuntimeId;
@@ -61,7 +54,6 @@ export type RuntimeParityDrift =
 
 export type RuntimeParityResult = {
   scenarioId: string;
-  runtimeParityUsage?: RuntimeParityUsagePolicy;
   cells: {
     openclaw: RuntimeParityCell;
     codex: RuntimeParityCell;
@@ -69,22 +61,6 @@ export type RuntimeParityResult = {
   drift: RuntimeParityDrift;
   driftDetails?: string;
 };
-
-export function resolveRuntimeParityUsagePolicy(value: unknown): RuntimeParityUsagePolicy {
-  // Legacy or malformed summaries must not silently disable live-usage proof.
-  if (!value || typeof value !== "object") {
-    return { expectation: "assistant-message-required" };
-  }
-  const candidate = value as { expectation?: unknown; reason?: unknown };
-  if (
-    candidate.expectation === "not-applicable" &&
-    typeof candidate.reason === "string" &&
-    candidate.reason.trim()
-  ) {
-    return { expectation: "not-applicable", reason: candidate.reason.trim() };
-  }
-  return { expectation: "assistant-message-required" };
-}
 
 export type RuntimeParityScenarioExecution = {
   scenarioStatus: "pass" | "fail";
@@ -116,8 +92,7 @@ type QaGatewayLike = {
 
 type QaSuiteScenarioLike = {
   details?: string;
-  status: "pass" | "fail" | "skip";
-  steps?: Array<{ details?: string; status?: "pass" | "fail" | "skip" }>;
+  status: "pass" | "fail";
 };
 
 type RuntimeParityCaptureParams = {
@@ -139,18 +114,12 @@ type RuntimeParitySessionEntry = {
   subagentRole?: string;
 };
 
-type RuntimeParitySessionCandidate = {
-  entry: RuntimeParitySessionEntry;
-  sessionKey: string;
-};
-
 type RuntimeParityTranscriptRecord = {
   message: Record<string, unknown>;
   role: "user" | "assistant" | "tool" | "toolResult";
 };
 
 type RuntimeParityMockRequestSnapshot = {
-  prompt?: string;
   allInputText?: string;
   plannedToolName?: string;
   plannedToolArgs?: unknown;
@@ -173,6 +142,29 @@ const TOOL_RESULT_ERROR_RE = /\b(?:error|failed|failure|timeout|denied|enoent|no
 
 function normalizeTextForParity(text: string) {
   return text.replace(/\s+/gu, " ").trim();
+}
+
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeForStableHash(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeForStableHash(entry));
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .toSorted((left, right) => left.localeCompare(right))
+        .map((key) => [key, normalizeForStableHash(record[key])]),
+    );
+  }
+  return value;
+}
+
+function stableHash(value: unknown) {
+  return sha256(JSON.stringify(normalizeForStableHash(value)) ?? "null");
 }
 
 function readUsageTotals(raw: unknown): RuntimeParityUsage {
@@ -430,25 +422,21 @@ function resolveToolCallOrder(records: RuntimeParityTranscriptRecord[]): Runtime
   };
 
   const markResolved = (index: number) => {
-    const pending = ordered[index];
-    if (!pending) {
-      return;
-    }
-    ordered[index] = { ...pending, _resolved: true };
+    ordered[index] = { ...ordered[index], _resolved: true };
     const unresolvedIndex = unresolvedOrder.indexOf(index);
     if (unresolvedIndex >= 0) {
       unresolvedOrder.splice(unresolvedIndex, 1);
     }
-    const toolIndices = unresolvedByTool.get(pending.tool);
+    const toolIndices = unresolvedByTool.get(ordered[index].tool);
     if (!toolIndices) {
       return;
     }
     const nextIndices = toolIndices.filter((candidate) => candidate !== index);
     if (nextIndices.length > 0) {
-      unresolvedByTool.set(pending.tool, nextIndices);
+      unresolvedByTool.set(ordered[index].tool, nextIndices);
       return;
     }
-    unresolvedByTool.delete(pending.tool);
+    unresolvedByTool.delete(ordered[index].tool);
   };
 
   const matchPendingIndex = (result: { id?: string; tool?: string }) => {
@@ -470,8 +458,8 @@ function resolveToolCallOrder(records: RuntimeParityTranscriptRecord[]): Runtime
         const index =
           ordered.push({
             tool: call.tool,
-            argsHash: parity.stableHash(call.args),
-            resultHash: parity.stableHash(null),
+            argsHash: stableHash(call.args),
+            resultHash: stableHash(null),
             _resolved: false,
           }) - 1;
         if (call.id) {
@@ -490,9 +478,9 @@ function resolveToolCallOrder(records: RuntimeParityTranscriptRecord[]): Runtime
             "unknown",
           argsHash:
             pendingIndex !== undefined
-              ? (ordered[pendingIndex]?.argsHash ?? parity.stableHash(null))
-              : parity.stableHash(null),
-          resultHash: parity.stableHash(result.result),
+              ? (ordered[pendingIndex]?.argsHash ?? stableHash(null))
+              : stableHash(null),
+          resultHash: stableHash(result.result),
           ...(result.errorClass ? { errorClass: result.errorClass } : {}),
         };
         if (pendingIndex === undefined || !ordered[pendingIndex]) {
@@ -522,11 +510,7 @@ function resolveToolCallOrderFromMockRequests(
   };
 
   const markResolved = (index: number) => {
-    const pending = ordered[index];
-    if (!pending) {
-      return;
-    }
-    ordered[index] = { ...pending, _resolved: true };
+    ordered[index] = { ...ordered[index], _resolved: true };
     const unresolvedIndex = unresolvedOrder.indexOf(index);
     if (unresolvedIndex >= 0) {
       unresolvedOrder.splice(unresolvedIndex, 1);
@@ -542,9 +526,9 @@ function resolveToolCallOrderFromMockRequests(
         tool: pendingIndex !== undefined ? (ordered[pendingIndex]?.tool ?? "unknown") : "unknown",
         argsHash:
           pendingIndex !== undefined
-            ? (ordered[pendingIndex]?.argsHash ?? parity.stableHash(null))
-            : parity.stableHash(null),
-        resultHash: parity.stableHash(parsedOutput ?? rawToolOutput),
+            ? (ordered[pendingIndex]?.argsHash ?? stableHash(null))
+            : stableHash(null),
+        resultHash: stableHash(parsedOutput ?? rawToolOutput),
         ...(classifyToolResultError({
           rawOutput: rawToolOutput,
           parsedOutput,
@@ -569,8 +553,8 @@ function resolveToolCallOrderFromMockRequests(
     }
     ordered.push({
       tool: plannedToolName,
-      argsHash: parity.stableHash(request.plannedToolArgs ?? null),
-      resultHash: parity.stableHash(null),
+      argsHash: stableHash(request.plannedToolArgs ?? null),
+      resultHash: stableHash(null),
       _resolved: false,
     });
     enqueueUnresolved(ordered.length - 1);
@@ -729,6 +713,26 @@ function aggregateUsage(records: RuntimeParityTranscriptRecord[]): RuntimeParity
   return totals;
 }
 
+function compareToolCallShape(
+  left: RuntimeParityToolCall[],
+  right: RuntimeParityToolCall[],
+): string | undefined {
+  if (left.length !== right.length) {
+    return `tool call count differs (${left.length} vs ${right.length})`;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const leftCall = left[index];
+    const rightCall = right[index];
+    if (!leftCall || !rightCall) {
+      return `tool call row ${index + 1} missing`;
+    }
+    if (leftCall.tool !== rightCall.tool || leftCall.argsHash !== rightCall.argsHash) {
+      return `tool call ${index + 1} differs (${leftCall.tool}/${leftCall.argsHash} vs ${rightCall.tool}/${rightCall.argsHash})`;
+    }
+  }
+  return undefined;
+}
+
 function compareToolResultShape(
   left: RuntimeParityToolCall[],
   right: RuntimeParityToolCall[],
@@ -778,86 +782,34 @@ function hasMissingToolResult(toolCalls: readonly RuntimeParityToolCall[]) {
   return toolCalls.some((toolCall) => toolCall.errorClass === TOOL_RESULT_MISSING_ERROR_CLASS);
 }
 
-function hasProvenTerminalImageResult(scenarioResult: QaSuiteScenarioLike) {
-  return (
-    scenarioResult.status === "pass" &&
-    (scenarioResult.steps ?? []).some(
-      (step) =>
-        step.status === "pass" &&
-        /(?:^|\n)image_generate=true\r?\nMEDIA:\S+/u.test(step.details ?? ""),
-    )
-  );
-}
-
-const PROVEN_TERMINAL_IMAGE_RESULT_HASH = parity.stableHash({ kind: "media", status: "success" });
-
 function resolveRuntimeParityToolCalls(params: {
   mockToolCalls: RuntimeParityToolCall[] | null;
   transcriptToolCalls: RuntimeParityToolCall[];
-  terminalImageResultProven?: boolean;
 }): RuntimeParityToolCall[] {
-  const mockImageCalls = (params.mockToolCalls ?? []).filter(
-    (toolCall) => toolCall.tool === "image_generate",
-  );
-  const transcriptImageCalls = params.transcriptToolCalls.filter(
-    (toolCall) => toolCall.tool === "image_generate",
-  );
-  const imageCaptureIsUnambiguous = parity.hasSingleDistinctLeftToolCallShape(
-    mockImageCalls,
-    transcriptImageCalls,
-  );
-  let selected: RuntimeParityToolCall[];
   if (!params.mockToolCalls) {
-    selected = params.transcriptToolCalls;
-  } else if (
+    return params.transcriptToolCalls;
+  }
+  if (
     hasMissingToolResult(params.mockToolCalls) &&
     !hasMissingToolResult(params.transcriptToolCalls) &&
-    parity.compareCapturedToolCallShape(params.mockToolCalls, params.transcriptToolCalls) ===
-      undefined
+    compareToolCallShape(params.mockToolCalls, params.transcriptToolCalls) === undefined
   ) {
-    selected = params.transcriptToolCalls;
-  } else {
-    selected = params.mockToolCalls;
+    return params.transcriptToolCalls;
   }
-  const imageCalls = selected.filter((toolCall) => toolCall.tool === "image_generate");
-  if (params.terminalImageResultProven && imageCaptureIsUnambiguous && imageCalls.length === 1) {
-    selected = selected.map((toolCall) => {
-      if (
-        toolCall.tool !== "image_generate" ||
-        (toolCall.errorClass !== undefined &&
-          toolCall.errorClass !== TOOL_RESULT_MISSING_ERROR_CLASS)
-      ) {
-        return toolCall;
-      }
-      return {
-        ...toolCall,
-        resultHash: PROVEN_TERMINAL_IMAGE_RESULT_HASH,
-        errorClass: undefined,
-      };
-    });
-  }
-  return selected;
+  return params.mockToolCalls;
 }
 
 function filterMockRequestsForParentPrompt(
   requests: RuntimeParityMockRequestSnapshot[],
   parentPrompt: string,
-  parentPrompts: readonly string[] = [parentPrompt],
 ) {
-  const normalizedParentPrompts = parentPrompts
-    .map(normalizeTextForParity)
-    .filter((prompt) => prompt.length > 0);
-  if (normalizedParentPrompts.length === 0) {
+  const normalizedParentPrompt = normalizeTextForParity(parentPrompt);
+  if (!normalizedParentPrompt) {
     return requests;
   }
-  const matching = requests.filter((request) => {
-    const normalizedPrompt = normalizeTextForParity(request.prompt ?? "");
-    if (normalizedPrompt) {
-      return normalizedParentPrompts.some((prompt) => normalizedPrompt.includes(prompt));
-    }
-    const normalizedHistory = normalizeTextForParity(request.allInputText ?? "");
-    return normalizedParentPrompts.some((prompt) => normalizedHistory.includes(prompt));
-  });
+  const matching = requests.filter((request) =>
+    normalizeTextForParity(request.allInputText ?? "").includes(normalizedParentPrompt),
+  );
   return matching.length > 0 ? matching : requests;
 }
 
@@ -902,22 +854,7 @@ function classifyRuntimeParityCells(params: {
     };
   }
 
-  if (
-    params.openclawScenarioStatus === "fail" ||
-    params.codexScenarioStatus === "fail" ||
-    !isRuntimeParityCellPassable(params.openclaw) ||
-    !isRuntimeParityCellPassable(params.codex)
-  ) {
-    return {
-      drift: "failure-mode",
-      driftDetails:
-        params.openclawScenarioStatus === params.codexScenarioStatus
-          ? "at least one runtime failed"
-          : `scenario status differs (${params.openclawScenarioStatus} vs ${params.codexScenarioStatus})`,
-    };
-  }
-
-  const toolCallShapeDetails = parity.compareToolCallShape(
+  const toolCallShapeDetails = compareToolCallShape(
     params.openclaw.toolCalls,
     params.codex.toolCalls,
   );
@@ -951,6 +888,21 @@ function classifyRuntimeParityCells(params: {
   }
 
   if (
+    params.openclawScenarioStatus === "fail" ||
+    params.codexScenarioStatus === "fail" ||
+    !isRuntimeParityCellPassable(params.openclaw) ||
+    !isRuntimeParityCellPassable(params.codex)
+  ) {
+    return {
+      drift: "failure-mode",
+      driftDetails:
+        params.openclawScenarioStatus === params.codexScenarioStatus
+          ? "at least one runtime failed"
+          : `scenario status differs (${params.openclawScenarioStatus} vs ${params.codexScenarioStatus})`,
+    };
+  }
+
+  if (
     normalizeTextForParity(params.openclaw.finalText) ===
     normalizeTextForParity(params.codex.finalText)
   ) {
@@ -958,6 +910,22 @@ function classifyRuntimeParityCells(params: {
   }
 
   return { drift: "text-only", driftDetails: "final text differs after whitespace normalization" };
+}
+
+function resolveSessionTranscriptFile(params: {
+  sessionsDir: string;
+  sessionId: string;
+  sessionEntry?: RuntimeParitySessionEntry;
+}): string | undefined {
+  const explicitSessionFile = readNonEmptyString(params.sessionEntry?.sessionFile);
+  if (explicitSessionFile) {
+    const candidate = path.isAbsolute(explicitSessionFile)
+      ? explicitSessionFile
+      : path.join(params.sessionsDir, explicitSessionFile);
+    return candidate;
+  }
+  const baseName = `${params.sessionId}.jsonl`;
+  return path.join(params.sessionsDir, baseName);
 }
 
 function isRuntimeParityRootSession(entry: RuntimeParitySessionEntry) {
@@ -973,29 +941,24 @@ function isRuntimeParityRootSession(entry: RuntimeParitySessionEntry) {
   return true;
 }
 
-function runtimeParitySessionEnv(stateDir: string): NodeJS.ProcessEnv {
-  return { ...process.env, OPENCLAW_STATE_DIR: stateDir };
-}
-
-function readRuntimeParitySessionEntries(params: {
+async function readRuntimeParitySessionEntries(params: {
   stateDir: string;
   agentId: string;
-}): RuntimeParitySessionCandidate[] {
+}): Promise<Array<RuntimeParitySessionEntry>> {
+  const storePath = path.join(
+    params.stateDir,
+    "agents",
+    params.agentId,
+    "sessions",
+    "sessions.json",
+  );
   try {
-    const entries = listSessionEntries({
-      agentId: params.agentId,
-      env: runtimeParitySessionEnv(params.stateDir),
-    })
-      .filter(({ entry }) => readNonEmptyString(entry.sessionId))
-      .map(({ entry, sessionKey }) => ({
-        entry: entry as RuntimeParitySessionEntry,
-        sessionKey,
-      }));
-    const rootEntries = entries.filter(({ entry }) => isRuntimeParityRootSession(entry));
+    const raw = await fs.readFile(storePath, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, RuntimeParitySessionEntry>;
+    const entries = Object.values(parsed).filter((entry) => readNonEmptyString(entry?.sessionId));
+    const rootEntries = entries.filter(isRuntimeParityRootSession);
     const candidates = rootEntries.length > 0 ? rootEntries : entries;
-    return candidates.toSorted(
-      (left, right) => (right.entry.updatedAt ?? 0) - (left.entry.updatedAt ?? 0),
-    );
+    return candidates.toSorted((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0));
   } catch {
     return [];
   }
@@ -1005,25 +968,33 @@ async function loadRuntimeParityTranscripts(params: {
   gateway: QaGatewayLike;
   agentId: string;
 }): Promise<string> {
-  const stateDir = `${params.gateway.tempRoot}/state`;
-  const sessionEntries = readRuntimeParitySessionEntries({
-    stateDir,
+  const sessionsDir = path.join(
+    params.gateway.tempRoot,
+    "state",
+    "agents",
+    params.agentId,
+    "sessions",
+  );
+  const sessionEntries = await readRuntimeParitySessionEntries({
+    stateDir: path.join(params.gateway.tempRoot, "state"),
     agentId: params.agentId,
   });
   const transcripts: string[] = [];
-  for (const { entry, sessionKey } of sessionEntries) {
-    const sessionId = readNonEmptyString(entry.sessionId);
+  for (const sessionEntry of sessionEntries) {
+    const sessionId = readNonEmptyString(sessionEntry.sessionId);
     if (!sessionId) {
       continue;
     }
+    const sessionFile = resolveSessionTranscriptFile({
+      sessionsDir,
+      sessionId,
+      sessionEntry,
+    });
+    if (!sessionFile) {
+      continue;
+    }
     try {
-      const events = loadTranscriptEventsSync({
-        agentId: params.agentId,
-        env: runtimeParitySessionEnv(stateDir),
-        sessionId,
-        sessionKey,
-      });
-      const transcript = events.map((event) => JSON.stringify(event)).join("\n");
+      const transcript = await fs.readFile(sessionFile, "utf8");
       if (transcript.trim().length > 0 && !isHeartbeatOnlyRuntimeTranscript(transcript)) {
         transcripts.push(transcript.trimEnd());
         break;
@@ -1038,7 +1009,6 @@ async function loadRuntimeParityTranscripts(params: {
 async function loadRuntimeParityMockToolCalls(
   mockBaseUrl: string | undefined,
   parentPrompt: string,
-  parentPrompts: readonly string[] = [parentPrompt],
 ): Promise<RuntimeParityToolCall[] | null> {
   const normalizedBaseUrl = mockBaseUrl?.trim().replace(/\/+$/u, "");
   if (!normalizedBaseUrl) {
@@ -1053,7 +1023,6 @@ async function loadRuntimeParityMockToolCalls(
     let payload: unknown;
     try {
       if (!response.ok) {
-        await discardIgnoredResponseBody(response);
         return null;
       }
       payload = await response.json();
@@ -1065,7 +1034,6 @@ async function loadRuntimeParityMockToolCalls(
     }
     const requests = payload.filter(isMessageRecord).map(
       (entry): RuntimeParityMockRequestSnapshot => ({
-        prompt: readNonEmptyString(entry.prompt),
         allInputText: readNonEmptyString(entry.allInputText),
         plannedToolName: readNonEmptyString(entry.plannedToolName),
         plannedToolArgs: entry.plannedToolArgs ?? null,
@@ -1073,7 +1041,7 @@ async function loadRuntimeParityMockToolCalls(
       }),
     );
     return resolveToolCallOrderFromMockRequests(
-      filterMockRequestsForParentPrompt(requests, parentPrompt, parentPrompts),
+      filterMockRequestsForParentPrompt(requests, parentPrompt),
     );
   } catch {
     return null;
@@ -1090,37 +1058,23 @@ export async function captureRuntimeParityCell(
   });
   const transcriptRecords = buildTranscriptRecords(transcriptBytes);
   const transcriptToolCalls = resolveToolCallOrder(transcriptRecords);
-  const parentPrompts = transcriptRecords
-    .filter((record) => record.role === "user")
-    .map((record) => extractAssistantText(record.message))
-    .filter((prompt) => prompt.length > 0);
-  const parentPrompt = parentPrompts[0] ?? "";
-  const mockToolCalls = await loadRuntimeParityMockToolCalls(
-    params.mockBaseUrl,
-    parentPrompt,
-    parentPrompts,
-  );
+  const parentPrompt =
+    transcriptRecords
+      .filter((record) => record.role === "user" && !isToolResultLikeMessage(record.message))
+      .map((record) => extractAssistantText(record.message))
+      .find(Boolean) ?? "";
+  const mockToolCalls = await loadRuntimeParityMockToolCalls(params.mockBaseUrl, parentPrompt);
   const gatewayLogs = params.gateway.logs?.();
   const sentinelFindings = [
     ...scanGatewayLogSentinels(gatewayLogs),
     ...scanDirectReplyTranscriptSentinels(transcriptBytes),
   ];
-  // Retry passes retain first-attempt diagnostics; only terminal failures may
-  // classify that historical text as the cell's runtime error.
-  const scenarioErrorClass =
-    params.scenarioResult.status === "pass"
-      ? undefined
-      : classifyScenarioError(params.scenarioResult.details);
+  const scenarioErrorClass = classifyScenarioError(params.scenarioResult.details);
   const sentinelErrorClass = summarizeSentinelErrorClass(sentinelFindings);
-  const terminalImageResultProven = hasProvenTerminalImageResult(params.scenarioResult);
   return {
     runtime: params.runtime,
     transcriptBytes,
-    toolCalls: resolveRuntimeParityToolCalls({
-      mockToolCalls,
-      transcriptToolCalls,
-      terminalImageResultProven,
-    }),
+    toolCalls: resolveRuntimeParityToolCalls({ mockToolCalls, transcriptToolCalls }),
     finalText: extractFinalAssistantText(transcriptRecords),
     usage: aggregateUsage(transcriptRecords),
     wallClockMs: params.wallClockMs,
@@ -1134,7 +1088,6 @@ export async function captureRuntimeParityCell(
 
 export async function runRuntimeParityScenario(params: {
   scenarioId: string;
-  runtimeParityUsage?: RuntimeParityUsagePolicy;
   runCell: (runtime: RuntimeId) => Promise<RuntimeParityScenarioExecution>;
 }): Promise<RuntimeParityResult> {
   const openclaw = await params.runCell("openclaw");
@@ -1147,7 +1100,6 @@ export async function runRuntimeParityScenario(params: {
   });
   return {
     scenarioId: params.scenarioId,
-    runtimeParityUsage: resolveRuntimeParityUsagePolicy(params.runtimeParityUsage),
     cells: {
       openclaw: openclaw.cell,
       codex: codex.cell,
@@ -1157,4 +1109,11 @@ export async function runRuntimeParityScenario(params: {
   };
 }
 
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+export const testing = {
+  classifyRuntimeParityCells,
+  filterMockRequestsForParentPrompt,
+  resolveRuntimeParityToolCalls,
+  resolveToolCallOrderFromMockRequests,
+};
+
+export { testing as __testing };

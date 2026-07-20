@@ -1,7 +1,6 @@
 // Gateway setup prompt shared constants.
 // Provides Tailscale copy and Control UI origin updates for CLI setup flows.
 import { isIpv6Address, parseCanonicalIpAddress } from "@openclaw/net-policy/ip";
-import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getTailnetHostname } from "../infra/tailscale.js";
@@ -76,9 +75,7 @@ export async function maybeAddTailnetOriginToControlUiAllowedOrigins(params: {
     return params.config;
   }
   const tsOrigin = await getTailnetHostname(undefined, params.tailscaleBin ?? undefined)
-    .then((host) =>
-      buildTailnetHttpsOrigin(expectDefined(host, "gateway config prompts.shared host")),
-    )
+    .then((host) => buildTailnetHttpsOrigin(host))
     .catch(() => null);
   if (!tsOrigin) {
     return params.config;

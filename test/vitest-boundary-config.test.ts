@@ -8,7 +8,7 @@ function requireTestConfig(config: ReturnType<typeof createBoundaryVitestConfig>
   if (!config.test) {
     throw new Error("expected boundary vitest test config");
   }
-  return config.test as typeof config.test & { passWithNoTests?: boolean };
+  return config.test;
 }
 
 describe("boundary vitest config", () => {

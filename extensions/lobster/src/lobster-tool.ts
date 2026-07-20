@@ -7,7 +7,6 @@ import {
   readNonNegativeIntegerParam,
   readPositiveIntegerParam,
 } from "openclaw/plugin-sdk/param-readers";
-import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import { Type } from "typebox";
 import type { OpenClawPluginApi } from "../runtime-api.js";
 import {
@@ -97,25 +96,11 @@ function parseOptionalFlowStateJson(value: unknown): JsonLike | undefined {
   if (typeof value !== "string") {
     throw new Error("flowStateJson must be a JSON string");
   }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return undefined;
-  }
   try {
-    return JSON.parse(trimmed) as JsonLike;
+    return JSON.parse(value) as JsonLike;
   } catch {
     throw new Error("flowStateJson must be valid JSON");
   }
-}
-
-function isEmptyJsonObject(value: JsonLike | undefined): boolean {
-  return (
-    value !== undefined &&
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === 0
-  );
 }
 
 function parseRunFlowParams(params: Record<string, unknown>): ManagedFlowRunParams | null {
@@ -126,21 +111,19 @@ function parseRunFlowParams(params: Record<string, unknown>): ManagedFlowRunPara
   const stateJson = parseOptionalFlowStateJson(params.flowStateJson);
   const resumeFlowId = readOptionalTrimmedString(params.flowId, "flowId");
   const resumeRevision = readOptionalNumber(params.flowExpectedRevision, "flowExpectedRevision");
-  const stateJsonSignalsRunMode = stateJson !== undefined && !isEmptyJsonObject(stateJson);
-
-  if (resumeFlowId !== undefined || (resumeRevision !== undefined && resumeRevision !== 0)) {
-    throw new Error("run action does not accept flowId or flowExpectedRevision");
-  }
 
   const hasRunFields =
     controllerId !== undefined ||
     goal !== undefined ||
     currentStep !== undefined ||
     waitingStep !== undefined ||
-    stateJsonSignalsRunMode;
+    stateJson !== undefined;
 
   if (!hasRunFields) {
     return null;
+  }
+  if (resumeFlowId !== undefined || resumeRevision !== undefined) {
+    throw new Error("run action does not accept flowId or flowExpectedRevision");
   }
   if (!controllerId) {
     throw new Error("flowControllerId required when using managed TaskFlow run mode");
@@ -167,21 +150,19 @@ function parseResumeFlowParams(params: Record<string, unknown>): ManagedFlowResu
   const approve = readOptionalBoolean(params.approve, "approve");
   const runControllerId = readOptionalTrimmedString(params.flowControllerId, "flowControllerId");
   const runGoal = readOptionalTrimmedString(params.flowGoal, "flowGoal");
-  const stateJson = parseOptionalFlowStateJson(params.flowStateJson);
-  const stateJsonDisallowed = stateJson !== undefined && !isEmptyJsonObject(stateJson);
-
-  if (runControllerId !== undefined || runGoal !== undefined || stateJsonDisallowed) {
-    throw new Error("resume action does not accept flowControllerId, flowGoal, or flowStateJson");
-  }
+  const stateJson = params.flowStateJson;
 
   const hasResumeFields =
     flowId !== undefined ||
-    (expectedRevision !== undefined && expectedRevision !== 0) ||
+    expectedRevision !== undefined ||
     currentStep !== undefined ||
     waitingStep !== undefined;
 
   if (!hasResumeFields) {
     return null;
+  }
+  if (runControllerId !== undefined || runGoal !== undefined || stateJson !== undefined) {
+    throw new Error("resume action does not accept flowControllerId, flowGoal, or flowStateJson");
   }
   if (!flowId) {
     throw new Error("flowId required when using managed TaskFlow resume mode");
@@ -213,7 +194,10 @@ function formatManagedFlowResult(result: ManagedFlowSuccessResult) {
     flow: result.flow,
     mutation: result.mutation,
   };
-  return jsonResult(details);
+  return {
+    content: [{ type: "text", text: JSON.stringify(details, null, 2) }],
+    details,
+  };
 }
 
 function requireTaskFlowRuntime(taskFlow: BoundTaskFlow | undefined, action: "run" | "resume") {
@@ -238,7 +222,8 @@ export function createLobsterTool(api: OpenClawPluginApi, options?: LobsterToolO
     description:
       "Run Lobster pipelines as a local-first workflow runtime (typed JSON envelope + resumable approvals).",
     parameters: Type.Object({
-      action: Type.Enum(["run", "resume"], { type: "string" }),
+      // NOTE: Prefer string enums in tool schemas; some providers reject unions/anyOf.
+      action: Type.Unsafe<"run" | "resume">({ type: "string", enum: ["run", "resume"] }),
       pipeline: Type.Optional(Type.String()),
       argsJson: Type.Optional(Type.String()),
       token: Type.Optional(Type.String()),
@@ -330,7 +315,10 @@ export function createLobsterTool(api: OpenClawPluginApi, options?: LobsterToolO
       if (!envelope.ok) {
         throw new Error(envelope.error.message);
       }
-      return jsonResult(envelope);
+      return {
+        content: [{ type: "text", text: JSON.stringify(envelope, null, 2) }],
+        details: envelope,
+      };
     },
   };
 }

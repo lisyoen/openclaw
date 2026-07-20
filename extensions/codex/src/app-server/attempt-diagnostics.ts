@@ -12,7 +12,7 @@ import type { CodexAppServerRuntimeOptions, resolveCodexPluginsPolicy } from "./
 type TrustedDiagnosticEventInput = Parameters<typeof emitTrustedDiagnosticEventWithPrivateData>[0];
 
 /** Reads a tool schema field in either app-server or OpenClaw naming. */
-function readCodexDiagnosticToolParameters(tool: {
+export function readCodexDiagnosticToolParameters(tool: {
   inputSchema?: unknown;
   parameters?: unknown;
 }): unknown {
@@ -20,7 +20,7 @@ function readCodexDiagnosticToolParameters(tool: {
 }
 
 /** Builds compact diagnostic tool definitions for trusted private telemetry. */
-function buildCodexDiagnosticToolDefinitions(
+export function buildCodexDiagnosticToolDefinitions(
   tools: readonly {
     name: string;
     description: string;
@@ -45,7 +45,7 @@ export function utf8JsonByteLength(value: unknown): number | undefined {
 }
 
 /** Builds a short namespaced fingerprint for sensitive log values. */
-function fingerprintCodexLogValue(namespace: string, value: string): string {
+export function fingerprintCodexLogValue(namespace: string, value: string): string {
   const hash = createHash("sha256");
   hash.update(namespace);
   hash.update("\0");
@@ -73,7 +73,6 @@ export function buildCodexPluginThreadConfigEligibilityLogData(params: {
     enabled: params.pluginThreadConfigRequired,
     policyConfigured: params.resolvedPluginPolicy?.configured === true,
     policyEnabled: params.resolvedPluginPolicy?.enabled === true,
-    allowAllPlugins: params.resolvedPluginPolicy?.allowAllPlugins === true,
     pluginConfigKeys: params.resolvedPluginPolicy?.pluginPolicies
       .map((plugin) => plugin.configKey)
       .toSorted(),

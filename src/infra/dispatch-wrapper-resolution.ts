@@ -9,23 +9,13 @@ import {
 import { normalizeExecutableToken } from "./exec-wrapper-tokens.js";
 import { parseInlineOptionToken } from "./inline-option-token.js";
 
+export { unwrapEnvInvocation } from "./command-carriers.js";
+
 export const MAX_DISPATCH_WRAPPER_DEPTH = 4;
 
 const NICE_OPTIONS_WITH_VALUE = new Set(["-n", "--adjustment", "--priority"]);
 const CAFFEINATE_OPTIONS_WITH_VALUE = new Set(["-t", "-w"]);
 const STDBUF_OPTIONS_WITH_VALUE = new Set(["-i", "--input", "-o", "--output", "-e", "--error"]);
-const FLOCK_SHORT_FLAG_OPTIONS = new Set(["-e", "-F", "-n", "-o", "-s", "-x"]);
-const FLOCK_LONG_FLAG_OPTIONS = new Set([
-  "--close",
-  "--exclusive",
-  "--nb",
-  "--no-fork",
-  "--nonblock",
-  "--shared",
-  "--verbose",
-]);
-const FLOCK_SHORT_OPTIONS_WITH_VALUE = new Set(["-E", "-w"]);
-const FLOCK_LONG_OPTIONS_WITH_VALUE = new Set(["--conflict-exit-code", "--timeout", "--wait"]);
 const TIME_FLAG_OPTIONS = new Set([
   "-a",
   "--append",
@@ -58,6 +48,7 @@ const XCRUN_FLAG_OPTIONS = new Set([
   "-v",
   "--verbose",
 ]);
+
 function isArchSelectorToken(token: string): boolean {
   return /^-[A-Za-z0-9_]+$/.test(token);
 }
@@ -246,50 +237,6 @@ function unwrapTimeInvocation(argv: string[]): string[] | null {
   });
 }
 
-function isFlockShortFlagCluster(token: string): boolean {
-  return /^-[eFnsxo]+$/.test(token);
-}
-
-function unwrapFlockInvocation(argv: string[]): string[] | null {
-  return scanWrapperInvocation(argv, {
-    separators: new Set(["--"]),
-    onToken: (token, lower) => {
-      if (!token.startsWith("-") || token === "-") {
-        return "stop";
-      }
-      const parsedToken = parseInlineOptionToken(token);
-      const lowerFlag = parseInlineOptionToken(lower).name;
-      if (FLOCK_LONG_FLAG_OPTIONS.has(lowerFlag)) {
-        return "continue";
-      }
-      if (FLOCK_LONG_OPTIONS_WITH_VALUE.has(lowerFlag)) {
-        return parsedToken.hasInlineValue ? "continue" : "consume-next";
-      }
-      if (isFlockShortFlagCluster(token)) {
-        return "continue";
-      }
-      if (FLOCK_SHORT_FLAG_OPTIONS.has(parsedToken.name)) {
-        return "continue";
-      }
-      if (FLOCK_SHORT_OPTIONS_WITH_VALUE.has(parsedToken.name)) {
-        return parsedToken.hasInlineValue || token !== parsedToken.name
-          ? "continue"
-          : "consume-next";
-      }
-      return "invalid";
-    },
-    adjustCommandIndex: (commandIndex, currentArgv) => {
-      // The first non-option token is the lock target; only the next token can be
-      // the wrapped executable. Shell-string and fd-only forms stay blocked.
-      const wrappedCommandIndex = commandIndex + 1;
-      const wrappedCommand = currentArgv[wrappedCommandIndex]?.trim() ?? "";
-      return wrappedCommand && (!wrappedCommand.startsWith("-") || wrappedCommand === "-")
-        ? wrappedCommandIndex
-        : null;
-    },
-  });
-}
-
 function timeInvocationWritesOutputFile(argv: string[]): boolean {
   let expectsOptionValue = false;
   for (let idx = 1; idx < argv.length; idx += 1) {
@@ -451,7 +398,6 @@ const DISPATCH_WRAPPER_SPECS: readonly DispatchWrapperSpec[] = [
     unwrap: unwrapEnvInvocation,
     transparentUsage: (argv) => !envInvocationUsesModifiers(argv),
   },
-  { name: "flock", unwrap: unwrapFlockInvocation, transparentUsage: true },
   { name: "ionice" },
   { name: "nice", unwrap: unwrapNiceInvocation, transparentUsage: true },
   { name: "nohup", unwrap: unwrapNohupInvocation, transparentUsage: true },
@@ -478,9 +424,6 @@ const DISPATCH_WRAPPER_SPECS: readonly DispatchWrapperSpec[] = [
 const DISPATCH_WRAPPER_SPEC_BY_NAME = new Map(
   DISPATCH_WRAPPER_SPECS.map((spec) => [spec.name, spec] as const),
 );
-function normalizeDispatchWrapperName(token: string): string {
-  return normalizeExecutableToken(token);
-}
 
 type DispatchWrapperUnwrapResult =
   | { kind: "not-wrapper" }
@@ -508,7 +451,7 @@ function unwrapDispatchWrapper(
 }
 
 export function isDispatchWrapperExecutable(token: string): boolean {
-  return DISPATCH_WRAPPER_SPEC_BY_NAME.has(normalizeDispatchWrapperName(token));
+  return DISPATCH_WRAPPER_SPEC_BY_NAME.has(normalizeExecutableToken(token));
 }
 
 export function unwrapKnownDispatchWrapperInvocation(
@@ -519,7 +462,7 @@ export function unwrapKnownDispatchWrapperInvocation(
   if (!token0) {
     return { kind: "not-wrapper" };
   }
-  const wrapper = normalizeDispatchWrapperName(token0);
+  const wrapper = normalizeExecutableToken(token0);
   const spec = DISPATCH_WRAPPER_SPEC_BY_NAME.get(wrapper);
   if (!spec) {
     return { kind: "not-wrapper" };

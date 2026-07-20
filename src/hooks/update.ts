@@ -13,16 +13,16 @@ import {
 import { recordHookInstall } from "./installs.js";
 
 /** Logger contract for hook pack update operations. */
-type HookPackUpdateLogger = {
+export type HookPackUpdateLogger = {
   info?: (message: string) => void;
   warn?: (message: string) => void;
 };
 
 /** Per-pack update status emitted by updateNpmInstalledHookPacks. */
-type HookPackUpdateStatus = "updated" | "unchanged" | "skipped" | "error";
+export type HookPackUpdateStatus = "updated" | "unchanged" | "skipped" | "error";
 
 /** Outcome for one hook pack update attempt. */
-type HookPackUpdateOutcome = {
+export type HookPackUpdateOutcome = {
   hookId: string;
   status: HookPackUpdateStatus;
   message: string;
@@ -31,14 +31,14 @@ type HookPackUpdateOutcome = {
 };
 
 /** Aggregate update result with the possibly updated config. */
-type HookPackUpdateSummary = {
+export type HookPackUpdateSummary = {
   config: OpenClawConfig;
   changed: boolean;
   outcomes: HookPackUpdateOutcome[];
 };
 
 /** Integrity drift payload enriched with hook pack identity and dry-run state. */
-type HookPackUpdateIntegrityDriftParams = HookNpmIntegrityDriftParams & {
+export type HookPackUpdateIntegrityDriftParams = HookNpmIntegrityDriftParams & {
   hookId: string;
   resolvedSpec?: string;
   resolvedVersion?: string;
@@ -136,7 +136,6 @@ export async function updateNpmInstalledHookPacks(params: {
     }
     const currentVersion = await readInstalledPackageVersion(installPath);
     const result = await installHooksFromNpmSpec({
-      config: params.config,
       spec: effectiveSpec,
       mode: "update",
       dryRun: params.dryRun,

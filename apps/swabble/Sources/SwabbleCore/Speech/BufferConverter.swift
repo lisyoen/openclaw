@@ -2,12 +2,7 @@
 import Foundation
 
 final class BufferConverter {
-    private final class Box<T>: @unchecked Sendable { var value: T
-        init(_ value: T) {
-            self.value = value
-        }
-    }
-
+    private final class Box<T>: @unchecked Sendable { var value: T; init(_ value: T) { self.value = value } }
     enum ConverterError: Swift.Error {
         case failedToCreateConverter
         case failedToCreateConversionBuffer

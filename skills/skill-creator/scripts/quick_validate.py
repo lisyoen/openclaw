@@ -73,7 +73,7 @@ def validate_skill(skill_path):
         return False, "SKILL.md not found"
 
     try:
-        content = skill_md.read_text(encoding="utf-8-sig")
+        content = skill_md.read_text(encoding="utf-8")
     except OSError as e:
         return False, f"Could not read SKILL.md: {e}"
 

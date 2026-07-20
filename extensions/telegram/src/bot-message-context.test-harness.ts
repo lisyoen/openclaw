@@ -1,10 +1,8 @@
 // Telegram plugin module implements bot message context harness behavior.
 import { createHash } from "node:crypto";
 import { buildChannelInboundEventContext } from "openclaw/plugin-sdk/channel-inbound";
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import type { BuildTelegramMessageContextParams, TelegramMediaRef } from "./bot-message-context.js";
-import { setTelegramRuntime } from "./runtime.js";
-import type { TelegramRuntime } from "./runtime.types.js";
+import { setTelegramTopicNameStoreFactoryForTest } from "./topic-name-cache.js";
 
 export const baseTelegramMessageContextConfig = {
   agents: { defaults: { model: "anthropic/claude-opus-4-5", workspace: "/tmp/openclaw" } },
@@ -25,7 +23,6 @@ type BuildTelegramMessageContextForTestParams = {
   message: Record<string, unknown>;
   me?: Record<string, unknown>;
   allMedia?: TelegramMediaRef[];
-  promptContext?: BuildTelegramMessageContextParams["promptContext"];
   options?: BuildTelegramMessageContextParams["options"];
   cfg?: Record<string, unknown>;
   accountId?: string;
@@ -57,16 +54,8 @@ function createTelegramMessageContextSessionRuntimeForTest(
 ): TelegramTestSessionRuntime {
   return {
     buildChannelInboundEventContext,
-    readAmbientTranscriptWatermark: () => undefined,
     readSessionUpdatedAt: () => undefined,
     recordInboundSession: async () => undefined,
-    resolveAmbientTranscriptWatermarkKey: ({ channel, accountId, conversationId, threadId }) =>
-      JSON.stringify([
-        channel,
-        accountId ?? "",
-        conversationId,
-        threadId === undefined ? "" : String(threadId),
-      ]),
     resolveInboundLastRouteSessionKey: ({ route, sessionKey }) =>
       route.lastRoutePolicy === "main" ? route.mainSessionKey : sessionKey,
     resolvePinnedMainDmOwnerFromAllowlist: () => null,
@@ -75,29 +64,24 @@ function createTelegramMessageContextSessionRuntimeForTest(
 }
 
 function installTelegramTopicNameStoreForTest() {
-  setTelegramRuntime({
-    state: {
-      openKeyedStore: (({ namespace }: { namespace: string }) => {
-        const entries = telegramTopicNameStoresForTest.get(namespace) ?? new Map();
-        telegramTopicNameStoresForTest.set(namespace, entries);
-        return {
-          async register(key: string, value: TopicNameEntryForTest) {
-            entries.set(key, value);
-          },
-          async entries() {
-            return Array.from(entries, ([key, value]) => ({ key, value }));
-          },
-          async delete(key: string) {
-            return entries.delete(key);
-          },
-          async clear() {
-            entries.clear();
-          },
-        };
-      }) as unknown as TelegramRuntime["state"]["openKeyedStore"],
-    },
-    channel: {},
-  } as TelegramRuntime);
+  setTelegramTopicNameStoreFactoryForTest((namespace) => {
+    const entries = telegramTopicNameStoresForTest.get(namespace) ?? new Map();
+    telegramTopicNameStoresForTest.set(namespace, entries);
+    return {
+      async register(key, value) {
+        entries.set(key, value);
+      },
+      async entries() {
+        return Array.from(entries, ([key, value]) => ({ key, value }));
+      },
+      async delete(key) {
+        return entries.delete(key);
+      },
+      async clear() {
+        entries.clear();
+      },
+    };
+  });
 }
 
 export async function buildTelegramMessageContextForTest(
@@ -128,7 +112,6 @@ export async function buildTelegramMessageContextForTest(
       me: { id: 7, username: "bot", ...params.me },
     } as never,
     allMedia: params.allMedia ?? [],
-    promptContext: params.promptContext ?? [],
     storeAllowFrom: [],
     options: params.options ?? {},
     bot: {
@@ -139,6 +122,7 @@ export async function buildTelegramMessageContextForTest(
       },
     } as never,
     cfg: (params.cfg ?? baseTelegramMessageContextConfig) as never,
+    loadFreshConfig: () => (params.cfg ?? baseTelegramMessageContextConfig) as never,
     runtime: {
       recordChannelActivity: () => undefined,
       ...params.runtime,
@@ -167,6 +151,7 @@ export async function buildTelegramMessageContextForTest(
 let buildTelegramMessageContextLoader:
   | typeof import("./bot-message-context.js").buildTelegramMessageContext
   | undefined;
+let vitestModuleLoader: Promise<typeof import("vitest")> | undefined;
 let messageContextMocksInstalled = false;
 
 async function loadBuildTelegramMessageContext() {
@@ -178,7 +163,10 @@ async function loadBuildTelegramMessageContext() {
   return buildTelegramMessageContextLoader;
 }
 
-const loadVitestModule = createLazyRuntimeModule(() => import("vitest"));
+async function loadVitestModule() {
+  vitestModuleLoader ??= import("vitest");
+  return await vitestModuleLoader;
+}
 
 async function installMessageContextTestMocks() {
   installTelegramTopicNameStoreForTest();

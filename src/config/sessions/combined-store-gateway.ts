@@ -1,7 +1,6 @@
 // Builds the gateway-visible combined session store across agent-specific stores.
 // Gateway callers need canonical per-agent keys even when stores are split by `{agentId}`.
 
-import { expectDefined } from "@openclaw/normalization-core";
 import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import {
   canonicalizeSpawnedByForAgent,
@@ -10,7 +9,7 @@ import {
 import { normalizeAgentId } from "../../routing/session-key.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
 import { resolveStorePath } from "./paths.js";
-import { listSessionEntries } from "./session-accessor.js";
+import { loadSessionStore } from "./store-load.js";
 import {
   resolveAgentSessionStoreTargetsSync,
   resolveAllAgentSessionStoreTargetsSync,
@@ -21,19 +20,6 @@ import type { SessionEntry } from "./types.js";
 // Template-backed stores need per-agent scans before they can be merged for Gateway views.
 function isStorePathTemplate(store?: string): boolean {
   return typeof store === "string" && store.includes("{agentId}");
-}
-
-function loadGatewayStoreEntries(params: {
-  agentId: string;
-  storePath: string;
-}): Record<string, SessionEntry> {
-  return Object.fromEntries(
-    listSessionEntries({
-      agentId: params.agentId,
-      clone: false,
-      storePath: params.storePath,
-    }).map(({ sessionKey, entry }) => [sessionKey, entry]),
-  );
 }
 
 function mergeSessionEntryIntoCombined(params: {
@@ -90,7 +76,7 @@ export function loadCombinedSessionStoreForGateway(
     // A single shared store still needs keys canonicalized as if owned by the default agent.
     const storePath = resolveStorePath(storeConfig);
     const defaultAgentId = normalizeAgentId(resolveDefaultAgentId(cfg));
-    const store = loadGatewayStoreEntries({ agentId: defaultAgentId, storePath });
+    const store = loadSessionStore(storePath, { clone: false });
     const combined: Record<string, SessionEntry> = {};
     for (const [key, entry] of Object.entries(store)) {
       const canonicalKey = resolveStoredSessionKeyForAgentStore({
@@ -122,7 +108,7 @@ export function loadCombinedSessionStoreForGateway(
   for (const target of targets) {
     const agentId = target.agentId;
     const storePath = target.storePath;
-    const store = loadGatewayStoreEntries({ agentId, storePath });
+    const store = loadSessionStore(storePath, { clone: false });
     for (const [key, entry] of Object.entries(store)) {
       const canonicalKey = resolveStoredSessionKeyForAgentStore({
         cfg,
@@ -141,7 +127,7 @@ export function loadCombinedSessionStoreForGateway(
 
   const storePath =
     targets.length === 1
-      ? expectDefined(targets[0], "targets entry at 0").storePath
+      ? targets[0].storePath
       : typeof storeConfig === "string" && storeConfig.trim()
         ? storeConfig.trim()
         : "(multiple)";

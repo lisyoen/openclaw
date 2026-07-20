@@ -1,48 +1,22 @@
 // Transcript write contexts let nested append paths reuse an already-owned session write lock.
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
-import { parseSqliteSessionFileMarker } from "./sqlite-marker.js";
 
 type OwnedSessionTranscriptWriteContext = {
   sessionFile?: string;
   sessionKey?: string;
-  canAdvanceSessionEntryCache?: (snapshot: OwnedSessionTranscriptCacheSnapshot) => boolean;
-  publishSessionFileSnapshot?: (snapshot: OwnedSessionTranscriptCacheSnapshot) => boolean;
   withSessionWriteLock: <T>(
     run: () => Promise<T> | T,
-    options?: OwnedSessionTranscriptWriteOptions<T>,
+    options?: { publishOwnedWrite?: boolean },
   ) => Promise<T>;
-};
-
-export type OwnedSessionTranscriptWriteOptions<T> = {
-  publishOwnedWrite?: boolean;
-  resolvePublishedEntries?: (result: T) => readonly OwnedSessionTranscriptPublishedEntry[];
-  resolvePublishedEntriesAfterFailure?: () => readonly OwnedSessionTranscriptPublishedEntry[];
-};
-
-export type OwnedSessionTranscriptPublishedEntry =
-  | { kind: "id"; id: string }
-  | { kind: "header"; serialized: string }
-  | { kind: "serialized"; serialized: string };
-
-export type OwnedSessionTranscriptCacheSnapshot = {
-  dev: bigint;
-  ino: bigint;
-  size: bigint;
-  mtimeNs: bigint;
-  ctimeNs: bigint;
 };
 
 const ownedTranscriptWriteContext = new AsyncLocalStorage<OwnedSessionTranscriptWriteContext>();
 
-// Compare concrete files when available; SQLite markers fall back to session
-// identity because they are storage references rather than lockable paths.
-function normalizeConcretePathForCompare(value: string | undefined): string | undefined {
+// Compare resolved paths when available; fall back to session keys for lock reuse.
+function normalizePathForCompare(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  if (!trimmed || parseSqliteSessionFileMarker(trimmed)) {
-    return undefined;
-  }
-  return path.resolve(trimmed);
+  return trimmed ? path.resolve(trimmed) : undefined;
 }
 
 function contextMatches(params: {
@@ -50,8 +24,8 @@ function contextMatches(params: {
   sessionFile?: string;
   sessionKey?: string;
 }): boolean {
-  const contextSessionFile = normalizeConcretePathForCompare(params.context.sessionFile);
-  const sessionFile = normalizeConcretePathForCompare(params.sessionFile);
+  const contextSessionFile = normalizePathForCompare(params.context.sessionFile);
+  const sessionFile = normalizePathForCompare(params.sessionFile);
   if (contextSessionFile && sessionFile) {
     return contextSessionFile === sessionFile;
   }
@@ -87,71 +61,27 @@ export async function runWithOwnedSessionTranscriptWriteLock<T>(
   return await runWithOwnedSessionTranscriptWriteContext(params, run);
 }
 
-export async function acquireOwnedSessionTranscriptWriteLock(params: {
+export async function runWithOwnedSessionTranscriptWritePublication<T>(
+  params: {
+    sessionFile?: string;
+    sessionKey?: string;
+  },
+  run: () => Promise<T> | T,
+): Promise<T> {
+  return await runWithOwnedSessionTranscriptWriteContext(params, run, {
+    publishOwnedWrite: true,
+  });
+}
+
+export function resolveOwnedSessionTranscriptWriteLockRunner(params: {
   sessionFile?: string;
   sessionKey?: string;
-}): Promise<{ release: () => Promise<void> } | undefined> {
+}): OwnedSessionTranscriptWriteContext["withSessionWriteLock"] | undefined {
   const context = ownedTranscriptWriteContext.getStore();
   if (!context || !contextMatches({ context, ...params })) {
     return undefined;
   }
-
-  // Keep the owner callback pending until release so release-shaped callers
-  // cannot outlive the logical writer lock or leak a tracked nested operation.
-  let markAcquired!: () => void;
-  let rejectAcquire!: (error: unknown) => void;
-  const acquired = new Promise<void>((resolve, reject) => {
-    markAcquired = resolve;
-    rejectAcquire = reject;
-  });
-  let releaseOperation!: () => void;
-  const releaseRequested = new Promise<void>((resolve) => {
-    releaseOperation = resolve;
-  });
-  const operation = context.withSessionWriteLock(async () => {
-    markAcquired();
-    await releaseRequested;
-  });
-  void operation.catch(rejectAcquire);
-  await acquired;
-
-  let released = false;
-  return {
-    release: async () => {
-      if (released) {
-        return;
-      }
-      released = true;
-      releaseOperation();
-      await operation;
-    },
-  };
-}
-
-export function canAdvanceOwnedSessionEntryCache(params: {
-  sessionFile?: string;
-  sessionKey?: string;
-  snapshot: OwnedSessionTranscriptCacheSnapshot;
-}): boolean {
-  const context = ownedTranscriptWriteContext.getStore();
-  return Boolean(
-    context &&
-    contextMatches({ context, ...params }) &&
-    context.publishSessionFileSnapshot &&
-    context.canAdvanceSessionEntryCache?.(params.snapshot),
-  );
-}
-
-export function publishOwnedSessionFileSnapshot(params: {
-  sessionFile?: string;
-  sessionKey?: string;
-  snapshot: OwnedSessionTranscriptCacheSnapshot;
-}): boolean | undefined {
-  const context = ownedTranscriptWriteContext.getStore();
-  if (!context || !contextMatches({ context, ...params }) || !context.publishSessionFileSnapshot) {
-    return undefined;
-  }
-  return context.publishSessionFileSnapshot(params.snapshot);
+  return context.withSessionWriteLock;
 }
 
 async function runWithOwnedSessionTranscriptWriteContext<T>(
@@ -160,7 +90,7 @@ async function runWithOwnedSessionTranscriptWriteContext<T>(
     sessionKey?: string;
   },
   run: () => Promise<T> | T,
-  options?: OwnedSessionTranscriptWriteOptions<T>,
+  options?: { publishOwnedWrite?: boolean },
 ): Promise<T> {
   const context = ownedTranscriptWriteContext.getStore();
   if (!context || !contextMatches({ context, ...params })) {

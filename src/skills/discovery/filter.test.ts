@@ -1,6 +1,10 @@
 // Skill filter tests cover allowlist and agent-scoped skill selection behavior.
 import { describe, expect, it } from "vitest";
-import { matchesSkillFilter, normalizeSkillFilter } from "./filter.js";
+import {
+  matchesSkillFilter,
+  normalizeSkillFilter,
+  normalizeSkillFilterForComparison,
+} from "./filter.js";
 
 describe("skills/filter", () => {
   it("normalizes configured filters with trimming", () => {
@@ -13,6 +17,13 @@ describe("skills/filter", () => {
   it("preserves explicit empty list as []", () => {
     expect(normalizeSkillFilter([])).toStrictEqual([]);
     expect(normalizeSkillFilter(undefined)).toBeUndefined();
+  });
+
+  it("normalizes for comparison with dedupe + ordering", () => {
+    expect(normalizeSkillFilterForComparison(["weather", "meme-factory", "weather"])).toEqual([
+      "meme-factory",
+      "weather",
+    ]);
   });
 
   it("matches equivalent filters after normalization", () => {

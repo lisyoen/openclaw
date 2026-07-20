@@ -4,6 +4,7 @@ export {
   buildOllamaChatRequest,
   createConfiguredOllamaCompatStreamWrapper,
   convertToOllamaMessages,
+  createConfiguredOllamaCompatNumCtxWrapper,
   createConfiguredOllamaStreamFn,
   createOllamaStreamFn,
   isOllamaCompatProvider,

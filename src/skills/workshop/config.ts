@@ -18,7 +18,7 @@ const DEFAULT_CONFIG: SkillWorkshopConfig = {
     enabled: false,
   },
   allowSymlinkTargetWrites: false,
-  approvalPolicy: "auto",
+  approvalPolicy: "pending",
   maxPending: 50,
   maxSkillBytes: 40_000,
 };
@@ -34,7 +34,7 @@ function readInteger(value: unknown, fallback: number, min: number, max: number)
 }
 
 function readApprovalPolicy(value: unknown, fallback: SkillWorkshopConfig["approvalPolicy"]) {
-  return value === "pending" || value === "auto" ? value : fallback;
+  return value === "auto" ? "auto" : fallback;
 }
 
 export function resolveSkillWorkshopConfig(config?: OpenClawConfig): SkillWorkshopConfig {

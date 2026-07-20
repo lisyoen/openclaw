@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   buildBootstrapContextFiles,
+  DEFAULT_BOOTSTRAP_MAX_CHARS,
+  DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE,
+  DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS,
   ensureSessionHeader,
   resolveBootstrapMaxChars,
   resolveBootstrapPromptTruncationWarningMode,
@@ -13,10 +16,6 @@ import {
 } from "./embedded-agent-helpers.js";
 import type { WorkspaceBootstrapFile } from "./workspace.js";
 import { DEFAULT_AGENTS_FILENAME } from "./workspace.js";
-
-const EXPECTED_DEFAULT_BOOTSTRAP_MAX_CHARS = 20_000;
-const EXPECTED_DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS = 60_000;
-const EXPECTED_DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE = "always";
 
 const makeFile = (overrides: Partial<WorkspaceBootstrapFile>): WorkspaceBootstrapFile => ({
   name: DEFAULT_AGENTS_FILENAME,
@@ -90,42 +89,8 @@ describe("buildBootstrapContextFiles", () => {
     expect(warnings[0]).toContain("TOOLS.md");
     expect(warnings[0]).toContain("limit 200");
   });
-  it("keeps generic and AGENTS.md truncation valid at UTF-16 boundaries", () => {
-    const cases = [
-      {
-        file: makeFile({
-          name: "TOOLS.md",
-          path: "/tmp/TOOLS.md",
-          content: `${"h".repeat(73)}😀${"m".repeat(200)}😀${"t".repeat(23)}`,
-        }),
-        maxChars: 200,
-        expectedHead: "h".repeat(73),
-        expectedTail: "t".repeat(23),
-      },
-      {
-        file: makeFile({
-          content: `${"a".repeat(269)}😀${"b".repeat(638)}😀${"c".repeat(89)}`,
-        }),
-        maxChars: 600,
-        expectedHead: "a".repeat(269),
-        expectedTail: "c".repeat(89),
-      },
-    ];
-
-    for (const testCase of cases) {
-      const [result] = buildBootstrapContextFiles([testCase.file], {
-        maxChars: testCase.maxChars,
-      });
-
-      expect(result?.content.startsWith(testCase.expectedHead)).toBe(true);
-      expect(result?.content.endsWith(testCase.expectedTail)).toBe(true);
-      expect(result?.content).not.toMatch(
-        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
-      );
-    }
-  });
   it("fits the rendered truncation marker inside the per-file budget", () => {
-    const maxChars = EXPECTED_DEFAULT_BOOTSTRAP_MAX_CHARS;
+    const maxChars = DEFAULT_BOOTSTRAP_MAX_CHARS;
     const files = [
       makeFile({
         name: "HEARTBEAT.md",
@@ -191,7 +156,7 @@ describe("buildBootstrapContextFiles", () => {
     expect(result?.content).toContain("H");
   });
   it("keeps content under the default limit", () => {
-    const long = "a".repeat(EXPECTED_DEFAULT_BOOTSTRAP_MAX_CHARS - 10);
+    const long = "a".repeat(DEFAULT_BOOTSTRAP_MAX_CHARS - 10);
     const files = [makeFile({ content: long })];
     const [result] = buildBootstrapContextFiles(files);
     expect(result?.content).toBe(long);
@@ -204,7 +169,7 @@ describe("buildBootstrapContextFiles", () => {
     const files = createLargeBootstrapFiles();
     const result = buildBootstrapContextFiles(files);
     const totalChars = result.reduce((sum, entry) => sum + entry.content.length, 0);
-    expect(totalChars).toBeLessThanOrEqual(EXPECTED_DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS);
+    expect(totalChars).toBeLessThanOrEqual(DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS);
     expect(result).toHaveLength(3);
     expect(result[2]?.content).toBe("c".repeat(10_000));
   });
@@ -312,12 +277,12 @@ const BOOTSTRAP_LIMIT_RESOLVERS: BootstrapLimitResolverCase[] = [
   {
     name: "bootstrapMaxChars",
     resolve: resolveBootstrapMaxChars,
-    defaultValue: EXPECTED_DEFAULT_BOOTSTRAP_MAX_CHARS,
+    defaultValue: DEFAULT_BOOTSTRAP_MAX_CHARS,
   },
   {
     name: "bootstrapTotalMaxChars",
     resolve: resolveBootstrapTotalMaxChars,
-    defaultValue: EXPECTED_DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS,
+    defaultValue: DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS,
   },
 ];
 
@@ -374,7 +339,7 @@ describe("bootstrap limit resolvers", () => {
 describe("resolveBootstrapPromptTruncationWarningMode", () => {
   it("defaults to always", () => {
     expect(resolveBootstrapPromptTruncationWarningMode()).toBe("always");
-    expect(EXPECTED_DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE).toBe("always");
+    expect(DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE).toBe("always");
   });
 
   it("accepts explicit valid modes", () => {
@@ -400,6 +365,6 @@ describe("resolveBootstrapPromptTruncationWarningMode", () => {
       resolveBootstrapPromptTruncationWarningMode({
         agents: { defaults: { bootstrapPromptTruncationWarning: "invalid" } },
       } as unknown as OpenClawConfig),
-    ).toBe(EXPECTED_DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE);
+    ).toBe(DEFAULT_BOOTSTRAP_PROMPT_TRUNCATION_WARNING_MODE);
   });
 });

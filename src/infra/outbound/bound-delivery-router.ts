@@ -9,7 +9,7 @@ import {
 } from "./session-binding-service.js";
 
 /** Session-bound delivery lookup input for routing task completion messages. */
-type BoundDeliveryRouterInput = {
+export type BoundDeliveryRouterInput = {
   eventKind: "task_completion";
   targetSessionKey: string;
   requester?: ConversationRef;
@@ -17,14 +17,14 @@ type BoundDeliveryRouterInput = {
 };
 
 /** Resolved session binding or the fallback reason used by delivery callers. */
-type BoundDeliveryRouterResult = {
+export type BoundDeliveryRouterResult = {
   binding: SessionBindingRecord | null;
   mode: "bound" | "fallback";
   reason: string;
 };
 
 /** Router facade that maps a target session/requester pair to a bound conversation. */
-type BoundDeliveryRouter = {
+export type BoundDeliveryRouter = {
   resolveDestination: (input: BoundDeliveryRouterInput) => BoundDeliveryRouterResult;
 };
 

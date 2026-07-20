@@ -1,6 +1,5 @@
 // Agent Core module implements kill tree behavior.
-import { spawn, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 
 const DEFAULT_GRACE_MS = 3000;
 const MAX_GRACE_MS = 60_000;
@@ -17,14 +16,9 @@ export type KillProcessTreeOptions = {
  *   first (without /F), then force-kills if process survives.
  * - Unix: send SIGTERM to process group first, wait grace period, then SIGKILL.
  *
- * Group kill (`process.kill(-pid, ...)`) is only used when the PID is verified
- * as its own process group leader, unless `detached: true` is explicitly passed.
- * This prevents accidentally signaling the gateway's process group when the
- * child shares its parent's group.
- *
- * - `detached: false`: skip group kill unconditionally.
- * - `detached: true`: use group kill unconditionally (trust caller).
- * - `detached` omitted: use group kill only when PID is the group leader.
+ * When the child was spawned with `detached: false`, pass `detached: false` to
+ * skip the Unix `process.kill(-pid, ...)` group-kill. That avoids signaling the
+ * gateway's own process group.
  */
 export function killProcessTree(pid: number, opts?: KillProcessTreeOptions): void {
   if (!Number.isFinite(pid) || pid <= 0) {
@@ -41,8 +35,7 @@ export function killProcessTree(pid: number, opts?: KillProcessTreeOptions): voi
     return;
   }
 
-  const useGroupKill =
-    opts?.detached === true || (opts?.detached !== false && isProcessGroupLeader(pid));
+  const useGroupKill = opts?.detached !== false;
   if (opts?.force === true) {
     signalProcessTreeUnix(pid, "SIGKILL", useGroupKill);
     return;
@@ -75,9 +68,7 @@ export function signalProcessTree(
     return;
   }
 
-  const useGroupKill =
-    opts?.detached === true || (opts?.detached !== false && isProcessGroupLeader(pid));
-  signalProcessTreeUnix(pid, signal, useGroupKill);
+  signalProcessTreeUnix(pid, signal, opts?.detached !== false);
 }
 
 function normalizeGraceMs(value?: number): number {
@@ -94,55 +85,6 @@ function isProcessAlive(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-function parseProcessGroupId(value: unknown): number | undefined {
-  if (typeof value !== "string" || !/^\d+$/.test(value.trim())) {
-    return undefined;
-  }
-  const pgid = Number(value.trim());
-  return Number.isSafeInteger(pgid) && pgid > 0 ? pgid : undefined;
-}
-
-function readProcessGroupIdFromPs(pid: number): number | undefined {
-  try {
-    const res = spawnSync("ps", ["-p", String(pid), "-o", "pgid="], {
-      encoding: "utf8",
-      timeout: 500,
-    });
-    if (res.error || res.status !== 0) {
-      return undefined;
-    }
-    return parseProcessGroupId(res.stdout);
-  } catch {
-    return undefined;
-  }
-}
-
-function readProcessGroupIdFromProc(pid: number): number | undefined {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const commEnd = stat.lastIndexOf(")");
-    if (commEnd < 0) {
-      return undefined;
-    }
-    // After comm: state, ppid, pgrp. The command name may contain spaces or ')'.
-    const fields = stat
-      .slice(commEnd + 1)
-      .trim()
-      .split(/\s+/);
-    return parseProcessGroupId(fields[2]);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Fail closed to direct-PID signaling when group ownership cannot be proved. */
-function isProcessGroupLeader(pid: number): boolean {
-  // Linux exposes the fact in procfs; avoid a synchronous child process on the common path.
-  const procPgid = process.platform === "linux" ? readProcessGroupIdFromProc(pid) : undefined;
-  const pgid = procPgid ?? readProcessGroupIdFromPs(pid);
-  return pgid === pid;
 }
 
 function signalProcessTreeUnix(
@@ -168,12 +110,11 @@ function signalProcessTreeUnix(
 
 function runTaskkill(args: string[]): void {
   try {
-    const child = spawn("taskkill", args, {
+    spawn("taskkill", args, {
       stdio: "ignore",
       detached: true,
       windowsHide: true,
     });
-    child.once("error", () => {});
   } catch {
     // Ignore taskkill spawn failures.
   }

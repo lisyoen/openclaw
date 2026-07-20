@@ -45,7 +45,7 @@ type LegacyOAuthUnreferencedSidecar = {
   sidecarPath: string;
 };
 
-type LegacyOAuthSidecarRepairResult = {
+export type LegacyOAuthSidecarRepairResult = {
   detected: string[];
   changes: string[];
   warnings: string[];
@@ -330,13 +330,8 @@ export async function maybeRepairLegacyOAuthSidecarProfiles(params: {
   return result;
 }
 
-const testing = {
+export const testing = {
   buildLegacyOAuthSecretAad: legacyOAuthSidecarTestUtils.buildLegacyOAuthSecretAad,
   buildLegacyOAuthSecretKey: legacyOAuthSidecarTestUtils.buildLegacyOAuthSecretKey,
 };
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for("openclaw.doctorAuthOAuthSidecarTestApi")
-  ] = testing;
-}
+export { testing as __testing };

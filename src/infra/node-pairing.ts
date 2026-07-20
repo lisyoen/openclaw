@@ -1,20 +1,20 @@
-// Node capability-surface approvals, stored on paired device records.
-// Device pairing (device-pairing.ts) owns connection auth; this module owns
-// which capabilities/commands an operator approved for a node-role device
-// (node command gating). Both share the devices store and its lock through
-// withPairedDeviceRecords. The former standalone nodes/{pending,paired}.json
-// store and its per-node token were retired; state-migrations.ts folds old
-// rows into device records once.
+// Manages node pairing identities for gateway and remote device trust.
 import { randomUUID } from "node:crypto";
 import { normalizeArrayBackedTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import { resolveMissingRequestedScope } from "../shared/operator-scope-compat.js";
-import {
-  withPairedDeviceRecords,
-  type PairedDevice,
-  type PairedDevicePendingNodeSurface,
-} from "./device-pairing.js";
 import { type NodeApprovalScope, resolveNodePairApprovalScopes } from "./node-pairing-authz.js";
 import { sameNodeApprovalSurfaceSet, sameNodePermissionSurface } from "./node-pairing-surface.js";
+import {
+  createAsyncLock,
+  pruneExpiredPending,
+  readJsonIfExists,
+  reconcilePendingPairingRequests,
+  coercePairingStateRecord,
+  resolvePairingPaths,
+  writeJson,
+} from "./pairing-files.js";
+import { rejectPendingPairingRequest } from "./pairing-pending.js";
+import { generatePairingToken, verifyPairingToken } from "./pairing-token.js";
 
 type NodeDeclaredSurface = {
   nodeId: string;
@@ -33,6 +33,8 @@ type NodeDeclaredSurface = {
   remoteIp?: string;
 };
 
+type NodeApprovedSurface = NodeDeclaredSurface;
+
 /** Node-declared pairing surface before approval. */
 export type NodePairingRequestInput = NodeDeclaredSurface & {
   silent?: boolean;
@@ -45,7 +47,11 @@ export type NodePairingPendingRequest = NodePairingRequestInput & {
   ts: number;
 };
 
-type NodePairingPendingSnapshot = Pick<NodePairingPendingRequest, "requestId" | "nodeId"> & {
+type NodePairingPendingRecord = NodePairingPendingRequest & {
+  revision?: string;
+};
+
+export type NodePairingPendingSnapshot = Pick<NodePairingPendingRequest, "requestId" | "nodeId"> & {
   revision?: string;
 };
 
@@ -54,7 +60,8 @@ export type NodePairingCleanupClaim = {
   baseDir: string | undefined;
   generation: number;
   nodeId: string;
-  observed: NodePairingPendingSnapshot;
+  pendingPath: string;
+  observed: NodePairingPendingSnapshot[];
 };
 
 /** Pending request summary returned when a new approval surface supersedes older requests. */
@@ -72,8 +79,9 @@ type NodePairingPendingEntry = NodePairingPendingRequest & {
   requiredApproveScopes: NodeApprovalScope[];
 };
 
-/** Approved node record projected from the device's node surface (no auth material). */
-export type NodePairingPairedNode = NodeDeclaredSurface & {
+/** Approved node record with its pairing token and persisted capability surface. */
+export type NodePairingPairedNode = NodeApprovedSurface & {
+  token: string;
   bins?: string[];
   createdAtMs: number;
   approvedAtMs: number;
@@ -87,105 +95,26 @@ type NodePairingList = {
   paired: NodePairingPairedNode[];
 };
 
+type NodePairingStateFile = {
+  pendingById: Record<string, NodePairingPendingRecord>;
+  pairedByNodeId: Record<string, NodePairingPairedNode>;
+};
+
+const PENDING_TTL_MS = 5 * 60 * 1000;
 const OPERATOR_ROLE = "operator";
 
+const withLock = createAsyncLock();
 const activeCleanupRevisionClaims = new Map<string, Set<number>>();
 let nextCleanupClaimGeneration = 0;
 
-function normalizeNodeId(nodeId: string) {
-  return nodeId.trim();
-}
-
-function nodeSurfaceDevice(
-  pairedByDeviceId: Record<string, PairedDevice>,
-  nodeId: string,
-): PairedDevice | null {
-  return pairedByDeviceId[normalizeNodeId(nodeId)] ?? null;
-}
-
-function toPublicPendingRequest(
-  device: PairedDevice,
-  pending: PairedDevicePendingNodeSurface,
-): NodePairingPendingRequest {
-  return {
-    requestId: pending.requestId,
-    nodeId: device.deviceId,
-    clientId: pending.clientId ?? device.clientId,
-    clientMode: pending.clientMode ?? device.clientMode,
-    displayName: pending.displayName ?? device.displayName,
-    platform: pending.platform ?? device.platform,
-    version: pending.version,
-    coreVersion: pending.coreVersion,
-    uiVersion: pending.uiVersion,
-    deviceFamily: pending.deviceFamily ?? device.deviceFamily,
-    modelIdentifier: pending.modelIdentifier,
-    caps: pending.caps,
-    commands: pending.commands,
-    permissions: pending.permissions,
-    remoteIp: pending.remoteIp ?? device.remoteIp,
-    silent: pending.silent,
-    ts: pending.ts,
-  };
-}
-
-function toPendingSnapshot(
-  device: PairedDevice,
-  pending: PairedDevicePendingNodeSurface,
-): NodePairingPendingSnapshot {
-  return {
-    requestId: pending.requestId,
-    nodeId: device.deviceId,
-    ...(pending.revision ? { revision: pending.revision } : {}),
-  };
-}
-
-function toPendingEntry(
-  device: PairedDevice,
-  pending: PairedDevicePendingNodeSurface,
-): NodePairingPendingEntry {
-  return {
-    ...toPublicPendingRequest(device, pending),
-    requiredApproveScopes: resolveNodePairApprovalScopes(pending.commands ?? []),
-  };
-}
-
-function toPairedNode(device: PairedDevice): NodePairingPairedNode | null {
-  const surface = device.nodeSurface;
-  if (!surface) {
-    return null;
-  }
-  return {
-    nodeId: device.deviceId,
-    clientId: device.clientId,
-    clientMode: device.clientMode,
-    // The surface name is the operator-facing node name (approval snapshot or
-    // node.rename); reconnect metadata refreshes only touch the device name.
-    displayName: surface.displayName ?? device.displayName,
-    platform: device.platform,
-    version: surface.version,
-    coreVersion: surface.coreVersion,
-    uiVersion: surface.uiVersion,
-    deviceFamily: device.deviceFamily,
-    modelIdentifier: surface.modelIdentifier,
-    caps: surface.caps,
-    commands: surface.commands,
-    permissions: surface.permissions,
-    remoteIp: device.remoteIp,
-    bins: surface.bins,
-    createdAtMs: surface.createdAtMs,
-    approvedAtMs: surface.approvedAtMs,
-    lastConnectedAtMs: surface.lastConnectedAtMs,
-    lastSeenAtMs: device.lastSeenAtMs,
-    lastSeenReason: device.lastSeenReason,
-  };
-}
-
-function buildPendingNodeSurface(params: {
+function buildPendingNodePairingRequest(params: {
+  requestId?: string;
   req: NodePairingRequestInput;
-}): PairedDevicePendingNodeSurface {
+}): NodePairingPendingRecord {
   return {
-    requestId: randomUUID(),
+    requestId: params.requestId ?? randomUUID(),
     revision: randomUUID(),
+    nodeId: params.req.nodeId,
     clientId: params.req.clientId,
     clientMode: params.req.clientMode,
     displayName: params.req.displayName,
@@ -204,10 +133,10 @@ function buildPendingNodeSurface(params: {
   };
 }
 
-function refreshPendingNodeSurface(
-  existing: PairedDevicePendingNodeSurface,
+function refreshPendingNodePairingRequest(
+  existing: NodePairingPendingRecord,
   incoming: NodePairingRequestInput,
-): PairedDevicePendingNodeSurface {
+): NodePairingPendingRecord {
   return {
     ...existing,
     revision: randomUUID(),
@@ -231,7 +160,7 @@ function refreshPendingNodeSurface(
 }
 
 function samePendingApprovalSurface(
-  existing: PairedDevicePendingNodeSurface,
+  existing: NodePairingPendingRecord,
   incoming: NodePairingRequestInput,
 ): boolean {
   const incomingCaps = normalizeArrayBackedTrimmedStringList(incoming.caps) ?? existing.caps;
@@ -247,7 +176,7 @@ function samePendingApprovalSurface(
 }
 
 function samePendingReconnectMetadata(
-  existing: PairedDevicePendingNodeSurface,
+  existing: NodePairingPendingRecord,
   incoming: NodePairingRequestInput,
 ): boolean {
   return (
@@ -265,40 +194,135 @@ function samePendingReconnectMetadata(
   );
 }
 
+function mergeNodePairingReplacementInput(params: {
+  existing: readonly NodePairingPendingRecord[];
+  incoming: NodePairingRequestInput;
+}): NodePairingRequestInput {
+  const latest = params.existing[0];
+  return {
+    nodeId: params.incoming.nodeId,
+    clientId: params.incoming.clientId ?? latest?.clientId,
+    clientMode: params.incoming.clientMode ?? latest?.clientMode,
+    displayName: params.incoming.displayName ?? latest?.displayName,
+    platform: params.incoming.platform ?? latest?.platform,
+    version: params.incoming.version ?? latest?.version,
+    coreVersion: params.incoming.coreVersion ?? latest?.coreVersion,
+    uiVersion: params.incoming.uiVersion ?? latest?.uiVersion,
+    deviceFamily: params.incoming.deviceFamily ?? latest?.deviceFamily,
+    modelIdentifier: params.incoming.modelIdentifier ?? latest?.modelIdentifier,
+    caps: params.incoming.caps ?? latest?.caps,
+    commands: params.incoming.commands ?? latest?.commands,
+    permissions: params.incoming.permissions ?? latest?.permissions,
+    remoteIp: params.incoming.remoteIp ?? latest?.remoteIp,
+    silent: Boolean(
+      params.incoming.silent && params.existing.every((pending) => pending.silent === true),
+    ),
+  };
+}
+
+function resolveNodeApprovalRequiredScopes(pending: NodePairingPendingRecord): NodeApprovalScope[] {
+  const commands = Array.isArray(pending.commands) ? pending.commands : [];
+  return resolveNodePairApprovalScopes(commands);
+}
+
+function toPublicPendingNodePairingRequest(
+  pending: NodePairingPendingRecord,
+): NodePairingPendingRequest {
+  const { revision: _revision, ...request } = pending;
+  return request;
+}
+
+function toPendingNodePairingSnapshot(
+  pending: NodePairingPendingRecord,
+): NodePairingPendingSnapshot {
+  const snapshot: NodePairingPendingSnapshot = {
+    requestId: pending.requestId,
+    nodeId: pending.nodeId,
+  };
+  if (pending.revision) {
+    snapshot.revision = pending.revision;
+  }
+  return snapshot;
+}
+
+function toPendingNodePairingEntry(pending: NodePairingPendingRecord): NodePairingPendingEntry {
+  return {
+    ...toPublicPendingNodePairingRequest(pending),
+    requiredApproveScopes: resolveNodeApprovalRequiredScopes(pending),
+  };
+}
+
+type ApprovedNodePairingResult = { requestId: string; node: NodePairingPairedNode };
+type ForbiddenNodePairingResult = { status: "forbidden"; missingScope: string };
+type ApproveNodePairingResult = ApprovedNodePairingResult | ForbiddenNodePairingResult | null;
+
+async function loadState(baseDir?: string): Promise<NodePairingStateFile> {
+  const { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "nodes");
+  const [pending, paired] = await Promise.all([
+    readJsonIfExists<unknown>(pendingPath),
+    readJsonIfExists<unknown>(pairedPath),
+  ]);
+  const state: NodePairingStateFile = {
+    pendingById: coercePairingStateRecord<NodePairingPendingRecord>(pending),
+    pairedByNodeId: coercePairingStateRecord<NodePairingPairedNode>(paired),
+  };
+  pruneExpiredPending(state.pendingById, Date.now(), PENDING_TTL_MS);
+  return state;
+}
+
+async function persistState(state: NodePairingStateFile, baseDir?: string) {
+  const { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "nodes");
+  await Promise.all([
+    writeJson(pendingPath, state.pendingById),
+    writeJson(pairedPath, state.pairedByNodeId),
+  ]);
+}
+
+function normalizeNodeId(nodeId: string) {
+  return nodeId.trim();
+}
+
 function buildCleanupRevisionClaimKey(
-  baseDir: string | undefined,
+  pendingPath: string,
   observed: NodePairingPendingSnapshot,
 ): string {
-  return `${baseDir ?? ""}\0${observed.nodeId}\0${observed.requestId}\0${observed.revision ?? ""}`;
+  return `${pendingPath}\0${observed.requestId}\0${observed.revision ?? ""}`;
 }
 
 function addCleanupClaim(claim: NodePairingCleanupClaim): void {
-  const key = buildCleanupRevisionClaimKey(claim.baseDir, claim.observed);
-  const generations = activeCleanupRevisionClaims.get(key) ?? new Set<number>();
-  generations.add(claim.generation);
-  activeCleanupRevisionClaims.set(key, generations);
+  for (const observed of claim.observed) {
+    const key = buildCleanupRevisionClaimKey(claim.pendingPath, observed);
+    const generations = activeCleanupRevisionClaims.get(key) ?? new Set<number>();
+    generations.add(claim.generation);
+    activeCleanupRevisionClaims.set(key, generations);
+  }
 }
 
 function cleanupClaimIsActive(claim: NodePairingCleanupClaim): boolean {
-  const key = buildCleanupRevisionClaimKey(claim.baseDir, claim.observed);
-  return activeCleanupRevisionClaims.get(key)?.has(claim.generation) === true;
+  return claim.observed.some((observed) => {
+    const key = buildCleanupRevisionClaimKey(claim.pendingPath, observed);
+    return activeCleanupRevisionClaims.get(key)?.has(claim.generation) === true;
+  });
 }
 
 function removeCleanupClaim(claim: NodePairingCleanupClaim): void {
-  const key = buildCleanupRevisionClaimKey(claim.baseDir, claim.observed);
-  const generations = activeCleanupRevisionClaims.get(key);
-  generations?.delete(claim.generation);
-  if (!generations || generations.size === 0) {
-    activeCleanupRevisionClaims.delete(key);
+  for (const observed of claim.observed) {
+    const key = buildCleanupRevisionClaimKey(claim.pendingPath, observed);
+    const generations = activeCleanupRevisionClaims.get(key);
+    generations?.delete(claim.generation);
+    if (!generations || generations.size === 0) {
+      activeCleanupRevisionClaims.delete(key);
+    }
   }
 }
 
 function invalidateCleanupClaimsThrough(
   claim: NodePairingCleanupClaim,
-  device: PairedDevice,
-  pending: PairedDevicePendingNodeSurface,
+  pending: NodePairingPendingRecord,
+  baseDir: string | undefined,
 ): void {
-  const key = buildCleanupRevisionClaimKey(claim.baseDir, toPendingSnapshot(device, pending));
+  const pendingPath = resolvePairingPaths(baseDir, "nodes").pendingPath;
+  const key = buildCleanupRevisionClaimKey(pendingPath, toPendingNodePairingSnapshot(pending));
   const generations = activeCleanupRevisionClaims.get(key);
   if (!generations) {
     return;
@@ -313,32 +337,28 @@ function invalidateCleanupClaimsThrough(
   }
 }
 
-function pendingHasActiveCleanupClaim(
-  baseDir: string | undefined,
-  device: PairedDevice,
-  pending: PairedDevicePendingNodeSurface,
-): boolean {
-  const key = buildCleanupRevisionClaimKey(baseDir, toPendingSnapshot(device, pending));
-  return (activeCleanupRevisionClaims.get(key)?.size ?? 0) > 0;
+function newToken() {
+  return generatePairingToken();
 }
 
 export async function listNodePairing(baseDir?: string): Promise<NodePairingList> {
-  return await withPairedDeviceRecords(baseDir, (pairedByDeviceId) => {
-    const pending: NodePairingPendingEntry[] = [];
-    const paired: NodePairingPairedNode[] = [];
-    for (const device of Object.values(pairedByDeviceId)) {
-      if (device.pendingNodeSurface) {
-        pending.push(toPendingEntry(device, device.pendingNodeSurface));
-      }
-      const node = toPairedNode(device);
-      if (node) {
-        paired.push(node);
-      }
-    }
-    pending.sort((a, b) => b.ts - a.ts);
-    paired.sort((a, b) => b.approvedAtMs - a.approvedAtMs);
-    return { value: { pending, paired }, persist: false };
-  });
+  const state = await loadState(baseDir);
+  const pending = Object.values(state.pendingById)
+    .toSorted((a, b) => b.ts - a.ts)
+    .map(toPendingNodePairingEntry);
+  const paired = Object.values(state.pairedByNodeId).toSorted(
+    (a, b) => b.approvedAtMs - a.approvedAtMs,
+  );
+  return { pending, paired };
+}
+
+/** Return one paired node by normalized node id. */
+export async function getPairedNode(
+  nodeId: string,
+  baseDir?: string,
+): Promise<NodePairingPairedNode | null> {
+  const state = await loadState(baseDir);
+  return state.pairedByNodeId[normalizeNodeId(nodeId)] ?? null;
 }
 
 /** Snapshot pairing state and claim current pending revisions for one paired reconnect. */
@@ -349,105 +369,124 @@ export async function beginNodePairingConnect(
   pairedNode: NodePairingPairedNode | null;
   cleanupClaim?: NodePairingCleanupClaim;
 }> {
-  return await withPairedDeviceRecords<{
-    pairedNode: NodePairingPairedNode | null;
-    cleanupClaim?: NodePairingCleanupClaim;
-  }>(baseDir, (pairedByDeviceId) => {
-    const device = nodeSurfaceDevice(pairedByDeviceId, nodeId);
-    const pairedNode = device ? toPairedNode(device) : null;
-    const pending = device?.pendingNodeSurface;
-    if (!device || !pairedNode || !pending) {
-      return { value: { pairedNode }, persist: false };
+  return await withLock(async () => {
+    const state = await loadState(baseDir);
+    const normalized = normalizeNodeId(nodeId);
+    const pairedNode = state.pairedByNodeId[normalized] ?? null;
+    const observed = Object.values(state.pendingById)
+      .filter((entry) => entry.nodeId === normalized)
+      .map(toPendingNodePairingSnapshot);
+    if (!pairedNode || observed.length === 0) {
+      return { pairedNode };
     }
+    const pendingPath = resolvePairingPaths(baseDir, "nodes").pendingPath;
     const claim: NodePairingCleanupClaim = {
       baseDir,
       generation: ++nextCleanupClaimGeneration,
-      nodeId: device.deviceId,
-      observed: toPendingSnapshot(device, pending),
+      nodeId: normalized,
+      pendingPath,
+      observed,
     };
     addCleanupClaim(claim);
-    return { value: { pairedNode, cleanupClaim: claim }, persist: false };
+    return { pairedNode, cleanupClaim: claim };
   });
+}
+
+function pendingHasActiveCleanupClaim(
+  pending: NodePairingPendingRecord,
+  baseDir: string | undefined,
+): boolean {
+  const pendingPath = resolvePairingPaths(baseDir, "nodes").pendingPath;
+  const key = buildCleanupRevisionClaimKey(pendingPath, toPendingNodePairingSnapshot(pending));
+  return (activeCleanupRevisionClaims.get(key)?.size ?? 0) > 0;
 }
 
 /** Release a reconnect cleanup claim without changing pending pairing state. */
 export async function releaseNodePairingCleanupClaim(
   claim: NodePairingCleanupClaim,
 ): Promise<void> {
-  removeCleanupClaim(claim);
+  await withLock(async () => {
+    removeCleanupClaim(claim);
+  });
 }
 
 /** Delete pending revisions claimed by a reconnect after hello succeeds. */
 export async function finalizeNodePairingCleanupClaim(
   claim: NodePairingCleanupClaim,
 ): Promise<NodePairingSupersededRequest[]> {
-  if (!cleanupClaimIsActive(claim)) {
-    return [];
-  }
-  try {
-    return await withPairedDeviceRecords(claim.baseDir, (pairedByDeviceId) => {
-      const device = nodeSurfaceDevice(pairedByDeviceId, claim.nodeId);
-      const pending = device?.pendingNodeSurface;
-      if (!device || !pending) {
-        return { value: [], persist: false };
+  return await withLock(async () => {
+    if (!cleanupClaimIsActive(claim)) {
+      return [];
+    }
+    try {
+      const state = await loadState(claim.baseDir);
+      const observedById = new Map(
+        claim.observed
+          .filter((entry) => entry.nodeId === claim.nodeId)
+          .map((entry) => [entry.requestId, entry] as const),
+      );
+      const rejected = Object.values(state.pendingById)
+        .filter((pending) => {
+          const observed = observedById.get(pending.requestId);
+          return observed !== undefined && observed.revision === pending.revision;
+        })
+        .toSorted((left, right) => right.ts - left.ts);
+      if (rejected.length === 0) {
+        return [];
       }
-      if (
-        claim.observed.requestId !== pending.requestId ||
-        claim.observed.revision !== pending.revision
-      ) {
-        return { value: [], persist: false };
+      for (const pending of rejected) {
+        delete state.pendingById[pending.requestId];
       }
-      delete device.pendingNodeSurface;
-      return {
-        value: [{ requestId: pending.requestId, nodeId: device.deviceId }],
-        persist: true,
-      };
-    });
-  } finally {
-    removeCleanupClaim(claim);
-  }
+      await persistState(state, claim.baseDir);
+      return rejected.map((pending) => ({
+        requestId: pending.requestId,
+        nodeId: pending.nodeId,
+      }));
+    } finally {
+      removeCleanupClaim(claim);
+    }
+  });
 }
 
-/** Create or refresh the pending node-surface request for operator approval. */
+/** Create or refresh a pending node pairing request for operator approval. */
 export async function requestNodePairing(
   req: NodePairingRequestInput,
   baseDir?: string,
 ): Promise<RequestNodePairingResult> {
-  const nodeId = normalizeNodeId(req.nodeId);
-  if (!nodeId) {
-    throw new Error("nodeId required");
-  }
-  return await withPairedDeviceRecords(baseDir, (pairedByDeviceId) => {
-    const device = nodeSurfaceDevice(pairedByDeviceId, nodeId);
-    if (!device) {
-      // Node surface approvals attach to paired devices; connect paths always
-      // complete device pairing before requesting a surface, so a missing
-      // record means the caller skipped the auth handshake.
-      throw new Error("node pairing requires a paired device");
+  return await withLock(async () => {
+    const state = await loadState(baseDir);
+    const nodeId = normalizeNodeId(req.nodeId);
+    if (!nodeId) {
+      throw new Error("nodeId required");
     }
-    const existing = device.pendingNodeSurface;
-    if (existing && samePendingApprovalSurface(existing, { ...req, nodeId })) {
-      const refreshed = refreshPendingNodeSurface(existing, req);
-      device.pendingNodeSurface = refreshed;
-      return {
-        value: {
-          status: "pending" as const,
-          request: toPublicPendingRequest(device, refreshed),
-          created: false,
-        },
-        persist: true,
-      };
-    }
-    const replacement = buildPendingNodeSurface({ req: { ...req, nodeId } });
-    device.pendingNodeSurface = replacement;
-    const superseded = existing ? [{ requestId: existing.requestId, nodeId }] : [];
-    const result: RequestNodePairingResult = {
-      status: "pending",
-      request: toPublicPendingRequest(device, replacement),
-      created: true,
-      ...(superseded.length > 0 ? { superseded } : {}),
+    const pendingForNode = Object.values(state.pendingById)
+      .filter((pending) => pending.nodeId === nodeId)
+      .toSorted((left, right) => right.ts - left.ts);
+    const result = await reconcilePendingPairingRequests({
+      pendingById: state.pendingById,
+      existing: pendingForNode,
+      incoming: {
+        ...req,
+        nodeId,
+      },
+      canRefreshSingle: (existing, incoming) => samePendingApprovalSurface(existing, incoming),
+      refreshSingle: (existing, incoming) => refreshPendingNodePairingRequest(existing, incoming),
+      buildReplacement: ({ existing, incoming }) =>
+        buildPendingNodePairingRequest({
+          req: mergeNodePairingReplacementInput({ existing, incoming }),
+        }),
+      persist: async () => await persistState(state, baseDir),
+    });
+    const superseded = result.created
+      ? pendingForNode
+          .filter((pending) => pending.requestId !== result.request.requestId)
+          .map((pending) => ({ requestId: pending.requestId, nodeId: pending.nodeId }))
+      : [];
+    const publicResult = {
+      ...result,
+      request: toPublicPendingNodePairingRequest(result.request),
     };
-    return { value: result, persist: true };
+    return superseded.length > 0 ? { ...publicResult, superseded } : publicResult;
   });
 }
 
@@ -457,45 +496,31 @@ export async function reusePendingNodePairingForReconnect(
   cleanupClaim: NodePairingCleanupClaim | undefined,
   baseDir?: string,
 ): Promise<RequestNodePairingResult | null> {
-  const nodeId = normalizeNodeId(req.nodeId);
-  return await withPairedDeviceRecords(baseDir, (pairedByDeviceId) => {
-    const device = nodeSurfaceDevice(pairedByDeviceId, nodeId);
-    const pending = device?.pendingNodeSurface;
+  return await withLock(async () => {
+    const state = await loadState(baseDir);
+    const nodeId = normalizeNodeId(req.nodeId);
+    const pendingForNode = Object.values(state.pendingById)
+      .filter((pending) => pending.nodeId === nodeId)
+      .toSorted((left, right) => right.ts - left.ts);
     if (
-      device &&
-      pending &&
-      samePendingApprovalSurface(pending, { ...req, nodeId }) &&
-      samePendingReconnectMetadata(pending, req)
+      pendingForNode.length === 1 &&
+      samePendingApprovalSurface(pendingForNode[0], { ...req, nodeId }) &&
+      samePendingReconnectMetadata(pendingForNode[0], req)
     ) {
+      const pending = pendingForNode[0];
       // The unchanged reconnect supersedes older cleanup ownership without
       // refreshing the request or writing pairing state.
       if (cleanupClaim) {
-        invalidateCleanupClaimsThrough(cleanupClaim, device, pending);
+        invalidateCleanupClaimsThrough(cleanupClaim, pending, baseDir);
       }
       return {
-        value: {
-          status: "pending" as const,
-          request: toPublicPendingRequest(device, pending),
-          created: false,
-        },
-        persist: false,
+        status: "pending",
+        request: toPublicPendingNodePairingRequest(pending),
+        created: false,
       };
     }
-    return { value: null, persist: false };
+    return null;
   });
-}
-
-type ApprovedNodePairingResult = { requestId: string; node: NodePairingPairedNode };
-type ForbiddenNodePairingResult = { status: "forbidden"; missingScope: string };
-type ApproveNodePairingResult = ApprovedNodePairingResult | ForbiddenNodePairingResult | null;
-
-function findPendingNodePairingDevice(
-  pairedByDeviceId: Record<string, PairedDevice>,
-  requestId: string,
-): PairedDevice | undefined {
-  return Object.values(pairedByDeviceId).find(
-    (device) => device.pendingNodeSurface?.requestId === requestId,
-  );
 }
 
 /** Approve a pending node request when caller scopes cover the requested command surface. */
@@ -504,48 +529,53 @@ export async function approveNodePairing(
   options: { callerScopes?: readonly string[] },
   baseDir?: string,
 ): Promise<ApproveNodePairingResult> {
-  return await withPairedDeviceRecords<ApproveNodePairingResult>(baseDir, (pairedByDeviceId) => {
-    const device = findPendingNodePairingDevice(pairedByDeviceId, requestId);
-    const pending = device?.pendingNodeSurface;
-    if (!device || !pending) {
-      return { value: null, persist: false };
+  return await withLock(async () => {
+    const state = await loadState(baseDir);
+    const pending = state.pendingById[requestId];
+    if (!pending) {
+      return null;
     }
     // A paired reconnect has atomically observed this revision as stale.
     // Approval can resume if the handshake fails and releases its claim.
-    if (pendingHasActiveCleanupClaim(baseDir, device, pending)) {
-      return { value: null, persist: false };
+    if (pendingHasActiveCleanupClaim(pending, baseDir)) {
+      return null;
     }
-    const requiredScopes = resolveNodePairApprovalScopes(pending.commands ?? []);
+    const requiredScopes = resolveNodeApprovalRequiredScopes(pending);
     const missingScope = resolveMissingRequestedScope({
       role: OPERATOR_ROLE,
       requestedScopes: requiredScopes,
       allowedScopes: options.callerScopes ?? [],
     });
     if (missingScope) {
-      return { value: { status: "forbidden" as const, missingScope }, persist: false };
+      return { status: "forbidden", missingScope };
     }
 
     const now = Date.now();
-    device.nodeSurface = {
+    const existing = state.pairedByNodeId[pending.nodeId];
+    const node: NodePairingPairedNode = {
+      nodeId: pending.nodeId,
+      token: newToken(),
+      clientId: pending.clientId,
+      clientMode: pending.clientMode,
       displayName: pending.displayName,
+      platform: pending.platform,
       version: pending.version,
       coreVersion: pending.coreVersion,
       uiVersion: pending.uiVersion,
+      deviceFamily: pending.deviceFamily,
       modelIdentifier: pending.modelIdentifier,
       caps: pending.caps,
       commands: pending.commands,
       permissions: pending.permissions,
-      bins: device.nodeSurface?.bins,
-      createdAtMs: device.nodeSurface?.createdAtMs ?? now,
+      remoteIp: pending.remoteIp,
+      createdAtMs: existing?.createdAtMs ?? now,
       approvedAtMs: now,
-      lastConnectedAtMs: device.nodeSurface?.lastConnectedAtMs,
     };
-    delete device.pendingNodeSurface;
-    const node = toPairedNode(device);
-    if (!node) {
-      return { value: null, persist: false };
-    }
-    return { value: { requestId, node }, persist: true };
+
+    delete state.pendingById[requestId];
+    state.pairedByNodeId[pending.nodeId] = node;
+    await persistState(state, baseDir);
+    return { requestId, node };
   });
 }
 
@@ -554,95 +584,114 @@ export async function rejectNodePairing(
   requestId: string,
   baseDir?: string,
 ): Promise<{ requestId: string; nodeId: string } | null> {
-  return await withPairedDeviceRecords(baseDir, (pairedByDeviceId) => {
-    const device = findPendingNodePairingDevice(pairedByDeviceId, requestId);
-    if (!device) {
-      return { value: null, persist: false };
-    }
-    delete device.pendingNodeSurface;
-    return { value: { requestId, nodeId: device.deviceId }, persist: true };
+  return await withLock(async () => {
+    return await rejectPendingPairingRequest<
+      NodePairingPendingRequest,
+      NodePairingStateFile,
+      "nodeId"
+    >({
+      requestId,
+      idKey: "nodeId",
+      loadState: () => loadState(baseDir),
+      persistState: (state) => persistState(state, baseDir),
+      getId: (pending: NodePairingPendingRequest) => pending.nodeId,
+    });
   });
 }
 
-/** Return the owning node id for a pending node pairing request, or null if none. */
-export async function getPendingNodePairing(
-  requestId: string,
-  baseDir?: string,
-): Promise<{ requestId: string; nodeId: string } | null> {
-  return await withPairedDeviceRecords(baseDir, (pairedByDeviceId) => {
-    const device = findPendingNodePairingDevice(pairedByDeviceId, requestId);
-    if (!device?.pendingNodeSurface) {
-      return { value: null, persist: false };
-    }
-    return { value: { requestId, nodeId: device.deviceId }, persist: false };
-  });
-}
-
-/** Update the remote skill bins advertised by a paired node. */
-export async function updatePairedNodeBins(
+/** Remove a paired node without disturbing unrelated pending requests. */
+export async function removePairedNode(
   nodeId: string,
-  bins: string[],
+  baseDir?: string,
+): Promise<{ nodeId: string } | null> {
+  return await withLock(async () => {
+    const state = await loadState(baseDir);
+    const normalized = normalizeNodeId(nodeId);
+    if (!normalized || !state.pairedByNodeId[normalized]) {
+      return null;
+    }
+    delete state.pairedByNodeId[normalized];
+    await persistState(state, baseDir);
+    return { nodeId: normalized };
+  });
+}
+
+/** Verify a paired node token and return the approved node record on success. */
+export async function verifyNodeToken(
+  nodeId: string,
+  token: string,
+  baseDir?: string,
+): Promise<{ ok: boolean; node?: NodePairingPairedNode }> {
+  const state = await loadState(baseDir);
+  const normalized = normalizeNodeId(nodeId);
+  const node = state.pairedByNodeId[normalized];
+  if (!node) {
+    return { ok: false };
+  }
+  return verifyPairingToken(token, node.token) ? { ok: true, node } : { ok: false };
+}
+
+/** Update non-auth metadata for a paired node heartbeat/status refresh. */
+export async function updatePairedNodeMetadata(
+  nodeId: string,
+  patch: Partial<Omit<NodePairingPairedNode, "nodeId" | "token" | "createdAtMs" | "approvedAtMs">>,
   baseDir?: string,
 ): Promise<boolean> {
-  return await withPairedDeviceRecords(baseDir, (pairedByDeviceId) => {
-    const device = nodeSurfaceDevice(pairedByDeviceId, nodeId);
-    if (!device?.nodeSurface) {
-      return { value: false, persist: false };
+  return await withLock(async () => {
+    const state = await loadState(baseDir);
+    const normalized = normalizeNodeId(nodeId);
+    const existing = state.pairedByNodeId[normalized];
+    if (!existing) {
+      return false;
     }
-    device.nodeSurface = {
-      ...device.nodeSurface,
-      bins,
+
+    const next: NodePairingPairedNode = {
+      ...existing,
+      clientId: patch.clientId ?? existing.clientId,
+      clientMode: patch.clientMode ?? existing.clientMode,
+      displayName: patch.displayName ?? existing.displayName,
+      platform: patch.platform ?? existing.platform,
+      version: patch.version ?? existing.version,
+      coreVersion: patch.coreVersion ?? existing.coreVersion,
+      uiVersion: patch.uiVersion ?? existing.uiVersion,
+      deviceFamily: patch.deviceFamily ?? existing.deviceFamily,
+      modelIdentifier: patch.modelIdentifier ?? existing.modelIdentifier,
+      remoteIp: patch.remoteIp ?? existing.remoteIp,
+      caps: patch.caps ?? existing.caps,
+      commands: patch.commands ?? existing.commands,
+      bins: patch.bins ?? existing.bins,
+      permissions: patch.permissions ?? existing.permissions,
+      lastConnectedAtMs: patch.lastConnectedAtMs ?? existing.lastConnectedAtMs,
+      lastSeenAtMs: patch.lastSeenAtMs ?? existing.lastSeenAtMs,
+      lastSeenReason: patch.lastSeenReason ?? existing.lastSeenReason,
     };
-    return { value: true, persist: true };
+
+    state.pairedByNodeId[normalized] = next;
+    await persistState(state, baseDir);
+    return true;
   });
 }
 
-type RecordPairedNodeConnectionResult =
-  | { recorded: false }
-  | { recorded: true; firstConnection: boolean };
-
-/** Atomically classify and persist one successful node connection. */
-export async function recordPairedNodeConnection(
-  nodeId: string,
-  connectedAtMs: number,
-  baseDir?: string,
-): Promise<RecordPairedNodeConnectionResult> {
-  return await withPairedDeviceRecords<RecordPairedNodeConnectionResult>(
-    baseDir,
-    (pairedByDeviceId) => {
-      const device = nodeSurfaceDevice(pairedByDeviceId, nodeId);
-      if (!device?.nodeSurface) {
-        return { value: { recorded: false }, persist: false };
-      }
-      // Read and write under the pairing lock. Concurrent rehandshakes must not
-      // both claim the same node's first connection and schedule duplicate alerts.
-      const firstConnection = device.nodeSurface.lastConnectedAtMs === undefined;
-      const previousConnectedAtMs = device.nodeSurface.lastConnectedAtMs ?? connectedAtMs;
-      device.nodeSurface = {
-        ...device.nodeSurface,
-        lastConnectedAtMs: Math.max(previousConnectedAtMs, connectedAtMs),
-      };
-      return { value: { recorded: true, firstConnection }, persist: true };
-    },
-  );
-}
-
-/** Rename a paired node display name while preserving approval metadata. */
+/** Rename a paired node display name while preserving token and approval metadata. */
 export async function renamePairedNode(
   nodeId: string,
   displayName: string,
   baseDir?: string,
 ): Promise<NodePairingPairedNode | null> {
-  const trimmed = displayName.trim();
-  if (!trimmed) {
-    throw new Error("displayName required");
-  }
-  return await withPairedDeviceRecords(baseDir, (pairedByDeviceId) => {
-    const device = nodeSurfaceDevice(pairedByDeviceId, nodeId);
-    if (!device?.nodeSurface) {
-      return { value: null, persist: false };
+  return await withLock(async () => {
+    const state = await loadState(baseDir);
+    const normalized = normalizeNodeId(nodeId);
+    const existing = state.pairedByNodeId[normalized];
+    if (!existing) {
+      return null;
     }
-    device.nodeSurface = { ...device.nodeSurface, displayName: trimmed };
-    return { value: toPairedNode(device), persist: true };
+    const trimmed = displayName.trim();
+    if (!trimmed) {
+      throw new Error("displayName required");
+    }
+    const next: NodePairingPairedNode = { ...existing, displayName: trimmed };
+    state.pairedByNodeId[normalized] = next;
+    await persistState(state, baseDir);
+    return next;
   });
 }

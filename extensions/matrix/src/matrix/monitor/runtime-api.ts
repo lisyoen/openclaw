@@ -11,6 +11,7 @@ export {
   addAllowlistUserEntriesFromConfigEntry,
   buildAllowlistResolutionSummary,
   canonicalizeAllowlistWithResolvedIds,
+  formatAllowlistMatchMeta,
   patchAllowlistUsersInConfigEntries,
   summarizeMapping,
 } from "openclaw/plugin-sdk/allow-from";
@@ -22,4 +23,7 @@ export { formatLocationText, toLocationContext } from "openclaw/plugin-sdk/chann
 export { getAgentScopedMediaLocalRoots } from "openclaw/plugin-sdk/agent-media-payload";
 export { logInboundDrop } from "openclaw/plugin-sdk/channel-inbound";
 export { logTypingFailure } from "openclaw/plugin-sdk/channel-outbound";
-export { buildChannelKeyCandidates } from "openclaw/plugin-sdk/channel-targets";
+export {
+  buildChannelKeyCandidates,
+  resolveChannelEntryMatch,
+} from "openclaw/plugin-sdk/channel-targets";

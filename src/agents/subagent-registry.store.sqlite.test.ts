@@ -1,10 +1,9 @@
-// Subagent registry SQLite store tests cover canonical whole-snapshot persistence.
+// Subagent registry SQLite store tests cover whole-snapshot persistence and
+// one-time import from the legacy JSON registry file.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
-import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
@@ -15,8 +14,6 @@ import {
   saveSubagentRegistryToSqlite,
 } from "./subagent-registry.store.sqlite.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
-
-type SubagentRegistryDatabase = Pick<OpenClawStateKyselyDatabase, "subagent_runs">;
 
 function createRun(overrides: Partial<SubagentRunRecord> = {}): SubagentRunRecord {
   return {
@@ -82,27 +79,7 @@ describe("subagent registry sqlite store", () => {
 
   it("persists subagent runs in the shared sqlite state database", async () => {
     await withTempStateEnv(async () => {
-      const run = createRun({
-        requesterTurnRunId: "run-requester",
-        requesterTurnYielded: true,
-        retireAfterRequesterTurn: true,
-        endedReason: "subagent-error",
-        outcome: { status: "error", error: "restart interrupted run", endedAt: 250 },
-        terminalOwner: "interrupted-recovery",
-        completion: { required: true, resultText: null, capturedAt: 250 },
-        requesterSettleWake: {
-          status: "dispatching",
-          attemptCount: 1,
-          replayCount: 1,
-          nextAttemptAt: 30_000,
-          batchRunIds: ["run-one", "run-two"],
-          requesterYieldBatch: true,
-          afterRequesterYield: true,
-          rearmGeneration: 3,
-          lastError: "provider timeout",
-          retireAfterSettle: true,
-        },
-      });
+      const run = createRun();
 
       saveSubagentRegistryToSqlite(new Map([[run.runId, run]]));
 
@@ -112,15 +89,10 @@ describe("subagent registry sqlite store", () => {
         childSessionKey: run.childSessionKey,
         requesterSessionKey: run.requesterSessionKey,
         task: run.task,
-        requesterTurnRunId: "run-requester",
-        requesterTurnYielded: true,
-        retireAfterRequesterTurn: true,
         endedAt: run.endedAt,
         outcome: run.outcome,
-        terminalOwner: "interrupted-recovery",
         completion: run.completion,
         delivery: run.delivery,
-        requesterSettleWake: run.requesterSettleWake,
       });
       expect(await fs.stat(path.join(tempStateDir!, "state", "openclaw.sqlite"))).toBeTruthy();
       await expect(fs.stat(path.join(tempStateDir!, "subagents", "runs.json"))).rejects.toThrow();
@@ -144,63 +116,14 @@ describe("subagent registry sqlite store", () => {
     });
   });
 
-  it("preserves announcedAt for not_required delivery when completion was announced", async () => {
+  it("imports the legacy json registry when sqlite has no runs", async () => {
     await withTempStateEnv(async () => {
-      const run = createRun({
-        expectsCompletionMessage: false,
-        completion: { required: false },
-        delivery: { status: "not_required", announcedAt: 300 },
-      });
-
-      saveSubagentRegistryToSqlite(new Map([[run.runId, run]]));
-
-      const restored = loadSubagentRegistryFromSqlite();
-      const restoredRun = restored.get(run.runId)!;
-      expect(restoredRun.delivery?.status).toBe("not_required");
-      expect(restoredRun.delivery?.announcedAt).toBe(300);
-      expect(restoredRun.delivery?.deliveredAt).toBeUndefined();
-    });
-  });
-
-  it("repairs a tainted delivered status when completion is not required", async () => {
-    await withTempStateEnv(async () => {
-      const run = createRun({
-        expectsCompletionMessage: false,
-        completion: { required: false },
-        delivery: { status: "not_required", announcedAt: 300 },
-      });
-      saveSubagentRegistryToSqlite(new Map([[run.runId, run]]));
-
-      const { db } = openOpenClawStateDatabase();
-      const stateDb = getNodeSqliteKysely<SubagentRegistryDatabase>(db);
-      executeSqliteQuerySync(
-        db,
-        stateDb
-          .updateTable("subagent_runs")
-          .set({
-            payload_json: JSON.stringify({
-              ...run,
-              delivery: { status: "delivered", announcedAt: 300, deliveredAt: 300 },
-            }),
-          })
-          .where("run_id", "=", run.runId),
-      );
-
-      const restoredRun = loadSubagentRegistryFromSqlite().get(run.runId)!;
-      expect(restoredRun.delivery).toMatchObject({
-        status: "not_required",
-        announcedAt: 300,
-        deliveredAt: 300,
-      });
-    });
-  });
-
-  it("does not read or delete the retired JSON registry at runtime", async () => {
-    await withTempStateEnv(async () => {
+      // Import deletes the JSON source after the first successful migration so
+      // later loads treat SQLite as canonical state.
       const legacyRun = createRun({
         runId: "legacy-run",
         childSessionKey: "agent:main:subagent:legacy",
-        task: "retired legacy registry",
+        task: "import legacy registry",
       });
       const registryPath = path.join(tempStateDir!, "subagents", "runs.json");
       await fs.mkdir(path.dirname(registryPath), { recursive: true });
@@ -210,13 +133,16 @@ describe("subagent registry sqlite store", () => {
         "utf8",
       );
 
-      const restored = loadSubagentRegistryFromSqlite();
+      const imported = loadSubagentRegistryFromSqlite();
 
-      expect(restored).toEqual(new Map());
-      await expect(fs.stat(registryPath)).resolves.toBeTruthy();
+      expect(imported.get(legacyRun.runId)?.task).toBe("import legacy registry");
+      await expect(fs.stat(registryPath)).rejects.toThrow();
+      expect(loadSubagentRegistryFromSqlite().get(legacyRun.runId)?.task).toBe(
+        "import legacy registry",
+      );
       expect(
         openOpenClawStateDatabase().db.prepare("SELECT COUNT(*) AS count FROM subagent_runs").get(),
-      ).toEqual({ count: 0 });
+      ).toEqual({ count: 1 });
     });
   });
 });

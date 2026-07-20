@@ -142,14 +142,12 @@ export function extractTrustedCodexProjectPaths(configToml: string): string[] {
 
     const assignment =
       /^(?<key>"(?:\\.|[^"\\])*"|'[^']*'|[A-Za-z0-9_\-/.~:]+)\s*=\s*(?<value>.+)$/.exec(line);
-    const rawKey = assignment?.groups?.key;
-    const rawValue = assignment?.groups?.value;
-    if (!rawKey || rawValue === undefined) {
+    if (!assignment?.groups) {
       continue;
     }
 
-    const key = parseTomlString(rawKey) ?? rawKey;
-    const value = rawValue.trim();
+    const key = parseTomlString(assignment.groups.key) ?? assignment.groups.key;
+    const value = assignment.groups.value.trim();
     if (inProjectsTable && /^\{.*\}$/.test(value)) {
       if (/\btrust_level\s*=\s*["']trusted["']/.test(value) && key) {
         trusted.add(key);
@@ -298,4 +296,9 @@ export function renderIsolatedCodexConfig(params: {
   ]
     .filter((line, index, lines) => !(line === "" && lines[index - 1] === ""))
     .join("\n");
+}
+
+/** Render only the project trust section for a session-local Codex config. */
+export function renderIsolatedCodexProjectTrustConfig(projectPaths: string[]): string {
+  return renderIsolatedCodexConfig({ projectPaths });
 }

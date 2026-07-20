@@ -38,49 +38,57 @@ const promptAllowFrom = createPromptParsedAllowFromForAccount({
     entries: mergeAllowFromEntries(undefined, splitSetupEntries(raw)),
   }),
   getExistingAllowFrom: ({ cfg, accountId }) =>
-    resolveGoogleChatAccount({ cfg, accountId }).config.allowFrom ?? [],
+    resolveGoogleChatAccount({ cfg, accountId }).config.dm?.allowFrom ?? [],
   applyAllowFrom: ({ cfg, accountId, allowFrom }) =>
     applySetupAccountConfigPatch({
       cfg,
       channelKey: channel,
       accountId,
-      patch: { allowFrom },
+      patch: {
+        dm: {
+          ...resolveGoogleChatAccount({ cfg, accountId }).config.dm,
+          allowFrom,
+        },
+      },
     }),
 });
 
 const googlechatDmPolicy: ChannelSetupDmPolicy = {
   label: "Google Chat",
   channel,
-  policyKey: "channels.googlechat.dmPolicy",
-  allowFromKey: "channels.googlechat.allowFrom",
+  policyKey: "channels.googlechat.dm.policy",
+  allowFromKey: "channels.googlechat.dm.allowFrom",
   resolveConfigKeys: (cfg, accountId) =>
     (accountId ?? resolveDefaultGoogleChatAccountId(cfg)) !== DEFAULT_ACCOUNT_ID
       ? {
-          policyKey: `channels.googlechat.accounts.${accountId ?? resolveDefaultGoogleChatAccountId(cfg)}.dmPolicy`,
-          allowFromKey: `channels.googlechat.accounts.${accountId ?? resolveDefaultGoogleChatAccountId(cfg)}.allowFrom`,
+          policyKey: `channels.googlechat.accounts.${accountId ?? resolveDefaultGoogleChatAccountId(cfg)}.dm.policy`,
+          allowFromKey: `channels.googlechat.accounts.${accountId ?? resolveDefaultGoogleChatAccountId(cfg)}.dm.allowFrom`,
         }
       : {
-          policyKey: "channels.googlechat.dmPolicy",
-          allowFromKey: "channels.googlechat.allowFrom",
+          policyKey: "channels.googlechat.dm.policy",
+          allowFromKey: "channels.googlechat.dm.allowFrom",
         },
   getCurrent: (cfg, accountId) =>
     resolveGoogleChatAccount({
       cfg,
       accountId: accountId ?? resolveDefaultGoogleChatAccountId(cfg),
-    }).config.dmPolicy ?? "pairing",
+    }).config.dm?.policy ?? "pairing",
   setPolicy: (cfg, policy, accountId) => {
     const resolvedAccountId = accountId ?? resolveDefaultGoogleChatAccountId(cfg);
-    const current = resolveGoogleChatAccount({
+    const currentDm = resolveGoogleChatAccount({
       cfg,
       accountId: resolvedAccountId,
-    }).config;
+    }).config.dm;
     return applySetupAccountConfigPatch({
       cfg,
       channelKey: channel,
       accountId: resolvedAccountId,
       patch: {
-        dmPolicy: policy,
-        ...(policy === "open" ? { allowFrom: addWildcardAllowFrom(current.allowFrom) } : {}),
+        dm: {
+          ...currentDm,
+          policy,
+          ...(policy === "open" ? { allowFrom: addWildcardAllowFrom(currentDm?.allowFrom) } : {}),
+        },
       },
     });
   },
@@ -137,10 +145,7 @@ export const googlechatSetupWizard: ChannelSetupWizard = {
   prepare: async ({ cfg, accountId, credentialValues, prompter }) => {
     const envReady =
       accountId === DEFAULT_ACCOUNT_ID &&
-      Boolean(
-        normalizeOptionalString(process.env[ENV_SERVICE_ACCOUNT]) ||
-        normalizeOptionalString(process.env[ENV_SERVICE_ACCOUNT_FILE]),
-      );
+      (Boolean(process.env[ENV_SERVICE_ACCOUNT]) || Boolean(process.env[ENV_SERVICE_ACCOUNT_FILE]));
     if (envReady) {
       const useEnv = await prompter.confirm({
         message: t("wizard.googlechat.useEnvPrompt"),

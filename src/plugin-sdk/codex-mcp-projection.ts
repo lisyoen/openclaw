@@ -3,7 +3,4 @@
 // can attach the same user `mcp.servers` entries to its thread config without
 // deep-importing core helpers.
 
-export {
-  buildCodexUserMcpServersThreadConfigPatch,
-  buildCodexUserMcpServersThreadConfigPatchForRuntime,
-} from "../agents/cli-runner/bundle-mcp-codex.js";
+export { buildCodexUserMcpServersThreadConfigPatch } from "../agents/cli-runner/bundle-mcp-codex.js";

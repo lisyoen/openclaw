@@ -3,6 +3,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import JSON5 from "json5";
 import { resolveConfigPath } from "../config/paths.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import { configMayNeedPluginAutoEnable } from "../config/plugin-auto-enable.shared.js";
@@ -24,10 +25,13 @@ import {
   type PluginManifestRecord,
 } from "../plugins/manifest-registry.js";
 import { parseJsonWithJson5Fallback } from "../utils/parse-json-compat.js";
-import { ALWAYS_ALLOWED_RUNTIME_DIR_NAMES } from "./facade-activation-contract.js";
 import { resolveRegistryPluginModuleLocationFromRecords } from "./facade-resolution-shared.js";
 
-const ALWAYS_ALLOWED_RUNTIME_DIR_NAME_SET = new Set<string>(ALWAYS_ALLOWED_RUNTIME_DIR_NAMES);
+const ALWAYS_ALLOWED_RUNTIME_DIR_NAMES = new Set([
+  "image-generation-core",
+  "media-understanding-core",
+  "speech-core",
+]);
 const EMPTY_FACADE_BOUNDARY_CONFIG: OpenClawConfig = {};
 
 /** Minimal manifest shape needed to decide whether a bundled facade may load. */
@@ -58,7 +62,7 @@ function readFacadeBoundaryConfigSafely(): {
       return { rawConfig: EMPTY_FACADE_BOUNDARY_CONFIG };
     }
     const raw = fs.readFileSync(configPath, "utf8");
-    const parsed = parseJsonWithJson5Fallback(raw);
+    const parsed = JSON5.parse(raw);
     const rawConfig =
       parsed && typeof parsed === "object"
         ? (parsed as OpenClawConfig)
@@ -261,7 +265,7 @@ export function resolveBundledPluginPublicSurfaceAccess(params: {
 }): { allowed: boolean; pluginId?: string; reason?: string } {
   if (
     params.artifactBasename === "runtime-api.js" &&
-    ALWAYS_ALLOWED_RUNTIME_DIR_NAME_SET.has(params.dirName)
+    ALWAYS_ALLOWED_RUNTIME_DIR_NAMES.has(params.dirName)
   ) {
     return {
       allowed: true,

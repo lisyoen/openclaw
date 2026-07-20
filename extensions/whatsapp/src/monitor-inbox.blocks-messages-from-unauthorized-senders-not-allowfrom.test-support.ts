@@ -209,14 +209,8 @@ describe("web monitor inbox", () => {
     expect(onMessage).toHaveBeenCalledTimes(1);
     expect(onMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        admission: expect.objectContaining({
-          conversation: expect.objectContaining({
-            id: "+123",
-          }),
-          ingress: expect.objectContaining({
-            decision: "allow",
-          }),
-        }),
+        from: "+123",
+        accessControlPassed: true,
         payload: expect.objectContaining({
           body: "self ping",
         }),
@@ -273,7 +267,7 @@ describe("web monitor inbox", () => {
 
     expect(onMessage).toHaveBeenCalledTimes(1);
     const payload = firstInboundPayload(onMessage);
-    expect(payload.admission?.conversation.kind).toBe("group");
+    expect(payload.chatType).toBe("group");
     expect(payload.platform.senderE164).toBe("+999");
 
     await listener.close();
@@ -361,7 +355,7 @@ describe("web monitor inbox", () => {
     // Should call onMessage because sender is in groupAllowFrom
     expect(onMessage).toHaveBeenCalledTimes(1);
     const payload = firstInboundPayload(onMessage);
-    expect(payload.admission?.conversation.kind).toBe("group");
+    expect(payload.chatType).toBe("group");
     expect(payload.platform.senderE164).toBe("+15551234567");
 
     await listener.close();
@@ -395,7 +389,7 @@ describe("web monitor inbox", () => {
     // Should call onMessage because wildcard allows all senders
     expect(onMessage).toHaveBeenCalledTimes(1);
     const payload = firstInboundPayload(onMessage);
-    expect(payload.admission?.conversation.kind).toBe("group");
+    expect(payload.chatType).toBe("group");
 
     await listener.close();
   });

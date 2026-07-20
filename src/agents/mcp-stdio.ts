@@ -3,7 +3,6 @@
  * Accepts OpenClaw and upstream MCP config field names, keeping only
  * command/args/env/cwd needed to spawn a stdio server.
  */
-import { redactSensitiveArgv } from "../config/redact-argv.js";
 import { isMcpConfigRecord, toMcpEnvRecord, toMcpStringArray } from "./mcp-config-shared.js";
 
 /** Normalized stdio MCP server launch config. */
@@ -54,8 +53,8 @@ export function resolveStdioMcpServerLaunchConfig(
 
 /** Describe a stdio MCP launch config for diagnostics. */
 export function describeStdioMcpServerLaunchConfig(config: StdioMcpServerLaunchConfig): string {
-  const redactedArgs = Array.isArray(config.args) ? redactSensitiveArgv(config.args) : [];
-  const args = redactedArgs.length > 0 ? ` ${redactedArgs.join(" ")}` : "";
+  const args =
+    Array.isArray(config.args) && config.args.length > 0 ? ` ${config.args.join(" ")}` : "";
   const cwd = config.cwd ? ` (cwd=${config.cwd})` : "";
   return `${config.command}${args}${cwd}`;
 }

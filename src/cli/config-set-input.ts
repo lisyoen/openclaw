@@ -5,8 +5,6 @@ import {
   normalizeStringifiedOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import JSON5 from "json5";
-import { readFileDescriptorBoundedSync } from "../infra/boundary-file-read.js";
-import { hasErrnoCode } from "../infra/errors.js";
 
 export type ConfigSetOptions = {
   strictJson?: boolean;
@@ -45,19 +43,6 @@ export type ConfigSetBatchEntry = {
   ref?: unknown;
   provider?: unknown;
 };
-
-const CONFIG_MUTATION_FILE_MAX_BYTES = 8 * 1024 * 1024;
-
-export function readConfigMutationFileSync(filePath: string): string {
-  // These explicit CLI file flags have historically followed user-provided
-  // symlinks. Pin the opened descriptor, then bound the read without changing that contract.
-  const fd = fs.openSync(filePath, "r");
-  try {
-    return readFileDescriptorBoundedSync(fd, CONFIG_MUTATION_FILE_MAX_BYTES).toString("utf8");
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 
 export function hasBatchMode(opts: ConfigSetOptions): boolean {
   return Boolean(
@@ -151,14 +136,6 @@ export function parseBatchSource(opts: ConfigSetOptions): ConfigSetBatchEntry[] 
   if (!pathname) {
     throw new Error("--batch-file must not be empty.");
   }
-  let raw: string;
-  try {
-    raw = readConfigMutationFileSync(pathname);
-  } catch (err) {
-    if (hasErrnoCode(err, "ENOENT")) {
-      throw new Error(`--batch-file not found: ${pathname}`, { cause: err });
-    }
-    throw err;
-  }
+  const raw = fs.readFileSync(pathname, "utf8");
   return parseBatchEntries(raw, "--batch-file");
 }

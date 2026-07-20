@@ -4,6 +4,7 @@ import {
   resolveMemorySlotDecisionShared,
   resolvePluginActivationDecisionShared,
   toPluginActivationState,
+  type PluginActivationSource,
   type PluginActivationStateLike,
 } from "./config-activation-shared.js";
 import {
@@ -17,9 +18,10 @@ import {
 import type { PluginKind } from "./plugin-kind.types.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
 
-type PluginActivationState = PluginActivationStateLike;
+export type { PluginActivationSource };
+export type PluginActivationState = PluginActivationStateLike;
 
-type NormalizedPluginsConfig = SharedNormalizedPluginsConfig;
+export type NormalizedPluginsConfig = SharedNormalizedPluginsConfig;
 
 export function normalizePluginsConfigWithResolver(
   config?: OpenClawConfig["plugins"],
@@ -28,7 +30,7 @@ export function normalizePluginsConfigWithResolver(
   return normalizePluginsConfigWithResolverShared(config, normalizePluginId);
 }
 
-function resolvePluginActivationState(params: {
+export function resolvePluginActivationState(params: {
   id: string;
   origin: PluginOrigin;
   config: NormalizedPluginsConfig;
@@ -51,7 +53,7 @@ function resolvePluginActivationState(params: {
 }
 export const hasExplicitPluginConfig = hasExplicitPluginConfigShared;
 
-const isBundledChannelEnabledByChannelConfig = isBundledChannelEnabledByChannelConfigShared;
+export const isBundledChannelEnabledByChannelConfig = isBundledChannelEnabledByChannelConfigShared;
 
 type PolicyEffectiveActivationParams = {
   id: string;

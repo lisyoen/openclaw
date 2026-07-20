@@ -1,26 +1,29 @@
 /**
  * Shared exec-host approval helper tests.
- * Covers follow-up failure dedupe, elevated handoffs, policy merging, and
- * unavailable approval surfaces.
+ * Covers pending-state expiry, follow-up failure dedupe, elevated handoffs,
+ * policy merging, and unavailable approval surfaces.
  */
+import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coercion";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   consumeExecApprovalFollowupRuntimeHandoff,
   isExecApprovalFollowupSessionRebound,
   registerExecApprovalFollowupRuntimeHandoff,
+  resetExecApprovalFollowupRuntimeHandoffsForTests,
 } from "./bash-tools.exec-approval-followup-state.js";
 import {
   buildExecApprovalPendingToolResult,
-  createAndRegisterDefaultExecApprovalRequest,
-  createExecApprovalDecisionState,
+  createExecApprovalPendingState,
   enforceStrictInlineEvalApprovalBoundary,
+  MAX_EXEC_APPROVAL_FOLLOWUP_FAILURE_LOG_KEYS as maxExecApprovalFollowupFailureLogKeys,
+  resolveBaseExecApprovalDecision,
+  resolveExecApprovalUnavailableState,
   resolveExecHostApprovalContext,
   sendExecApprovalFollowupResult,
-  shouldResolveExecApprovalUnavailableInline,
 } from "./bash-tools.exec-host-shared.js";
 
 const mocks = vi.hoisted(() => ({
-  resolveExecApprovals: vi.fn(async () => ({
+  resolveExecApprovals: vi.fn(() => ({
     defaults: {
       security: "allowlist",
       ask: "off",
@@ -35,7 +38,6 @@ const mocks = vi.hoisted(() => ({
     },
     allowlist: [],
     file: { version: 1, agents: {} },
-    hash: "approvals-hash",
   })),
 }));
 
@@ -43,8 +45,62 @@ vi.mock("../infra/exec-approvals.js", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../infra/exec-approvals.js")>();
   return {
     ...mod,
-    resolveExecApprovalsLocked: mocks.resolveExecApprovals,
+    resolveExecApprovals: mocks.resolveExecApprovals,
   };
+});
+
+describe("createExecApprovalPendingState", () => {
+  it("sets a valid pending approval expiry from the current clock", () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    try {
+      nowSpy.mockReturnValue(1_800_000_000_000);
+
+      expect(
+        createExecApprovalPendingState({
+          warnings: ["careful"],
+          timeoutMs: 60_000,
+        }),
+      ).toMatchObject({
+        warningText: "careful\n\n",
+        expiresAtMs: 1_800_000_060_000,
+        preResolvedDecision: undefined,
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("expires pending approvals immediately while the process clock is invalid", () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    try {
+      nowSpy.mockReturnValue(Number.NaN);
+
+      expect(
+        createExecApprovalPendingState({
+          warnings: [],
+          timeoutMs: 60_000,
+        }).expiresAtMs,
+      ).toBe(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("expires pending approvals immediately when expiry would exceed Date bounds", () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    try {
+      nowSpy.mockReturnValue(MAX_DATE_TIMESTAMP_MS);
+
+      expect(
+        createExecApprovalPendingState({
+          warnings: [],
+          timeoutMs: 60_000,
+        }).expiresAtMs,
+      ).toBe(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
 
 describe("sendExecApprovalFollowupResult", () => {
@@ -55,7 +111,7 @@ describe("sendExecApprovalFollowupResult", () => {
     sendExecApprovalFollowup.mockReset();
     logWarn.mockReset();
     mocks.resolveExecApprovals.mockReset();
-    mocks.resolveExecApprovals.mockResolvedValue({
+    mocks.resolveExecApprovals.mockReturnValue({
       defaults: {
         security: "allowlist",
         ask: "off",
@@ -70,8 +126,8 @@ describe("sendExecApprovalFollowupResult", () => {
       },
       allowlist: [],
       file: { version: 1, agents: {} },
-      hash: "approvals-hash",
     });
+    resetExecApprovalFollowupRuntimeHandoffsForTests();
   });
 
   function firstExecApprovalFollowupCall():
@@ -111,45 +167,11 @@ describe("sendExecApprovalFollowupResult", () => {
     );
   });
 
-  it.each([
-    {
-      name: "direct gateway code",
-      error: Object.assign(new Error("approval not found"), {
-        gatewayCode: "APPROVAL_NOT_FOUND",
-      }),
-    },
-    {
-      name: "structured invalid-request details",
-      error: Object.assign(new Error("approval not found"), {
-        gatewayCode: "INVALID_REQUEST",
-        details: { reason: "APPROVAL_NOT_FOUND" },
-      }),
-    },
-    {
-      name: "legacy message-only error",
-      error: new Error("unknown or expired approval id"),
-    },
-  ])("suppresses approval-not-found followup dispatch failures ($name)", async ({ error }) => {
-    sendExecApprovalFollowup.mockRejectedValue(error);
-
-    await sendExecApprovalFollowupResult(
-      {
-        approvalId: "approval-expired",
-        sessionKey: "agent:main:main",
-      },
-      "Exec finished",
-      { sendExecApprovalFollowup, logWarn },
-    );
-
-    expect(logWarn).not.toHaveBeenCalled();
-  });
-
   it("evicts oldest followup failure dedupe keys after reaching the cap", async () => {
     sendExecApprovalFollowup.mockRejectedValue(new Error("Channel is required"));
     const deps = { sendExecApprovalFollowup, logWarn };
-    const failureKeysBeyondDedupeWindow = 257;
 
-    for (let i = 0; i < failureKeysBeyondDedupeWindow; i += 1) {
+    for (let i = 0; i <= maxExecApprovalFollowupFailureLogKeys; i += 1) {
       await sendExecApprovalFollowupResult(
         {
           approvalId: `approval-${i}`,
@@ -168,7 +190,7 @@ describe("sendExecApprovalFollowupResult", () => {
       deps,
     );
 
-    expect(logWarn).toHaveBeenCalledTimes(failureKeysBeyondDedupeWindow + 1);
+    expect(logWarn).toHaveBeenCalledTimes(maxExecApprovalFollowupFailureLogKeys + 2);
     expect(logWarn).toHaveBeenLastCalledWith(
       "exec approval followup dispatch failed (id=approval-0): Channel is required",
     );
@@ -336,8 +358,8 @@ describe("isExecApprovalFollowupSessionRebound", () => {
 });
 
 describe("resolveExecHostApprovalContext", () => {
-  it("does not let exec-approvals.json broaden security beyond the requested policy", async () => {
-    mocks.resolveExecApprovals.mockResolvedValue({
+  it("does not let exec-approvals.json broaden security beyond the requested policy", () => {
+    mocks.resolveExecApprovals.mockReturnValue({
       defaults: {
         security: "allowlist",
         ask: "off",
@@ -352,10 +374,9 @@ describe("resolveExecHostApprovalContext", () => {
       },
       allowlist: [],
       file: { version: 1, agents: {} },
-      hash: "approvals-hash",
     });
 
-    const result = await resolveExecHostApprovalContext({
+    const result = resolveExecHostApprovalContext({
       agentId: "agent-main",
       security: "allowlist",
       ask: "off",
@@ -365,8 +386,8 @@ describe("resolveExecHostApprovalContext", () => {
     expect(result.hostSecurity).toBe("allowlist");
   });
 
-  it("does not let host ask=off suppress a stricter requested ask mode", async () => {
-    mocks.resolveExecApprovals.mockResolvedValue({
+  it("does not let host ask=off suppress a stricter requested ask mode", () => {
+    mocks.resolveExecApprovals.mockReturnValue({
       defaults: {
         security: "full",
         ask: "off",
@@ -381,10 +402,9 @@ describe("resolveExecHostApprovalContext", () => {
       },
       allowlist: [],
       file: { version: 1, agents: {} },
-      hash: "approvals-hash",
     });
 
-    const result = await resolveExecHostApprovalContext({
+    const result = resolveExecHostApprovalContext({
       agentId: "agent-main",
       security: "full",
       ask: "always",
@@ -394,8 +414,8 @@ describe("resolveExecHostApprovalContext", () => {
     expect(result.hostAsk).toBe("always");
   });
 
-  it("clamps askFallback to the effective host security", async () => {
-    mocks.resolveExecApprovals.mockResolvedValue({
+  it("clamps askFallback to the effective host security", () => {
+    mocks.resolveExecApprovals.mockReturnValue({
       defaults: {
         security: "full",
         ask: "always",
@@ -410,10 +430,9 @@ describe("resolveExecHostApprovalContext", () => {
       },
       allowlist: [],
       file: { version: 1, agents: {} },
-      hash: "approvals-hash",
     });
 
-    const result = await resolveExecHostApprovalContext({
+    const result = resolveExecHostApprovalContext({
       agentId: "agent-main",
       security: "allowlist",
       ask: "always",
@@ -427,18 +446,14 @@ describe("resolveExecHostApprovalContext", () => {
 describe("enforceStrictInlineEvalApprovalBoundary", () => {
   it("denies unanswered approvals when ask fallback is fail-closed", () => {
     expect(
-      createExecApprovalDecisionState({
+      resolveBaseExecApprovalDecision({
         decision: null,
         askFallback: "deny",
       }),
     ).toEqual({
-      baseDecision: {
-        approvedByAsk: false,
-        deniedReason: "approval-timeout",
-        timedOut: true,
-      },
       approvedByAsk: false,
       deniedReason: "approval-timeout",
+      timedOut: true,
     });
   });
 
@@ -515,57 +530,14 @@ describe("buildExecApprovalPendingToolResult", () => {
     });
   }
 
-  it("does not infer approver DM delivery from unavailable approval state", async () => {
-    const state = await createAndRegisterDefaultExecApprovalRequest({
-      warnings: [],
-      approvalRunningNoticeMs: 1_000,
-      createApprovalSlug: (approvalId) => approvalId,
+  it("does not infer approver DM delivery from unavailable approval state", () => {
+    const state = resolveExecApprovalUnavailableState({
       turnSourceChannel: "telegram",
       turnSourceAccountId: "default",
-      register: async (approvalId) => ({
-        id: approvalId,
-        expiresAtMs: Date.now() + 60_000,
-        finalDecision: null,
-      }),
+      preResolvedDecision: null,
     });
     expect(state.sentApproverDms).toBe(false);
     expect(state.unavailableReason).toBe("no-approval-route");
-  });
-
-  it("resolves terminal no-route approvals inline", () => {
-    expect(
-      shouldResolveExecApprovalUnavailableInline({
-        unavailableReason: "no-approval-route",
-        preResolvedDecision: null,
-      }),
-    ).toBe(true);
-  });
-
-  it("keeps waiting when a route exists or a decision arrived", () => {
-    expect(
-      shouldResolveExecApprovalUnavailableInline({
-        unavailableReason: null,
-        preResolvedDecision: null,
-      }),
-    ).toBe(false);
-    expect(
-      shouldResolveExecApprovalUnavailableInline({
-        unavailableReason: "no-approval-route",
-        preResolvedDecision: "allow-once",
-      }),
-    ).toBe(false);
-    expect(
-      shouldResolveExecApprovalUnavailableInline({
-        unavailableReason: "no-approval-route",
-        preResolvedDecision: undefined,
-      }),
-    ).toBe(false);
-    expect(
-      shouldResolveExecApprovalUnavailableInline({
-        unavailableReason: "initiating-platform-disabled",
-        preResolvedDecision: null,
-      }),
-    ).toBe(false);
   });
 
   it("keeps a local /approve prompt when the initiating Discord surface is disabled", () => {
@@ -600,39 +572,6 @@ describe("buildExecApprovalPendingToolResult", () => {
     expect(text).toContain("native chat exec approvals are not configured on Discord");
     expect(text).not.toContain("/approve");
     expect(text).not.toContain("Pending command:");
-  });
-
-  it("preserves node metadata in unavailable recovery guidance", () => {
-    const result = buildExecApprovalPendingToolResult({
-      host: "node",
-      nodeId: "node-mac-1",
-      command: "uname -a",
-      cwd: "/tmp",
-      warningText: "",
-      approvalId: "approval-id",
-      approvalSlug: "approval-slug",
-      expiresAtMs: Date.now() + 60_000,
-      initiatingSurface: {
-        kind: "enabled",
-        channel: undefined,
-        channelLabel: "Web UI",
-      },
-      sentApproverDms: false,
-      unavailableReason: "no-approval-route",
-    });
-
-    expect(result.details).toMatchObject({
-      status: "approval-unavailable",
-      host: "node",
-      nodeId: "node-mac-1",
-    });
-    const text = result.content.find((part) => part.type === "text")?.text ?? "";
-    expect(text).toContain(
-      "Print the Control UI URL with `openclaw dashboard --no-open`, open it in a browser, then use the approval inbox.",
-    );
-    expect(text).toContain(
-      "Inspect the node's effective exec policy with `openclaw approvals get --node node-mac-1`.",
-    );
   });
 
   it("keeps the Telegram unavailable reply when Discord DM approvals are not fully configured", () => {

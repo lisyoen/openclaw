@@ -6,26 +6,19 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { estimateMessagesTokens } from "../../agents/compaction.js";
 import { classifyCompactionReason } from "../../agents/embedded-agent-runner/compact-reasons.js";
-import { runEmbeddedAgentEntry } from "../../agents/embedded-agent-runner/run-entry.js";
+import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
+import { ensureSelectedAgentHarnessPlugin } from "../../agents/harness/runtime-plugin.js";
+import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { isCliRuntimeAliasForProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveContextConfigProviderForRuntime } from "../../agents/openai-routing.js";
 import type { AgentMessage } from "../../agents/runtime/index.js";
 import { resolveSandboxConfigForAgent, resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
 import {
-  resolvePersistedSessionRuntimeId,
-  resolveSessionRuntimeOverrideForProvider,
-} from "../../agents/session-runtime-compat.js";
-import {
-  resolveCandidateThinkingLevel,
-  resolveEffectiveAgentRuntime,
-} from "../../agents/thinking-runtime.js";
-import {
-  deriveContextPromptTokens,
+  derivePromptTokens,
   hasNonzeroUsage,
   normalizeUsage,
   type UsageLike,
@@ -36,21 +29,15 @@ import {
   resolveSessionFilePath,
   resolveSessionFilePathOptions,
   type SessionEntry,
+  applySessionStoreEntryPatch,
+  updateSessionStoreEntry,
 } from "../../config/sessions.js";
-import {
-  readTranscriptStatsSync,
-  updateSessionEntry,
-} from "../../config/sessions/session-accessor.js";
-import {
-  formatSqliteSessionFileMarker,
-  parseSqliteSessionFileMarker,
-} from "../../config/sessions/sqlite-marker.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { readSessionMessagesAsync } from "../../gateway/session-utils.fs.js";
 import { logVerbose } from "../../globals.js";
-import { isAbortError } from "../../infra/abort-signal.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { isAbortError } from "../../infra/unhandled-rejections.js";
 import { resolveMemoryFlushPlan } from "../../plugins/memory-state.js";
 import { CommandLane } from "../../process/lanes.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
@@ -77,15 +64,6 @@ import type { ReplyOperation } from "./reply-run-registry.js";
 import { incrementCompactionCount } from "./session-updates.js";
 
 type EmbeddedAgentRuntime = typeof import("../../agents/embedded-agent.js");
-type UpdateSessionEntryParams = {
-  storePath: string;
-  sessionKey: string;
-  skipMaintenance?: boolean;
-  takeCacheOwnership?: boolean;
-  update: (
-    entry: SessionEntry,
-  ) => Promise<Partial<SessionEntry> | null> | Partial<SessionEntry> | null;
-};
 
 const MAX_VISIBLE_MEMORY_FLUSH_ERROR_CHARS = 600;
 const MAX_FLUSH_FAILURES = 3;
@@ -115,22 +93,6 @@ async function runEmbeddedAgentDefault(
   return await runEmbeddedAgent(...args);
 }
 
-async function updateSessionEntryDefault(
-  params: UpdateSessionEntryParams,
-): Promise<SessionEntry | null> {
-  return await updateSessionEntry(
-    {
-      storePath: params.storePath,
-      sessionKey: params.sessionKey,
-    },
-    params.update,
-    {
-      skipMaintenance: params.skipMaintenance,
-      takeCacheOwnership: params.takeCacheOwnership,
-    },
-  );
-}
-
 async function ensureMemoryFlushTargetFile(params: {
   workspaceDir: string;
   relativePath: string;
@@ -157,40 +119,36 @@ async function ensureMemoryFlushTargetFile(params: {
 
 const memoryDeps = {
   compactEmbeddedAgentSession: compactEmbeddedAgentSessionDefault,
-  runEmbeddedAgentEntry,
+  runWithModelFallback,
+  ensureSelectedAgentHarnessPlugin,
   runEmbeddedAgent: runEmbeddedAgentDefault,
   ensureMemoryFlushTargetFile,
   registerAgentRunContext,
   refreshQueuedFollowupSession,
   incrementCompactionCount,
-  updateSessionEntry: updateSessionEntryDefault,
+  updateSessionStoreEntry,
   emitAgentEvent,
   randomUUID: () => crypto.randomUUID(),
   now: () => Date.now(),
 };
 
 /** Overrides memory helper dependencies for tests. */
-function setAgentRunnerMemoryTestDeps(overrides?: Partial<typeof memoryDeps>): void {
+export function setAgentRunnerMemoryTestDeps(overrides?: Partial<typeof memoryDeps>): void {
   Object.assign(memoryDeps, {
-    runEmbeddedAgentEntry,
+    runWithModelFallback,
+    ensureSelectedAgentHarnessPlugin,
     compactEmbeddedAgentSession: compactEmbeddedAgentSessionDefault,
     runEmbeddedAgent: runEmbeddedAgentDefault,
     ensureMemoryFlushTargetFile,
     registerAgentRunContext,
     refreshQueuedFollowupSession,
     incrementCompactionCount,
-    updateSessionEntry: updateSessionEntryDefault,
+    updateSessionStoreEntry,
     emitAgentEvent,
     randomUUID: () => crypto.randomUUID(),
     now: () => Date.now(),
     ...overrides,
   });
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.agentRunnerMemoryTestApi")] = {
-    setAgentRunnerMemoryTestDeps,
-  };
 }
 
 function estimatePromptTokensForMemoryFlush(prompt?: string): number | undefined {
@@ -263,13 +221,25 @@ function resolveMemoryFlushModelFallbackOptions(
   };
 }
 
+function resolveMemoryFlushRuntimeOverrideForProvider(params: {
+  provider: string;
+  entry?: Pick<SessionEntry, "agentRuntimeOverride">;
+}): string | undefined {
+  const provider = normalizeLowercaseStringOrEmpty(params.provider);
+  const runtime = normalizeLowercaseStringOrEmpty(params.entry?.agentRuntimeOverride);
+  if (!runtime || runtime === "auto" || runtime === "default") {
+    return undefined;
+  }
+  if (provider === "openai" && runtime === "codex") {
+    return "codex";
+  }
+  return undefined;
+}
+
 function followupUsesCliRuntime(params: {
   cfg: OpenClawConfig;
   followupRun: FollowupRun;
-  sessionEntry?: Pick<
-    SessionEntry,
-    "agentHarnessId" | "agentRuntimeOverride" | "modelSelectionLocked"
-  >;
+  sessionEntry?: Pick<SessionEntry, "agentRuntimeOverride">;
 }): boolean {
   const provider = params.followupRun.run.provider;
   if (isCliProvider(provider, params.cfg)) {
@@ -277,7 +247,7 @@ function followupUsesCliRuntime(params: {
   }
   return isCliRuntimeAliasForProvider({
     provider,
-    runtime: resolvePersistedSessionRuntimeId(params.sessionEntry),
+    runtime: params.sessionEntry?.agentRuntimeOverride,
     cfg: params.cfg,
   });
 }
@@ -308,18 +278,30 @@ function resolveFollowupAgentRuntimeId(params: {
     params.sessionEntry?.sessionId === params.followupRun.run.sessionId
       ? params.sessionEntry
       : undefined;
-  return resolveEffectiveAgentRuntime({
-    cfg: params.cfg,
+  const persistedRuntimeOverride = normalizeOptionalString(
+    matchingSessionEntry?.agentRuntimeOverride,
+  );
+  const persistedRuntimeId =
+    persistedRuntimeOverride &&
+    persistedRuntimeOverride !== "auto" &&
+    persistedRuntimeOverride !== "default"
+      ? persistedRuntimeOverride
+      : matchingSessionEntry?.agentHarnessId;
+  if (persistedRuntimeId) {
+    return persistedRuntimeId;
+  }
+  const harnessPolicy = resolveAgentHarnessPolicy({
     provider: params.followupRun.run.provider,
     modelId: params.followupRun.run.model,
+    config: params.cfg,
     agentId: params.followupRun.run.agentId,
     sessionKey:
       params.runtimePolicySessionKey ??
       params.sessionKey ??
       params.followupRun.run.runtimePolicySessionKey ??
       params.followupRun.run.sessionKey,
-    sessionEntry: matchingSessionEntry,
   });
+  return harnessPolicy.runtime;
 }
 
 function followupUsesCodexRuntime(params: {
@@ -338,14 +320,6 @@ function resolveVisibleMemoryFlushErrorPayloads(payloads?: ReplyPayload[]): Repl
   );
 }
 
-function buildVisibleMemoryFlushFailure(payloads: ReplyPayload[]): Error {
-  const message = payloads
-    .map((payload) => normalizeOptionalString(payload.text))
-    .filter((text): text is string => Boolean(text))
-    .join("\n");
-  return new Error(message || "Memory flush returned an error response");
-}
-
 function buildMemoryFlushErrorPayload(err: unknown): ReplyPayload | undefined {
   if (isAbortError(err)) {
     return undefined;
@@ -358,7 +332,7 @@ function buildMemoryFlushErrorPayload(err: unknown): ReplyPayload | undefined {
   return {
     text:
       visibleText.length > MAX_VISIBLE_MEMORY_FLUSH_ERROR_CHARS
-        ? `${truncateUtf16Safe(visibleText, MAX_VISIBLE_MEMORY_FLUSH_ERROR_CHARS - 1)}…`
+        ? `${visibleText.slice(0, MAX_VISIBLE_MEMORY_FLUSH_ERROR_CHARS - 1)}…`
         : visibleText,
     isError: true,
   };
@@ -367,12 +341,12 @@ function buildMemoryFlushErrorPayload(err: unknown): ReplyPayload | undefined {
 function truncateMemoryFlushErrorMessage(err: unknown): string {
   const message = normalizeOptionalString(formatErrorMessage(err)) || String(err);
   return message.length > MAX_FLUSH_ERROR_LENGTH
-    ? `${truncateUtf16Safe(message, MAX_FLUSH_ERROR_LENGTH - 1)}…`
+    ? `${message.slice(0, MAX_FLUSH_ERROR_LENGTH - 1)}…`
     : message;
 }
 
 /** Usage snapshot read from a session transcript before compaction. */
-type SessionTranscriptUsageSnapshot = {
+export type SessionTranscriptUsageSnapshot = {
   promptTokens?: number;
   outputTokens?: number;
   trailingBytesTokens?: number;
@@ -420,27 +394,18 @@ function resolveSessionLogPath(
       (sessionEntry as (SessionEntry & { transcriptPath?: string }) | undefined)?.transcriptPath,
     );
     const sessionFile = normalizeOptionalString(sessionEntry?.sessionFile) || transcriptPath;
-    if (parseSqliteSessionFileMarker(sessionFile)) {
-      return sessionFile;
-    }
     const agentId = resolveAgentIdFromSessionKey(sessionKey);
-    if (!sessionFile && agentId && opts?.storePath) {
-      return formatSqliteSessionFileMarker({
-        agentId,
-        sessionId,
-        storePath: opts.storePath,
-      });
-    }
-    if (!sessionFile) {
-      return undefined;
-    }
     const pathOpts = resolveSessionFilePathOptions({
       agentId,
       storePath: opts?.storePath,
     });
     // Normalize sessionFile through resolveSessionFilePath so relative entries
     // are resolved against the sessions dir/store layout, not process.cwd().
-    return resolveSessionFilePath(sessionId, { sessionFile }, pathOpts);
+    return resolveSessionFilePath(
+      sessionId,
+      sessionFile ? { sessionFile } : sessionEntry,
+      pathOpts,
+    );
   } catch {
     return undefined;
   }
@@ -458,7 +423,7 @@ function deriveTranscriptUsageSnapshot(
   if (!usage) {
     return undefined;
   }
-  const promptTokens = deriveContextPromptTokens({ lastCallUsage: usage });
+  const promptTokens = derivePromptTokens(usage);
   const outputRaw = usage.output;
   const outputTokens =
     typeof outputRaw === "number" && Number.isFinite(outputRaw) && outputRaw > 0
@@ -522,20 +487,6 @@ async function readSessionLogSnapshot(params: {
   );
   if (!logPath) {
     return {};
-  }
-  const sqliteMarker = parseSqliteSessionFileMarker(logPath);
-  if (sqliteMarker) {
-    // SQLite-backed transcripts intentionally skip the legacy JSONL tail scan
-    // (there is no usage line to parse), but the byte-size guard below still
-    // needs a real value or it silently degrades to token-only triggering.
-    if (!params.includeByteSize) {
-      return {};
-    }
-    try {
-      return { byteSize: readTranscriptStatsSync(sqliteMarker).sizeBytes };
-    } catch {
-      return {};
-    }
   }
 
   const snapshot: SessionLogSnapshot = {};
@@ -654,16 +605,22 @@ async function estimatePromptTokensFromSessionTranscript(params: {
   sessionId?: string;
   sessionEntry?: SessionEntry;
   sessionKey?: string;
+  sessionFile?: string;
   storePath?: string;
 }): Promise<TranscriptTokenEstimate | undefined> {
   const sessionId = normalizeOptionalString(params.sessionId);
   if (!sessionId) {
     return undefined;
   }
+  const fallbackSessionFile = normalizeOptionalString(params.sessionFile);
+  const sessionEntryForTranscript =
+    params.sessionEntry?.sessionFile || !fallbackSessionFile
+      ? params.sessionEntry
+      : ({ ...params.sessionEntry, sessionFile: fallbackSessionFile } as SessionEntry);
   try {
     const snapshot = await readSessionLogSnapshot({
       sessionId,
-      sessionEntry: params.sessionEntry,
+      sessionEntry: sessionEntryForTranscript,
       sessionKey: params.sessionKey,
       opts: { storePath: params.storePath },
       includeByteSize: true,
@@ -697,7 +654,7 @@ async function estimatePromptTokensFromSessionTranscript(params: {
     const messages = (await readSessionMessagesAsync(
       sessionId,
       params.storePath,
-      params.sessionEntry?.sessionFile,
+      sessionEntryForTranscript?.sessionFile,
       {
         mode: "recent",
         maxMessages: 200,
@@ -808,7 +765,10 @@ export async function runPreflightCompactionIfNeeded(params: {
     agentCfgContextTokens: params.agentCfgContextTokens,
   });
   const memoryFlushPlan = resolveMemoryFlushPlan({ cfg: params.cfg });
-  const reserveTokensFloor = memoryFlushPlan?.reserveTokensFloor ?? 20_000;
+  const reserveTokensFloor =
+    memoryFlushPlan?.reserveTokensFloor ??
+    params.cfg.agents?.defaults?.compaction?.reserveTokensFloor ??
+    20_000;
   const softThresholdTokens = memoryFlushPlan?.softThresholdTokens ?? 4_000;
   const freshPersistedTokens = resolveFreshSessionTotalTokens(entry);
   const persistedTotalTokens = entry.totalTokens;
@@ -819,36 +779,26 @@ export async function runPreflightCompactionIfNeeded(params: {
   const promptTokenEstimate = estimatePromptTokensForMemoryFlush(
     params.promptForEstimate ?? params.followupRun.prompt,
   );
-  const serverCompactionThreshold = resolveResponsesServerCompactionThreshold({
-    cfg: params.cfg,
-    provider: params.followupRun.run.provider,
-    modelId: params.followupRun.run.model ?? params.defaultModel,
-  });
-  const threshold = Math.max(
-    contextWindowTokens - reserveTokensFloor - softThresholdTokens,
-    serverCompactionThreshold ?? 0,
-  );
-  const freshNeedsOutputRead =
-    typeof freshPersistedTokens === "number" &&
-    typeof promptTokenEstimate === "number" &&
-    threshold > 0 &&
-    freshPersistedTokens + promptTokenEstimate >= threshold - TRANSCRIPT_OUTPUT_READ_BUFFER_TOKENS;
   const maxActiveTranscriptBytes = resolveMaxActiveTranscriptBytes(params.cfg);
   const shouldCheckActiveTranscriptBytes = typeof maxActiveTranscriptBytes === "number";
   const transcriptUsageTokens =
-    typeof freshPersistedTokens === "number" && !freshNeedsOutputRead
+    typeof freshPersistedTokens === "number"
       ? undefined
       : await estimatePromptTokensFromSessionTranscript({
           sessionId: entry.sessionId,
           sessionEntry: entry,
           sessionKey: params.sessionKey ?? params.followupRun.run.sessionKey,
+          sessionFile: entry.sessionFile ?? params.followupRun.run.sessionFile,
           storePath: params.storePath,
         });
   const transcriptSizeSnapshot =
     shouldCheckActiveTranscriptBytes && transcriptUsageTokens?.transcriptByteSize === undefined
       ? await readSessionLogSnapshot({
           sessionId: entry.sessionId,
-          sessionEntry: entry,
+          sessionEntry:
+            entry.sessionFile || !params.followupRun.run.sessionFile
+              ? entry
+              : { ...entry, sessionFile: params.followupRun.run.sessionFile },
           sessionKey: params.sessionKey ?? params.followupRun.run.sessionKey,
           opts: { storePath: params.storePath },
           includeByteSize: true,
@@ -861,10 +811,9 @@ export async function runPreflightCompactionIfNeeded(params: {
     typeof activeTranscriptBytes === "number" &&
     typeof maxActiveTranscriptBytes === "number" &&
     activeTranscriptBytes >= maxActiveTranscriptBytes;
-  const stalePersistedPromptTokens =
-    hasPersistedTotalTokens && entry.totalTokensFresh !== false
-      ? Math.floor(persistedTotalTokens)
-      : undefined;
+  const stalePersistedPromptTokens = hasPersistedTotalTokens
+    ? Math.floor(persistedTotalTokens)
+    : undefined;
   const transcriptPromptTokens = transcriptUsageTokens?.promptTokens;
   const transcriptOutputTokens = transcriptUsageTokens?.outputTokens;
   const usageProjectedTokenCount =
@@ -875,17 +824,8 @@ export async function runPreflightCompactionIfNeeded(params: {
           promptTokenEstimate,
         )
       : undefined;
-  const freshProjectedTokenCount =
-    typeof freshPersistedTokens === "number"
-      ? resolveEffectivePromptTokens(
-          freshPersistedTokens,
-          transcriptOutputTokens,
-          promptTokenEstimate,
-        )
-      : undefined;
   const projectedTokenCount = Math.max(
     usageProjectedTokenCount ?? 0,
-    freshProjectedTokenCount ?? 0,
     stalePersistedPromptTokens ?? 0,
   );
   const tokenCountForCompaction =
@@ -893,6 +833,15 @@ export async function runPreflightCompactionIfNeeded(params: {
       ? projectedTokenCount
       : undefined;
 
+  const serverCompactionThreshold = resolveResponsesServerCompactionThreshold({
+    cfg: params.cfg,
+    provider: params.followupRun.run.provider,
+    modelId: params.followupRun.run.model ?? params.defaultModel,
+  });
+  const threshold = Math.max(
+    contextWindowTokens - reserveTokensFloor - softThresholdTokens,
+    serverCompactionThreshold ?? 0,
+  );
   logVerbose(
     `preflightCompaction check: sessionKey=${params.sessionKey} ` +
       `tokenCount=${tokenCountForCompaction ?? freshPersistedTokens ?? "undefined"} ` +
@@ -951,21 +900,16 @@ export async function runPreflightCompactionIfNeeded(params: {
     await notifyStartCompaction();
     const sessionFile = resolveSessionLogPath(
       entry.sessionId,
-      entry,
+      entry.sessionFile ? entry : { ...entry, sessionFile: params.followupRun.run.sessionFile },
       params.sessionKey ?? params.followupRun.run.sessionKey,
       { storePath: params.storePath },
     );
-    if (!sessionFile) {
-      await notifyTerminalCompaction("skipped");
-      return entry ?? params.sessionEntry;
-    }
     const result = await deps.compactEmbeddedAgentSession({
       sessionId: entry.sessionId,
       sessionKey: params.sessionKey,
       sandboxSessionKey: params.runtimePolicySessionKey,
       allowGatewaySubagentBinding: true,
       messageChannel: params.followupRun.run.messageProvider,
-      clientCaps: params.followupRun.run.clientCaps,
       groupId: entry.groupId ?? params.followupRun.run.groupId,
       groupChannel: entry.groupChannel ?? params.followupRun.run.groupChannel,
       groupSpace: entry.space ?? params.followupRun.run.groupSpace,
@@ -973,7 +917,7 @@ export async function runPreflightCompactionIfNeeded(params: {
       senderName: params.followupRun.run.senderName,
       senderUsername: params.followupRun.run.senderUsername,
       senderE164: params.followupRun.run.senderE164,
-      sessionFile,
+      sessionFile: sessionFile ?? params.followupRun.run.sessionFile,
       workspaceDir: params.followupRun.run.workspaceDir,
       cwd: params.followupRun.run.cwd,
       agentDir: params.followupRun.run.agentDir,
@@ -982,14 +926,8 @@ export async function runPreflightCompactionIfNeeded(params: {
       provider: params.followupRun.run.provider,
       model: params.followupRun.run.model,
       authProfileId: params.followupRun.run.authProfileId,
-      authProfileIdSource: params.followupRun.run.authProfileIdSource,
       agentHarnessId:
-        entry.sessionId === params.followupRun.run.sessionId
-          ? entry.modelSelectionLocked === true
-            ? resolvePersistedSessionRuntimeId(entry)
-            : entry.agentHarnessId
-          : undefined,
-      modelSelectionLocked: entry.modelSelectionLocked === true,
+        entry.sessionId === params.followupRun.run.sessionId ? entry.agentHarnessId : undefined,
       thinkLevel: params.followupRun.run.thinkLevel,
       bashElevated: params.followupRun.run.bashElevated,
       trigger: "budget",
@@ -1070,14 +1008,7 @@ export async function runPreflightCompactionIfNeeded(params: {
   }
 }
 
-type MemoryFlushOutcome = "skipped" | "completed" | "failed" | "exhausted";
-
-type MemoryFlushResult = {
-  sessionEntry?: SessionEntry;
-  outcome: MemoryFlushOutcome;
-};
-
-/** Runs pre-compaction memory flush when transcript state warrants it. */
+/** Runs post-turn memory flush when transcript state warrants it. */
 export async function runMemoryFlushIfNeeded(params: {
   cfg: OpenClawConfig;
   followupRun: FollowupRun;
@@ -1095,10 +1026,10 @@ export async function runMemoryFlushIfNeeded(params: {
   isHeartbeat: boolean;
   replyOperation: ReplyOperation;
   onVisibleErrorPayloads?: (payloads: ReplyPayload[]) => void;
-}): Promise<MemoryFlushResult> {
+}): Promise<SessionEntry | undefined> {
   const memoryFlushPlan = resolveMemoryFlushPlan({ cfg: params.cfg });
   if (!memoryFlushPlan) {
-    return { sessionEntry: params.sessionEntry, outcome: "skipped" };
+    return params.sessionEntry;
   }
 
   const memoryFlushWritable = (() => {
@@ -1219,17 +1150,13 @@ export async function runMemoryFlushIfNeeded(params: {
     }
     if (params.storePath && params.sessionKey) {
       try {
-        const updatedEntry = await updateSessionEntry(
-          {
-            storePath: params.storePath,
-            sessionKey: params.sessionKey,
-          },
-          () => ({ totalTokens: transcriptPromptTokens, totalTokensFresh: true }),
-          {
-            skipMaintenance: true,
-            takeCacheOwnership: true,
-          },
-        );
+        const updatedEntry = await applySessionStoreEntryPatch({
+          storePath: params.storePath,
+          sessionKey: params.sessionKey,
+          skipMaintenance: true,
+          takeCacheOwnership: true,
+          patch: { totalTokens: transcriptPromptTokens, totalTokensFresh: true },
+        });
         if (updatedEntry) {
           entry = updatedEntry;
           if (params.sessionStore) {
@@ -1293,7 +1220,7 @@ export async function runMemoryFlushIfNeeded(params: {
       !hasAlreadyFlushedForCurrentCompaction(entry));
 
   if (!shouldFlushMemory) {
-    return { sessionEntry: entry ?? params.sessionEntry, outcome: "skipped" };
+    return entry ?? params.sessionEntry;
   }
 
   logVerbose(
@@ -1316,8 +1243,6 @@ export async function runMemoryFlushIfNeeded(params: {
     });
   }
   let memoryCompactionCompleted = false;
-  let outcome: MemoryFlushOutcome = "completed";
-  let visibleErrorPayloads: ReplyPayload[] = [];
   const memoryFlushNowMs = memoryDeps.now();
   const activeMemoryFlushPlan =
     resolveMemoryFlushPlan({
@@ -1338,78 +1263,49 @@ export async function runMemoryFlushIfNeeded(params: {
   let postCompactionSessionId: string | undefined;
   let postCompactionSessionFile: string | undefined;
   try {
-    const selection = resolveMemoryFlushModelFallbackOptions(
-      params.followupRun.run,
-      activeMemoryFlushPlan.model,
-      params.cfg,
-    );
-    await memoryDeps.runEmbeddedAgentEntry({
-      selection: {
-        cfg: selection.cfg,
-        provider: selection.provider,
-        model: selection.model,
-        agentDir: selection.agentDir,
-        fallbacksOverride: selection.fallbacksOverride,
-      },
-      identity: {
-        runId: flushRunId,
-        agentId: params.followupRun.run.agentId,
-        sessionId: activeSessionEntry?.sessionId ?? params.followupRun.run.sessionId,
-        sessionKey: selection.sessionKey,
-        lane: CommandLane.Main,
-      },
-      harness: {
-        workspaceDir: params.followupRun.run.workspaceDir,
-        sessionKey:
-          params.runtimePolicySessionKey ??
-          params.followupRun.run.runtimePolicySessionKey ??
-          params.sessionKey,
-        preparation: { kind: "direct" },
-        resolveRuntimeOverride: (provider) =>
-          resolveSessionRuntimeOverrideForProvider({
-            provider,
-            entry: activeSessionEntry,
-            cfg: params.cfg,
-          }),
-      },
-      behavior: { kind: "maintenance" },
-      sessionOverride: { kind: "preserve" },
+    await memoryDeps.runWithModelFallback({
+      ...resolveMemoryFlushModelFallbackOptions(
+        params.followupRun.run,
+        activeMemoryFlushPlan.model,
+        params.cfg,
+      ),
+      runId: flushRunId,
+      sessionId: activeSessionEntry?.sessionId ?? params.followupRun.run.sessionId,
+      lane: CommandLane.Main,
       abortSignal: params.replyOperation.abortSignal,
-      runCandidate: async (provider, model, runOptions) => {
-        const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
+      resolveAgentHarnessRuntimeOverride: (provider) =>
+        resolveMemoryFlushRuntimeOverrideForProvider({
           provider,
           entry: activeSessionEntry,
-          cfg: params.cfg,
-        });
-        const candidateThinkLevel = resolveCandidateThinkingLevel({
-          cfg: params.cfg,
+        }),
+      prepareAgentHarnessRuntime: async ({ provider, model, agentHarnessRuntimeOverride }) => {
+        await memoryDeps.ensureSelectedAgentHarnessPlugin({
+          config: params.cfg,
           provider,
           modelId: model,
-          level: params.followupRun.run.thinkLevel,
           agentId: params.followupRun.run.agentId,
           sessionKey:
             params.runtimePolicySessionKey ??
             params.followupRun.run.runtimePolicySessionKey ??
             params.sessionKey,
-          sessionEntry: activeSessionEntry,
-          agentRuntime: sessionRuntimeOverride,
+          agentHarnessRuntimeOverride,
+          workspaceDir: params.followupRun.run.workspaceDir,
         });
+      },
+      run: async (provider, model, runOptions) => {
         const { embeddedContext, senderContext, runBaseParams } = buildEmbeddedRunExecutionParams({
-          run: { ...params.followupRun.run, thinkLevel: candidateThinkLevel },
-          replyRoute: params.followupRun,
+          run: params.followupRun.run,
           sessionCtx: params.sessionCtx,
           hasRepliedRef: params.opts?.hasRepliedRef,
           provider,
           model,
           runId: flushRunId,
-          allowTransientCooldownProbe: runOptions.allowTransientCooldownProbe,
+          allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
         });
         const result = await memoryDeps.runEmbeddedAgent({
           ...embeddedContext,
           ...senderContext,
           ...runBaseParams,
-          agentHarnessId: sessionRuntimeOverride,
-          agentHarnessRuntimeOverride: sessionRuntimeOverride,
           sandboxSessionKey: params.runtimePolicySessionKey,
           allowGatewaySubagentBinding: true,
           silentExpected: true,
@@ -1418,7 +1314,6 @@ export async function runMemoryFlushIfNeeded(params: {
           prompt: activeMemoryFlushPlan.prompt,
           transcriptPrompt: "",
           extraSystemPrompt: flushSystemPrompt,
-          isFinalFallbackAttempt: runOptions.isFinalFallbackAttempt,
           bootstrapPromptWarningSignaturesSeen,
           bootstrapPromptWarningSignature:
             bootstrapPromptWarningSignaturesSeen[bootstrapPromptWarningSignaturesSeen.length - 1],
@@ -1433,7 +1328,10 @@ export async function runMemoryFlushIfNeeded(params: {
             }
           },
         });
-        visibleErrorPayloads = resolveVisibleMemoryFlushErrorPayloads(result.payloads);
+        const visibleErrorPayloads = resolveVisibleMemoryFlushErrorPayloads(result.payloads);
+        if (visibleErrorPayloads.length > 0) {
+          params.onVisibleErrorPayloads?.(visibleErrorPayloads);
+        }
         if (result.meta?.agentMeta?.sessionId) {
           postCompactionSessionId = result.meta.agentMeta.sessionId;
         }
@@ -1480,14 +1378,9 @@ export async function runMemoryFlushIfNeeded(params: {
         }
       }
     }
-    if (visibleErrorPayloads.length > 0) {
-      // Preserve any completed transcript rotation, then count the maintenance error.
-      // Do not stamp memory-flush success for a resolved run that returned an error.
-      throw buildVisibleMemoryFlushFailure(visibleErrorPayloads);
-    }
     if (params.storePath && params.sessionKey) {
       try {
-        const updatedEntry = await memoryDeps.updateSessionEntry({
+        const updatedEntry = await memoryDeps.updateSessionStoreEntry({
           storePath: params.storePath,
           sessionKey: params.sessionKey,
           skipMaintenance: true,
@@ -1513,12 +1406,11 @@ export async function runMemoryFlushIfNeeded(params: {
       }
     }
   } catch (err) {
-    outcome = "failed";
     const truncatedError = truncateMemoryFlushErrorMessage(err);
     if (!isAbortError(err) && params.storePath && params.sessionKey) {
       try {
         const failedAt = memoryDeps.now();
-        const failedEntry = await memoryDeps.updateSessionEntry({
+        const failedEntry = await memoryDeps.updateSessionStoreEntry({
           storePath: params.storePath,
           sessionKey: params.sessionKey,
           skipMaintenance: true,
@@ -1552,7 +1444,6 @@ export async function runMemoryFlushIfNeeded(params: {
           },
         });
         if (failedEntry && failureCount >= MAX_FLUSH_FAILURES) {
-          outcome = "exhausted";
           logVerbose(
             `memory flush exhausted: skipping flush for this compaction cycle after ${failureCount} consecutive failures`,
           );
@@ -1567,7 +1458,7 @@ export async function runMemoryFlushIfNeeded(params: {
               maxAttempts: MAX_FLUSH_FAILURES,
             },
           });
-          const exhaustedEntry = await memoryDeps.updateSessionEntry({
+          const exhaustedEntry = await memoryDeps.updateSessionStoreEntry({
             storePath: params.storePath,
             sessionKey: params.sessionKey,
             skipMaintenance: true,
@@ -1602,6 +1493,5 @@ export async function runMemoryFlushIfNeeded(params: {
     }
   }
 
-  return { sessionEntry: activeSessionEntry, outcome };
+  return activeSessionEntry;
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

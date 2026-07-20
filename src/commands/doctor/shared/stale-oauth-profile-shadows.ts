@@ -1,7 +1,6 @@
 // Doctor cleanup for per-agent OAuth profiles shadowing fresher main-agent credentials.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   resolveAgentDir,
@@ -217,9 +216,7 @@ function removeStaleProfilesFromStore(params: {
 }
 
 function formatProfileList(profileIds: string[]): string {
-  return profileIds.length === 1
-    ? expectDefined(profileIds[0], "profile ids entry at 0")
-    : `${profileIds.length} profiles`;
+  return profileIds.length === 1 ? profileIds[0] : `${profileIds.length} profiles`;
 }
 
 async function repairStaleOAuthProfilesForAgent(params: {
@@ -327,13 +324,9 @@ export async function repairStaleOAuthProfileShadows(params: {
   return { changes, warnings };
 }
 
-const testing = {
+export const testing = {
   removeStaleProfilesFromStore,
   repairStaleOAuthProfilesForAgent,
+  shouldRemoveLocalOAuthShadow,
 };
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for("openclaw.staleOAuthProfileShadowsTestApi")
-  ] = testing;
-}
+export { testing as __testing };

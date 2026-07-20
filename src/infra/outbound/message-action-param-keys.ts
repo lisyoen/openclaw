@@ -4,7 +4,6 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 
 const STANDARD_MESSAGE_ACTION_PARAM_KEYS = new Set([
   "accountId",
-  "action",
   "asDocument",
   "attachments",
   "base64",
@@ -21,12 +20,8 @@ const STANDARD_MESSAGE_ACTION_PARAM_KEYS = new Set([
   "filename",
   "forceDocument",
   "gifPlayback",
-  "gatewayToken",
-  "gatewayUrl",
   "image",
-  "idempotencyKey",
   "interactive",
-  "json",
   "media",
   "mediaUrl",
   "mediaUrls",
@@ -44,12 +39,10 @@ const STANDARD_MESSAGE_ACTION_PARAM_KEYS = new Set([
   "presentation",
   "replyTo",
   "silent",
-  "senderIsOwner",
   "target",
   "targets",
   "text",
   "threadId",
-  "timeoutMs",
   "topLevel",
   "to",
 ]);

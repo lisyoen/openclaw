@@ -114,22 +114,14 @@ describe("updateNpmInstalledHookPacks", () => {
       },
     });
 
-    const config = createHookInstallConfig({
-      hookId: "demo-hooks",
-      spec: "@openclaw/demo-hooks",
-    });
     const result = await updateNpmInstalledHookPacks({
-      config,
+      config: createHookInstallConfig({
+        hookId: "demo-hooks",
+        spec: "@openclaw/demo-hooks",
+      }),
       hookIds: ["demo-hooks"],
     });
 
-    expect(installHooksFromNpmSpecMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        config,
-        expectedHookPackId: "demo-hooks",
-        mode: "update",
-      }),
-    );
     expect(result.changed).toBe(true);
     expect(result.config.hooks?.internal?.installs?.["demo-hooks"]).toEqual({
       source: "npm",

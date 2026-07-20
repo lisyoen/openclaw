@@ -6,11 +6,7 @@ import {
   type MusicGenerationRequest,
 } from "openclaw/plugin-sdk/music-generation";
 import { isProviderApiKeyConfigured } from "openclaw/plugin-sdk/provider-auth";
-import {
-  assertOkOrThrowHttpError,
-  postJsonRequest,
-  readProviderJsonResponse,
-} from "openclaw/plugin-sdk/provider-http";
+import { assertOkOrThrowHttpError, postJsonRequest } from "openclaw/plugin-sdk/provider-http";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveFalHttpRequestConfig } from "./http-config.js";
 
@@ -165,7 +161,7 @@ export function buildFalMusicGenerationProvider(): MusicGenerationProvider {
 
       try {
         await assertOkOrThrowHttpError(response, "fal music generation failed");
-        const payload = await readProviderJsonResponse<unknown>(response, "fal music generation");
+        const payload = await response.json();
         const [candidate] = extractGeneratedMusicFileCandidates(payload);
         if (!candidate) {
           throw new Error("fal music generation response missing audio output");

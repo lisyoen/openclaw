@@ -8,7 +8,6 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type {
   GeneratedVideoAsset as CoreGeneratedVideoAsset,
   VideoGenerationAssetRole as CoreVideoGenerationAssetRole,
-  VideoGenerationCatalogModelEntry as CoreVideoGenerationCatalogModelEntry,
   VideoGenerationMode as CoreVideoGenerationMode,
   VideoGenerationModeCapabilities as CoreVideoGenerationModeCapabilities,
   VideoGenerationModelCapabilitiesContext as CoreVideoGenerationModelCapabilitiesContext,
@@ -172,12 +171,6 @@ export type VideoGenerationProviderCapabilities = VideoGenerationModeCapabilitie
   videoToVideo?: VideoGenerationTransformCapabilities;
 };
 
-/** Static catalog metadata that overrides provider defaults for one video model. */
-export type VideoGenerationCatalogModelEntry = {
-  capabilities?: VideoGenerationProviderCapabilities;
-  modes?: readonly VideoGenerationMode[];
-};
-
 /** Video generation provider contract implemented by provider plugins. */
 export type VideoGenerationProvider = {
   id: string;
@@ -188,7 +181,6 @@ export type VideoGenerationProvider = {
   defaultTimeoutMs?: number;
   models?: string[];
   capabilities: VideoGenerationProviderCapabilities;
-  catalogByModel?: Readonly<Record<string, VideoGenerationCatalogModelEntry>>;
   isConfigured?: (ctx: VideoGenerationProviderConfiguredContext) => boolean;
   resolveModelCapabilities?: (
     ctx: VideoGenerationModelCapabilitiesContext,
@@ -209,8 +201,6 @@ const videoGenerationSdkCompat: [
   AssertAssignable<CoreVideoGenerationProviderOptionType, VideoGenerationProviderOptionType>,
   AssertAssignable<VideoGenerationMode, CoreVideoGenerationMode>,
   AssertAssignable<CoreVideoGenerationMode, VideoGenerationMode>,
-  AssertAssignable<VideoGenerationCatalogModelEntry, CoreVideoGenerationCatalogModelEntry>,
-  AssertAssignable<CoreVideoGenerationCatalogModelEntry, VideoGenerationCatalogModelEntry>,
   AssertAssignable<VideoGenerationModeCapabilities, CoreVideoGenerationModeCapabilities>,
   AssertAssignable<CoreVideoGenerationModeCapabilities, VideoGenerationModeCapabilities>,
   AssertAssignable<VideoGenerationProvider, CoreVideoGenerationProvider>,

@@ -10,11 +10,10 @@ import {
   type DiagnosticExecProcessCompletedEvent,
   type DiagnosticEventPayload,
 } from "../infra/diagnostic-events.js";
-import type { ManagedRun } from "../process/supervisor/index.js";
-import type { SpawnInput } from "../process/supervisor/types.js";
+import type { ManagedRun, SpawnInput } from "../process/supervisor/index.js";
 
 let listRunningSessions: typeof import("./bash-process-registry.js").listRunningSessions;
-let resetProcessRegistryForTests: typeof import("./bash-process-registry.test-support.js").resetProcessRegistryForTests;
+let resetProcessRegistryForTests: typeof import("./bash-process-registry.js").resetProcessRegistryForTests;
 let runExecProcess: typeof import("./bash-tools.exec-runtime.js").runExecProcess;
 
 const { supervisorSpawnMock } = vi.hoisted(() => ({
@@ -26,6 +25,7 @@ vi.mock("../process/supervisor/index.js", () => ({
     spawn: supervisorSpawnMock,
     cancel: vi.fn(),
     cancelScope: vi.fn(),
+    reconcileOrphans: vi.fn(),
     getRecord: vi.fn(),
   }),
 }));
@@ -56,8 +56,8 @@ function createSuccessfulRun(input: SpawnInput): ManagedRun {
 }
 
 beforeAll(async () => {
-  ({ listRunningSessions } = await import("./bash-process-registry.js"));
-  ({ resetProcessRegistryForTests } = await import("./bash-process-registry.test-support.js"));
+  ({ listRunningSessions, resetProcessRegistryForTests } =
+    await import("./bash-process-registry.js"));
   ({ runExecProcess } = await import("./bash-tools.exec-runtime.js"));
 });
 

@@ -227,7 +227,7 @@ function createVideoGenerateToolSchema(params: { includeAudioReferences: boolean
   return Type.Object(properties);
 }
 
-function resolveVideoGenerationModelConfigForTool(params: {
+export function resolveVideoGenerationModelConfigForTool(params: {
   cfg?: OpenClawConfig;
   workspaceDir?: string;
   agentDir?: string;
@@ -241,12 +241,6 @@ function resolveVideoGenerationModelConfigForTool(params: {
     modelConfig: params.cfg?.agents?.defaults?.videoGenerationModel,
     providers: () => listRuntimeVideoGenerationProviders({ config: params.cfg }),
   });
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.videoGenerateToolTestApi")] = {
-    resolveVideoGenerationModelConfigForTool,
-  };
 }
 
 function hasExplicitVideoGenerationModelConfig(cfg?: OpenClawConfig): boolean {
@@ -276,7 +270,6 @@ function collectVideoGenerationModelProviderIds(params: {
 function isVideoGenerationProviderConfigured(params: {
   snapshot: Pick<PluginMetadataSnapshot, "index" | "plugins">;
   cfg: OpenClawConfig;
-  workspaceDir?: string;
   agentDir?: string;
   authStore?: AuthProfileStore;
   providerId: string;
@@ -292,8 +285,6 @@ function isVideoGenerationProviderConfigured(params: {
     }) ||
     hasAuthForProvider({
       provider: params.providerId,
-      cfg: params.cfg,
-      workspaceDir: params.workspaceDir,
       agentDir: params.agentDir,
       authStore: params.authStore,
     })
@@ -356,7 +347,6 @@ function shouldExposeVideoReferenceAudioParams(params: {
       isVideoGenerationProviderConfigured({
         snapshot,
         cfg: params.cfg,
-        workspaceDir: params.workspaceDir,
         agentDir: params.agentDir,
         authStore: params.authStore,
         providerId,
@@ -980,7 +970,7 @@ export function createVideoGenerateTool(options?: {
     name: "video_generate",
     displaySummary: "Generate videos",
     description:
-      "Create video. Session chat background: call once/request, await, then visible reply + structured media. status checks active task. Duration may round to provider value.",
+      'Create videos. Session chats: background task; do not call video_generate again for same request; wait completion, then report through the current visible-reply contract with generated media attached using structured media fields. "status" checks active task. Duration may round to provider-supported value.',
     parameters: createVideoGenerateToolSchema({ includeAudioReferences }),
     execute: async (_toolCallId, rawArgs) => {
       const args = rawArgs as Record<string, unknown>;
@@ -1015,7 +1005,6 @@ export function createVideoGenerateTool(options?: {
 
       const activeDuplicateGuardResult = createVideoGenerateDuplicateGuardResult(
         options?.agentSessionKey,
-        { prompt },
       );
       if (activeDuplicateGuardResult) {
         return activeDuplicateGuardResult;
@@ -1124,7 +1113,7 @@ export function createVideoGenerateTool(options?: {
       });
       const duplicateGuardResult = createVideoGenerateDuplicateGuardResult(
         options?.agentSessionKey,
-        { prompt, requestKey },
+        { requestKey },
       );
       if (duplicateGuardResult) {
         return duplicateGuardResult;
@@ -1139,9 +1128,8 @@ export function createVideoGenerateTool(options?: {
       // Attach roles to the loaded image assets (positional, by index into images[]).
       for (let i = 0; i < loadedReferenceImages.length; i++) {
         const role = imageRoles[i];
-        const asset = loadedReferenceImages.at(i);
-        if (role && asset) {
-          asset.sourceAsset.role = role;
+        if (role) {
+          loadedReferenceImages[i].sourceAsset.role = role;
         }
       }
       const loadedReferenceVideos = await loadReferenceAssets({
@@ -1153,9 +1141,8 @@ export function createVideoGenerateTool(options?: {
       });
       for (let i = 0; i < loadedReferenceVideos.length; i++) {
         const role = videoRoles[i];
-        const asset = loadedReferenceVideos.at(i);
-        if (role && asset) {
-          asset.sourceAsset.role = role;
+        if (role) {
+          loadedReferenceVideos[i].sourceAsset.role = role;
         }
       }
       const loadedReferenceAudios = await loadReferenceAssets({
@@ -1167,9 +1154,8 @@ export function createVideoGenerateTool(options?: {
       });
       for (let i = 0; i < loadedReferenceAudios.length; i++) {
         const role = audioRoles[i];
-        const asset = loadedReferenceAudios.at(i);
-        if (role && asset) {
-          asset.sourceAsset.role = role;
+        if (role) {
+          loadedReferenceAudios[i].sourceAsset.role = role;
         }
       }
       validateVideoGenerationCapabilities({
@@ -1322,4 +1308,3 @@ export function createVideoGenerateTool(options?: {
     },
   };
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

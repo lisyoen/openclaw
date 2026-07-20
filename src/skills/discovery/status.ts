@@ -16,14 +16,12 @@ import { resolveBundledSkillsContext } from "../loading/bundled-context.js";
 import {
   hasBinary,
   isBundledSkillAllowed,
-  isSkillEnvRequirementSatisfied,
-  isSkillConfigPathTruthy,
+  isConfigPathTruthy,
   resolveBundledAllowlist,
   resolveSkillConfig,
   resolveSkillsInstallPreferences,
 } from "../loading/config.js";
 import { loadWorkspaceSkillEntries } from "../loading/workspace.js";
-import { mergeRemoteNodeSkillEntries } from "../runtime/remote-skills.js";
 import type {
   SkillEntry,
   SkillEligibilityContext,
@@ -37,7 +35,9 @@ import {
   type SkillIndexEntry,
 } from "./skill-index.js";
 
-type SkillInstallOption = {
+export type SkillStatusConfigCheck = RequirementConfigCheck;
+
+export type SkillInstallOption = {
   id: string;
   kind: SkillInstallSpec["kind"];
   label: string;
@@ -60,19 +60,12 @@ export type SkillStatusEntry = {
   blockedByAllowlist: boolean;
   blockedByAgentFilter: boolean;
   eligible: boolean;
-  /**
-   * True when the skill declares an OS requirement that does not include the
-   * current platform (e.g. a macOS-only skill on Linux/Windows). Such skills are
-   * inapplicable by design rather than broken installs, so callers can surface
-   * them separately from genuine "missing requirements".
-   */
-  platformIncompatible: boolean;
   modelVisible: boolean;
   userInvocable: boolean;
   commandVisible: boolean;
   requirements: Requirements;
   missing: Requirements;
-  configChecks: RequirementConfigCheck[];
+  configChecks: SkillStatusConfigCheck[];
   install: SkillInstallOption[];
   clawhub?: ClawHubSkillStatusLink;
   skillCard?: LocalSkillCardStatus;
@@ -253,8 +246,6 @@ type BuildSkillStatusContext = {
   agentSkillFilter?: string[];
   workspaceDir: string;
   clawhubLockRead: ClawHubSkillsLockfileStatusRead;
-  managedSkillsDir: string;
-  managedLockRead: ClawHubSkillsLockfileStatusRead;
 };
 
 function buildSkillStatus(
@@ -270,12 +261,12 @@ function buildSkillStatus(
   const blockedByAgentFilter = agentSkillFilter !== undefined && !indexed.agentAllowed;
   const always = entry.metadata?.always === true;
   const isEnvSatisfied = (envName: string) =>
-    isSkillEnvRequirementSatisfied({
-      envName,
-      skillConfig,
-      primaryEnv: entry.metadata?.primaryEnv,
-    });
-  const isConfigSatisfied = (pathStr: string) => isSkillConfigPathTruthy(config, pathStr);
+    Boolean(
+      process.env[envName] ||
+      skillConfig?.env?.[envName] ||
+      (skillConfig?.apiKey && entry.metadata?.primaryEnv === envName),
+    );
+  const isConfigSatisfied = (pathStr: string) => isConfigPathTruthy(config, pathStr);
   const skillSource = indexed.source;
   const bundled = indexed.bundled;
 
@@ -289,26 +280,16 @@ function buildSkillStatus(
       isConfigSatisfied,
     });
   const eligible = !disabled && !blockedByAllowlist && requirementsSatisfied;
-  // Resolve platform incompatibility through the shared requirement evaluator's
-  // `missing.os` (which already accounts for remote macOS node eligibility)
-  // rather than a local-only process.platform check, so a macOS-only skill a
-  // remote node can satisfy is not flagged incompatible.
-  const platformIncompatible = missing.os.length > 0;
   const availableToAgent = eligible && !blockedByAgentFilter;
   const userInvocable = indexed.userInvocable;
 
-  // Source ownership survives canonicalization of symlinked managed installs.
-  const isGlobalManagedSkill = !bundled && skillSource === "openclaw-managed";
   const clawhub =
     workspaceDir && !bundled
       ? resolveClawHubSkillStatusLinkSync({
-          workspaceDir: isGlobalManagedSkill
-            ? path.dirname(path.resolve(context.managedSkillsDir))
-            : workspaceDir,
+          workspaceDir,
           skillDir: entry.skill.baseDir,
           skillKey,
-          lockRead: isGlobalManagedSkill ? context.managedLockRead : context.clawhubLockRead,
-          lockfileScope: isGlobalManagedSkill ? "managed" : "workspace",
+          lockRead: context.clawhubLockRead,
         })
       : undefined;
   const skillCard = resolveLocalSkillCardStatusSync(entry.skill.baseDir);
@@ -329,7 +310,6 @@ function buildSkillStatus(
     blockedByAllowlist,
     blockedByAgentFilter,
     eligible,
-    platformIncompatible,
     modelVisible: availableToAgent && indexed.promptVisible,
     userInvocable,
     commandVisible: availableToAgent && userInvocable,
@@ -357,30 +337,16 @@ export function buildWorkspaceSkillStatus(
   const agentSkillFilter = opts?.agentId
     ? resolveEffectiveAgentSkillFilter(opts.config, opts.agentId)
     : undefined;
-  // Status reports every skill (disabled/ineligible included) with flags, so
-  // the loader must stay unfiltered; node-hosted skills merge in separately.
-  const skillEntries = mergeRemoteNodeSkillEntries(
+  const skillEntries =
     opts?.entries ??
-      loadWorkspaceSkillEntries(workspaceDir, {
-        config: opts?.config,
-        managedSkillsDir,
-        bundledSkillsDir: bundledContext.dir,
-        includeArchived: true,
-      }),
-    {
-      canExec: opts?.eligibility?.nodeSkills?.canExec,
-      node: opts?.eligibility?.nodeSkills?.node,
-    },
-  );
+    loadWorkspaceSkillEntries(workspaceDir, {
+      config: opts?.config,
+      managedSkillsDir,
+      bundledSkillsDir: bundledContext.dir,
+    });
   const prefs = resolveSkillsInstallPreferences(opts?.config);
   const allowBundled = resolveBundledAllowlist(opts?.config);
   const clawhubLockRead = readClawHubSkillsLockfileStatusSync(workspaceDir);
-  // Global installs are tracked beside managedSkillsDir, never by fallback.
-  const managedParentDir = path.dirname(path.resolve(managedSkillsDir));
-  const managedLockRead =
-    managedParentDir === path.resolve(workspaceDir)
-      ? clawhubLockRead
-      : readClawHubSkillsLockfileStatusSync(managedParentDir);
   const skillIndexEntries = buildSkillIndexEntries(skillEntries, {
     bundledNames: bundledContext.names,
     agentSkillFilter,
@@ -399,8 +365,6 @@ export function buildWorkspaceSkillStatus(
         agentSkillFilter,
         workspaceDir,
         clawhubLockRead,
-        managedSkillsDir,
-        managedLockRead,
       }),
     ),
   };

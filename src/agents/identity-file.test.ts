@@ -2,33 +2,11 @@
  * Regression coverage for IDENTITY.md parsing and merging.
  * Ensures placeholders are ignored and rich identity fields stay stable.
  */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  loadAgentIdentityFromFile,
-  loadAgentIdentityFromWorkspace,
-  mergeIdentityMarkdownContent,
-} from "./identity-file.js";
-
-const TEST_MAX_IDENTITY_FILE_BYTES = 4 * 1024 * 1024;
-
-async function parseIdentityFromContent(
-  content: string,
-): Promise<import("./identity-file.js").AgentIdentityFile | null> {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-identity-parse-"));
-  const filePath = path.join(tempDir, "IDENTITY.md");
-  fs.writeFileSync(filePath, content, "utf-8");
-  try {
-    return await loadAgentIdentityFromFile(filePath);
-  } finally {
-    fs.rmSync(tempDir, { force: true, recursive: true });
-  }
-}
+import { describe, expect, it } from "vitest";
+import { mergeIdentityMarkdownContent, parseIdentityMarkdown } from "./identity-file.js";
 
 describe("parseIdentityMarkdown", () => {
-  it("ignores identity template placeholders", async () => {
+  it("ignores identity template placeholders", () => {
     const content = `
 # IDENTITY.md - Who Am I?
 
@@ -38,11 +16,11 @@ describe("parseIdentityMarkdown", () => {
 - **Emoji:** *(your signature - pick one that feels right)*
 - **Avatar:** *(workspace-relative path, http(s) URL, or data URI)*
     `;
-    const parsed = await parseIdentityFromContent(content);
-    expect(parsed).toBeNull();
+    const parsed = parseIdentityMarkdown(content);
+    expect(parsed).toStrictEqual({});
   });
 
-  it("parses explicit identity values", async () => {
+  it("parses explicit identity values", () => {
     const content = `
 - **Name:** Samantha
 - **Creature:** Robot
@@ -50,7 +28,7 @@ describe("parseIdentityMarkdown", () => {
 - **Emoji:** :robot:
 - **Avatar:** avatars/openclaw.png
 `;
-    const parsed = await parseIdentityFromContent(content);
+    const parsed = parseIdentityMarkdown(content);
     expect(parsed).toEqual({
       name: "Samantha",
       creature: "Robot",
@@ -60,13 +38,13 @@ describe("parseIdentityMarkdown", () => {
     });
   });
 
-  it("strips markdown code spans from values and labels", async () => {
+  it("strips markdown code spans from values and labels", () => {
     const content = [
       "- **Name:** `Samantha`",
       "- `Creature`: Robot",
       "- **`Avatar`**: `avatars/openclaw.png`",
     ].join("\n");
-    const parsed = await parseIdentityFromContent(content);
+    const parsed = parseIdentityMarkdown(content);
     expect(parsed).toEqual({
       name: "Samantha",
       creature: "Robot",
@@ -74,15 +52,10 @@ describe("parseIdentityMarkdown", () => {
     });
   });
 
-  it("still treats code-span-wrapped template placeholders as placeholders", async () => {
+  it("still treats code-span-wrapped template placeholders as placeholders", () => {
     const content = "- **Avatar:** `(workspace-relative path, http(s) URL, or data URI)`";
-    const parsed = await parseIdentityFromContent(content);
-    expect(parsed).toBeNull();
-  });
-
-  it("ignores an italic not-set placeholder", async () => {
-    const parsed = await parseIdentityFromContent("- **Avatar:** *(not set yet)*");
-    expect(parsed).toBeNull();
+    const parsed = parseIdentityMarkdown(content);
+    expect(parsed).toStrictEqual({});
   });
 });
 
@@ -137,71 +110,5 @@ Fluent in over six million error messages.
     });
 
     expect(merged).toBe("- Name: New Name\n");
-  });
-});
-
-describe("loadAgentIdentityFromWorkspace", () => {
-  let tempDir: string;
-
-  beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-identity-"));
-  });
-
-  afterEach(() => {
-    fs.rmSync(tempDir, { force: true, recursive: true });
-  });
-
-  it("loads identity values from IDENTITY.md", () => {
-    fs.writeFileSync(
-      path.join(tempDir, "IDENTITY.md"),
-      ["- **Name:** Test Agent", "- **Emoji:** 🤖"].join("\n"),
-      "utf-8",
-    );
-
-    expect(loadAgentIdentityFromWorkspace(tempDir)).toEqual({
-      name: "Test Agent",
-      emoji: "🤖",
-    });
-  });
-
-  it("loads identity values from a symlinked IDENTITY.md", () => {
-    if (process.platform === "win32") {
-      return;
-    }
-    const targetPath = path.join(tempDir, "REAL_IDENTITY.md");
-    fs.writeFileSync(targetPath, "- **Name:** Linked Agent", "utf-8");
-    fs.symlinkSync(targetPath, path.join(tempDir, "IDENTITY.md"));
-
-    expect(loadAgentIdentityFromWorkspace(tempDir)).toEqual({ name: "Linked Agent" });
-  });
-
-  it("loads an explicit identity file through a symlink", async () => {
-    if (process.platform === "win32") {
-      return;
-    }
-    const targetPath = path.join(tempDir, "REAL_IDENTITY.md");
-    const identityPath = path.join(tempDir, "identity-link.md");
-    fs.writeFileSync(targetPath, "- **Name:** Linked Agent", "utf-8");
-    fs.symlinkSync(targetPath, identityPath);
-
-    await expect(loadAgentIdentityFromFile(identityPath)).resolves.toEqual({
-      name: "Linked Agent",
-    });
-  });
-
-  it("does not infer an overflow from a missing path containing exceeds", async () => {
-    const identityPath = path.join(tempDir, "identity-exceeds-limit.md");
-
-    await expect(loadAgentIdentityFromFile(identityPath)).resolves.toBeNull();
-  });
-
-  it("returns null when IDENTITY.md exceeds the size cap", () => {
-    fs.writeFileSync(
-      path.join(tempDir, "IDENTITY.md"),
-      "x".repeat(TEST_MAX_IDENTITY_FILE_BYTES + 1),
-      "utf-8",
-    );
-
-    expect(loadAgentIdentityFromWorkspace(tempDir)).toBeNull();
   });
 });

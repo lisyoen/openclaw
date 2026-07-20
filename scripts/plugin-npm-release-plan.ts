@@ -2,15 +2,13 @@
 // Plugin Npm Release Plan script supports OpenClaw repository automation.
 
 import { pathToFileURL } from "node:url";
-import { collectPluginReleasePlan, parsePluginNpmReleaseArgs } from "./lib/plugin-npm-release.ts";
+import { collectPluginReleasePlan, parsePluginReleaseArgs } from "./lib/plugin-npm-release.ts";
 
-function collectPluginNpmReleasePlan(argv: string[]) {
-  const { selection, selectionMode, npmDistTag, baseRef, headRef } =
-    parsePluginNpmReleaseArgs(argv);
+export function collectPluginNpmReleasePlan(argv: string[]) {
+  const { selection, selectionMode, baseRef, headRef } = parsePluginReleaseArgs(argv);
   return collectPluginReleasePlan({
     selection,
     selectionMode,
-    npmDistTag,
     gitRange: baseRef && headRef ? { baseRef, headRef } : undefined,
   });
 }

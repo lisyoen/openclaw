@@ -19,15 +19,6 @@ type RestoreTerminalStateOptions = {
    * Default: false.
    */
   resumeStdinIfPaused?: boolean;
-
-  /**
-   * Stream to write the ANSI reset sequence to.
-   * Callers that emit structured data to stdout should route the reset to
-   * stderr so parseable output stays clean.
-   *
-   * Default: process.stdout.
-   */
-  resetStream?: NodeJS.WriteStream;
 };
 
 function reportRestoreFailure(scope: string, err: unknown, reason?: string): void {
@@ -47,7 +38,6 @@ export function restoreTerminalState(
   // Docker TTY note: resuming stdin can keep a container process alive even
   // after the wizard is "done" (stdin_open: true), making installers appear hung.
   const resumeStdin = options.resumeStdinIfPaused ?? options.resumeStdin ?? false;
-  const resetStream = options.resetStream ?? process.stdout;
   try {
     clearActiveProgressLine();
   } catch (err) {
@@ -70,11 +60,11 @@ export function restoreTerminalState(
     }
   }
 
-  if (resetStream.isTTY) {
+  if (process.stdout.isTTY) {
     try {
-      resetStream.write(RESET_SEQUENCE);
+      process.stdout.write(RESET_SEQUENCE);
     } catch (err) {
-      reportRestoreFailure("terminal reset", err, reason);
+      reportRestoreFailure("stdout reset", err, reason);
     }
   }
 }

@@ -1,29 +1,18 @@
 // Loads state-directory dotenv entries used by config and runtime startup.
 import fs from "node:fs";
 import path from "node:path";
-import { parse as parseDotEnv } from "dotenv";
+import dotenv from "dotenv";
 import {
   isDangerousHostEnvOverrideVarName,
   isDangerousHostEnvVarName,
   normalizeEnvVarKey,
 } from "../infra/host-env-security.js";
-import { readRegularFileSync } from "../infra/regular-file.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
 import { collectConfigServiceEnvVars } from "./config-env-vars.js";
-import { ALLOW_OLDER_BINARY_DESTRUCTIVE_ACTIONS_ENV } from "./future-version-guard.js";
 import { resolveStateDir } from "./paths.js";
 import type { OpenClawConfig } from "./types.js";
 
-/** Maximum bytes to read from the state-directory .env file. */
-const MAX_STATE_DIR_DOTENV_BYTES = 1024 * 1024;
-const log = createSubsystemLogger("config/dotenv");
-
 function isBlockedServiceEnvVar(key: string): boolean {
-  return (
-    key.toUpperCase() === ALLOW_OLDER_BINARY_DESTRUCTIVE_ACTIONS_ENV ||
-    isDangerousHostEnvVarName(key) ||
-    isDangerousHostEnvOverrideVarName(key)
-  );
+  return isDangerousHostEnvVarName(key) || isDangerousHostEnvOverrideVarName(key);
 }
 
 function unwrapMatchingLiteralQuotes(value: string): string {
@@ -65,10 +54,11 @@ type ParsedStateDirDotEnv = {
   skippedShellReferenceKeys: string[];
 };
 
-function parseStateDirDotEnvContent(content: string | Buffer): ParsedStateDirDotEnv {
+function parseStateDirDotEnvContent(content: string): ParsedStateDirDotEnv {
+  const parsed = dotenv.parse(content);
   const entries: Record<string, string> = {};
   const skippedShellReferenceKeys: string[] = [];
-  for (const [rawKey, value] of Object.entries(parseDotEnv(content))) {
+  for (const [rawKey, value] of Object.entries(parsed)) {
     if (!value?.trim()) {
       continue;
     }
@@ -93,6 +83,11 @@ function parseStateDirDotEnvContent(content: string | Buffer): ParsedStateDirDot
   return { entries, skippedShellReferenceKeys };
 }
 
+/** Reads a specific state directory `.env` as managed service env vars. */
+export function readStateDirDotEnvVarsFromStateDir(stateDir: string): Record<string, string> {
+  return readStateDirDotEnvFromStateDir(stateDir).entries;
+}
+
 /**
  * Read and parse the state-dir `.env`, returning both the persisted entries and
  * the keys that were skipped because they held unresolved shell references. The
@@ -102,23 +97,8 @@ function parseStateDirDotEnvContent(content: string | Buffer): ParsedStateDirDot
 export function readStateDirDotEnvFromStateDir(stateDir: string): ParsedStateDirDotEnv {
   const dotEnvPath = path.join(stateDir, ".env");
   try {
-    // Resolve symlinks so a .env file that points to a regular file keeps
-    // working while the bounded read still rejects oversized targets.
-    const resolved = fs.realpathSync(dotEnvPath);
-    const { buffer } = readRegularFileSync({
-      filePath: resolved,
-      maxBytes: MAX_STATE_DIR_DOTENV_BYTES,
-    });
-    return parseStateDirDotEnvContent(buffer);
-  } catch (err) {
-    // Surface oversized files so operators know a configured .env was
-    // skipped — unlike parse or permission errors which mean the file is
-    // genuinely unusable.
-    if (err instanceof Error && err.message.startsWith("File exceeds")) {
-      log.warn(
-        `skipping oversized state-directory .env file (max ${MAX_STATE_DIR_DOTENV_BYTES} bytes): ${dotEnvPath}`,
-      );
-    }
+    return parseStateDirDotEnvContent(fs.readFileSync(dotEnvPath, "utf8"));
+  } catch {
     return { entries: {}, skippedShellReferenceKeys: [] };
   }
 }
@@ -128,13 +108,15 @@ export function readStateDirDotEnvFromStateDir(stateDir: string): ParsedStateDir
  * a filtered record of key-value pairs suitable for a managed service
  * environment source.
  */
-function readStateDirDotEnvVars(env: Record<string, string | undefined>): Record<string, string> {
+export function readStateDirDotEnvVars(
+  env: Record<string, string | undefined>,
+): Record<string, string> {
   const stateDir = resolveStateDir(env as NodeJS.ProcessEnv);
-  return readStateDirDotEnvFromStateDir(stateDir).entries;
+  return readStateDirDotEnvVarsFromStateDir(stateDir);
 }
 
 /** Split view of durable gateway service env sources before precedence is applied. */
-type DurableServiceEnvVarSources = {
+export type DurableServiceEnvVarSources = {
   stateDirDotEnvEnvironment: Record<string, string>;
   configEnvironment: Record<string, string>;
   durableEnvironment: Record<string, string>;

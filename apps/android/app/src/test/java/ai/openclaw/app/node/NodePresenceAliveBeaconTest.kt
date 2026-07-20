@@ -98,19 +98,4 @@ class NodePresenceAliveBeaconTest {
     assertFalse(sanitized.contains("\t"))
     assertEquals(200, sanitized.length)
   }
-
-  @Test
-  fun sanitizeReasonForLog_preservesUtf16BoundariesAtLimit() {
-    val splitPairPrefix = "bad\n${"x".repeat(195)}"
-    assertEquals(
-      "bad ${"x".repeat(195)}",
-      NodePresenceAliveBeacon.sanitizeReasonForLog("$splitPairPrefix😀tail"),
-    )
-
-    val completePairPrefix = "bad\n${"x".repeat(194)}"
-    assertEquals(
-      "bad ${"x".repeat(194)}😀",
-      NodePresenceAliveBeacon.sanitizeReasonForLog("$completePairPrefix😀tail"),
-    )
-  }
 }

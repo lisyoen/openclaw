@@ -1,6 +1,5 @@
 {
   "id": "qianfan",
-  "icon": "https://cdn.simpleicons.org/baidu",
   "activation": {
     "onStartup": false
   },
@@ -61,7 +60,6 @@
       "provider": "qianfan",
       "method": "api-key",
       "choiceId": "qianfan-api-key",
-      "appGuidedSecret": true,
       "choiceLabel": "Qianfan API key",
       "groupId": "qianfan",
       "groupLabel": "Qianfan",

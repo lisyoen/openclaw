@@ -7,7 +7,6 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveEnabledBundledManifestContractPlugins } from "./bundled-manifest-contract-plugins.js";
 import { loadBundledDocumentExtractorEntriesFromDir } from "./document-extractor-public-artifacts.js";
 import type { PluginDocumentExtractorEntry } from "./document-extractor-types.js";
-import { createPluginIdScopeSet } from "./plugin-scope.js";
 
 function compareExtractors(
   left: PluginDocumentExtractorEntry,
@@ -29,7 +28,8 @@ function resolveExplicitAllowedDocumentExtractorPluginIds(params: {
   if (!Array.isArray(allow) || allow.length === 0) {
     return null;
   }
-  const onlyPluginIdSet = createPluginIdScopeSet(params.onlyPluginIds);
+  const onlyPluginIdSet =
+    params.onlyPluginIds && params.onlyPluginIds.length > 0 ? new Set(params.onlyPluginIds) : null;
   const deniedPluginIds = new Set(params.config?.plugins?.deny ?? []);
   const entries = params.config?.plugins?.entries ?? {};
   return sortUniqueStrings(

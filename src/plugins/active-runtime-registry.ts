@@ -1,9 +1,8 @@
 // Stores active runtime plugin registry state and activation metadata.
 import { normalizeSortedUniqueStringEntries } from "@openclaw/normalization-core/string-normalization";
 import { resolveCompatibleRuntimePluginRegistry, type PluginLoadOptions } from "./loader.js";
-import type { PluginRecord, PluginRegistry } from "./registry-types.js";
+import type { PluginRegistry } from "./registry-types.js";
 import {
-  collectLivePluginRegistries,
   getActivePluginChannelRegistry,
   getActivePluginHttpRouteRegistry,
   getActivePluginRegistry,
@@ -14,28 +13,6 @@ export type ActiveRuntimePluginRegistrySurface = "active" | "channel" | "http-ro
 
 export function getActiveRuntimePluginRegistry(): PluginRegistry | null {
   return getActivePluginRegistry();
-}
-
-function isRuntimePluginRecordLoaded(plugin: PluginRecord): boolean {
-  return plugin.status === "loaded" && (plugin.format === "bundle" || plugin.imported !== false);
-}
-
-// Plugin ids confirmed loaded across every live runtime registry surface
-// (active plus any pinned http-route/channel/session-extension registry), via
-// the canonical collectLivePluginRegistries() set. A plugin can stay live via a
-// pinned surface that diverged from the active registry, so reading "loaded"
-// from the active registry alone would mislabel it. No-op when the surfaces are
-// synced to the active registry (the common case).
-export function listLoadedRuntimePluginIdsAcrossSurfaces(): string[] {
-  const loaded: string[] = [];
-  for (const registry of collectLivePluginRegistries()) {
-    for (const plugin of registry.plugins ?? []) {
-      if (isRuntimePluginRecordLoaded(plugin)) {
-        loaded.push(plugin.id);
-      }
-    }
-  }
-  return normalizeSortedUniqueStringEntries(loaded);
 }
 
 function normalizeRequiredPluginIds(ids?: readonly string[]): string[] | undefined {
@@ -55,15 +32,10 @@ export function registryContainsRuntimePluginIds(
   const present = new Set<string>();
   const loaded = new Set<string>();
   const pluginStatusById = new Map<string, string | undefined>();
-  const pluginRuntimeLoadedById = new Map<string, boolean>();
   for (const plugin of registry.plugins ?? []) {
     present.add(plugin.id);
     pluginStatusById.set(plugin.id, plugin.status);
-    pluginRuntimeLoadedById.set(plugin.id, isRuntimePluginRecordLoaded(plugin));
-    // Deferred manifest records are metadata-only until their runtime module is
-    // imported. Reusing them here would skip the scoped load that registers the
-    // requested harness/provider/tool capabilities.
-    if (plugin.status === undefined || isRuntimePluginRecordLoaded(plugin)) {
+    if (plugin.status === undefined || plugin.status === "loaded") {
       loaded.add(plugin.id);
     }
   }
@@ -80,7 +52,7 @@ export function registryContainsRuntimePluginIds(
         if (typeof pluginId === "string" && pluginId.length > 0) {
           present.add(pluginId);
           const status = pluginStatusById.get(pluginId);
-          if (status === undefined || pluginRuntimeLoadedById.get(pluginId) === true) {
+          if (status === undefined || status === "loaded") {
             loaded.add(pluginId);
           }
         }

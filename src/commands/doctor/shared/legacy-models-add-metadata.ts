@@ -14,8 +14,7 @@ export function isLegacyModelsAddCodexMetadataModel(params: {
   model: Partial<ModelDefinitionConfig> | undefined;
 }): boolean {
   const model = params.model;
-  const provider = normalizeProviderId(params.provider);
-  if ((provider !== "codex" && provider !== "openai-codex") || !model) {
+  if (normalizeProviderId(params.provider) !== "openai-codex" || !model) {
     return false;
   }
   const id = model.id?.trim().toLowerCase();

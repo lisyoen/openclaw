@@ -1,8 +1,10 @@
 /** Tests fast-path secret collection for channel contract API credentials. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { loadPluginMetadataSnapshotMock } = vi.hoisted(() => ({
-  loadPluginMetadataSnapshotMock: vi.fn(() => ({ plugins: [] })),
+const { loadPluginManifestRegistryMock } = vi.hoisted(() => ({
+  loadPluginManifestRegistryMock: vi.fn(() => {
+    throw new Error("manifest registry should stay off the explicit bundled channel fast path");
+  }),
 }));
 const { loadBundledPluginPublicArtifactModuleSyncMock } = vi.hoisted(() => ({
   loadBundledPluginPublicArtifactModuleSyncMock: vi.fn(
@@ -19,6 +21,12 @@ const { loadBundledPluginPublicArtifactModuleSyncMock } = vi.hoisted(() => ({
           ],
         };
       }
+      if (dirName === "whatsapp" && artifactBasename === "security-contract-api.js") {
+        return {
+          unsupportedSecretRefSurfacePatterns: ["channels.whatsapp.creds.json"],
+          collectUnsupportedSecretRefConfigCandidates: () => [],
+        };
+      }
       throw new Error(
         `Unable to resolve bundled plugin public surface ${dirName}/${artifactBasename}`,
       );
@@ -26,23 +34,26 @@ const { loadBundledPluginPublicArtifactModuleSyncMock } = vi.hoisted(() => ({
   ),
 }));
 
-vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
-  loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
+vi.mock("../plugins/manifest-registry.js", () => ({
+  loadPluginManifestRegistry: loadPluginManifestRegistryMock,
 }));
 
 vi.mock("../plugins/public-surface-loader.js", () => ({
   loadBundledPluginPublicArtifactModuleSync: loadBundledPluginPublicArtifactModuleSyncMock,
 }));
 
-import { loadChannelSecretContractApi } from "./channel-contract-api.js";
+import {
+  loadBundledChannelSecretContractApi,
+  loadBundledChannelSecurityContractApi,
+} from "./channel-contract-api.js";
 
 describe("channel contract api explicit fast path", () => {
   beforeEach(() => {
-    loadPluginMetadataSnapshotMock.mockClear();
+    loadPluginManifestRegistryMock.mockClear();
   });
 
   it("resolves bundled channel secret contracts by explicit channel id without manifest scans", () => {
-    const api = loadChannelSecretContractApi({ channelId: "discord", config: {} });
+    const api = loadBundledChannelSecretContractApi("discord");
 
     expect(api?.collectRuntimeConfigAssignments).toBeTypeOf("function");
     expect(loadBundledPluginPublicArtifactModuleSyncMock).toHaveBeenCalledWith({
@@ -53,11 +64,23 @@ describe("channel contract api explicit fast path", () => {
       (entry) => entry.id === "channels.discord.accounts.*.token",
     );
     expect(tokenEntry?.id).toBe("channels.discord.accounts.*.token");
-    expect(loadPluginMetadataSnapshotMock).not.toHaveBeenCalled();
+    expect(loadPluginManifestRegistryMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves bundled channel security contracts by explicit channel id without manifest scans", () => {
+    const api = loadBundledChannelSecurityContractApi("whatsapp");
+
+    expect(api?.unsupportedSecretRefSurfacePatterns).toContain("channels.whatsapp.creds.json");
+    expect(api?.collectUnsupportedSecretRefConfigCandidates).toBeTypeOf("function");
+    expect(loadBundledPluginPublicArtifactModuleSyncMock).toHaveBeenCalledWith({
+      dirName: "whatsapp",
+      artifactBasename: "security-contract-api.js",
+    });
+    expect(loadPluginManifestRegistryMock).not.toHaveBeenCalled();
   });
 
   it("does not fall back to the broad contract-api artifact when the secret artifact is missing", () => {
-    const api = loadChannelSecretContractApi({ channelId: "missing", config: {} });
+    const api = loadBundledChannelSecretContractApi("missing");
 
     expect(api).toBeUndefined();
     expect(loadBundledPluginPublicArtifactModuleSyncMock).toHaveBeenCalledWith({
@@ -68,6 +91,6 @@ describe("channel contract api explicit fast path", () => {
       dirName: "missing",
       artifactBasename: "contract-api.js",
     });
-    expect(loadPluginMetadataSnapshotMock).toHaveBeenCalledTimes(1);
+    expect(loadPluginManifestRegistryMock).not.toHaveBeenCalled();
   });
 });

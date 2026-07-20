@@ -14,7 +14,6 @@ on:
           - slack-desktop-smoke
           - telegram-live
           - telegram-desktop-proof
-          - web-ui-chat-proof
       baseline_ref:
         description: Optional baseline ref for before/after scenarios
         required: false
@@ -106,23 +105,15 @@ jobs:
               gh "${args[@]}"
               ;;
             telegram-desktop-proof)
-              if [[ -z "${PR_NUMBER:-}" ]]; then
-                echo "telegram-desktop-proof requires pr_number." >&2
-                exit 1
+              baseline_ref="$BASELINE_REF"
+              if [[ -z "$baseline_ref" || "$baseline_ref" == "0bf06e953fdda290799fc9fb9244a8f67fdae593" ]]; then
+                baseline_ref="main"
               fi
               args=(
                 workflow run mantis-telegram-desktop-proof.yml
                 --repo "$GITHUB_REPOSITORY"
                 --ref main
-                -f "pr_number=${PR_NUMBER}"
-              )
-              gh "${args[@]}"
-              ;;
-            web-ui-chat-proof)
-              args=(
-                workflow run mantis-web-ui-chat-proof.yml
-                --repo "$GITHUB_REPOSITORY"
-                --ref main
+                -f "baseline_ref=${baseline_ref}"
                 -f "candidate_ref=${CANDIDATE_REF}"
               )
               if [[ -n "${PR_NUMBER:-}" ]]; then

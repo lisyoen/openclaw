@@ -24,7 +24,7 @@ function stripWindowsNamespacePrefix(input: string): string {
   return input;
 }
 
-function isWindowsDriveAbsolutePath(raw: string): boolean {
+export function isWindowsDriveAbsolutePath(raw: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(stripWindowsNamespacePrefix(raw.trim()));
 }
 

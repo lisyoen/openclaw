@@ -5,7 +5,7 @@
 import { getKeybindings, type Keybinding, type KeyId } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.js";
 
-interface KeyTextFormatOptions {
+export interface KeyTextFormatOptions {
   capitalize?: boolean;
 }
 
@@ -17,7 +17,7 @@ function formatKeyPart(part: string, options: KeyTextFormatOptions): string {
     : displayPart;
 }
 
-function formatKeyText(key: string, options: KeyTextFormatOptions = {}): string {
+export function formatKeyText(key: string, options: KeyTextFormatOptions = {}): string {
   return key
     .split("/")
     .map((k) =>
@@ -40,6 +40,14 @@ export function keyText(keybinding: Keybinding): string {
   return formatKeys(getKeybindings().getKeys(keybinding));
 }
 
+export function keyDisplayText(keybinding: Keybinding): string {
+  return formatKeys(getKeybindings().getKeys(keybinding), { capitalize: true });
+}
+
 export function keyHint(keybinding: Keybinding, description: string): string {
   return theme.fg("dim", keyText(keybinding)) + theme.fg("muted", ` ${description}`);
+}
+
+export function rawKeyHint(key: string, description: string): string {
+  return theme.fg("dim", formatKeyText(key)) + theme.fg("muted", ` ${description}`);
 }

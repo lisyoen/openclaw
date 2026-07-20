@@ -18,48 +18,27 @@ extension AgentProTab {
             self.usageDestination
         case .dreaming:
             self.dreamingDestination
-        case .files:
-            self.filesDestination
         }
-    }
-
-    var filesDestination: some View {
-        AgentWorkspaceFilesScreen(
-            agentId: self.activeAgentID,
-            headerSidebarAction: self.directHeaderSidebarAction(for: .files))
     }
 
     var agentsDestination: some View {
-        List {
-            Section {
-                if self.filteredAgents.isEmpty {
-                    self.emptyAgentsRow
-                } else {
-                    ForEach(self.filteredAgents, id: \.id) { agent in
-                        self.agentRow(agent)
-                    }
+        ZStack {
+            OpenClawProBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    self.rosterHeader
+                    self.agentFilters
+                    self.agentsSection
                 }
+                .padding(.vertical, 18)
             }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle(self.headerTitle)
-        .navigationBarTitleDisplayMode(.large)
-        .searchable(text: self.$agentSearchText, prompt: "Search agents")
-        .refreshable {
-            await self.refreshOverview(force: true)
-        }
-        .font(OpenClawType.body)
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                self.agentFilterMenu
-                self.gatewayToolbarButton
+            .refreshable {
+                await self.refreshOverview(force: true)
             }
-            if let headerSidebarAction {
-                ToolbarItem(placement: .topBarLeading) {
-                    OpenClawSidebarHeaderLeadingSlot(action: headerSidebarAction)
-                }
-            }
+            .safeAreaPadding(.bottom, OpenClawProMetric.bottomScrollInset)
         }
+        .navigationTitle("Agents")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     var skillsDestination: some View {
@@ -79,7 +58,6 @@ extension AgentProTab {
                     self.skillsList
                 }
                 .padding(.vertical, 18)
-                .font(OpenClawType.body)
             }
             .refreshable {
                 await self.refreshOverview(force: true)
@@ -92,7 +70,7 @@ extension AgentProTab {
 
     var instancesDestination: some View {
         AgentProNodesDestination(
-            headerSidebarAction: self.directHeaderSidebarAction(for: .instances),
+            headerLeadingAction: self.directHeaderLeadingAction(for: .instances),
             overview: self.overview,
             gatewayConnected: self.gatewayConnected,
             agentCount: self.appModel.gatewayAgents.count,
@@ -111,11 +89,11 @@ extension AgentProTab {
                 VStack(alignment: .leading, spacing: 16) {
                     self.directHeader(
                         for: .cron,
-                        title: "Automations",
+                        title: "Cron Jobs",
                         subtitle: self.cronDetail)
                     self.detailSummaryCard(
                         icon: "clock.arrow.circlepath",
-                        title: "Automations",
+                        title: "Cron Jobs",
                         value: self.cronValue,
                         detail: self.cronDetail,
                         color: self.cronColor)
@@ -123,14 +101,13 @@ extension AgentProTab {
                     self.cronJobsList(limit: nil)
                 }
                 .padding(.vertical, 18)
-                .font(OpenClawType.body)
             }
             .refreshable {
                 await self.refreshOverview(force: true)
             }
             .safeAreaPadding(.bottom, OpenClawProMetric.bottomScrollInset)
         }
-        .navigationTitle("Automations")
+        .navigationTitle("Cron Jobs")
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -153,7 +130,6 @@ extension AgentProTab {
                     self.usageDailyList
                 }
                 .padding(.vertical, 18)
-                .font(OpenClawType.body)
             }
             .refreshable {
                 await self.refreshOverview(force: true)
@@ -166,7 +142,7 @@ extension AgentProTab {
 
     var dreamingDestination: some View {
         AgentProDreamingDestination(
-            headerSidebarAction: self.directHeaderSidebarAction(for: .dreaming),
+            headerLeadingAction: self.directHeaderLeadingAction(for: .dreaming),
             overview: self.overview,
             gatewayConnected: self.gatewayConnected,
             overviewLoading: self.overviewLoading,
@@ -180,14 +156,14 @@ extension AgentProTab {
 
     @ViewBuilder
     func directHeader(for route: AgentRoute, title: String, subtitle: String) -> some View {
-        if let headerSidebarAction = self.directHeaderSidebarAction(for: route) {
+        if let headerLeadingAction = self.directHeaderLeadingAction(for: route) {
             OpenClawAdaptiveHeaderRow(
-                title: .localized(title),
-                subtitle: .localized(subtitle),
-                titleFont: OpenClawType.title3SemiBold,
-                subtitleFont: OpenClawType.subheadMedium)
+                title: title,
+                subtitle: subtitle,
+                titleFont: .title3.weight(.semibold),
+                subtitleFont: .callout)
             {
-                OpenClawSidebarHeaderLeadingSlot(action: headerSidebarAction)
+                OpenClawSidebarHeaderLeadingSlot(action: headerLeadingAction)
             } accessory: {
                 EmptyView()
             }
@@ -195,8 +171,8 @@ extension AgentProTab {
         }
     }
 
-    func directHeaderSidebarAction(for route: AgentRoute) -> OpenClawSidebarHeaderAction? {
-        self.directRoute == route ? self.headerSidebarAction : nil
+    func directHeaderLeadingAction(for route: AgentRoute) -> OpenClawSidebarHeaderAction? {
+        self.directRoute == route ? self.headerLeadingAction : nil
     }
 
     func detailSummaryCard(
@@ -211,9 +187,9 @@ extension AgentProTab {
                 ProIconBadge(systemName: icon, color: color)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(OpenClawType.headline)
+                        .font(.headline)
                     Text(detail)
-                        .font(OpenClawType.caption)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)

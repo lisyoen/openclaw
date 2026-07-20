@@ -34,7 +34,7 @@ beforeEach(() => {
 });
 
 describe("loadOutboundMediaFromUrl", () => {
-  it("forwards media limits, local roots, and image optimization to loadWebMedia", async () => {
+  it("forwards maxBytes and mediaLocalRoots to loadWebMedia", async () => {
     loadWebMediaMock.mockResolvedValueOnce({
       buffer: Buffer.from("x"),
       kind: "image",
@@ -44,13 +44,11 @@ describe("loadOutboundMediaFromUrl", () => {
     await loadOutboundMediaFromUrl("file:///tmp/image.png", {
       maxBytes: 1024,
       mediaLocalRoots: ["/tmp/workspace-agent"],
-      optimizeImages: false,
     });
 
     expect(loadWebMediaMock).toHaveBeenCalledWith("file:///tmp/image.png", {
       maxBytes: 1024,
       localRoots: ["/tmp/workspace-agent"],
-      optimizeImages: false,
     });
   });
 

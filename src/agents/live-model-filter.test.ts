@@ -113,10 +113,10 @@ describe("resolveHighSignalLiveModelLimit", () => {
 });
 
 describe("live model priorities", () => {
-  it("includes the always-thinking Moonshot K3 route", () => {
+  it("includes the always-thinking Moonshot K2.7 Code route", () => {
     expect(listPrioritizedHighSignalLiveModelRefs()).toContainEqual({
       provider: "moonshot",
-      id: "kimi-k3",
+      id: "kimi-k2.7-code",
     });
   });
 });

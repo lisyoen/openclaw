@@ -3,12 +3,8 @@
  */
 export { buildGuardedModelFetch } from "../agents/provider-transport-fetch.js";
 export { buildOpenAICompletionsParams } from "../agents/openai-transport-stream.js";
-export { stripSystemPromptCacheBoundary } from "@openclaw/ai/internal/shared";
+export { stripSystemPromptCacheBoundary } from "../agents/system-prompt-cache-boundary.js";
 export { transformTransportMessages } from "../agents/transport-message-transform.js";
-export {
-  describeToolResultMediaPlaceholder,
-  extractToolResultText,
-} from "@openclaw/ai/internal/shared";
 export {
   coerceTransportToolCallArguments,
   createEmptyTransportUsage,

@@ -22,11 +22,5 @@ export function sanitizeForConsole(text: string | undefined, maxChars = 200): st
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const codePoints = Array.from(sanitized);
-  if (codePoints.length <= maxChars) {
-    return sanitized;
-  }
-  // Cap on code-point boundaries so a maxChars cut never splits a surrogate pair (emoji/astral) and
-  // leaves a lone surrogate before the ellipsis.
-  return `${codePoints.slice(0, maxChars).join("")}…`;
+  return sanitized.length > maxChars ? `${sanitized.slice(0, maxChars)}…` : sanitized;
 }

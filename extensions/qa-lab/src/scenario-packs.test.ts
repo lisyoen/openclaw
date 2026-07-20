@@ -1,18 +1,15 @@
 // Qa Lab tests cover scenario packs plugin behavior.
 import { describe, expect, it } from "vitest";
-import { QA_SCENARIO_PACKS, readQaScenarioById } from "./scenario-catalog.js";
-import { resolveQaScenarioPackScenarioIds } from "./scenario-packs.js";
-
-function scenarioIdsForPack(packId: string): readonly string[] {
-  const pack = QA_SCENARIO_PACKS.find((candidate) => candidate.id === packId);
-  if (!pack) {
-    throw new Error(`missing QA scenario pack: ${packId}`);
-  }
-  return pack.scenarioIds;
-}
+import {
+  QA_OBSERVABILITY_SCENARIO_IDS,
+  QA_PERSONAL_AGENT_SCENARIO_IDS,
+  QA_SCENARIO_PACKS,
+  readQaScenarioById,
+  resolveQaScenarioPackScenarioIds,
+} from "./scenario-catalog.js";
 
 describe("qa scenario packs", () => {
-  it("points every pack scenario id at a loadable YAML scenario", () => {
+  it("points every pack scenario id at a loadable markdown scenario", () => {
     expect(QA_SCENARIO_PACKS.length).toBeGreaterThan(0);
 
     for (const pack of QA_SCENARIO_PACKS) {
@@ -61,13 +58,13 @@ describe("qa scenario packs", () => {
 
   it("expands the personal-agent pack in pack order", () => {
     expect(resolveQaScenarioPackScenarioIds({ pack: "personal-agent" })).toEqual([
-      ...scenarioIdsForPack("personal-agent"),
+      ...QA_PERSONAL_AGENT_SCENARIO_IDS,
     ]);
   });
 
   it("expands the observability pack in pack order", () => {
     expect(resolveQaScenarioPackScenarioIds({ pack: "observability" })).toEqual([
-      ...scenarioIdsForPack("observability"),
+      ...QA_OBSERVABILITY_SCENARIO_IDS,
     ]);
   });
 
@@ -77,7 +74,7 @@ describe("qa scenario packs", () => {
         pack: "personal-agent",
         scenarioIds: ["channel-chat-baseline", "personal-reminder-roundtrip"],
       }),
-    ).toEqual(["channel-chat-baseline", ...scenarioIdsForPack("personal-agent")]);
+    ).toEqual(["channel-chat-baseline", ...QA_PERSONAL_AGENT_SCENARIO_IDS]);
   });
 
   it("rejects unknown scenario packs", () => {

@@ -8,7 +8,6 @@ export {
   countPendingDescendantRuns,
   countPendingDescendantRunsExcludingRun,
   getLatestSubagentRunByChildSessionKey,
-  hasDescendantRunAwaitingSettle,
   isSubagentSessionRunActive,
   listSubagentRunsForRequester,
   replaceSubagentRunAfterSteer,

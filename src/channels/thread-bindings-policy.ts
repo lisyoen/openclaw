@@ -10,7 +10,10 @@ import {
 import { getLoadedChannelPlugin } from "./plugins/index.js";
 import { resolveBundledChannelThreadBindingDefaultPlacement } from "./plugins/thread-binding-api.js";
 
-export { resolveThreadBindingLifecycle } from "../shared/thread-binding-lifecycle.js";
+export {
+  resolveThreadBindingLifecycle,
+  type ThreadBindingLifecycleRecord,
+} from "../shared/thread-binding-lifecycle.js";
 
 const DEFAULT_THREAD_BINDING_IDLE_HOURS = 24;
 const DEFAULT_THREAD_BINDING_MAX_AGE_HOURS = 0;
@@ -20,6 +23,8 @@ type SessionThreadBindingsConfigShape = {
   idleHours?: unknown;
   maxAgeHours?: unknown;
   spawnSessions?: unknown;
+  spawnSubagentSessions?: unknown;
+  spawnAcpSessions?: unknown;
   defaultSpawnContext?: unknown;
 };
 
@@ -29,10 +34,10 @@ type ChannelThreadBindingsContainerShape = {
 };
 
 /** Thread-bound session type controlled by spawn policy. */
-type ThreadBindingSpawnKind = "subagent" | "acp";
+export type ThreadBindingSpawnKind = "subagent" | "acp";
 
 /** Effective per-channel/account policy for creating thread-bound sessions. */
-type ThreadBindingSpawnPolicy = {
+export type ThreadBindingSpawnPolicy = {
   channel: string;
   accountId: string;
   enabled: boolean;
@@ -41,7 +46,7 @@ type ThreadBindingSpawnPolicy = {
 };
 
 /** Starting transcript mode for a spawned thread-bound session. */
-type ThreadBindingSpawnContext = "isolated" | "fork";
+export type ThreadBindingSpawnContext = "isolated" | "fork";
 
 function normalizeChannelId(value: string | undefined | null): string {
   return normalizeLowercaseStringOrEmpty(value);
@@ -168,6 +173,12 @@ function resolveChannelThreadBindings(params: {
   };
 }
 
+function resolveSpawnFlagKey(
+  kind: ThreadBindingSpawnKind,
+): "spawnSubagentSessions" | "spawnAcpSessions" {
+  return kind === "subagent" ? "spawnSubagentSessions" : "spawnAcpSessions";
+}
+
 function normalizeSpawnContext(value: unknown): ThreadBindingSpawnContext | undefined {
   return value === "isolated" || value === "fork" ? value : undefined;
 }
@@ -191,8 +202,11 @@ export function resolveThreadBindingSpawnPolicy(params: {
     normalizeBoolean(root?.enabled) ??
     normalizeBoolean(params.cfg.session?.threadBindings?.enabled) ??
     true;
+  const spawnFlagKey = resolveSpawnFlagKey(params.kind);
   const spawnEnabledRaw =
+    normalizeBoolean(account?.[spawnFlagKey]) ??
     normalizeBoolean(account?.spawnSessions) ??
+    normalizeBoolean(root?.[spawnFlagKey]) ??
     normalizeBoolean(root?.spawnSessions) ??
     normalizeBoolean(params.cfg.session?.threadBindings?.spawnSessions);
   const spawnEnabled = spawnEnabledRaw ?? true;

@@ -48,18 +48,11 @@ export class MatrixAuthedHttpClient {
       throw buildHttpError(response.status, text);
     }
     const contentType = response.headers.get("content-type") ?? "";
-    const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
-    if (mediaType === "application/json") {
+    if (contentType.includes("application/json")) {
       if (!text.trim()) {
         return {};
       }
-      try {
-        return JSON.parse(text);
-      } catch {
-        throw Object.assign(new Error("Matrix homeserver returned malformed JSON"), {
-          statusCode: response.status,
-        });
-      }
+      return JSON.parse(text);
     }
     return text;
   }

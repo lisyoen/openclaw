@@ -30,27 +30,6 @@ function formatDiscordThreadInitialMessageError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function assertDiscordResponseArray<T>(value: unknown, label: string): T[] {
-  if (!Array.isArray(value)) {
-    throw new Error(`Unexpected Discord response for ${label}: expected array.`);
-  }
-  return value as T[];
-}
-
-function assertDiscordResponseObject(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`Unexpected Discord response for ${label}: expected object.`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function resolveDefaultThreadAutoArchiveDuration(channel?: APIChannel): number | undefined {
-  if (!channel || !("default_auto_archive_duration" in channel)) {
-    return undefined;
-  }
-  return channel.default_auto_archive_duration;
-}
-
 export class DiscordThreadInitialMessageError extends Error {
   readonly initialMessageError: string;
   readonly thread: APIChannel;
@@ -90,10 +69,7 @@ export async function readMessagesDiscord(
   if (messageQuery.around) {
     params.around = messageQuery.around;
   }
-  return assertDiscordResponseArray<APIMessage>(
-    await listChannelMessages(rest, channelId, params),
-    "message read",
-  );
+  return await listChannelMessages(rest, channelId, params);
 }
 
 export async function fetchMessageDiscord(
@@ -165,26 +141,25 @@ export async function createThreadDiscord(
 ) {
   const rest = resolveDiscordRest(opts);
   const body: Record<string, unknown> = { name: payload.name };
+  if (payload.autoArchiveMinutes) {
+    body.auto_archive_duration = payload.autoArchiveMinutes;
+  }
   if (!payload.messageId && payload.type !== undefined) {
     body.type = payload.type;
   }
-  let channel: APIChannel | undefined;
+  let channelType: ChannelType | undefined;
   if (!payload.messageId) {
+    // Only detect channel kind for route-less thread creation.
+    // If this lookup fails, keep prior behavior and let Discord validate.
     try {
-      channel = await getChannel(rest, channelId);
+      const channel = await getChannel(rest, channelId);
+      channelType = channel?.type;
     } catch {
-      // Channel metadata only enriches standalone creation; Discord still validates it.
+      channelType = undefined;
     }
   }
-  // Discord clients preselect the parent default, but REST thread creation needs
-  // it explicitly. Keep a caller override authoritative when one was supplied.
-  const archiveDuration =
-    payload.autoArchiveMinutes ?? resolveDefaultThreadAutoArchiveDuration(channel);
-  if (archiveDuration !== undefined) {
-    body.auto_archive_duration = archiveDuration;
-  }
   const isForumLike =
-    channel?.type === ChannelType.GuildForum || channel?.type === ChannelType.GuildMedia;
+    channelType === ChannelType.GuildForum || channelType === ChannelType.GuildMedia;
   if (isForumLike) {
     const starterContent = payload.content?.trim() ? payload.content : payload.name;
     body.message = { content: starterContent };
@@ -251,8 +226,5 @@ export async function searchMessagesDiscord(query: DiscordSearchQuery, opts: Dis
     const limit = Math.min(Math.max(Math.floor(query.limit), 1), 25);
     params.set("limit", String(limit));
   }
-  return assertDiscordResponseObject(
-    await searchGuildMessages(rest, query.guildId, params),
-    "message search",
-  );
+  return await searchGuildMessages(rest, query.guildId, params);
 }

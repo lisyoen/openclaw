@@ -1,5 +1,8 @@
 // Nextcloud Talk plugin module implements approval auth behavior.
-import { createChannelApprovalAuth } from "openclaw/plugin-sdk/approval-auth-runtime";
+import {
+  createResolvedApproverActionAuthAdapter,
+  resolveApprovalApprovers,
+} from "openclaw/plugin-sdk/approval-auth-runtime";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveNextcloudTalkAccount } from "./accounts.js";
 import type { CoreConfig } from "./types.js";
@@ -12,11 +15,14 @@ function normalizeNextcloudTalkApproverId(value: string | number): string | unde
   );
 }
 
-export const nextcloudTalkApprovalAuth = createChannelApprovalAuth({
+export const nextcloudTalkApprovalAuth = createResolvedApproverActionAuthAdapter({
   channelLabel: "Nextcloud Talk",
-  resolveInputs: ({ cfg, accountId }) => {
+  resolveApprovers: ({ cfg, accountId }) => {
     const account = resolveNextcloudTalkAccount({ cfg: cfg as CoreConfig, accountId });
-    return { allowFrom: account.config.allowFrom };
+    return resolveApprovalApprovers({
+      allowFrom: account.config.allowFrom,
+      normalizeApprover: normalizeNextcloudTalkApproverId,
+    });
   },
-  normalizeApprover: normalizeNextcloudTalkApproverId,
-}).approvalAuth;
+  normalizeSenderId: (value) => normalizeNextcloudTalkApproverId(value),
+});

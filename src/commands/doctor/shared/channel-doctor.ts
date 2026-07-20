@@ -339,12 +339,11 @@ export function collectChannelDoctorCompatibilityMutations(
 /** Collect stale channel config cleanup mutations from configured channel doctor adapters. */
 export async function collectChannelDoctorStaleConfigMutations(
   cfg: OpenClawConfig,
-  options: { env?: NodeJS.ProcessEnv; channelIds?: readonly string[] } = {},
+  options: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<ChannelDoctorConfigMutation[]> {
   const mutations: ChannelDoctorConfigMutation[] = [];
   let nextCfg = cfg;
-  const channelIds = options.channelIds ?? collectConfiguredChannelIds(cfg);
-  for (const entry of listChannelDoctorEntries(channelIds, {
+  for (const entry of listChannelDoctorEntries(collectConfiguredChannelIds(cfg), {
     cfg,
     env: options.env,
   })) {

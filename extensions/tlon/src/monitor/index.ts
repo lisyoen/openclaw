@@ -1,11 +1,7 @@
-import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
-import { createChannelInboundEnvelopeBuilder } from "openclaw/plugin-sdk/channel-inbound";
-import { bindIngressLifecycleToReplyOptions } from "openclaw/plugin-sdk/channel-outbound";
+// Tlon plugin entrypoint registers its OpenClaw integration.
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
-import { sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { asFiniteNumber } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { sliceUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { OpenClawConfig } from "../../runtime-api.js";
 import { createLoggerBackedRuntime } from "../../runtime-api.js";
 import { getTlonRuntime } from "../runtime.js";
@@ -28,8 +24,11 @@ import { resolveChannelAuthorization } from "./authorization.js";
 import { createTlonCitationResolver } from "./cites.js";
 import { fetchAllChannels, fetchInitData } from "./discovery.js";
 import { cacheMessage, fetchThreadHistory, getChannelHistory } from "./history.js";
-import { createTlonIngressMonitor, type TlonIngressLifecycle } from "./ingress.js";
 import { downloadMessageImages } from "./media.js";
+import {
+  createProcessedMessageTracker,
+  runWithProcessedMessageClaim,
+} from "./processed-messages.js";
 import {
   applyTlonSettingsOverrides,
   buildTlonSettingsMigrations,
@@ -46,7 +45,6 @@ import {
   isSummarizationRequest,
   resolveAuthorizedMessageText,
   resolveTlonCommandAuthorizationWithIngress,
-  resolveTlonGroupMentionDecision,
   stripBotMention,
 } from "./utils.js";
 
@@ -114,7 +112,16 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
         }
         const delay = Math.min(30000, 1000 * 2 ** (attempt - 1));
         runtime.log?.(`[tlon] Retrying authentication in ${delay}ms...`);
-        await sleepWithAbort(delay, opts.abortSignal);
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, delay);
+          if (opts.abortSignal) {
+            const onAbort = () => {
+              clearTimeout(timer);
+              reject(new Error("Aborted"));
+            };
+            opts.abortSignal.addEventListener("abort", onAbort, { once: true });
+          }
+        });
       }
     }
     throw new Error("unreachable Tlon authentication retry loop exit");
@@ -138,6 +145,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
     },
   });
 
+  const processedTracker = createProcessedMessageTracker(2000);
   let groupChannels: string[] = [];
   let botNickname: string | null = null;
 
@@ -305,7 +313,6 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
     timestamp: number;
     parentId?: string | null;
     isThreadReply?: boolean;
-    turnAdoptionLifecycle?: TlonIngressLifecycle;
   }) => {
     const {
       messageId,
@@ -318,7 +325,6 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       parentId,
       isThreadReply,
       messageContent,
-      turnAdoptionLifecycle,
     } = params;
     const groupChannel = channelNest; // For compatibility
     let messageText = params.messageText;
@@ -502,7 +508,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       bodyWithAttachments = mediaLines + "\n" + messageText;
     }
 
-    const body = createChannelInboundEnvelopeBuilder({ cfg, route })({
+    const body = core.channel.reply.formatAgentEnvelope({
       channel: "Tlon",
       from: fromLabel,
       timestamp,
@@ -529,7 +535,6 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       },
       route: {
         agentId: route.agentId,
-        dmScope: route.dmScope,
         accountId: route.accountId,
         routeSessionKey: route.sessionKey,
       },
@@ -560,7 +565,10 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       cfg,
       route.agentId,
     ).responsePrefix;
-    const humanDelay = resolveHumanDelayConfig(cfg, route.agentId);
+    const humanDelay = core.channel.reply.resolveHumanDelayConfig(cfg, route.agentId);
+    const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
+      agentId: route.agentId,
+    });
     const deliveryTarget = isGroup ? groupChannel : senderShip;
 
     const prepareReplyPayload = (payload: ReplyPayload): ReplyPayload => {
@@ -594,12 +602,17 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       runtime.log?.(`[tlon] Now tracking thread for future replies: ${parentId}`);
     };
 
-    await core.channel.inbound.dispatch({
+    await core.channel.inbound.dispatchReply({
       channel: "tlon",
       accountId: route.accountId,
       cfg,
-      route: { agentId: route.agentId, dmScope: route.dmScope, sessionKey: route.sessionKey },
+      agentId: route.agentId,
+      routeSessionKey: route.sessionKey,
+      storePath,
       ctxPayload,
+      recordInboundSession: core.channel.session.recordInboundSession,
+      dispatchReplyWithBufferedBlockDispatcher:
+        core.channel.reply.dispatchReplyWithBufferedBlockDispatcher,
       delivery: {
         preparePayload: prepareReplyPayload,
         durable: deliveryTarget
@@ -653,9 +666,6 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
         responsePrefix,
         humanDelay,
       },
-      ...(turnAdoptionLifecycle
-        ? { replyOptions: bindIngressLifecycleToReplyOptions(turnAdoptionLifecycle) }
-        : {}),
       record: {
         onRecordError: (err) => {
           runtime.error?.(`[tlon] failed updating session meta: ${String(err)}`);
@@ -741,10 +751,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
     });
 
   // Firehose handler for all channel messages (/v2)
-  const handleChannelsFirehose = async (
-    event: unknown,
-    turnAdoptionLifecycle?: TlonIngressLifecycle,
-  ) => {
+  const handleChannelsFirehose = async (event: unknown) => {
     try {
       const eventRecord = asRecord(event);
       const nest = readString(eventRecord, "nest");
@@ -785,111 +792,113 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
         return;
       }
 
-      const senderShip = normalizeShip(readString(content, "author") ?? "");
-      if (!senderShip || senderShip === botShipName) {
-        return;
-      }
-
-      const rawText = extractMessageText(content.content);
-      if (!rawText.trim()) {
-        return;
-      }
-
-      const contentBody = content.content;
-      const sentAt = readNumber(content, "sent") ?? Date.now();
-
-      cacheMessage(nest, {
-        author: senderShip,
-        content: rawText,
-        timestamp: sentAt,
+      const processed = await runWithProcessedMessageClaim({
+        tracker: processedTracker,
         id: messageId,
-      });
-
-      // Get thread info early for participation check
-      const seal = isThreadReply ? asRecord(replySet?.seal) : asRecord(set?.seal);
-      const parentId = readString(seal, "parent-id") ?? readString(seal, "parent") ?? null;
-
-      // Check if we should respond:
-      // 1. Direct mention always triggers response
-      // 2. Thread replies where we've participated - respond if relevant (let agent decide)
-      const mentioned = isBotMentioned(rawText, botShipName, botNickname ?? undefined);
-      const inParticipatedThread = isThreadReply && parentId && participatedThreads.has(parentId);
-      const mentionDecision = resolveTlonGroupMentionDecision({
-        cfg,
-        accountId: account.accountId,
-        wasMentioned: mentioned,
-        botParticipatedInThread: Boolean(inParticipatedThread),
-      });
-
-      if (mentionDecision.shouldSkip) {
-        return;
-      }
-
-      // Log why we're responding
-      if (mentionDecision.implicitMention && !mentioned) {
-        runtime.log?.(`[tlon] Responding to thread we participated in (no mention): ${parentId}`);
-      }
-
-      // Owner is always allowed
-      if (isOwner(senderShip)) {
-        runtime.log?.(`[tlon] Owner ${senderShip} is always allowed in channels`);
-      } else {
-        const { mode, allowedShips } = resolveChannelAuthorization(cfg, nest, currentSettings);
-        if (mode === "restricted") {
-          const normalizedAllowed = allowedShips.map(normalizeShip);
-          if (!normalizedAllowed.includes(senderShip)) {
-            // If owner is configured, queue approval request
-            if (effectiveOwnerShip) {
-              const approval = createPendingApproval({
-                type: "channel",
-                requestingShip: senderShip,
-                channelNest: nest,
-                messagePreview: sliceUtf16Safe(rawText, 0, 100),
-                originalMessage: {
-                  messageId: messageId ?? "",
-                  messageText: rawText,
-                  messageContent: contentBody,
-                  timestamp: sentAt,
-                  parentId: parentId ?? undefined,
-                  isThreadReply,
-                },
-              });
-              await queueApprovalRequest(approval);
-            } else {
-              runtime.log?.(
-                `[tlon] Access denied: ${senderShip} in ${nest} (allowed: ${allowedShips.join(", ")})`,
-              );
-            }
+        task: async () => {
+          const senderShip = normalizeShip(readString(content, "author") ?? "");
+          if (!senderShip || senderShip === botShipName) {
             return;
           }
-        }
-      }
 
-      const messageText = await resolveAuthorizedMessageText({
-        rawText,
-        content: contentBody,
-        authorizedForCites: true,
-        resolveAllCites,
-      });
+          const rawText = extractMessageText(content.content);
+          if (!rawText.trim()) {
+            return;
+          }
 
-      const parsed = parseChannelNest(nest);
-      await processMessage({
-        messageId: messageId ?? "",
-        senderShip,
-        messageText,
-        messageContent: contentBody, // Pass raw content for media extraction
-        isGroup: true,
-        channelNest: nest,
-        hostShip: parsed?.hostShip,
-        channelName: parsed?.channelName,
-        timestamp: sentAt,
-        parentId,
-        isThreadReply,
-        turnAdoptionLifecycle,
+          const contentBody = content.content;
+          const sentAt = readNumber(content, "sent") ?? Date.now();
+
+          cacheMessage(nest, {
+            author: senderShip,
+            content: rawText,
+            timestamp: sentAt,
+            id: messageId,
+          });
+
+          // Get thread info early for participation check
+          const seal = isThreadReply ? asRecord(replySet?.seal) : asRecord(set?.seal);
+          const parentId = readString(seal, "parent-id") ?? readString(seal, "parent") ?? null;
+
+          // Check if we should respond:
+          // 1. Direct mention always triggers response
+          // 2. Thread replies where we've participated - respond if relevant (let agent decide)
+          const mentioned = isBotMentioned(rawText, botShipName, botNickname ?? undefined);
+          const inParticipatedThread =
+            isThreadReply && parentId && participatedThreads.has(parentId);
+
+          if (!mentioned && !inParticipatedThread) {
+            return;
+          }
+
+          // Log why we're responding
+          if (inParticipatedThread && !mentioned) {
+            runtime.log?.(
+              `[tlon] Responding to thread we participated in (no mention): ${parentId}`,
+            );
+          }
+
+          // Owner is always allowed
+          if (isOwner(senderShip)) {
+            runtime.log?.(`[tlon] Owner ${senderShip} is always allowed in channels`);
+          } else {
+            const { mode, allowedShips } = resolveChannelAuthorization(cfg, nest, currentSettings);
+            if (mode === "restricted") {
+              const normalizedAllowed = allowedShips.map(normalizeShip);
+              if (!normalizedAllowed.includes(senderShip)) {
+                // If owner is configured, queue approval request
+                if (effectiveOwnerShip) {
+                  const approval = createPendingApproval({
+                    type: "channel",
+                    requestingShip: senderShip,
+                    channelNest: nest,
+                    messagePreview: rawText.slice(0, 100),
+                    originalMessage: {
+                      messageId: messageId ?? "",
+                      messageText: rawText,
+                      messageContent: contentBody,
+                      timestamp: sentAt,
+                      parentId: parentId ?? undefined,
+                      isThreadReply,
+                    },
+                  });
+                  await queueApprovalRequest(approval);
+                } else {
+                  runtime.log?.(
+                    `[tlon] Access denied: ${senderShip} in ${nest} (allowed: ${allowedShips.join(", ")})`,
+                  );
+                }
+                return;
+              }
+            }
+          }
+
+          const messageText = await resolveAuthorizedMessageText({
+            rawText,
+            content: contentBody,
+            authorizedForCites: true,
+            resolveAllCites,
+          });
+
+          const parsed = parseChannelNest(nest);
+          await processMessage({
+            messageId: messageId ?? "",
+            senderShip,
+            messageText,
+            messageContent: contentBody, // Pass raw content for media extraction
+            isGroup: true,
+            channelNest: nest,
+            hostShip: parsed?.hostShip,
+            channelName: parsed?.channelName,
+            timestamp: sentAt,
+            parentId,
+            isThreadReply,
+          });
+        },
       });
+      void processed;
     } catch (error: unknown) {
       runtime.error?.(`[tlon] Error handling channel firehose event: ${formatErrorMessage(error)}`);
-      throw error;
     }
   };
 
@@ -897,10 +906,7 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
   // Track which DM invites we've already processed to avoid duplicate accepts
   const processedDmInvites = new Set<string>();
 
-  const handleChatFirehose = async (
-    event: unknown,
-    turnAdoptionLifecycle?: TlonIngressLifecycle,
-  ) => {
+  const handleChatFirehose = async (event: unknown) => {
     try {
       // Handle DM invite lists (arrays)
       if (Array.isArray(event)) {
@@ -976,124 +982,115 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
         return;
       }
 
-      const authorShip = normalizeShip(readString(essay, "author") ?? "");
-      const partnerShip = extractDmPartnerShip(whom);
-      const senderShip = partnerShip || authorShip;
+      const processed = await runWithProcessedMessageClaim({
+        tracker: processedTracker,
+        id: messageId,
+        task: async () => {
+          const authorShip = normalizeShip(readString(essay, "author") ?? "");
+          const partnerShip = extractDmPartnerShip(whom);
+          const senderShip = partnerShip || authorShip;
 
-      // Ignore the bot's own outbound DM events.
-      if (authorShip === botShipName) {
-        return;
-      }
-      if (!senderShip || senderShip === botShipName) {
-        return;
-      }
+          // Ignore the bot's own outbound DM events.
+          if (authorShip === botShipName) {
+            return;
+          }
+          if (!senderShip || senderShip === botShipName) {
+            return;
+          }
 
-      // Log mismatch between author and partner for debugging
-      if (authorShip && partnerShip && authorShip !== partnerShip) {
-        runtime.log?.(
-          `[tlon] DM ship mismatch (author=${authorShip}, partner=${partnerShip}) - routing to partner`,
-        );
-      }
+          // Log mismatch between author and partner for debugging
+          if (authorShip && partnerShip && authorShip !== partnerShip) {
+            runtime.log?.(
+              `[tlon] DM ship mismatch (author=${authorShip}, partner=${partnerShip}) - routing to partner`,
+            );
+          }
 
-      const rawText = extractMessageText(essay.content);
-      if (!rawText.trim()) {
-        return;
-      }
+          const rawText = extractMessageText(essay.content);
+          if (!rawText.trim()) {
+            return;
+          }
 
-      // Check if this is the owner sending an approval response
-      const messageText = rawText;
-      if (isOwner(senderShip) && isApprovalResponse(messageText)) {
-        const handled = await handleApprovalResponse(messageText);
-        if (handled) {
-          runtime.log?.(`[tlon] Processed approval response from owner: ${messageText}`);
-          return;
-        }
-      }
+          // Check if this is the owner sending an approval response
+          const messageText = rawText;
+          if (isOwner(senderShip) && isApprovalResponse(messageText)) {
+            const handled = await handleApprovalResponse(messageText);
+            if (handled) {
+              runtime.log?.(`[tlon] Processed approval response from owner: ${messageText}`);
+              return;
+            }
+          }
 
-      // Check if this is the owner sending an admin command
-      if (isOwner(senderShip) && isAdminCommand(messageText)) {
-        const handled = await handleAdminCommand(messageText);
-        if (handled) {
-          runtime.log?.(`[tlon] Processed admin command from owner: ${messageText}`);
-          return;
-        }
-      }
+          // Check if this is the owner sending an admin command
+          if (isOwner(senderShip) && isAdminCommand(messageText)) {
+            const handled = await handleAdminCommand(messageText);
+            if (handled) {
+              runtime.log?.(`[tlon] Processed admin command from owner: ${messageText}`);
+              return;
+            }
+          }
 
-      // Owner is always allowed to DM (bypass allowlist)
-      if (isOwner(senderShip)) {
-        const resolvedMessageText = await resolveAuthorizedMessageText({
-          rawText,
-          content: essay.content,
-          authorizedForCites: true,
-          resolveAllCites,
-        });
-        runtime.log?.(`[tlon] Processing DM from owner ${senderShip}`);
-        await processMessage({
-          messageId: messageId ?? "",
-          senderShip,
-          messageText: resolvedMessageText,
-          messageContent: essay.content,
-          isGroup: false,
-          timestamp: readNumber(essay, "sent") ?? Date.now(),
-          turnAdoptionLifecycle,
-        });
-        return;
-      }
-
-      // For DMs from others, check allowlist
-      if (!(await isDmAllowedWithIngress(senderShip, effectiveDmAllowlist))) {
-        // If owner is configured, queue approval request
-        if (effectiveOwnerShip) {
-          const approval = createPendingApproval({
-            type: "dm",
-            requestingShip: senderShip,
-            messagePreview: sliceUtf16Safe(messageText, 0, 100),
-            originalMessage: {
+          // Owner is always allowed to DM (bypass allowlist)
+          if (isOwner(senderShip)) {
+            const resolvedMessageText = await resolveAuthorizedMessageText({
+              rawText,
+              content: essay.content,
+              authorizedForCites: true,
+              resolveAllCites,
+            });
+            runtime.log?.(`[tlon] Processing DM from owner ${senderShip}`);
+            await processMessage({
               messageId: messageId ?? "",
-              messageText,
+              senderShip,
+              messageText: resolvedMessageText,
               messageContent: essay.content,
+              isGroup: false,
               timestamp: readNumber(essay, "sent") ?? Date.now(),
-            },
-          });
-          await queueApprovalRequest(approval);
-        } else {
-          runtime.log?.(`[tlon] Blocked DM from ${senderShip}: not in allowlist`);
-        }
-        return;
-      }
+            });
+            return;
+          }
 
-      await processMessage({
-        messageText: await resolveAuthorizedMessageText({
-          rawText,
-          content: essay.content,
-          authorizedForCites: true,
-          resolveAllCites,
-        }),
-        messageId: messageId ?? "",
-        senderShip,
-        messageContent: essay.content, // Pass raw content for media extraction
-        isGroup: false,
-        timestamp: readNumber(essay, "sent") ?? Date.now(),
-        turnAdoptionLifecycle,
+          // For DMs from others, check allowlist
+          if (!(await isDmAllowedWithIngress(senderShip, effectiveDmAllowlist))) {
+            // If owner is configured, queue approval request
+            if (effectiveOwnerShip) {
+              const approval = createPendingApproval({
+                type: "dm",
+                requestingShip: senderShip,
+                messagePreview: messageText.slice(0, 100),
+                originalMessage: {
+                  messageId: messageId ?? "",
+                  messageText,
+                  messageContent: essay.content,
+                  timestamp: readNumber(essay, "sent") ?? Date.now(),
+                },
+              });
+              await queueApprovalRequest(approval);
+            } else {
+              runtime.log?.(`[tlon] Blocked DM from ${senderShip}: not in allowlist`);
+            }
+            return;
+          }
+
+          await processMessage({
+            messageText: await resolveAuthorizedMessageText({
+              rawText,
+              content: essay.content,
+              authorizedForCites: true,
+              resolveAllCites,
+            }),
+            messageId: messageId ?? "",
+            senderShip,
+            messageContent: essay.content, // Pass raw content for media extraction
+            isGroup: false,
+            timestamp: readNumber(essay, "sent") ?? Date.now(),
+          });
+        },
       });
+      void processed;
     } catch (error: unknown) {
       runtime.error?.(`[tlon] Error handling chat firehose event: ${formatErrorMessage(error)}`);
-      throw error;
     }
   };
-
-  const ingress = createTlonIngressMonitor({
-    accountId: account.accountId,
-    runtime,
-    abortSignal: opts.abortSignal,
-    dispatch: async (source, event, turnAdoptionLifecycle) => {
-      if (source === "channels") {
-        await handleChannelsFirehose(event, turnAdoptionLifecycle);
-        return;
-      }
-      await handleChatFirehose(event, turnAdoptionLifecycle);
-    },
-  });
 
   try {
     runtime.log?.("[tlon] Subscribing to firehose updates...");
@@ -1102,11 +1099,8 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
     await api.subscribe({
       app: "channels",
       path: "/v2",
-      event: async (event) => {
-        const result = await ingress.receive({ source: "channels", event });
-        if (result.kind === "ignored") {
-          await handleChannelsFirehose(event);
-        }
+      event: (event) => {
+        void handleChannelsFirehose(event);
       },
       err: (error) => {
         runtime.error?.(`[tlon] Channels firehose error: ${String(error)}`);
@@ -1121,11 +1115,8 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
     await api.subscribe({
       app: "chat",
       path: "/v3",
-      event: async (event) => {
-        const result = await ingress.receive({ source: "chat", event });
-        if (result.kind === "ignored") {
-          await handleChatFirehose(event);
-        }
+      event: (event) => {
+        void handleChatFirehose(event);
       },
       err: (error) => {
         runtime.error?.(`[tlon] Chat firehose error: ${String(error)}`);
@@ -1489,7 +1480,6 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
 
     runtime.log?.("[tlon] All subscriptions registered, connecting to SSE stream...");
     await api.connect();
-    ingress.start();
     runtime.log?.("[tlon] Connected! Firehose subscriptions active");
 
     // Periodically refresh channel discovery
@@ -1532,8 +1522,6 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
       await new Promise(() => {});
     }
   } finally {
-    api?.stopReceiving();
-    await ingress.stop();
     try {
       await api?.close();
     } catch (error: unknown) {
@@ -1541,4 +1529,3 @@ export async function monitorTlonProvider(opts: MonitorTlonOpts = {}): Promise<v
     }
   }
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

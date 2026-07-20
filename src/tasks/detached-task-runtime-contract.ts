@@ -1,7 +1,6 @@
 // Defines the detached task runtime contract and spawn options.
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type {
-  JsonValue,
   TaskDeliveryState,
   TaskDeliveryStatus,
   TaskNotifyPolicy,
@@ -11,10 +10,6 @@ import type {
   TaskStatus,
   TaskTerminalOutcome,
 } from "./task-registry.types.js";
-
-// A killed subagent can still report a completion that raced the kill marker.
-// Task cancellation replaces this marker once the operator request is accepted.
-export const SUBAGENT_KILL_TASK_ERROR = "Subagent run killed.";
 
 export type DetachedTaskCreateParams = {
   runtime: TaskRuntime;
@@ -28,14 +23,12 @@ export type DetachedTaskCreateParams = {
   childSessionKey?: string;
   parentTaskId?: string;
   agentId?: string;
-  requesterAgentId?: string;
   runId?: string;
   label?: string;
   task: string;
   preferMetadata?: boolean;
   notifyPolicy?: TaskNotifyPolicy;
   deliveryStatus?: TaskDeliveryStatus;
-  detail?: JsonValue;
 };
 
 export type DetachedRunningTaskCreateParams = DetachedTaskCreateParams & {
@@ -44,7 +37,7 @@ export type DetachedRunningTaskCreateParams = DetachedTaskCreateParams & {
   progressSummary?: string | null;
 };
 
-type DetachedTaskStartParams = {
+export type DetachedTaskStartParams = {
   runId: string;
   runtime?: TaskRuntime;
   sessionKey?: string;
@@ -54,7 +47,7 @@ type DetachedTaskStartParams = {
   eventSummary?: string | null;
 };
 
-type DetachedTaskProgressParams = {
+export type DetachedTaskProgressParams = {
   runId: string;
   runtime?: TaskRuntime;
   sessionKey?: string;
@@ -63,42 +56,43 @@ type DetachedTaskProgressParams = {
   eventSummary?: string | null;
 };
 
-type DetachedTaskFinalizeCommonParams = {
+export type DetachedTaskCompleteParams = {
   runId: string;
   runtime?: TaskRuntime;
   sessionKey?: string;
-  childSessionKey?: string | null;
   endedAt: number;
   lastEventAt?: number;
   progressSummary?: string | null;
   terminalSummary?: string | null;
-  preserveTerminalSummary?: boolean;
-  detail?: JsonValue;
-  suppressDelivery?: boolean;
-};
-
-export type DetachedTaskCompleteParams = DetachedTaskFinalizeCommonParams & {
   terminalOutcome?: TaskTerminalOutcome | null;
 };
 
-export type DetachedTaskFailParams = DetachedTaskFinalizeCommonParams & {
+export type DetachedTaskFailParams = {
+  runId: string;
+  runtime?: TaskRuntime;
+  sessionKey?: string;
   status?: Extract<TaskStatus, "failed" | "timed_out" | "cancelled">;
+  endedAt: number;
+  lastEventAt?: number;
   error?: string;
+  progressSummary?: string | null;
+  terminalSummary?: string | null;
 };
 
-export type DetachedTaskFinalizeParams = DetachedTaskFinalizeCommonParams & {
+export type DetachedTaskFinalizeParams = {
+  runId: string;
+  runtime?: TaskRuntime;
+  sessionKey?: string;
   status: Extract<TaskStatus, "succeeded" | "failed" | "timed_out" | "cancelled">;
+  endedAt: number;
+  lastEventAt?: number;
   error?: string;
-  clearError?: boolean;
+  progressSummary?: string | null;
+  terminalSummary?: string | null;
   terminalOutcome?: TaskTerminalOutcome | null;
 };
 
-export type DetachedTaskTerminalState = Omit<
-  DetachedTaskFinalizeParams,
-  "runId" | "runtime" | "sessionKey"
->;
-
-type DetachedTaskDeliveryStatusParams = {
+export type DetachedTaskDeliveryStatusParams = {
   runId: string;
   runtime?: TaskRuntime;
   sessionKey?: string;
@@ -106,13 +100,13 @@ type DetachedTaskDeliveryStatusParams = {
   error?: string;
 };
 
-type DetachedTaskCancelParams = {
+export type DetachedTaskCancelParams = {
   cfg: OpenClawConfig;
   taskId: string;
   reason?: string;
 };
 
-type DetachedTaskCancelResult = {
+export type DetachedTaskCancelResult = {
   found: boolean;
   cancelled: boolean;
   reason?: string;
@@ -130,19 +124,6 @@ export type DetachedTaskRecoveryAttemptResult = {
   recovered: boolean;
 };
 
-export type DetachedTaskFindParams = {
-  runId: string;
-  runtime: TaskRuntime;
-  sessionKey: string;
-  createdAtOrAfter: number;
-  createdBefore?: number;
-  allowSessionFallback?: boolean;
-};
-
-export type DetachedTaskFindResult =
-  | { lookup: "available"; task?: TaskRecord }
-  | { lookup: "unavailable"; task?: undefined };
-
 export type DetachedTaskLifecycleRuntime = {
   createQueuedTaskRun: (params: DetachedTaskCreateParams) => TaskRecord | null;
   createRunningTaskRun: (params: DetachedRunningTaskCreateParams) => TaskRecord | null;
@@ -152,11 +133,6 @@ export type DetachedTaskLifecycleRuntime = {
   completeTaskRunByRunId: (params: DetachedTaskCompleteParams) => TaskRecord[];
   failTaskRunByRunId: (params: DetachedTaskFailParams) => TaskRecord[];
   setDetachedTaskDeliveryStatusByRunId: (params: DetachedTaskDeliveryStatusParams) => TaskRecord[];
-  /**
-   * Resolve the task owned by one run generation. Custom runtimes should
-   * implement this when their records are not mirrored into core task state.
-   */
-  findTaskRun?: (params: DetachedTaskFindParams) => TaskRecord | undefined;
   /**
    * Return `found: false` when this runtime does not own the task so core can
    * fall back to the legacy detached-task cancel path.

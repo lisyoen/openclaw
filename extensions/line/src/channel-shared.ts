@@ -40,9 +40,6 @@ export const lineChannelPluginCommon = {
         configured: hasLineCredentials(account),
         extra: {
           tokenSource: account.tokenSource ?? undefined,
-          signingSecretSource: account.signingSecretSource ?? undefined,
-          tokenStatus: account.tokenStatus,
-          signingSecretStatus: account.signingSecretStatus,
         },
       }),
   },

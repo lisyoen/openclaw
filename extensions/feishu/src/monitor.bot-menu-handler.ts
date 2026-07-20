@@ -3,7 +3,12 @@ import { isRecord, readStringValue as readString } from "openclaw/plugin-sdk/str
 import type { ClawdbotConfig, HistoryEntry, PluginRuntime, RuntimeEnv } from "../runtime-api.js";
 import { handleFeishuMessage, type FeishuMessageEvent } from "./bot.js";
 import { maybeHandleFeishuQuickActionMenu } from "./card-ux-launcher.js";
-import { claimUnprocessedFeishuMessage, forgetProcessedFeishuMessage } from "./dedup.js";
+import {
+  claimUnprocessedFeishuMessage,
+  forgetProcessedFeishuMessage,
+  recordProcessedFeishuMessage,
+  releaseFeishuMessageProcessing,
+} from "./dedup.js";
 import { botNames, botOpenIds } from "./monitor.state.js";
 import { isFeishuRetryableSyntheticEventError } from "./monitor.synthetic-error.js";
 
@@ -99,11 +104,11 @@ export function createFeishuBotMenuHandler(params: {
         namespace: accountId,
         log,
       });
-      if (claim.kind === "duplicate") {
+      if (claim === "duplicate") {
         log(`feishu[${accountId}]: dropping duplicate bot-menu event for ${syntheticMessageId}`);
         return;
       }
-      if (claim.kind === "inflight") {
+      if (claim === "inflight") {
         log(`feishu[${accountId}]: dropping in-flight bot-menu event for ${syntheticMessageId}`);
         return;
       }
@@ -117,7 +122,7 @@ export function createFeishuBotMenuHandler(params: {
           channelRuntime: params.channelRuntime,
           chatHistories,
           accountId,
-          processingClaim: claim.kind === "claimed" ? claim.handle : undefined,
+          processingClaimHeld: true,
         });
 
       const promise = maybeHandleFeishuQuickActionMenu({
@@ -129,9 +134,7 @@ export function createFeishuBotMenuHandler(params: {
       })
         .then(async (handledMenu) => {
           if (handledMenu) {
-            if (claim.kind === "claimed") {
-              await claim.handle.commit();
-            }
+            await recordProcessedFeishuMessage(syntheticMessageId, accountId, log);
             return;
           }
           return await handleLegacyMenu();
@@ -139,13 +142,13 @@ export function createFeishuBotMenuHandler(params: {
         .catch(async (err: unknown) => {
           if (isFeishuRetryableSyntheticEventError(err)) {
             await forgetProcessedFeishuMessage(syntheticMessageId, accountId, log);
-            if (claim.kind === "claimed") {
-              claim.handle.release({ error: err });
-            }
-          } else if (claim.kind === "claimed") {
-            await claim.handle.commit();
+          } else {
+            await recordProcessedFeishuMessage(syntheticMessageId, accountId, log);
           }
           throw err;
+        })
+        .finally(() => {
+          releaseFeishuMessageProcessing(syntheticMessageId, accountId);
         });
       if (fireAndForget) {
         promise.catch((err: unknown) => {

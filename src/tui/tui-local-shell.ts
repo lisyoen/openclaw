@@ -1,9 +1,6 @@
 // Launches and manages the local shell process used by TUI local mode.
 import { spawn } from "node:child_process";
-import { StringDecoder } from "node:string_decoder";
-import type { Component, OverlayHandle, SelectItem } from "@earendil-works/pi-tui";
-import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import { tryProcessCwd } from "../infra/safe-cwd.js";
+import type { Component, SelectItem } from "@earendil-works/pi-tui";
 import { createSearchableSelectList } from "./components/selectors.js";
 
 type LocalShellDeps = {
@@ -13,8 +10,8 @@ type LocalShellDeps = {
   tui: {
     requestRender: () => void;
   };
-  openOverlay: (component: Component) => OverlayHandle;
-  closeOverlay: (handle?: OverlayHandle) => void;
+  openOverlay: (component: Component) => void;
+  closeOverlay: () => void;
   createSelector?: (
     items: SelectItem[],
     maxVisible: number,
@@ -23,7 +20,7 @@ type LocalShellDeps = {
     onCancel?: () => void;
   };
   spawnCommand?: typeof spawn;
-  getCwd?: () => string | undefined;
+  getCwd?: () => string;
   env?: NodeJS.ProcessEnv;
   maxOutputChars?: number;
 };
@@ -33,7 +30,7 @@ export function createLocalShellRunner(deps: LocalShellDeps) {
   let localExecAllowed = false;
   const createSelector = deps.createSelector ?? createSearchableSelectList;
   const spawnCommand = deps.spawnCommand ?? spawn;
-  const getCwd = deps.getCwd ?? tryProcessCwd;
+  const getCwd = deps.getCwd ?? (() => process.cwd());
   const env = deps.env ?? process.env;
   const maxChars = deps.maxOutputChars ?? 40_000;
 
@@ -59,8 +56,8 @@ export function createLocalShellRunner(deps: LocalShellDeps) {
         ],
         2,
       );
-      selector.onSelect = (item: SelectItem) => {
-        deps.closeOverlay(overlayHandle);
+      selector.onSelect = (item) => {
+        deps.closeOverlay();
         if (item.value === "yes") {
           localExecAllowed = true;
           deps.chatLog.addSystem("local shell: enabled for this session");
@@ -72,12 +69,12 @@ export function createLocalShellRunner(deps: LocalShellDeps) {
         deps.tui.requestRender();
       };
       selector.onCancel = () => {
-        deps.closeOverlay(overlayHandle);
+        deps.closeOverlay();
         deps.chatLog.addSystem("local shell: cancelled");
         deps.tui.requestRender();
         resolve(false);
       };
-      const overlayHandle: OverlayHandle = deps.openOverlay(selector);
+      deps.openOverlay(selector);
       deps.tui.requestRender();
     });
   };
@@ -101,22 +98,12 @@ export function createLocalShellRunner(deps: LocalShellDeps) {
       return;
     }
 
-    // A shell command's meaning depends on its directory; never retarget it implicitly.
-    const cwd = getCwd();
-    if (!cwd) {
-      deps.chatLog.addSystem(
-        "local shell: working directory was deleted; cd to an existing directory first",
-      );
-      deps.tui.requestRender();
-      return;
-    }
-
     deps.chatLog.addSystem(`[local] $ ${cmd}`);
     deps.tui.requestRender();
 
     const appendWithCap = (text: string, chunk: string) => {
       const combined = text + chunk;
-      return combined.length > maxChars ? sliceUtf16Safe(combined, -maxChars) : combined;
+      return combined.length > maxChars ? combined.slice(-maxChars) : combined;
     };
 
     await new Promise<void>((resolve) => {
@@ -124,35 +111,23 @@ export function createLocalShellRunner(deps: LocalShellDeps) {
         // Intentionally a shell: this is an operator-only local TUI feature (prefixed with `!`)
         // and is gated behind an explicit in-session approval prompt.
         shell: true,
-        cwd,
+        cwd: getCwd(),
         env: { ...env, OPENCLAW_SHELL: "tui-local" },
       });
 
       let stdout = "";
       let stderr = "";
-      const stdoutDecoder = new StringDecoder("utf8");
-      const stderrDecoder = new StringDecoder("utf8");
-      // Output pipes may fail independently; child close/error remains authoritative.
-      const ignoreOutputStreamError = () => {};
-      child.stdout.on("error", ignoreOutputStreamError);
-      child.stderr.on("error", ignoreOutputStreamError);
       child.stdout.on("data", (buf) => {
-        stdout = appendWithCap(stdout, stdoutDecoder.write(buf));
+        stdout = appendWithCap(stdout, buf.toString("utf8"));
       });
       child.stderr.on("data", (buf) => {
-        stderr = appendWithCap(stderr, stderrDecoder.write(buf));
+        stderr = appendWithCap(stderr, buf.toString("utf8"));
       });
 
       child.on("close", (code, signal) => {
-        stdout = appendWithCap(stdout, stdoutDecoder.end());
-        stderr = appendWithCap(stderr, stderrDecoder.end());
-        // Keep the tail (consistent with the streaming appendWithCap above) so a
-        // large stdout cannot evict stderr: the failure reason (FATAL etc.) at the
-        // end is what the operator needs most when output overflows the cap.
-        const combined = sliceUtf16Safe(
-          stdout + (stderr ? (stdout ? "\n" : "") + stderr : ""),
-          -maxChars,
-        ).trimEnd();
+        const combined = (stdout + (stderr ? (stdout ? "\n" : "") + stderr : ""))
+          .slice(0, maxChars)
+          .trimEnd();
 
         if (combined) {
           for (const lineLocal of combined.split("\n")) {

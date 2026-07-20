@@ -57,11 +57,11 @@ export const ConnectErrorDetailCodes = {
   CLIENT_VERSION_MISMATCH: "CLIENT_VERSION_MISMATCH",
 } as const;
 
-type ConnectErrorDetailCode =
+export type ConnectErrorDetailCode =
   (typeof ConnectErrorDetailCodes)[keyof typeof ConnectErrorDetailCodes];
 
 /** Pairing-specific reasons clients can display and use for reconnect policy. */
-const ConnectPairingRequiredReasons = {
+export const ConnectPairingRequiredReasons = {
   NOT_PAIRED: "not-paired",
   ROLE_UPGRADE: "role-upgrade",
   SCOPE_UPGRADE: "scope-upgrade",
@@ -72,7 +72,7 @@ export type ConnectPairingRequiredReason =
   (typeof ConnectPairingRequiredReasons)[keyof typeof ConnectPairingRequiredReasons];
 
 /** Suggested client-side recovery action for structured connect errors. */
-type ConnectRecoveryNextStep =
+export type ConnectRecoveryNextStep =
   | "retry_with_device_token"
   | "update_auth_configuration"
   | "update_auth_credentials"
@@ -80,13 +80,13 @@ type ConnectRecoveryNextStep =
   | "review_auth_configuration";
 
 /** Optional retry guidance extracted from gateway connect-error details. */
-type ConnectErrorRecoveryAdvice = {
+export type ConnectErrorRecoveryAdvice = {
   canRetryWithDeviceToken?: boolean;
   recommendedNextStep?: ConnectRecoveryNextStep;
 };
 
 /** Full structured details for pairing-required connect failures. */
-type PairingConnectErrorDetails = {
+export type PairingConnectErrorDetails = {
   code: typeof ConnectErrorDetailCodes.PAIRING_REQUIRED;
   reason?: ConnectPairingRequiredReason;
   requestId?: string;
@@ -232,7 +232,7 @@ export function readConnectErrorDetailCode(details: unknown): string | null {
     return null;
   }
   const code = (details as { code?: unknown }).code;
-  return typeof code === "string" && code.trim().length > 0 ? code.trim() : null;
+  return typeof code === "string" && code.trim().length > 0 ? code : null;
 }
 
 /** Extracts normalized retry advice from untrusted connect-error details. */
@@ -438,6 +438,20 @@ export function readPairingConnectErrorDetails(
     approvedRoles,
     approvedScopes,
   });
+}
+
+/** Reads the compact pairing-required subset from untrusted connect details. */
+export function readConnectPairingRequiredDetails(
+  details: unknown,
+): ConnectPairingRequiredDetails | null {
+  const pairing = readPairingConnectErrorDetails(details);
+  if (!pairing) {
+    return null;
+  }
+  return {
+    ...(pairing.requestId ? { requestId: pairing.requestId } : {}),
+    ...(pairing.reason ? { reason: pairing.reason } : {}),
+  };
 }
 
 /** Parses legacy/string-only pairing-required messages into structured details. */

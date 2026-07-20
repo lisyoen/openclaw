@@ -4,11 +4,10 @@ import {
   buildHarnessParityCell,
   buildHarnessParityResult,
   type HarnessRuntimeParityCell,
+  type HarnessVariant,
 } from "./harness-parity.js";
 import type { RuntimeId } from "./runtime-parity.js";
 import type { RuntimeParityComparisonMode } from "./runtime-tool-metadata.js";
-
-type HarnessVariant = Parameters<typeof buildHarnessParityCell>[0]["variant"];
 
 const LEFT: HarnessVariant = { id: "left", label: "Left", runtime: "openclaw" };
 const RIGHT: HarnessVariant = { id: "right", label: "Right", runtime: "openclaw" };
@@ -183,7 +182,7 @@ describe("harness parity", () => {
       classify(
         {
           transcriptBytes:
-            '{"type":"model_change","modelId":"gpt-5.6-luna"}\n' +
+            '{"type":"model_change","modelId":"gpt-5.5"}\n' +
             '{"type":"thinking_level_change","thinkingLevel":"off"}\n' +
             '{"type":"custom","customType":"model-snapshot"}\n' +
             '{"message":{"role":"assistant","content":"same"}}\n',

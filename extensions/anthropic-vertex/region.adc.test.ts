@@ -28,10 +28,6 @@ vi.mock("node:fs", async () => {
   };
 });
 
-vi.mock("openclaw/plugin-sdk/secret-file-runtime", () => ({
-  tryReadSecretFileSync: (pathname: string) => readFileSyncMock(pathname, "utf8"),
-}));
-
 import { hasAnthropicVertexAvailableAuth, resolveAnthropicVertexProjectId } from "./region.js";
 
 describe("anthropic-vertex ADC reads", () => {

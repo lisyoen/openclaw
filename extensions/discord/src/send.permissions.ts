@@ -7,7 +7,6 @@ import {
   getCurrentUser,
   getGuild,
   getGuildMember,
-  getThreadMember,
   type RequestClient,
 } from "./internal/discord.js";
 import type { DiscordPermissionsSummary, DiscordReactOpts } from "./send.types.js";
@@ -185,8 +184,7 @@ export async function canViewDiscordGuildChannel(
   const rest = resolveDiscordRest(opts);
   try {
     const channel = await getChannel(rest, channelId);
-    const permissionChannel = await resolveChannelPermissionSubject(rest, channel);
-    const channelGuildId = "guild_id" in permissionChannel ? permissionChannel.guild_id : undefined;
+    const channelGuildId = "guild_id" in channel ? channel.guild_id : undefined;
     if (channelGuildId !== guildId) {
       return false;
     }
@@ -202,18 +200,9 @@ export async function canViewDiscordGuildChannel(
       userId,
       guild,
       member,
-      channel: permissionChannel,
+      channel,
     });
-    if (!hasPermissionBit(permissions, PermissionFlagsBits.ViewChannel)) {
-      return false;
-    }
-    if ("type" in channel && channel.type === ChannelType.GuildPrivateThread) {
-      if (hasPermissionBit(permissions, PermissionFlagsBits.ManageThreads)) {
-        return true;
-      }
-      await getThreadMember(rest, channel.id, userId);
-    }
-    return true;
+    return hasPermissionBit(permissions, PermissionFlagsBits.ViewChannel);
   } catch {
     return false;
   }
@@ -390,14 +379,17 @@ export async function hasAllGuildPermissionsDiscord(
   );
 }
 
+/**
+ * @deprecated Prefer hasAnyGuildPermissionDiscord or hasAllGuildPermissionsDiscord for clarity.
+ */
+export const hasGuildPermissionDiscord = hasAnyGuildPermissionDiscord;
+
 export async function fetchChannelPermissionsDiscord(
   channelId: string,
   opts: DiscordReactOpts,
 ): Promise<DiscordPermissionsSummary> {
-  opts.signal?.throwIfAborted();
   const rest = resolveDiscordRest(opts);
   const channel = await getChannel(rest, channelId);
-  opts.signal?.throwIfAborted();
   const channelType = "type" in channel ? channel.type : undefined;
   const guildId = "guild_id" in channel ? channel.guild_id : undefined;
   if (!guildId) {
@@ -411,12 +403,10 @@ export async function fetchChannelPermissionsDiscord(
   }
 
   const botId = await fetchBotUserId(rest);
-  opts.signal?.throwIfAborted();
   const [guild, member] = await Promise.all([
     getGuild(rest, guildId),
     getGuildMember(rest, guildId, botId),
   ]);
-  opts.signal?.throwIfAborted();
 
   const permissions = resolveMemberChannelPermissionBits({
     guildId,

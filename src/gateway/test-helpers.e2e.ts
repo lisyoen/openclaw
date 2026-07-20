@@ -46,7 +46,6 @@ export async function connectGatewayClient(params: {
   scopes?: string[];
   caps?: string[];
   commands?: string[];
-  permissions?: Record<string, boolean>;
   instanceId?: string;
   deviceIdentity?: DeviceIdentity;
   onEvent?: (evt: { event?: string; payload?: unknown }) => void;
@@ -61,17 +60,17 @@ export async function connectGatewayClient(params: {
   const identityRoot = process.env.OPENCLAW_STATE_DIR ?? process.env.HOME ?? os.tmpdir();
   const deviceIdentity =
     params.deviceIdentity ??
-    loadOrCreateDeviceIdentity({
-      path: (() => {
+    loadOrCreateDeviceIdentity(
+      (() => {
         const safe = normalizeLowercaseStringOrEmpty(
           `${params.clientName ?? GATEWAY_CLIENT_NAMES.TEST}-${params.mode ?? GATEWAY_CLIENT_MODES.TEST}-${platform}-${params.deviceFamily ?? "none"}-${role}`.replace(
             /[^a-zA-Z0-9._-]+/g,
             "_",
           ),
         );
-        return path.join(identityRoot, "test-device-identities", `${safe}.sqlite`);
+        return path.join(identityRoot, "test-device-identities", `${safe}.json`);
       })(),
-    });
+    );
   return await new Promise<InstanceType<typeof GatewayClient>>((resolve, reject) => {
     let settled = false;
     const stop = (err?: Error, connectedClient?: InstanceType<typeof GatewayClient>) => {
@@ -109,7 +108,6 @@ export async function connectGatewayClient(params: {
       scopes,
       caps: params.caps,
       commands: params.commands,
-      permissions: params.permissions,
       instanceId: params.instanceId,
       deviceIdentity,
       onEvent: params.onEvent,

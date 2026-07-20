@@ -34,9 +34,7 @@ disabled_rules:
   - identifier_name
   - explicit_self
   - file_header
-  - opening_brace
   - todo
-  - trailing_comma
 
 line_length:
   warning: 140

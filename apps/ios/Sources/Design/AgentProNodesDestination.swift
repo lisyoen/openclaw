@@ -3,7 +3,7 @@ import SwiftUI
 import UIKit
 
 struct AgentProNodesDestination: View {
-    let headerSidebarAction: OpenClawSidebarHeaderAction?
+    let headerLeadingAction: OpenClawSidebarHeaderAction?
     let overview: AgentOverviewSnapshot?
     let gatewayConnected: Bool
     let agentCount: Int
@@ -23,7 +23,6 @@ struct AgentProNodesDestination: View {
                     self.nodesList
                 }
                 .padding(.vertical, 18)
-                .font(OpenClawType.body)
             }
             .refreshable {
                 await self.refresh()
@@ -36,14 +35,14 @@ struct AgentProNodesDestination: View {
 
     @ViewBuilder
     private var header: some View {
-        if let headerSidebarAction {
+        if let headerLeadingAction {
             OpenClawAdaptiveHeaderRow(
                 title: "Instances",
-                subtitle: .verbatim(self.instancesDetail),
-                titleFont: OpenClawType.title3SemiBold,
-                subtitleFont: OpenClawType.subheadMedium)
+                subtitle: self.instancesDetail,
+                titleFont: .title3.weight(.semibold),
+                subtitleFont: .callout)
             {
-                OpenClawSidebarHeaderLeadingSlot(action: headerSidebarAction)
+                OpenClawSidebarHeaderLeadingSlot(action: headerLeadingAction)
             } accessory: {
                 EmptyView()
             }
@@ -57,9 +56,9 @@ struct AgentProNodesDestination: View {
                 ProIconBadge(systemName: "display", color: self.instancesColor)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Instances")
-                        .font(OpenClawType.headline)
-                    Text(verbatim: self.instancesDetail)
-                        .font(OpenClawType.caption)
+                        .font(.headline)
+                    Text(self.instancesDetail)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
@@ -74,20 +73,14 @@ struct AgentProNodesDestination: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("Presence")
-                        .font(OpenClawType.headline)
+                        .font(.headline)
                     Spacer()
                     ProValuePill(value: self.instancesValue, color: self.instancesColor)
                 }
                 HStack(spacing: 10) {
-                    self.detailMetric(
-                        label: "Connected",
-                        value: (self.overview?.presence.count ?? 0).formatted())
-                    self.detailMetric(label: "Agents", value: self.agentCount.formatted())
-                    self.detailMetric(
-                        label: "Gateway",
-                        value: self.gatewayConnected
-                            ? String(localized: "online")
-                            : String(localized: "offline"))
+                    self.detailMetric(label: "Connected", value: "\(self.overview?.presence.count ?? 0)")
+                    self.detailMetric(label: "Agents", value: "\(self.agentCount)")
+                    self.detailMetric(label: "Gateway", value: self.gatewayConnected ? "online" : "offline")
                 }
             }
         }
@@ -140,28 +133,28 @@ struct AgentProNodesDestination: View {
         HStack(alignment: .top, spacing: 12) {
             ProIconBadge(systemName: Self.presenceIcon(entry), color: Self.presenceColor(entry))
             VStack(alignment: .leading, spacing: 4) {
-                Text(verbatim: Self.presenceLabel(entry) ?? String(localized: "Instance"))
-                    .font(OpenClawType.subheadSemiBold)
+                Text(Self.presenceLabel(entry) ?? "Instance")
+                    .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Text(Self.presenceDetail(entry))
-                    .font(OpenClawType.caption)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 if let meta = Self.presenceMeta(entry) {
                     Text(meta)
-                        .font(OpenClawType.caption2)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
             Text(Self.presenceState(entry))
-                .font(OpenClawType.caption2SemiBold)
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(Self.presenceColor(entry))
                 .lineLimit(1)
             if showsChevron {
                 Image(systemName: "chevron.right")
-                    .font(OpenClawType.caption2Bold)
+                    .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
                     .padding(.top, 2)
             }
@@ -179,10 +172,10 @@ struct AgentProNodesDestination: View {
                         HStack(spacing: 12) {
                             ProIconBadge(systemName: Self.presenceIcon(entry), color: Self.presenceColor(entry))
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(verbatim: Self.presenceLabel(entry) ?? String(localized: "Instance"))
-                                    .font(OpenClawType.headline)
+                                Text(Self.presenceLabel(entry) ?? "Instance")
+                                    .font(.headline)
                                 Text(Self.presenceDetail(entry))
-                                    .font(OpenClawType.caption)
+                                    .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 8)
@@ -193,19 +186,19 @@ struct AgentProNodesDestination: View {
 
                     ProCard {
                         VStack(spacing: 0) {
-                            self.nodeDetailRow("Instance", copyLabel: "Copy instance", value: entry.instanceid)
+                            self.nodeDetailRow("Instance", value: entry.instanceid)
                             Divider()
-                            self.nodeDetailRow("Device", copyLabel: "Copy device", value: entry.deviceid)
+                            self.nodeDetailRow("Device", value: entry.deviceid)
                             Divider()
-                            self.nodeDetailRow("Host", copyLabel: "Copy host", value: entry.host)
+                            self.nodeDetailRow("Host", value: entry.host)
                             Divider()
-                            self.nodeDetailRow("IP", copyLabel: "Copy IP", value: entry.ip)
+                            self.nodeDetailRow("IP", value: entry.ip)
                             Divider()
-                            self.nodeDetailRow("Platform", copyLabel: "Copy platform", value: entry.platform)
+                            self.nodeDetailRow("Platform", value: entry.platform)
                             Divider()
-                            self.nodeDetailRow("Version", copyLabel: "Copy version", value: entry.version)
+                            self.nodeDetailRow("Version", value: entry.version)
                             Divider()
-                            self.nodeDetailRow("Mode", copyLabel: "Copy mode", value: entry.mode)
+                            self.nodeDetailRow("Mode", value: entry.mode)
                         }
                     }
                     .padding(.horizontal, OpenClawProMetric.pagePadding)
@@ -215,27 +208,20 @@ struct AgentProNodesDestination: View {
                     self.nodeListCard(title: "Tags", values: entry.tags ?? [])
                 }
                 .padding(.vertical, 18)
-                .font(OpenClawType.body)
             }
             .safeAreaPadding(.bottom, OpenClawProMetric.bottomScrollInset)
         }
-        .navigationTitle(Self.presenceLabel(entry) ?? String(localized: "Instance"))
+        .navigationTitle(Self.presenceLabel(entry) ?? "Instance")
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func nodeDetailRow(
-        _ title: OpenClawTextValue,
-        copyLabel: LocalizedStringKey,
-        value: String?) -> some View
-    {
+    private func nodeDetailRow(_ title: String, value: String?) -> some View {
         let normalized = Self.normalized(value) ?? "n/a"
         return HStack(spacing: 10) {
-            title.text
-                .font(OpenClawType.subhead)
+            Text(title)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
-            Text(verbatim: normalized)
-                .font(OpenClawType.subhead)
+            Text(normalized)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Button {
@@ -245,26 +231,26 @@ struct AgentProNodesDestination: View {
             }
             .buttonStyle(.plain)
             .disabled(normalized == "n/a")
-            .accessibilityLabel(copyLabel)
+            .accessibilityLabel("Copy \(title)")
         }
-        .font(OpenClawType.subhead)
+        .font(.subheadline)
         .padding(.vertical, 10)
     }
 
-    private func nodeListCard(title: OpenClawTextValue, values: [String]) -> some View {
+    private func nodeListCard(title: String, values: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ProSectionHeader(title: title)
             ProCard {
                 if values.isEmpty {
                     Text("None reported.")
-                        .font(OpenClawType.subhead)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(values, id: \.self) { value in
-                            Text(verbatim: value)
-                                .font(OpenClawType.monoSmall)
+                            Text(value)
+                                .font(.caption.monospaced())
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -275,35 +261,29 @@ struct AgentProNodesDestination: View {
         }
     }
 
-    private func detailMetric(label: OpenClawTextValue, value: String) -> some View {
+    private func detailMetric(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            label.text
-                .font(OpenClawType.caption2Medium)
+            Text(label)
+                .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
-            Text(verbatim: value)
-                .font(OpenClawType.subheadSemiBold)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(
-            Color.primary.opacity(0.055),
-            in: RoundedRectangle(cornerRadius: OpenClawRadius.sm, style: .continuous))
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    private func emptyRow(
-        icon: String,
-        title: OpenClawTextValue,
-        detail: OpenClawTextValue) -> some View
-    {
+    private func emptyRow(icon: String, title: String, detail: String) -> some View {
         HStack(spacing: 12) {
             ProIconBadge(systemName: icon, color: .secondary)
             VStack(alignment: .leading, spacing: 3) {
-                title.text
-                    .font(OpenClawType.subheadSemiBold)
-                detail.text
-                    .font(OpenClawType.caption)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -327,24 +307,18 @@ struct AgentProNodesDestination: View {
         if !parts.isEmpty {
             return parts.joined(separator: " • ")
         }
-        return Self.normalized(entry.text) ?? String(localized: "Presence beacon received.")
+        return Self.normalized(entry.text) ?? "Presence beacon received."
     }
 
     private static func presenceMeta(_ entry: PresenceEntry) -> String? {
         let tags = (entry.tags ?? []).prefix(2).joined(separator: ", ")
         let scopesCount = entry.scopes?.count ?? 0
         let rolesCount = entry.roles?.count ?? 0
-        let scopesText = String(
-            AttributedString(localized: "^[\(scopesCount) scope](inflect: true)").characters)
-        let rolesText = String(
-            AttributedString(localized: "^[\(rolesCount) role](inflect: true)").characters)
         let labels = [
-            Self.normalized(entry.instanceid).map {
-                String(format: String(localized: "instance %@"), $0)
-            },
+            Self.normalized(entry.instanceid).map { "instance \($0)" },
             tags.isEmpty ? nil : tags,
-            scopesCount > 0 ? scopesText : nil,
-            rolesCount > 0 ? rolesText : nil,
+            scopesCount > 0 ? "\(scopesCount) scopes" : nil,
+            rolesCount > 0 ? "\(rolesCount) roles" : nil,
         ].compactMap(\.self)
         return labels.isEmpty ? nil : labels.joined(separator: " • ")
     }

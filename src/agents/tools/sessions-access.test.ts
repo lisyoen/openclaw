@@ -1,7 +1,6 @@
 // Sessions access tests cover session-tool visibility policy, sandbox clamps,
 // and agent-to-agent allow rules.
 import { describe, expect, it, vi } from "vitest";
-import { cleanupTempDirs, makeTempDir } from "../../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   createAgentToAgentPolicy,
@@ -11,14 +10,8 @@ import {
   resolveSandboxSessionToolsVisibility,
   resolveSessionToolsVisibility,
 } from "../../plugin-sdk/session-visibility.js";
-import {
-  listAmbientGroupWatchTargets,
-  registerMainSessionGroupWatch,
-  registerSessionStateWatch,
-} from "../../sessions/session-state-events.js";
-import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { resolveSandboxedSessionToolContext } from "./sessions-access.js";
-import { testing as sessionsResolutionTesting } from "./sessions-resolution.test-support.js";
+import { testing as sessionsResolutionTesting } from "./sessions-resolution.js";
 
 describe("resolveSessionToolsVisibility", () => {
   it("defaults to tree when unset or invalid", () => {
@@ -232,80 +225,6 @@ describe("createAgentToAgentPolicy", () => {
 });
 
 describe("createSessionVisibilityGuard", () => {
-  it("allows watched group reads under tree while denying unwatched peers", () => {
-    const tempDirs: string[] = [];
-    const stateDir = makeTempDir(tempDirs, "openclaw-session-visibility-");
-    closeOpenClawStateDatabaseForTest();
-    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
-    try {
-      const requesterSessionKey = "agent:main:main";
-      const watchedSessionKey = "agent:main:telegram:group:watched";
-      expect(
-        registerMainSessionGroupWatch({
-          sessionKey: watchedSessionKey,
-          agentId: "main",
-          entry: { sessionId: "watched", updatedAt: Date.now(), chatType: "group" },
-          dmScope: "main",
-        }),
-      ).toBe(true);
-      const crossAgentSessionKey = "agent:ops:telegram:group:watched";
-      registerSessionStateWatch({
-        watcherSessionKey: requesterSessionKey,
-        targetSessionKey: crossAgentSessionKey,
-      });
-      const explicitDirectSessionKey = "agent:main:coordinator";
-      registerSessionStateWatch({
-        watcherSessionKey: requesterSessionKey,
-        targetSessionKey: explicitDirectSessionKey,
-      });
-      expect(listAmbientGroupWatchTargets(requesterSessionKey)).toEqual(
-        new Set([watchedSessionKey]),
-      );
-      const guard = createSessionVisibilityRowChecker({
-        action: "history",
-        requesterSessionKey,
-        visibility: "tree",
-        a2aPolicy: createAgentToAgentPolicy({} as OpenClawConfig),
-      });
-
-      expect(guard.check({ key: watchedSessionKey })).toEqual({ allowed: true });
-      expect(guard.check({ key: "agent:main:telegram:group:unwatched" })).toEqual({
-        allowed: false,
-        status: "forbidden",
-        error:
-          "Session history visibility is restricted to the current session tree (tools.sessions.visibility=tree).",
-      });
-      expect(guard.check({ key: explicitDirectSessionKey })).toEqual({
-        allowed: false,
-        status: "forbidden",
-        error:
-          "Session history visibility is restricted to the current session tree (tools.sessions.visibility=tree).",
-      });
-      expect(guard.check({ key: crossAgentSessionKey })).toEqual({
-        allowed: false,
-        status: "forbidden",
-        error:
-          "Session history visibility is restricted. Set tools.sessions.visibility=all and tools.agentToAgent.enabled=true to allow cross-agent access; use tools.agentToAgent.allow to restrict permitted agent pairs.",
-      });
-      const sendGuard = createSessionVisibilityRowChecker({
-        action: "send",
-        requesterSessionKey,
-        visibility: "tree",
-        a2aPolicy: createAgentToAgentPolicy({} as OpenClawConfig),
-      });
-      expect(sendGuard.check({ key: watchedSessionKey })).toEqual({
-        allowed: false,
-        status: "forbidden",
-        error:
-          "Session send visibility is restricted to the current session tree (tools.sessions.visibility=tree).",
-      });
-    } finally {
-      closeOpenClawStateDatabaseForTest();
-      vi.unstubAllEnvs();
-      cleanupTempDirs(tempDirs);
-    }
-  });
-
   it("allows cross-agent spawned child rows in list results with tree visibility", () => {
     const guard = createSessionVisibilityRowChecker({
       action: "list",
@@ -359,7 +278,7 @@ describe("createSessionVisibilityGuard", () => {
       allowed: false,
       status: "forbidden",
       error:
-        "Session list visibility is restricted. Set tools.sessions.visibility=all and tools.agentToAgent.enabled=true to allow cross-agent access; use tools.agentToAgent.allow to restrict permitted agent pairs.",
+        "Session list visibility is restricted. Set tools.sessions.visibility=all to allow cross-agent access.",
     });
   });
 
@@ -421,7 +340,7 @@ describe("createSessionVisibilityGuard", () => {
       allowed: false,
       status: "forbidden",
       error:
-        "Session history visibility is restricted. Set tools.sessions.visibility=all and tools.agentToAgent.enabled=true to allow cross-agent access; use tools.agentToAgent.allow to restrict permitted agent pairs.",
+        "Session history visibility is restricted. Set tools.sessions.visibility=all to allow cross-agent access.",
     });
   });
 

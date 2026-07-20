@@ -1,7 +1,6 @@
 // Qqbot plugin module implements register clear storage behavior.
 import fs from "node:fs";
 import path from "node:path";
-import { formatByteSize } from "openclaw/plugin-sdk/number-runtime";
 import { getQQBotMediaPath } from "../../utils/platform.js";
 import type { SlashCommandRegistry } from "../slash-commands.js";
 
@@ -37,12 +36,16 @@ function scanDirectoryFiles(dirPath: string): { filePath: string; size: number }
 }
 
 function formatBytes(bytes: number): string {
-  return formatByteSize(bytes, {
-    style: "legacy-binary",
-    maxUnit: "giga",
-    separator: " ",
-    fractionDigits: (_value, unit) => (unit === "byte" ? null : 1),
-  });
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function removeEmptyDirs(dirPath: string): void {
@@ -83,48 +86,6 @@ function resolveQqbotDownloadsDir(): string {
   return getQQBotMediaPath("downloads");
 }
 
-function clearQqbotDownloads(targetDir: string): string {
-  const files = scanDirectoryFiles(targetDir);
-
-  if (files.length === 0) {
-    return `✅ 目录已为空，无需清理`;
-  }
-
-  let deletedCount = 0;
-  let deletedSize = 0;
-  let failedCount = 0;
-
-  for (const f of files) {
-    try {
-      fs.unlinkSync(f.filePath);
-      deletedCount++;
-      deletedSize += f.size;
-    } catch {
-      failedCount++;
-    }
-  }
-
-  try {
-    removeEmptyDirs(targetDir);
-  } catch {
-    // Non-critical, silently ignore.
-  }
-
-  if (failedCount === 0) {
-    return [
-      `✅ 清理成功`,
-      ``,
-      `已删除 ${deletedCount} 个文件，释放 ${formatBytes(deletedSize)} 磁盘空间。`,
-    ].join("\n");
-  }
-
-  return [
-    `⚠️ 部分清理完成`,
-    ``,
-    `已删除 ${deletedCount} 个文件（${formatBytes(deletedSize)}），${failedCount} 个文件删除失败。`,
-  ].join("\n");
-}
-
 export function registerClearStorageCommands(registry: SlashCommandRegistry): void {
   registry.register({
     name: "bot-clear-storage",
@@ -141,7 +102,7 @@ export function registerClearStorageCommands(registry: SlashCommandRegistry): vo
       ``,
       `⚠️ 仅在私聊中可用。`,
     ].join("\n"),
-    handler: async (ctx) => {
+    handler: (ctx) => {
       const isForce = ctx.args.trim() === "--force";
       const targetDir = resolveQqbotDownloadsDir();
       const displayDir = `~/.openclaw/media/qqbot/downloads`;
@@ -183,12 +144,45 @@ export function registerClearStorageCommands(registry: SlashCommandRegistry): vo
         return lines.join("\n");
       }
 
-      const run = async () => clearQqbotDownloads(targetDir);
-      if (!ctx.runIngressEffectOnce) {
-        return await run();
+      const files = scanDirectoryFiles(targetDir);
+
+      if (files.length === 0) {
+        return `✅ 目录已为空，无需清理`;
       }
-      const outcome = await ctx.runIngressEffectOnce({ effect: "clear-storage", run });
-      return outcome.kind === "executed" ? outcome.value : `✅ 此清理请求已经处理，无需重复清理`;
+
+      let deletedCount = 0;
+      let deletedSize = 0;
+      let failedCount = 0;
+
+      for (const f of files) {
+        try {
+          fs.unlinkSync(f.filePath);
+          deletedCount++;
+          deletedSize += f.size;
+        } catch {
+          failedCount++;
+        }
+      }
+
+      try {
+        removeEmptyDirs(targetDir);
+      } catch {
+        // Non-critical, silently ignore.
+      }
+
+      if (failedCount === 0) {
+        return [
+          `✅ 清理成功`,
+          ``,
+          `已删除 ${deletedCount} 个文件，释放 ${formatBytes(deletedSize)} 磁盘空间。`,
+        ].join("\n");
+      }
+
+      return [
+        `⚠️ 部分清理完成`,
+        ``,
+        `已删除 ${deletedCount} 个文件（${formatBytes(deletedSize)}），${failedCount} 个文件删除失败。`,
+      ].join("\n");
     },
   });
 }

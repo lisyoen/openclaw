@@ -101,7 +101,6 @@ describe("scanStatus", () => {
       plugins: { enabled: false },
     });
     configureScanStatus({
-      hasConfiguredChannels: true,
       sourceConfig,
       resolvedConfig,
       summary: createStatusSummary({ linkChannel: { linked: false } }),
@@ -109,11 +108,6 @@ describe("scanStatus", () => {
 
     await scanStatus({ json: false }, {} as never);
 
-    expect(mocks.getStatusSummary).toHaveBeenCalledWith({
-      config: resolvedConfig,
-      sourceConfig,
-      includeChannelSummary: false,
-    });
     expect(mocks.buildChannelsTable).toHaveBeenCalledOnce();
     expect(firstBuildChannelsTableCall()).toStrictEqual([
       resolvedConfig,
@@ -344,6 +338,7 @@ describe("scanStatus", () => {
     expect(firstCallArg(mocks.probeGateway, "probeGateway args")).toStrictEqual({
       url: "ws://127.0.0.1:18789",
       auth: {},
+      preauthHandshakeTimeoutMs: undefined,
       timeoutMs: 2500,
       detailLevel: "presence",
     });

@@ -1,7 +1,7 @@
 // Test routing roots for voice-call extension tests.
 import { bundledPluginRoot } from "../../scripts/lib/bundled-plugin-paths.mjs";
 
-const voiceCallExtensionIds = ["voice-call"];
+export const voiceCallExtensionIds = ["voice-call"];
 
 export const voiceCallExtensionTestRoots = voiceCallExtensionIds.map((id) => bundledPluginRoot(id));
 

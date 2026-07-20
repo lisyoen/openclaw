@@ -1,12 +1,12 @@
 /** Risk level returned by exec auto-reviewers for approval routing decisions. */
-type ExecAutoReviewRisk = "unknown" | "low" | "medium" | "high";
+export type ExecAutoReviewRisk = "unknown" | "low" | "medium" | "high";
 
 /** Auto-review outcome: either approve once or send the command to normal approval. */
 export type ExecAutoReviewDecision =
   | {
       decision: "allow-once";
       rationale: string;
-      risk: "low";
+      risk: "low" | "medium" | "high";
     }
   | {
       decision: "ask";
@@ -21,7 +21,6 @@ export type ExecAutoReviewHost = "gateway" | "node" | "codex-app-server";
 export type ExecAutoReviewInput = {
   command: string;
   argv?: readonly string[];
-  resolvedPath?: string | null;
   cwd?: string | null;
   envKeys?: readonly string[];
   host: ExecAutoReviewHost;

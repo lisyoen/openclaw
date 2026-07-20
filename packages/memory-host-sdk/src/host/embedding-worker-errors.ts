@@ -8,19 +8,23 @@ export const LOCAL_EMBEDDING_WORKER_ERROR_CODES = {
 } as const;
 
 /** Error code union for local embedding worker failures. */
-type LocalEmbeddingWorkerFailureCode =
+export type LocalEmbeddingWorkerFailureCode =
   (typeof LOCAL_EMBEDDING_WORKER_ERROR_CODES)[keyof typeof LOCAL_EMBEDDING_WORKER_ERROR_CODES];
 
 /** Cause category for local embedding worker failures. */
-type LocalEmbeddingWorkerFailureReason = "exit" | "signal" | "process-error" | "ipc";
+export type LocalEmbeddingWorkerFailureReason = "exit" | "signal" | "process-error" | "ipc";
 
-/** Error shape returned by the local embedding worker failure factory. */
-type LocalEmbeddingWorkerFailureError = Error & {
+/** Error shape used by callers that need retry/status decisions. */
+export type LocalEmbeddingWorkerFailureError = Error & {
   code: LocalEmbeddingWorkerFailureCode;
   reason: LocalEmbeddingWorkerFailureReason;
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
 };
+
+const LOCAL_EMBEDDING_WORKER_FAILURE_CODES = new Set<string>(
+  Object.values(LOCAL_EMBEDDING_WORKER_ERROR_CODES),
+);
 
 /** Create a local embedding worker failure with stable metadata fields. */
 export function createLocalEmbeddingWorkerFailureError(params: {
@@ -38,4 +42,14 @@ export function createLocalEmbeddingWorkerFailureError(params: {
     ...(params.signal !== undefined ? { signal: params.signal } : {}),
     ...(params.cause !== undefined ? { cause: params.cause } : {}),
   });
+}
+
+/** Narrow unknown errors to local embedding worker lifecycle failures. */
+export function isLocalEmbeddingWorkerFailure(
+  err: unknown,
+): err is LocalEmbeddingWorkerFailureError {
+  return (
+    err instanceof Error &&
+    LOCAL_EMBEDDING_WORKER_FAILURE_CODES.has(String((err as { code?: unknown }).code))
+  );
 }

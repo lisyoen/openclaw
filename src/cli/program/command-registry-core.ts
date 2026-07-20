@@ -12,6 +12,7 @@ import type { ProgramContext } from "./context.js";
 import {
   getCoreCliCommandDescriptors,
   getCoreCliCommandNames as getCoreDescriptorNames,
+  getCoreCliCommandsWithSubcommands,
 } from "./core-command-descriptors.js";
 import {
   registerCommandGroupByName,
@@ -19,10 +20,17 @@ import {
   type CommandGroupEntry,
 } from "./register-command-groups.js";
 
+export { getCoreCliCommandDescriptors, getCoreCliCommandsWithSubcommands };
+
 type CommandRegisterParams = {
   program: Command;
   ctx: ProgramContext;
   argv: string[];
+};
+
+export type CommandRegistration = {
+  id: string;
+  register: (params: CommandRegisterParams) => void;
 };
 
 function withProgramOnlySpecs(
@@ -45,7 +53,12 @@ const coreEntrySpecs: readonly CommandGroupDescriptorSpec<
   ...withProgramOnlySpecs(
     defineImportedProgramCommandGroupSpecs([
       {
-        commandNames: ["setup", "crestodian"], // hidden alias
+        commandNames: ["crestodian"],
+        loadModule: () => import("./register.crestodian.js"),
+        exportName: "registerCrestodianCommand",
+      },
+      {
+        commandNames: ["setup"],
         loadModule: () => import("./register.setup.js"),
         exportName: "registerSetupCommand",
       },
@@ -73,11 +86,6 @@ const coreEntrySpecs: readonly CommandGroupDescriptorSpec<
         commandNames: ["migrate"],
         loadModule: () => import("./register.migrate.js"),
         exportName: "registerMigrateCommand",
-      },
-      {
-        commandNames: ["audit"],
-        loadModule: () => import("./register.audit.js"),
-        exportName: "registerAuditCommand",
       },
       {
         commandNames: ["doctor", "dashboard", "reset", "uninstall"],

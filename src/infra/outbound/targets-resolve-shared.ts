@@ -8,8 +8,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel-constants.js";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import { validateTargetProviderPrefix } from "./channel-target-prefix.js";
-import { missingTargetError, reservedTargetLiteralError } from "./target-errors.js";
-import { resolveReservedTargetLiteral } from "./target-normalization.js";
+import { missingTargetError } from "./target-errors.js";
 
 /**
  * Result of resolving a concrete outbound target for a channel send.
@@ -19,7 +18,7 @@ export type OutboundTargetResolution = { ok: true; to: string } | { ok: false; e
 /**
  * Inputs shared by direct and heartbeat outbound target resolution.
  */
-type ResolveOutboundTargetParams = {
+export type ResolveOutboundTargetParams = {
   channel: GatewayMessageChannel;
   to?: string;
   allowFrom?: string[];
@@ -80,21 +79,6 @@ export function resolveOutboundTargetWithPlugin(params: {
   if (targetPrefixError) {
     return { ok: false, error: targetPrefixError };
   }
-  const hint = plugin.messaging?.targetResolver?.hint;
-  // Heartbeats defer reserved literals to the async resolver so directory hits can win.
-  if (params.target.mode !== "heartbeat") {
-    const reservedLiteral = resolveReservedTargetLiteral({ raw: effectiveTo, plugin });
-    if (reservedLiteral) {
-      return {
-        ok: false,
-        error: reservedTargetLiteralError(
-          plugin.meta.label ?? params.target.channel,
-          reservedLiteral,
-          hint,
-        ),
-      };
-    }
-  }
 
   const resolveTarget = plugin.outbound?.resolveTarget;
   if (resolveTarget) {
@@ -110,6 +94,7 @@ export function resolveOutboundTargetWithPlugin(params: {
   if (effectiveTo) {
     return { ok: true, to: effectiveTo };
   }
+  const hint = plugin.messaging?.targetResolver?.hint;
   return {
     ok: false,
     error: missingTargetError(plugin.meta.label ?? params.target.channel, hint),

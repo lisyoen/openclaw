@@ -1,6 +1,6 @@
 // Gateway Talk handoff registry.
 // Manages short-lived browser Talk rooms, tokens, events, and turn ownership.
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   asDateTimestampMs,
   isFutureDateTimestampMs,
@@ -8,7 +8,6 @@ import {
   resolveExpiresAtMsFromDurationMs,
 } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { sha256Base64Url } from "../infra/crypto-digest.js";
 import { recordTalkObservabilityEvent } from "../talk/observability.js";
 import {
   createTalkSessionController,
@@ -24,7 +23,7 @@ const DEFAULT_TALK_HANDOFF_TTL_MS = 10 * 60 * 1000;
 const MAX_TALK_HANDOFF_TTL_MS = 60 * 60 * 1000;
 
 /** Inputs captured when a gateway caller creates a managed Talk room. */
-type TalkHandoffCreateParams = {
+export type TalkHandoffCreateParams = {
   sessionKey: string;
   sessionId?: string;
   channel?: string;
@@ -39,7 +38,7 @@ type TalkHandoffCreateParams = {
 };
 
 /** Private handoff state, including the hashed room token and event controller. */
-type TalkHandoffRecord = {
+export type TalkHandoffRecord = {
   id: string;
   roomId: string;
   roomUrl: string;
@@ -60,7 +59,7 @@ type TalkHandoffRecord = {
 };
 
 /** Public handoff shape returned to clients; never includes token material. */
-type TalkHandoffPublicRecord = Omit<TalkHandoffRecord, "tokenHash" | "room"> & {
+export type TalkHandoffPublicRecord = Omit<TalkHandoffRecord, "tokenHash" | "room"> & {
   room: {
     activeClientId?: string;
     activeTurnId?: string;
@@ -68,11 +67,11 @@ type TalkHandoffPublicRecord = Omit<TalkHandoffRecord, "tokenHash" | "room"> & {
   };
 };
 
-type TalkHandoffCreateResult = TalkHandoffPublicRecord & {
+export type TalkHandoffCreateResult = TalkHandoffPublicRecord & {
   token: string;
 };
 
-type TalkHandoffJoinResult =
+export type TalkHandoffJoinResult =
   | {
       ok: true;
       record: TalkHandoffPublicRecord;
@@ -83,7 +82,7 @@ type TalkHandoffJoinResult =
     }
   | { ok: false; reason: "not_found" | "expired" | "invalid_token" };
 
-type TalkHandoffRevokeResult = {
+export type TalkHandoffRevokeResult = {
   revoked: boolean;
   roomId?: string;
   activeClientId?: string;
@@ -291,8 +290,13 @@ export function revokeTalkHandoff(id: string): TalkHandoffRevokeResult {
 }
 
 /** Verifies the caller token without exposing the stored token hash. */
-function verifyTalkHandoffToken(record: TalkHandoffRecord, token: string): boolean {
+export function verifyTalkHandoffToken(record: TalkHandoffRecord, token: string): boolean {
   return record.tokenHash === hashTalkHandoffToken(token);
+}
+
+/** Clears process-local handoffs between tests. */
+export function clearTalkHandoffsForTest(): void {
+  handoffs.clear();
 }
 
 function normalizeTtlMs(value: number | undefined): number {
@@ -320,7 +324,7 @@ function pruneExpiredTalkHandoffs(now = Date.now()): void {
 }
 
 function hashTalkHandoffToken(token: string): string {
-  return sha256Base64Url(token);
+  return createHash("sha256").update(token).digest("base64url");
 }
 
 function toPublicTalkHandoffRecord(record: TalkHandoffRecord): TalkHandoffPublicRecord {

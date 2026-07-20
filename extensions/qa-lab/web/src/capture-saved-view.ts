@@ -1,5 +1,4 @@
 // Qa Lab plugin module implements capture saved view behavior.
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { CaptureSavedView } from "./ui-render.js";
 
 const MAX_SAVED_VIEWS = 12;
@@ -39,7 +38,7 @@ function readString(value: unknown, maxLength: number): string | null {
     return null;
   }
   const trimmed = value.trim();
-  return trimmed ? truncateUtf16Safe(trimmed, maxLength) : null;
+  return trimmed ? trimmed.slice(0, maxLength) : null;
 }
 
 function readStringArray(value: unknown): string[] {
@@ -48,7 +47,7 @@ function readStringArray(value: unknown): string[] {
   }
   return value
     .filter((item): item is string => typeof item === "string")
-    .map((item) => truncateUtf16Safe(item.trim(), MAX_FILTER_VALUE_LENGTH))
+    .map((item) => item.trim().slice(0, MAX_FILTER_VALUE_LENGTH))
     .filter(Boolean)
     .slice(0, MAX_FILTER_ITEMS);
 }
@@ -87,7 +86,7 @@ export function normalizeCaptureSavedView(value: unknown): CaptureSavedView | nu
     hostFilter: readStringArray(record.hostFilter),
     searchText:
       typeof record.searchText === "string"
-        ? truncateUtf16Safe(record.searchText, MAX_SEARCH_TEXT_LENGTH)
+        ? record.searchText.slice(0, MAX_SEARCH_TEXT_LENGTH)
         : "",
     headerMode: readEnum(record.headerMode, headerModes, "key"),
     viewMode: readEnum(record.viewMode, viewModes, "list"),

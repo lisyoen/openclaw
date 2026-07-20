@@ -189,7 +189,6 @@ func isRetryableTranslateError(err error) bool {
 		return false
 	}
 	return strings.Contains(message, "placeholder missing") ||
-		strings.Contains(message, "placeholder duplicated") ||
 		strings.Contains(message, "rate limit") ||
 		strings.Contains(message, "429") ||
 		strings.Contains(message, "500") ||
@@ -208,9 +207,7 @@ func runCodexExecPrompt(ctx context.Context, req codexPromptRequest) (string, er
 	}
 	outputPath := outputFile.Name()
 	_ = outputFile.Close()
-	defer func() {
-		_ = os.Remove(outputPath)
-	}()
+	defer os.Remove(outputPath)
 
 	codexHomeBase, err := isolatedCodexHomeBase()
 	if err != nil {
@@ -220,9 +217,7 @@ func runCodexExecPrompt(ctx context.Context, req codexPromptRequest) (string, er
 	if err != nil {
 		return "", err
 	}
-	defer func() {
-		_ = os.RemoveAll(codexHome)
-	}()
+	defer os.RemoveAll(codexHome)
 	if err := writeCodexAuthFile(codexHome); err != nil {
 		return "", err
 	}
@@ -308,7 +303,7 @@ func docsCodexExecutable() string {
 
 func buildCodexTranslationPrompt(systemPrompt, message string) string {
 	return strings.TrimSpace(systemPrompt) + "\n\n" +
-		"Translate the exact input below. Return only the translated text, with no tool calls, reasoning, or commentary. Do not wrap the response in an additional code fence; preserve every code fence already present in the input exactly.\n\n" +
+		"Translate the exact input below. Return only the translated text, with no code fences, no tool calls, no reasoning, and no commentary.\n\n" +
 		"<openclaw_docs_i18n_input>\n" +
 		message +
 		"\n</openclaw_docs_i18n_input>\n"
@@ -320,16 +315,11 @@ func previewCommandOutput(stdout, stderr string) string {
 		return "no output"
 	}
 	combined = strings.Join(strings.Fields(combined), " ")
-	const (
-		limit      = 1200
-		headLength = 300
-		tailLength = 800
-	)
+	const limit = 500
 	if len(combined) <= limit {
 		return combined
 	}
-	// Codex prints API failures after its header and prompt, so the tail carries the actionable error.
-	return combined[:headLength] + " ... [truncated] ... " + combined[len(combined)-tailLength:]
+	return combined[:limit] + "..."
 }
 
 func sleepWithContext(ctx context.Context, delay time.Duration) error {
@@ -349,11 +339,8 @@ func normalizeThinking(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "low", "medium", "high", "xhigh":
 		return strings.ToLower(strings.TrimSpace(value))
-	case "max":
-		// Codex CLI supports max for GPT-5.6; xhigh remains the default for older model overrides.
-		return "max"
 	default:
-		return "xhigh"
+		return "high"
 	}
 }
 

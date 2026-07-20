@@ -1,6 +1,5 @@
 package ai.openclaw.app.gateway
 
-import ai.openclaw.app.SecurePrefs
 import android.content.Context
 import android.util.Base64
 import kotlinx.serialization.Serializable
@@ -18,14 +17,11 @@ data class DeviceIdentity(
 )
 
 /** Owns device identity generation, persistence, and auth payload signatures. */
-class DeviceIdentityStore private constructor(
+class DeviceIdentityStore(
   context: Context,
-  private val prefs: SecurePrefs,
 ) {
-  constructor(context: Context) : this(context, SecurePrefs(context))
-
   private val json = Json { ignoreUnknownKeys = true }
-  private val legacyIdentityFile = File(context.filesDir, "openclaw/identity/device.json")
+  private val identityFile = File(context.filesDir, "openclaw/identity/device.json")
 
   @Volatile private var cachedIdentity: DeviceIdentity? = null
 
@@ -33,7 +29,6 @@ class DeviceIdentityStore private constructor(
   @Synchronized
   fun loadOrCreate(): DeviceIdentity {
     cachedIdentity?.let { return it }
-    migrateLegacyIdentity()
     val existing = load()
     if (existing != null) {
       val derived = deriveDeviceId(existing.publicKeyRawBase64)
@@ -125,11 +120,12 @@ class DeviceIdentityStore private constructor(
       null
     }
 
-  private fun load(): DeviceIdentity? = readIdentity(prefs.getString(identityKey))
+  private fun load(): DeviceIdentity? = readIdentity(identityFile)
 
-  private fun readIdentity(raw: String?): DeviceIdentity? {
+  private fun readIdentity(file: File): DeviceIdentity? {
     return try {
-      if (raw == null) return null
+      if (!file.exists()) return null
+      val raw = file.readText(Charsets.UTF_8)
       val decoded = json.decodeFromString(DeviceIdentity.serializer(), raw)
       if (decoded.deviceId.isBlank() ||
         decoded.publicKeyRawBase64.isBlank() ||
@@ -144,30 +140,13 @@ class DeviceIdentityStore private constructor(
     }
   }
 
-  private fun migrateLegacyIdentity() {
-    if (!legacyIdentityFile.exists()) return
-    val legacy =
-      runCatching { legacyIdentityFile.readText(Charsets.UTF_8) }
-        .getOrNull()
-        ?.let(::readIdentity)
-    if (legacy == null) {
-      legacyIdentityFile.delete()
-      return
-    }
-
-    save(legacy)
-    check(load() == legacy) { "Failed to migrate device identity to secure storage" }
-    // Delete plaintext after verified import so secure prefs remain the only identity owner.
-    // A fallback would expose the key again and can restore stale identity, breaking gateway pairing.
-    check(legacyIdentityFile.delete() || !legacyIdentityFile.exists()) {
-      "Failed to delete legacy device identity"
-    }
-  }
-
   private fun save(identity: DeviceIdentity) {
-    val encoded = json.encodeToString(DeviceIdentity.serializer(), identity)
-    check(prefs.putStringSynchronously(identityKey, encoded)) {
-      "Failed to persist device identity"
+    try {
+      identityFile.parentFile?.mkdirs()
+      val encoded = json.encodeToString(DeviceIdentity.serializer(), identity)
+      identityFile.writeText(encoded, Charsets.UTF_8)
+    } catch (_: Throwable) {
+      // best-effort only
     }
   }
 
@@ -227,12 +206,6 @@ class DeviceIdentityStore private constructor(
     )
 
   companion object {
-    private const val identityKey = "device.identity"
     private val HEX = "0123456789abcdef".toCharArray()
-
-    internal fun withPrefs(
-      context: Context,
-      prefs: SecurePrefs,
-    ): DeviceIdentityStore = DeviceIdentityStore(context, prefs)
   }
 }

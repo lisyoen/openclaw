@@ -139,7 +139,7 @@ export const matrixMessageActions: ChannelMessageActionAdapter = {
     const listedActions = Array.from(actions);
     return {
       actions: listedActions,
-      capabilities: ["presentation"],
+      capabilities: [],
       schema: listedActions.includes("set-profile") ? buildMatrixProfileToolSchema() : null,
       mediaSourceParams: listedActions.includes("set-profile")
         ? { "set-profile": MATRIX_PROFILE_MEDIA_SOURCE_PARAMS }
@@ -160,17 +160,7 @@ export const matrixMessageActions: ChannelMessageActionAdapter = {
           ...(accountId ? { accountId } : {}),
         },
         cfg as CoreConfig,
-        {
-          mediaLocalRoots,
-          readContext: {
-            accountId,
-            requesterAccountId: ctx.requesterAccountId,
-            currentChannelId: ctx.toolContext?.currentChannelId,
-            currentChannelProvider: ctx.toolContext?.currentChannelProvider,
-            currentChatType: ctx.toolContext?.currentChatType,
-            conversationReadOrigin: ctx.conversationReadOrigin,
-          },
-        },
+        { mediaLocalRoots },
       );
     const resolveRoomId = () =>
       readStringParam(params, "roomId") ??
@@ -307,7 +297,7 @@ export const matrixMessageActions: ChannelMessageActionAdapter = {
       return await dispatch({
         action: "memberInfo",
         userId,
-        roomId: resolveRoomId(),
+        roomId: readStringParam(params, "roomId") ?? readStringParam(params, "channelId"),
       });
     }
 

@@ -5,14 +5,7 @@ export function createBaseSignalEventHandlerDeps(
   overrides: Partial<SignalEventHandlerDeps> = {},
 ): SignalEventHandlerDeps {
   return {
-    runtime: { log: () => {}, error: () => {} } as SignalEventHandlerDeps["runtime"],
-    statusReactionTiming: {
-      debounceMs: 0,
-      doneHoldMs: 0,
-      errorHoldMs: 0,
-      stallSoftMs: 60_000,
-      stallHardMs: 120_000,
-    },
+    runtime: { log: () => {}, error: () => {} } as any,
     cfg: {},
     baseUrl: "http://localhost",
     accountId: "default",

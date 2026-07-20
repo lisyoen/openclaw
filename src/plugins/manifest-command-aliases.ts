@@ -5,7 +5,7 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import { isRecord } from "../utils.js";
 
-type PluginManifestCommandAliasKind = "runtime-slash";
+export type PluginManifestCommandAliasKind = "runtime-slash";
 
 /** One command alias declared by a plugin manifest. */
 export type PluginManifestCommandAlias = {

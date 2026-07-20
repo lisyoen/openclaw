@@ -2,7 +2,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
@@ -45,10 +44,7 @@ function resolveArgDefaults(dockerfile: string): Map<string, string> {
       continue;
     }
     const [, name, rawValue] = argMatch;
-    argDefaults.set(
-      expectDefined(name, "name test invariant"),
-      expectDefined(rawValue, "rawValue test invariant").replace(/^["']|["']$/g, ""),
-    );
+    argDefaults.set(name, rawValue.replace(/^["']|["']$/g, ""));
   }
   return argDefaults;
 }
@@ -58,7 +54,7 @@ function resolveFromImageRef(fromLine: string, argDefaults: Map<string, string>)
   if (!fromMatch) {
     return fromLine;
   }
-  const imageRef = expectDefined(fromMatch[1], "fromMatch[1] test invariant");
+  const imageRef = fromMatch[1];
   const argName =
     imageRef.match(/^\$\{([A-Z0-9_]+)\}$/)?.[1] ?? imageRef.match(/^\$([A-Z0-9_]+)$/)?.[1];
   if (!argName) {
@@ -86,7 +82,7 @@ function resolveAllArgBackedFromReferences(
     if (usesArg) {
       const stageMatch = trimmed.match(/AS\s+(\S+)/i);
       const stageName = stageMatch ? stageMatch[1] : `stage-${stageIndex}`;
-      results.push({ stage: expectDefined(stageName, "stageName test invariant"), imageRef });
+      results.push({ stage: stageName, imageRef });
     }
     stageIndex += 1;
   }

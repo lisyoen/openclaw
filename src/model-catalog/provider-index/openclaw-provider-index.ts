@@ -30,22 +30,8 @@ export const OPENCLAW_PROVIDER_INDEX = {
             contextWindow: 262144,
           },
           {
-            id: "kimi-k3",
-            name: "Kimi K3",
-            reasoning: true,
-            input: ["text", "image"],
-            contextWindow: 1048576,
-          },
-          {
             id: "kimi-k2.7-code",
             name: "Kimi K2.7 Code",
-            reasoning: true,
-            input: ["text", "image"],
-            contextWindow: 262144,
-          },
-          {
-            id: "kimi-k2.7-code-highspeed",
-            name: "Kimi K2.7 Code HighSpeed",
             reasoning: true,
             input: ["text", "image"],
             contextWindow: 262144,
@@ -64,31 +50,17 @@ export const OPENCLAW_PROVIDER_INDEX = {
       previewCatalog: {
         models: [
           {
-            id: "deepseek-v4-flash",
-            name: "DeepSeek V4 Flash",
-            input: ["text"],
-            reasoning: true,
-            contextWindow: 1000000,
-          },
-          {
-            id: "deepseek-v4-pro",
-            name: "DeepSeek V4 Pro",
-            input: ["text"],
-            reasoning: true,
-            contextWindow: 1000000,
-          },
-          {
             id: "deepseek-chat",
             name: "DeepSeek Chat",
             input: ["text"],
-            contextWindow: 1000000,
+            contextWindow: 131072,
           },
           {
             id: "deepseek-reasoner",
             name: "DeepSeek Reasoner",
             input: ["text"],
             reasoning: true,
-            contextWindow: 1000000,
+            contextWindow: 131072,
           },
         ],
       },

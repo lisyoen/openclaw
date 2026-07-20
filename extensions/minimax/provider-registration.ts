@@ -21,7 +21,7 @@ import {
   buildProviderReplayFamilyHooks,
   normalizeModelCompat,
 } from "openclaw/plugin-sdk/provider-model-shared";
-import { buildProviderStreamFamilyHooks } from "openclaw/plugin-sdk/provider-stream-family";
+import { MINIMAX_FAST_MODE_STREAM_HOOKS } from "openclaw/plugin-sdk/provider-stream-family";
 import { fetchMinimaxUsage } from "openclaw/plugin-sdk/provider-usage";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
@@ -63,7 +63,7 @@ const HYBRID_ANTHROPIC_OPENAI_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
 });
 const MINIMAX_PROVIDER_HOOKS = {
   ...HYBRID_ANTHROPIC_OPENAI_REPLAY_HOOKS,
-  ...buildProviderStreamFamilyHooks("minimax-fast-mode"),
+  ...MINIMAX_FAST_MODE_STREAM_HOOKS,
   resolveReasoningOutputMode: () => "native" as const,
   resolveThinkingProfile: ({ modelId }: { modelId: string }) =>
     resolveMinimaxThinkingProfile(modelId),
@@ -180,10 +180,9 @@ function createOAuthHandler(region: MiniMaxRegion) {
       const { loginMiniMaxPortalOAuth } = await import("./oauth.runtime.js");
       const result = await loginMiniMaxPortalOAuth({
         openUrl: ctx.openUrl,
-        note: (message, title) => ctx.prompter.note(message, title),
+        note: ctx.prompter.note,
         progress,
         region,
-        ...(ctx.signal ? { signal: ctx.signal } : {}),
       });
 
       progress.stop("MiniMax OAuth complete");
@@ -289,7 +288,7 @@ function createMinimaxOAuthMethod(region: MiniMaxRegion) {
   };
 }
 
-function buildMinimaxApiProviderPlugin(): ProviderPlugin {
+export function buildMinimaxApiProviderPlugin(): ProviderPlugin {
   return {
     id: API_PROVIDER_ID,
     label: PROVIDER_LABEL,
@@ -326,7 +325,7 @@ function buildMinimaxApiProviderPlugin(): ProviderPlugin {
   };
 }
 
-function buildMinimaxPortalProviderPlugin(): ProviderPlugin {
+export function buildMinimaxPortalProviderPlugin(): ProviderPlugin {
   return {
     id: PORTAL_PROVIDER_ID,
     label: PROVIDER_LABEL,

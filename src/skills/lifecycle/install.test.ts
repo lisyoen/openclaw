@@ -6,15 +6,14 @@ import {
   initializeGlobalHookRunner,
   resetGlobalHookRunner,
 } from "../../plugins/hook-runner-global.js";
-import { createMockPluginRegistry } from "../../plugins/hooks.test-fixtures.js";
+import { createMockPluginRegistry } from "../../plugins/hooks.test-helpers.js";
 import { captureEnv } from "../../test-utils/env.js";
 import { createFixtureSuite } from "../../test-utils/fixture-suite.js";
 import { resolveOpenClawMetadata, resolveSkillInvocationPolicy } from "../loading/frontmatter.js";
 import { loadSkillsFromDirSafe, readSkillFrontmatterSafe } from "../loading/local-loader.js";
 import { runCommandWithTimeoutMock } from "../test-support/install-test-mocks.js";
 import type { SkillEntry } from "../types.js";
-import { installSkill } from "./install.js";
-import { skillsInstallTesting } from "./install.test-support.js";
+import { installSkill, testing as skillsInstallTesting } from "./install.js";
 
 vi.mock("../../process/exec.js", () => ({
   runCommandWithTimeout: (...args: unknown[]) => runCommandWithTimeoutMock(...args),

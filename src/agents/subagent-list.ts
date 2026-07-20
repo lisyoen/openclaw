@@ -6,7 +6,7 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { resolveSubagentLabel, sortSubagentRuns } from "../auto-reply/reply/subagents-utils.js";
 import { resolveStorePath } from "../config/sessions/paths.js";
-import { listSessionEntries } from "../config/sessions/session-accessor.js";
+import { loadSessionStore } from "../config/sessions/store-load.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { parseAgentSessionKey, type ParsedAgentSessionKey } from "../routing/session-key.js";
@@ -28,7 +28,6 @@ import {
 } from "./subagent-registry-read.js";
 import { getSubagentRunsSnapshotForRead } from "./subagent-registry-state.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
-import { compareSubagentRunGeneration } from "./subagent-run-generation.js";
 import {
   hasSubagentRunEnded,
   isLiveUnendedSubagentRun,
@@ -82,12 +81,7 @@ export function resolveSessionEntryForKey(params: {
   const storePath = resolveStorePathForKey(params.cfg, parsed);
   let store = params.cache.get(storePath);
   if (!store) {
-    store = Object.fromEntries(
-      listSessionEntries({ storePath, clone: false }).map(({ sessionKey, entry }) => [
-        sessionKey,
-        entry,
-      ]),
-    );
+    store = loadSessionStore(storePath);
     params.cache.set(storePath, store);
   }
   return {
@@ -109,7 +103,7 @@ export function buildLatestSubagentRunIndex(
       continue;
     }
     const existing = latestByChildSessionKey.get(childSessionKey);
-    if (!existing || compareSubagentRunGeneration(entry, existing) > 0) {
+    if (!existing || entry.createdAt > existing.createdAt) {
       latestByChildSessionKey.set(childSessionKey, entry);
     }
   }
@@ -149,7 +143,7 @@ export function buildLatestSubagentRunIndex(
 }
 
 /** Create a cached descendant counter for repeated list rendering checks. */
-function createPendingDescendantCounter(runsSnapshot?: Map<string, SubagentRunRecord>) {
+export function createPendingDescendantCounter(runsSnapshot?: Map<string, SubagentRunRecord>) {
   const pendingDescendantCache = new Map<string, number>();
   return (sessionKey: string) => {
     if (pendingDescendantCache.has(sessionKey)) {
@@ -163,7 +157,7 @@ function createPendingDescendantCounter(runsSnapshot?: Map<string, SubagentRunRe
 }
 
 /** Return whether a run should be shown in the active subagent section. */
-function isActiveSubagentRun(
+export function isActiveSubagentRun(
   entry: SubagentRunRecord,
   pendingDescendantCount: (sessionKey: string) => number,
 ) {

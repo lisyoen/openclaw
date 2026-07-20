@@ -39,6 +39,7 @@ describe("resolveQueueSettings", () => {
           messages: {
             queue: {
               mode: "followup",
+              debounceMs: 750,
               byChannel: {
                 discord: "collect",
               },
@@ -49,7 +50,7 @@ describe("resolveQueueSettings", () => {
       }),
     ).toEqual({
       mode: "collect",
-      debounceMs: 500,
+      debounceMs: 750,
       cap: 20,
       dropPolicy: "summarize",
     });

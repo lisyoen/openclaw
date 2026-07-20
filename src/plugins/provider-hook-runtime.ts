@@ -38,7 +38,7 @@ let providerRuntimePluginCache: ConfigScopedRuntimeCache<ProviderPlugin | null> 
 const defaultProviderRuntimePluginCache = new PluginLruCache<ProviderPlugin | null>(128);
 const PREPARED_PROVIDER_RUNTIME_SURFACES = ["channel"] as const;
 
-type ProviderRuntimePluginLookupParams = {
+export type ProviderRuntimePluginLookupParams = {
   provider: string;
   modelId?: string | null;
   config?: OpenClawConfig;
@@ -53,7 +53,7 @@ export type ProviderRuntimePluginHandle = ProviderRuntimePluginLookupParams & {
   plugin?: ProviderPlugin;
 };
 
-type ProviderRuntimePluginHandleParams = ProviderRuntimePluginLookupParams & {
+export type ProviderRuntimePluginHandleParams = ProviderRuntimePluginLookupParams & {
   runtimeHandle?: ProviderRuntimePluginHandle;
 };
 

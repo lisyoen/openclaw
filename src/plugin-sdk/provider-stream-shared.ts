@@ -1,26 +1,24 @@
 // Provider stream shared helpers implement reusable stream wrappers and payload policies.
-import { resolveOpenAIReasoningEffortForModel } from "@openclaw/ai/internal/openai";
+import { randomUUID } from "node:crypto";
 import { normalizeLowercaseStringOrEmpty } from "../../packages/normalization-core/src/string-coerce.js";
 import {
-  createPromotedPlainTextToolCallBlock,
-  createPromotedPlainTextToolCallEvents,
+  extractStandalonePlainTextToolCallText,
   normalizePlainTextToolCallStreamEvents,
-  projectScrubbedPlainTextToolCallMessage,
-  projectStandalonePlainTextToolCallMessage,
-  type PlainTextToolCallMessageProjection,
+  promoteStandalonePlainTextToolCallMessage,
+  scrubOverCapPlainTextToolCallMessage,
   type PlainTextToolCallNameMatcher,
   type PlainTextToolCallMessageNormalization,
 } from "../../packages/tool-call-repair/src/index.js";
 import { resolveOpenAIReasoningEffortMap } from "../agents/openai-reasoning-compat.js";
+import { resolveOpenAIReasoningEffortForModel } from "../agents/openai-reasoning-effort.js";
 import type { StreamFn } from "../agents/runtime/index.js";
 import type { ThinkLevel } from "../auto-reply/thinking.js";
-import { mapThinkingLevelToReasoningEffort } from "../llm/providers/stream-wrappers/reasoning-effort-utils.js";
 import { streamWithPayloadPatch } from "../llm/providers/stream-wrappers/stream-payload-utils.js";
 import { streamSimple } from "../llm/stream.js";
 import { createAssistantMessageEventStream } from "../llm/utils/event-stream.js";
-export { applyAnthropicRefusal } from "@openclaw/ai/internal/anthropic";
-export { createDeferredEventBuffer } from "@openclaw/ai/internal/runtime";
-export { notifyLlmRequestActivity, onLlmRequestActivity } from "@openclaw/ai/internal/runtime";
+export { applyAnthropicRefusal } from "../shared/anthropic-refusal.js";
+export { createDeferredEventBuffer } from "../shared/deferred-event-buffer.js";
+export { notifyLlmRequestActivity, onLlmRequestActivity } from "../shared/llm-request-activity.js";
 
 type ProviderWrapStreamFnContext = import("../plugins/types.js").ProviderWrapStreamFnContext;
 
@@ -60,10 +58,27 @@ function resolveContextToolNames(context: Parameters<StreamFn>[1]): Set<string> 
   return new Set(names);
 }
 
+function createSyntheticToolCallId(): string {
+  return `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+}
+
+function createPlainTextToolCallBlock(parsed: {
+  arguments: Record<string, unknown>;
+  name: string;
+}): Record<string, unknown> {
+  return {
+    type: "toolCall",
+    id: createSyntheticToolCallId(),
+    name: parsed.name,
+    arguments: parsed.arguments,
+    partialArgs: JSON.stringify(parsed.arguments),
+  };
+}
+
 function promotePlainTextToolCalls(
   message: unknown,
   toolNames: Set<string>,
-): PlainTextToolCallMessageProjection | undefined {
+): Record<string, unknown> | undefined {
   const messageRecord = toRecord(message);
   if (
     Array.isArray(messageRecord?.content) &&
@@ -71,10 +86,37 @@ function promotePlainTextToolCalls(
   ) {
     return undefined;
   }
-  return projectStandalonePlainTextToolCallMessage({
+  return promoteStandalonePlainTextToolCallMessage({
     allowedToolNames: toolNames,
-    createToolCallBlock: createPromotedPlainTextToolCallBlock,
+    createToolCallBlock: (block, name) => createPlainTextToolCallBlock({ ...block, name }),
     isRetainableNonTextBlock: () => true,
+    message,
+  });
+}
+
+function emitPromotedToolCallEvents(
+  stream: { push(event: unknown): void },
+  message: Record<string, unknown>,
+): void {
+  const content = Array.isArray(message.content) ? message.content : [];
+  content.forEach((block, contentIndex) => {
+    const record = toRecord(block);
+    if (record?.type !== "toolCall") {
+      return;
+    }
+    stream.push({ type: "toolcall_start", contentIndex, partial: message });
+    stream.push({
+      type: "toolcall_delta",
+      contentIndex,
+      delta: typeof record.partialArgs === "string" ? record.partialArgs : "{}",
+      partial: message,
+    });
+  });
+}
+
+function extractPlainTextToolCallCandidate(message: unknown): string | undefined {
+  return extractStandalonePlainTextToolCallText({
+    allowOtherNonTextBlocks: true,
     message,
   });
 }
@@ -95,36 +137,19 @@ function createProviderToolNameMatcher(toolNames: Set<string>): PlainTextToolCal
 
 function normalizeProviderDoneMessage(
   message: unknown,
-  allowPromotion: boolean,
   toolNames: Set<string>,
   matcher: PlainTextToolCallNameMatcher,
-  preserveEmptyTextBlocks = false,
 ): PlainTextToolCallMessageNormalization {
-  const scrubbedMessage = scrubProviderTerminalMessage(message, matcher, preserveEmptyTextBlocks);
-  if (scrubbedMessage) {
-    return { kind: "scrubbed", ...scrubbedMessage };
-  }
-  // Token-limit and error terminals can leave complete-looking tool syntax.
-  // Only normal completion or explicit tool use may promote it into an executable call.
-  if (!allowPromotion) {
-    return undefined;
-  }
-  const promotedMessage = promotePlainTextToolCalls(message, toolNames);
-  return promotedMessage ? { kind: "promoted", ...promotedMessage } : undefined;
-}
-
-function scrubProviderTerminalMessage(
-  message: unknown,
-  matcher: PlainTextToolCallNameMatcher,
-  preserveEmptyTextBlocks = false,
-  forceKnownCandidates = false,
-): PlainTextToolCallMessageProjection | undefined {
-  return projectScrubbedPlainTextToolCallMessage({
-    forceKnownCandidates,
+  const scrubbedMessage = scrubOverCapPlainTextToolCallMessage({
+    candidateText: extractPlainTextToolCallCandidate(message),
     matcher,
     message,
-    preserveEmptyTextBlocks,
   });
+  if (scrubbedMessage) {
+    return { kind: "scrubbed", message: scrubbedMessage };
+  }
+  const promotedMessage = promotePlainTextToolCalls(message, toolNames);
+  return promotedMessage ? { kind: "promoted", message: promotedMessage } : undefined;
 }
 
 function wrapPlainTextToolCallStream(
@@ -152,16 +177,14 @@ function wrapPlainTextToolCallStream(
       const normalizedEvents = normalizePlainTextToolCallStreamEvents(
         source as AsyncIterable<unknown>,
         {
-          createPromotedToolCallEvents: createPromotedPlainTextToolCallEvents,
+          createPromotedToolCallEvents: (message) => {
+            const events: unknown[] = [];
+            emitPromotedToolCallEvents({ push: (event: unknown) => events.push(event) }, message);
+            return events;
+          },
           matcher,
-          normalizeTerminalMessage: ({ allowPromotion, message, preserveEmptyTextBlocks }) =>
-            normalizeProviderDoneMessage(
-              message,
-              allowPromotion,
-              toolNames,
-              matcher,
-              preserveEmptyTextBlocks,
-            ),
+          normalizeDoneMessage: ({ message }) =>
+            normalizeProviderDoneMessage(message, toolNames, matcher),
           stopAfterDone: true,
         },
       );
@@ -386,56 +409,6 @@ export function isOpenAICompatibleThinkingEnabled(params: {
   }
   const normalized = raw.trim().toLowerCase();
   return normalized !== "off" && normalized !== "none";
-}
-
-/** Applies the shared reasoning payload policy used by OpenAI-compatible proxy providers. */
-export function normalizeOpenAICompatibleReasoningPayload(
-  payload: Record<string, unknown>,
-  thinkingLevel?: ThinkLevel,
-): void {
-  delete payload.reasoning_effort;
-  if (!thinkingLevel || thinkingLevel === "off") {
-    return;
-  }
-
-  const existingReasoning = payload.reasoning;
-  if (
-    existingReasoning &&
-    typeof existingReasoning === "object" &&
-    !Array.isArray(existingReasoning)
-  ) {
-    const reasoning = existingReasoning as Record<string, unknown>;
-    if (!("max_tokens" in reasoning) && !("effort" in reasoning)) {
-      reasoning.effort = mapThinkingLevelToReasoningEffort(thinkingLevel);
-    }
-  } else if (!existingReasoning) {
-    payload.reasoning = {
-      effort: mapThinkingLevelToReasoningEffort(thinkingLevel),
-    };
-  }
-}
-
-/** Applies Qwen chat-template thinking flags without discarding provider-specific kwargs. */
-export function setQwenChatTemplateThinking(
-  payload: Record<string, unknown>,
-  enabled: boolean,
-): void {
-  const existing = payload.chat_template_kwargs;
-  if (existing && typeof existing === "object" && !Array.isArray(existing)) {
-    const next: Record<string, unknown> = {
-      ...(existing as Record<string, unknown>),
-      enable_thinking: enabled,
-    };
-    if (!Object.hasOwn(next, "preserve_thinking")) {
-      next.preserve_thinking = true;
-    }
-    payload.chat_template_kwargs = next;
-    return;
-  }
-  payload.chat_template_kwargs = {
-    enable_thinking: enabled,
-    preserve_thinking: true,
-  };
 }
 
 /** @deprecated DeepSeek provider stream helper; do not use from third-party plugins. */
@@ -993,4 +966,3 @@ export {
   createToolStreamWrapper,
   createZaiToolStreamWrapper,
 } from "../llm/providers/stream-wrappers/zai.js";
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

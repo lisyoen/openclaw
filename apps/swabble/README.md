@@ -11,9 +11,8 @@ swabble is a Swift 6.2 wake-word hook daemon. The CLI targets macOS 26 (SpeechAn
 
 ## Quick start
 ```bash
-# Install the repository-pinned Swift tools
-../../scripts/install-swift-tools.sh .build/swift-tools
-export PATH="$PWD/.build/swift-tools:$PATH"
+# Install deps
+brew install swiftformat swiftlint
 
 # Build
 swift build
@@ -102,7 +101,7 @@ Environment variables:
 - Authorization requested at first start; requires macOS 26 + new Speech.framework APIs.
 
 ## Development
-- Format: `./scripts/format.sh` (uses the repository SwiftFormat policy)
+- Format: `./scripts/format.sh` (uses local `.swiftformat`)
 - Lint: `./scripts/lint.sh` (uses local `.swiftlint.yml`)
 - Tests: `swift test` (uses swift-testing package)
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildEmbeddedAgentSettingsSnapshot,
+  DEFAULT_EMBEDDED_AGENT_PROJECT_SETTINGS_POLICY,
   resolveEmbeddedAgentProjectSettingsPolicy,
 } from "./agent-project-settings-snapshot.js";
 import { createPreparedEmbeddedAgentSettingsManager } from "./agent-project-settings.js";
@@ -13,7 +14,9 @@ type EmbeddedAgentSettingsArgs = Parameters<typeof buildEmbeddedAgentSettingsSna
 
 describe("resolveEmbeddedAgentProjectSettingsPolicy", () => {
   it("defaults to sanitize", () => {
-    expect(resolveEmbeddedAgentProjectSettingsPolicy()).toBe("sanitize");
+    expect(resolveEmbeddedAgentProjectSettingsPolicy()).toBe(
+      DEFAULT_EMBEDDED_AGENT_PROJECT_SETTINGS_POLICY,
+    );
   });
 
   it("accepts trusted and ignore modes", () => {

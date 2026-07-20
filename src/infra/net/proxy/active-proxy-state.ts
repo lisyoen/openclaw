@@ -6,7 +6,7 @@ import type { ManagedProxyTlsOptions } from "./proxy-tls.js";
 export type ActiveManagedProxyUrl = Readonly<URL>;
 
 /** Managed proxy loopback behavior shared by gateway and child-process fetch paths. */
-type ActiveManagedProxyLoopbackMode = NonNullable<NonNullable<ProxyConfig>["loopbackMode"]>;
+export type ActiveManagedProxyLoopbackMode = NonNullable<NonNullable<ProxyConfig>["loopbackMode"]>;
 
 /** Ref-counted active proxy handle; callers must stop it when their proxy scope ends. */
 export type ActiveManagedProxyRegistration = {
@@ -17,7 +17,7 @@ export type ActiveManagedProxyRegistration = {
 };
 
 /** Registration metadata for managed proxy URLs and their TLS trust material. */
-type RegisterActiveManagedProxyOptions = {
+export type RegisterActiveManagedProxyOptions = {
   loopbackMode?: ActiveManagedProxyLoopbackMode;
   proxyTls?: ManagedProxyTlsOptions;
 };
@@ -133,4 +133,12 @@ export function getActiveManagedProxyUrl(): ActiveManagedProxyUrl | undefined {
 /** Returns the active managed proxy TLS options used by undici/proxyline dispatchers. */
 export function getActiveManagedProxyTlsOptions(): ManagedProxyTlsOptions | undefined {
   return activeProxyTlsOptions;
+}
+
+/** Clears process-local proxy state for tests that share a worker process. */
+export function resetActiveManagedProxyStateForTests(): void {
+  activeProxyUrl = undefined;
+  activeProxyLoopbackMode = undefined;
+  activeProxyTlsOptions = undefined;
+  activeProxyRegistrationCount = 0;
 }

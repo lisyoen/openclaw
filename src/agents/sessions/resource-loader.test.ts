@@ -1,79 +1,16 @@
-// Resource loader tests cover prompt loading and transforms.
-import { writeFile } from "node:fs/promises";
+// Resource loader tests cover compatibility wiring for SDK prompt transform
+// aliases.
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import { clearExtensionCache } from "./extensions/loader.js";
+import { describe, expect, it } from "vitest";
 import { DefaultResourceLoader } from "./resource-loader.js";
 
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
-
-type ExtensionCacheTestState = {
-  factoryRuns: number;
-  moduleLoads: number;
-};
-
-function extensionCacheTestState(): ExtensionCacheTestState {
-  return (
-    globalThis as typeof globalThis & { openclawExtensionCacheTestState: ExtensionCacheTestState }
-  ).openclawExtensionCacheTestState;
-}
-
-function extensionSource(command: string): string {
-  return `
-const state = (globalThis.openclawExtensionCacheTestState ??= { factoryRuns: 0, moduleLoads: 0 });
-state.moduleLoads += 1;
-
-export default function extension(api) {
-  state.factoryRuns += 1;
-  api.registerCommand(${JSON.stringify(command)}, {
-    description: "cache probe",
-    handler() {},
-  });
-}
-`;
-}
-
-afterEach(() => {
-  clearExtensionCache();
-  Reflect.deleteProperty(globalThis, "openclawExtensionCacheTestState");
-});
-
 describe("DefaultResourceLoader", () => {
-  it("reuses extension modules between loaders and refreshes them on reload", async () => {
-    const root = tempDirs.make("openclaw-resource-loader-extension-");
-    const extensionPath = join(root, "extension.ts");
-    await writeFile(extensionPath, extensionSource("before-reload"));
-    const createLoader = () =>
-      new DefaultResourceLoader({
-        cwd: root,
-        agentDir: root,
-        additionalExtensionPaths: [extensionPath],
-        noExtensions: true,
-        noSkills: true,
-        noPromptTemplates: true,
-        noThemes: true,
-        noContextFiles: true,
-      });
-
-    const firstLoader = createLoader();
-    await firstLoader.reload();
-    const secondLoader = createLoader();
-    await secondLoader.reload();
-
-    expect(extensionCacheTestState()).toEqual({ factoryRuns: 2, moduleLoads: 1 });
-    expect(secondLoader.getExtensions().extensions[0]?.commands.has("before-reload")).toBe(true);
-
-    await writeFile(extensionPath, extensionSource("after-reload"));
-    await secondLoader.reload();
-
-    expect(extensionCacheTestState()).toEqual({ factoryRuns: 3, moduleLoads: 2 });
-    expect(secondLoader.getExtensions().extensions[0]?.commands.has("after-reload")).toBe(true);
-  });
-
-  it("does not use unreadable prompt file paths as prompt content", async () => {
-    const root = tempDirs.make("openclaw-resource-loader-");
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("keeps deprecated SDK prompt override aliases wired to prompt transforms", async () => {
+    // These aliases are deprecated but shipped SDK surface, so they still map
+    // through the same transform path as the current options.
+    const root = mkdtempSync(join(tmpdir(), "openclaw-resource-loader-"));
     try {
       const loader = new DefaultResourceLoader({
         cwd: root,
@@ -83,17 +20,18 @@ describe("DefaultResourceLoader", () => {
         noPromptTemplates: true,
         noThemes: true,
         noContextFiles: true,
-        systemPrompt: root,
-        appendSystemPrompt: [root],
+        systemPrompt: "base",
+        appendSystemPrompt: ["tail"],
+        systemPromptOverride: (base) => `${base ?? ""} legacy`,
+        appendSystemPromptOverride: (base) => [...base, "legacy"],
       });
 
       await loader.reload();
 
-      expect(loader.getSystemPrompt()).toBeUndefined();
-      expect(loader.getAppendSystemPrompt()).toEqual([]);
-      expect(consoleError).toHaveBeenCalledTimes(2);
+      expect(loader.getSystemPrompt()).toBe("base legacy");
+      expect(loader.getAppendSystemPrompt()).toEqual(["tail", "legacy"]);
     } finally {
-      consoleError.mockRestore();
+      rmSync(root, { force: true, recursive: true });
     }
   });
 });

@@ -9,14 +9,9 @@ import {
   embeddedAgentLog,
   type EmbeddedRunAttemptParams,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
-import { parseSqliteSessionFileMarker } from "openclaw/plugin-sdk/session-store-runtime";
 import { resolveCodexAppServerHomeDir } from "./auth-bridge.js";
 import { isJsonObject, type JsonValue } from "./protocol.js";
-import type {
-  CodexAppServerBindingIdentity,
-  CodexAppServerBindingStore,
-  CodexAppServerThreadBinding,
-} from "./session-binding.js";
+import { clearCodexAppServerBinding, type CodexAppServerThreadBinding } from "./session-binding.js";
 
 // Codex owns proactive auto-compaction, but OpenClaw must not resume a native
 // thread that is already too close to the server-side window for the next turn.
@@ -128,9 +123,6 @@ async function listCodexAppServerRolloutFilesForThread(
 async function readCodexSessionRecordForSessionFile(
   sessionFile: string,
 ): Promise<(Record<string, unknown> & { sessionKey: string }) | undefined> {
-  if (isSqliteSessionFileMarker(sessionFile)) {
-    return undefined;
-  }
   const sessionsFile = path.join(path.dirname(sessionFile), "sessions.json");
   const resolvedSessionFile = path.resolve(sessionFile);
   let stat: Awaited<ReturnType<typeof fs.stat>>;
@@ -177,10 +169,6 @@ async function readCodexSessionRecordForSessionFile(
     record: found,
   });
   return found;
-}
-
-function isSqliteSessionFileMarker(sessionFile: string | undefined): boolean {
-  return parseSqliteSessionFileMarker(sessionFile) !== undefined;
 }
 
 type CodexAppServerRolloutTokenSnapshot = {
@@ -260,6 +248,13 @@ function readCodexAppServerRolloutTokenSnapshotLine(
   }
 }
 
+function toNonNegativeInt(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
 function readCompactionConfig(config: EmbeddedRunAttemptParams["config"] | undefined) {
   return isJsonObject(config?.agents?.defaults?.compaction)
     ? config.agents.defaults.compaction
@@ -267,9 +262,18 @@ function readCompactionConfig(config: EmbeddedRunAttemptParams["config"] | undef
 }
 
 function resolveCodexAppServerNativeThreadReserveTokens(
-  _config: EmbeddedRunAttemptParams["config"] | undefined,
+  config: EmbeddedRunAttemptParams["config"] | undefined,
 ): number {
-  return CODEX_APP_SERVER_NATIVE_THREAD_DEFAULT_RESERVE_TOKENS;
+  const compaction = readCompactionConfig(config);
+  const reserveTokens = toNonNegativeInt(compaction?.reserveTokens);
+  const reserveTokensFloor = toNonNegativeInt(compaction?.reserveTokensFloor);
+  if (reserveTokens !== undefined) {
+    return Math.max(
+      reserveTokens,
+      reserveTokensFloor ?? CODEX_APP_SERVER_NATIVE_THREAD_DEFAULT_RESERVE_TOKENS,
+    );
+  }
+  return reserveTokensFloor ?? CODEX_APP_SERVER_NATIVE_THREAD_DEFAULT_RESERVE_TOKENS;
 }
 
 function resolveCodexAppServerNativeThreadTokenFuse(params: {
@@ -323,8 +327,6 @@ function hasContextEngineThreadBootstrapProjection(binding: CodexAppServerThread
 /** Clears and drops a binding when the native Codex thread is too large to resume safely. */
 export async function rotateOversizedCodexAppServerStartupBinding(params: {
   binding: CodexAppServerThreadBinding | undefined;
-  bindingStore: CodexAppServerBindingStore;
-  identity: CodexAppServerBindingIdentity;
   sessionFile: string;
   agentDir: string;
   codexHome?: string;
@@ -334,11 +336,6 @@ export async function rotateOversizedCodexAppServerStartupBinding(params: {
 }): Promise<CodexAppServerThreadBinding | undefined> {
   const binding = params.binding;
   if (!binding?.threadId) {
-    return binding;
-  }
-  // Native Codex owns compaction for supervised threads. Clearing this private
-  // scope marker would silently move the next turn back to the agent runtime.
-  if (binding.connectionScope === "supervision") {
     return binding;
   }
   const sessionRecord = await readCodexSessionRecordForSessionFile(params.sessionFile);
@@ -365,10 +362,7 @@ export async function rotateOversizedCodexAppServerStartupBinding(params: {
             files: oversizedFiles.map((file) => ({ path: file.path, bytes: file.bytes })),
           },
         );
-        await params.bindingStore.mutate(params.identity, {
-          kind: "clear",
-          threadId: binding.threadId,
-        });
+        await clearCodexAppServerBinding(params.sessionFile);
         return undefined;
       }
     }
@@ -416,10 +410,7 @@ export async function rotateOversizedCodexAppServerStartupBinding(params: {
         projectedTurnTokens: params.projectedTurnTokens,
       },
     );
-    await params.bindingStore.mutate(params.identity, {
-      kind: "clear",
-      threadId: binding.threadId,
-    });
+    await clearCodexAppServerBinding(params.sessionFile);
     return undefined;
   }
   if (compaction?.truncateAfterCompaction !== true) {
@@ -439,3 +430,11 @@ export async function rotateOversizedCodexAppServerStartupBinding(params: {
   }
   return binding;
 }
+
+/** Internal sizing helpers exposed for startup-binding regression tests. */
+export const testing = {
+  parseCodexAppServerByteLimit,
+  readCodexAppServerRolloutTokenSnapshotLine,
+  resolveCodexAppServerNativeThreadTokenFuse,
+  resolveCodexAppServerNativeThreadReserveTokens,
+};

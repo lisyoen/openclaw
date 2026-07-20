@@ -1,25 +1,52 @@
-import type { BrowserServerState } from "./server-context.js";
-/** Browser server lifecycle helpers for parallel profile shutdown. */
-import { beginProfileTransition } from "./server-context.lifecycle.js";
+/**
+ * Browser server lifecycle helpers for relay setup and profile shutdown.
+ */
+import { stopOpenClawChrome } from "./chrome.js";
+import type { ResolvedBrowserConfig } from "./config.js";
+import {
+  type BrowserServerState,
+  createBrowserRouteContext,
+  listKnownProfileNames,
+} from "./server-context.js";
 
-/** Invalidate every profile before awaiting any cleanup, then drain in parallel. */
-export async function stopKnownBrowserProfiles(params: {
-  current: BrowserServerState;
-  closeSharedAdapters: boolean;
+/** Ensures extension relay compatibility hooks for configured profiles. */
+export async function ensureExtensionRelayForProfiles(_params: {
+  resolved: ResolvedBrowserConfig;
   onWarn: (message: string) => void;
 }) {
-  const drains = [...params.current.profiles.values()].map((runtime) =>
-    beginProfileTransition({
-      state: params.current,
-      runtime,
-      reason: "Browser runtime shutdown",
-      closeSharedAdapters: params.closeSharedAdapters,
-    }),
-  );
-  const settled = await Promise.allSettled(drains);
-  const failed = settled.find((result) => result.status === "rejected");
-  if (failed?.status === "rejected") {
-    params.onWarn(`openclaw browser stop failed: ${String(failed.reason)}`);
-    throw failed.reason;
+  // Intentional no-op: the Chrome extension relay path has been removed.
+  // runtime-lifecycle still calls this helper, so keep the stub until the next
+  // breaking cleanup rather than changing the call graph in a patch release.
+}
+
+/** Stops every known Browser profile during runtime shutdown. */
+export async function stopKnownBrowserProfiles(params: {
+  getState: () => BrowserServerState | null;
+  onWarn: (message: string) => void;
+}) {
+  const current = params.getState();
+  if (!current) {
+    return;
+  }
+  const ctx = createBrowserRouteContext({
+    getState: params.getState,
+    refreshConfigFromDisk: true,
+  });
+  try {
+    for (const name of listKnownProfileNames(current)) {
+      try {
+        const runtime = current.profiles.get(name);
+        if (runtime?.running) {
+          await stopOpenClawChrome(runtime.running);
+          runtime.running = null;
+          continue;
+        }
+        await ctx.forProfile(name).stopRunningBrowser();
+      } catch {
+        // ignore
+      }
+    }
+  } catch (err) {
+    params.onWarn(`openclaw browser stop failed: ${String(err)}`);
   }
 }

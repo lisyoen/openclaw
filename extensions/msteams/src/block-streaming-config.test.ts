@@ -2,58 +2,61 @@
 import { describe, expect, it } from "vitest";
 import { MSTeamsConfigSchema } from "../config-api.js";
 
-describe("MSTeamsConfigSchema block streaming", () => {
+describe("MSTeamsConfigSchema blockStreaming", () => {
   const baseConfig = {
     enabled: true,
     dmPolicy: "open" as const,
     allowFrom: ["*"],
   };
 
-  it("accepts nested streaming block config", () => {
+  it("accepts blockStreaming: true", () => {
     const result = MSTeamsConfigSchema.safeParse({
       ...baseConfig,
-      streaming: {
-        block: {
-          enabled: true,
-          coalesce: { minChars: 100, idleMs: 500 },
-        },
-      },
+      blockStreaming: true,
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.streaming?.block?.enabled).toBe(true);
-      expect(result.data.streaming?.block?.coalesce).toEqual({ minChars: 100, idleMs: 500 });
+      expect(result.data.blockStreaming).toBe(true);
     }
   });
 
-  it("accepts config without streaming (optional)", () => {
+  it("accepts blockStreaming: false", () => {
+    const result = MSTeamsConfigSchema.safeParse({
+      ...baseConfig,
+      blockStreaming: false,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.blockStreaming).toBe(false);
+    }
+  });
+
+  it("accepts config without blockStreaming (optional)", () => {
     const result = MSTeamsConfigSchema.safeParse(baseConfig);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.streaming).toBeUndefined();
+      expect(result.data.blockStreaming).toBeUndefined();
     }
   });
 
-  it("rejects non-boolean streaming.block.enabled", () => {
+  it("accepts blockStreaming alongside blockStreamingCoalesce", () => {
     const result = MSTeamsConfigSchema.safeParse({
       ...baseConfig,
-      streaming: { block: { enabled: "yes" } },
+      blockStreaming: true,
+      blockStreamingCoalesce: { minChars: 100, idleMs: 500 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.blockStreaming).toBe(true);
+      expect(result.data.blockStreamingCoalesce).toEqual({ minChars: 100, idleMs: 500 });
+    }
+  });
+
+  it("rejects non-boolean blockStreaming", () => {
+    const result = MSTeamsConfigSchema.safeParse({
+      ...baseConfig,
+      blockStreaming: "yes",
     });
     expect(result.success).toBe(false);
   });
-
-  // Legacy flat keys are doctor-migrated (`openclaw doctor --fix`), not
-  // schema-accepted; runtime consumes only the nested streaming shape.
-  it.each(["blockStreaming", "chunkMode", "blockStreamingCoalesce"])(
-    "rejects legacy flat %s",
-    (key) => {
-      const value =
-        key === "blockStreaming" ? true : key === "chunkMode" ? "newline" : { minChars: 100 };
-      const result = MSTeamsConfigSchema.safeParse({
-        ...baseConfig,
-        [key]: value,
-      });
-      expect(result.success).toBe(false);
-    },
-  );
 });

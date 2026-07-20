@@ -45,6 +45,7 @@ export type {
   TelegramAccountConfig,
   TelegramActionConfig,
   TelegramDirectConfig,
+  TelegramDmThreadReplies,
   TelegramExecApprovalConfig,
   TelegramGroupConfig,
   TelegramInlineButtonsScope,

@@ -1,4 +1,3 @@
-import { expectDefined } from "@openclaw/normalization-core";
 /** Normalizes slash-command text aliases and builds command detection caches. */
 import {
   normalizeLowercaseStringOrEmpty,
@@ -24,20 +23,6 @@ let cachedTextAliasMap: Map<string, TextAliasSpec> | null = null;
 let cachedTextAliasCommands: ChatCommandDefinition[] | null = null;
 let cachedDetection: CommandDetection | undefined;
 let cachedDetectionCommands: ChatCommandDefinition[] | null = null;
-
-function appendMultilineTail(head: string, tail: string | undefined, spec?: TextAliasSpec): string {
-  if (!tail) {
-    return head;
-  }
-  if (!spec || spec.key === "skill" || spec.key === "learn") {
-    return `${head}\n${tail}`;
-  }
-  if (spec.key === "reset") {
-    const flattened = tail.replace(/\s+/g, " ").trim();
-    return flattened ? `${head} ${flattened}` : head;
-  }
-  return head;
-}
 
 function getTextAliasMap(): Map<string, TextAliasSpec> {
   const commands = getChatCommands();
@@ -74,14 +59,13 @@ export function normalizeCommandBody(raw: string, options?: CommandNormalizeOpti
 
   const newline = trimmed.indexOf("\n");
   const singleLine = newline === -1 ? trimmed : trimmed.slice(0, newline).trim();
-  const multilineTail = newline === -1 ? undefined : trimmed.slice(newline + 1).trimStart();
 
   // `/cmd: value` is accepted as `/cmd value` because some channels insert colon syntax.
   const colonMatch = singleLine.match(/^\/([^\s:]+)\s*:(.*)$/);
   const normalized = colonMatch
     ? (() => {
         const [, command, rest] = colonMatch;
-        const normalizedRest = expectDefined(rest, "commands registry normalize rest").trimStart();
+        const normalizedRest = rest.trimStart();
         return normalizedRest ? `/${command} ${normalizedRest}` : `/${command}`;
       })()
     : singleLine;
@@ -99,27 +83,24 @@ export function normalizeCommandBody(raw: string, options?: CommandNormalizeOpti
   const textAliasMap = getTextAliasMap();
   const exact = textAliasMap.get(lowered);
   if (exact) {
-    return appendMultilineTail(exact.canonical, multilineTail, exact);
+    return exact.canonical;
   }
 
   const tokenMatch = commandBody.match(/^\/([^\s]+)(?:\s+([\s\S]+))?$/);
   if (!tokenMatch) {
-    return appendMultilineTail(commandBody, multilineTail);
+    return commandBody;
   }
   const [, token, rest] = tokenMatch;
   const tokenKey = `/${normalizeLowercaseStringOrEmpty(token)}`;
   const tokenSpec = textAliasMap.get(tokenKey);
   if (!tokenSpec) {
-    return appendMultilineTail(commandBody, multilineTail);
+    return commandBody;
   }
   if (rest && !tokenSpec.acceptsArgs) {
     return commandBody;
   }
   const normalizedRest = rest?.trimStart();
-  const normalizedHead = normalizedRest
-    ? `${tokenSpec.canonical} ${normalizedRest}`
-    : tokenSpec.canonical;
-  return appendMultilineTail(normalizedHead, multilineTail, tokenSpec);
+  return normalizedRest ? `${tokenSpec.canonical} ${normalizedRest}` : tokenSpec.canonical;
 }
 
 /** Returns cached exact and regex detectors for the current command registry instance. */
@@ -142,7 +123,7 @@ export function getCommandDetection(_cfg?: OpenClawConfig): CommandDetection {
         continue;
       }
       if (cmd.acceptsArgs) {
-        patterns.push(`${escaped}(?:\\s+[\\s\\S]+|\\s*:\\s*[\\s\\S]*)?`);
+        patterns.push(`${escaped}(?:\\s+.+|\\s*:\\s*.*)?`);
       } else {
         patterns.push(`${escaped}(?:\\s*:\\s*)?`);
       }

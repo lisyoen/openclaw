@@ -1,6 +1,5 @@
 // Load context tests cover agent and workspace context resolution for plugin runtimes.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
 
 const loadConfigMock = vi.fn<typeof import("../../config/config.js").loadConfig>();
 const applyPluginAutoEnableMock =
@@ -21,9 +20,7 @@ const metadataSnapshot = {
   policyHash: "policy",
   workspaceDir: "/resolved-workspace",
 };
-type MetadataSnapshotMock = typeof metadataSnapshot & { pluginIds?: readonly string[] };
-const loadPluginMetadataSnapshotMock = vi.fn((): MetadataSnapshotMock => metadataSnapshot);
-const isPluginMetadataSnapshotCompatibleMock = vi.fn(() => true);
+const loadPluginMetadataSnapshotMock = vi.fn(() => metadataSnapshot);
 const getCurrentPluginMetadataSnapshotMock = vi.fn(() => undefined);
 const setCurrentPluginMetadataSnapshotMock = vi.fn();
 const clearCurrentPluginMetadataSnapshotMock = vi.fn();
@@ -48,7 +45,6 @@ vi.mock("../../agents/agent-scope.js", () => ({
 }));
 
 vi.mock("../plugin-metadata-snapshot.js", () => ({
-  isPluginMetadataSnapshotCompatible: isPluginMetadataSnapshotCompatibleMock,
   loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
   resolvePluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
 }));
@@ -73,8 +69,6 @@ describe("resolvePluginRuntimeLoadContext", () => {
     applyPluginAutoEnableMock.mockReset();
     getCurrentPluginMetadataSnapshotMock.mockReset();
     getCurrentPluginMetadataSnapshotMock.mockReturnValue(undefined);
-    isPluginMetadataSnapshotCompatibleMock.mockReset();
-    isPluginMetadataSnapshotCompatibleMock.mockReturnValue(true);
     loadPluginMetadataSnapshotMock.mockClear();
     getCurrentPluginMetadataSnapshotMock.mockClear();
     setCurrentPluginMetadataSnapshotMock.mockClear();
@@ -190,50 +184,6 @@ describe("resolvePluginRuntimeLoadContext", () => {
       env: process.env,
       manifestRegistry,
     });
-  });
-
-  it("reuses auto-enable results until Gateway config or metadata changes", () => {
-    const rawConfig = { plugins: {} };
-    const env = process.env;
-    const initialSnapshot = { ...metadataSnapshot, pluginIds: ["openai"] };
-    loadPluginMetadataSnapshotMock
-      .mockReturnValueOnce(initialSnapshot)
-      .mockReturnValueOnce({ ...initialSnapshot, pluginIds: ["openai"] })
-      .mockReturnValueOnce({ ...initialSnapshot, policyHash: "changed" })
-      .mockReturnValueOnce(initialSnapshot);
-
-    const first = resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-    const second = resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-    resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-    resolvePluginRuntimeLoadContext({ config: { plugins: {} }, env });
-
-    expect(second.config).toBe(first.config);
-    expect(applyPluginAutoEnableMock).toHaveBeenCalledTimes(3);
-  });
-
-  it("invalidates auto-enable results when config or process env mutates in place", () => {
-    const rawConfig: OpenClawConfig = { plugins: {} };
-    const env = process.env;
-    const envKey = "OPENCLAW_TEST_PLUGIN_AUTO_ENABLE_FINGERPRINT";
-    const previousEnvValue = env[envKey];
-    delete env[envKey];
-
-    try {
-      resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-      resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-      rawConfig.plugins = { entries: { demo: { enabled: true } } };
-      resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-      env[envKey] = "changed";
-      resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-
-      expect(applyPluginAutoEnableMock).toHaveBeenCalledTimes(3);
-    } finally {
-      if (previousEnvValue === undefined) {
-        delete env[envKey];
-      } else {
-        env[envKey] = previousEnvValue;
-      }
-    }
   });
 
   it("threads install records from the metadata snapshot into the context and load options", () => {

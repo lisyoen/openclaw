@@ -27,27 +27,6 @@ function createStreamingMessage(): QueuedMessage {
   };
 }
 
-function createGroupStopMessage(): QueuedMessage {
-  return {
-    type: "group",
-    senderId: "TRUSTED_OPENID",
-    content: "/stop",
-    messageId: "msg-stop",
-    timestamp: "2026-01-01T00:00:00.000Z",
-    groupOpenid: "GROUP_OPENID",
-  };
-}
-
-function createDmStopMessage(): QueuedMessage {
-  return {
-    type: "c2c",
-    senderId: "TRUSTED_OPENID",
-    content: "/stop",
-    messageId: "msg-stop-dm",
-    timestamp: "2026-01-01T00:00:00.000Z",
-  };
-}
-
 function createAccount(): GatewayAccount {
   return {
     accountId: "default",
@@ -56,13 +35,9 @@ function createAccount(): GatewayAccount {
     markdownSupport: true,
     config: {
       allowFrom: ["*"],
-      streaming: { mode: "off" },
+      streaming: false,
     },
   };
-}
-
-function authorizeGroupCommands(account: GatewayAccount): void {
-  account.config.groupAllowFrom = ["TRUSTED_OPENID"];
 }
 
 describe("trySlashCommand", () => {
@@ -81,7 +56,7 @@ describe("trySlashCommand", () => {
       channels: {
         qqbot: {
           allowFrom: ["*"],
-          streaming: { mode: "off" },
+          streaming: false,
         },
       },
     };
@@ -102,80 +77,7 @@ describe("trySlashCommand", () => {
     const qqbot = getWrittenQQBotConfig(writes[0]);
     expect(result).toBe("handled");
     expect(writes).toHaveLength(1);
-    expect(qqbot?.streaming).toEqual({ mode: "partial", nativeTransport: true });
+    expect(qqbot?.streaming).toBe(true);
     expect(vi.mocked(sendText).mock.calls.at(0)?.[1]).toContain("已开启");
-  });
-
-  it("keeps group /stop urgent when command level is strict", async () => {
-    const account = createAccount();
-    authorizeGroupCommands(account);
-    account.config.groups = {
-      GROUP_OPENID: { commandLevel: "strict" },
-    };
-
-    const result = await trySlashCommand(createGroupStopMessage(), {
-      account,
-      cfg: {},
-      getMessagePeerId: () => "group:GROUP_OPENID",
-      getQueueSnapshot: () => ({
-        totalPending: 0,
-        activeUsers: 0,
-        maxConcurrentUsers: 1,
-        senderPending: 0,
-      }),
-    });
-
-    expect(result).toBe("urgent");
-  });
-
-  it("keeps group /stop urgent outside strict command level", async () => {
-    const account = createAccount();
-    authorizeGroupCommands(account);
-
-    const result = await trySlashCommand(createGroupStopMessage(), {
-      account,
-      cfg: {},
-      getMessagePeerId: () => "group:GROUP_OPENID",
-      getQueueSnapshot: () => ({
-        totalPending: 0,
-        activeUsers: 0,
-        maxConcurrentUsers: 1,
-        senderPending: 0,
-      }),
-    });
-
-    expect(result).toBe("urgent");
-  });
-
-  it("does not let unauthorized group /stop bypass the queue", async () => {
-    const result = await trySlashCommand(createGroupStopMessage(), {
-      account: createAccount(),
-      cfg: {},
-      getMessagePeerId: () => "group:GROUP_OPENID",
-      getQueueSnapshot: () => ({
-        totalPending: 0,
-        activeUsers: 0,
-        maxConcurrentUsers: 1,
-        senderPending: 0,
-      }),
-    });
-
-    expect(result).toBe("enqueue");
-  });
-
-  it("keeps open DM /stop urgent", async () => {
-    const result = await trySlashCommand(createDmStopMessage(), {
-      account: createAccount(),
-      cfg: {},
-      getMessagePeerId: () => "c2c:TRUSTED_OPENID",
-      getQueueSnapshot: () => ({
-        totalPending: 0,
-        activeUsers: 0,
-        maxConcurrentUsers: 1,
-        senderPending: 0,
-      }),
-    });
-
-    expect(result).toBe("urgent");
   });
 });

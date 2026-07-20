@@ -1,4 +1,3 @@
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 // Memory Wiki plugin module implements import insights behavior.
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { parseWikiMarkdown } from "./markdown.js";
@@ -209,7 +208,7 @@ function shortenSentence(value: string, maxLength = 180): string {
   if (compact.length <= maxLength) {
     return compact;
   }
-  return `${truncateUtf16Safe(compact, maxLength - 1).trimEnd()}…`;
+  return `${compact.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function extractCorrectionSignals(turns: TranscriptTurn[]): string[] {

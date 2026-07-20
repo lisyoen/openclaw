@@ -1,46 +1,37 @@
 ---
-summary: "How the macOS app reports gateway/channel health states"
+summary: "How the macOS app reports gateway/Baileys health states"
 read_when:
   - Debugging mac app health indicators
 title: "Health checks (macOS)"
 ---
 
-# Health checks on macOS
+# Health Checks on macOS
 
-How to read the linked-channel health state from the menu bar app.
+How to see whether the linked channel is healthy from the menu bar app.
 
 ## Menu bar
 
-Status dot:
-
-- Green: linked + probe healthy.
-- Orange: linked but a channel probe reports degraded/not connected.
-- Red: not linked yet.
-
-The secondary line reads "linked · auth 12m" or shows the failure reason.
-"Run Health Check Now" in the menu triggers an on-demand probe.
+- Status dot now reflects Baileys health:
+  - Green: linked + socket opened recently.
+  - Orange: connecting/retrying.
+  - Red: logged out or probe failed.
+- Secondary line reads "linked · auth 12m" or shows the failure reason.
+- "Run Health Check" menu item triggers an on-demand probe.
 
 ## Settings
 
-- General tab shows a Health card: status dot, summary line (link state +
-  auth age), and an optional failure detail line, with **Retry now** and
-  **Open logs** buttons.
-- **Channels tab** surfaces per-channel status and controls (login QR,
-  logout, probe, last disconnect/error) for WhatsApp and Telegram.
+- General tab gains a Health card showing: linked auth age, session-store path/count, last check time, last error/status code, and buttons for Run Health Check / Reveal Logs.
+- Uses a cached snapshot so the UI loads instantly and falls back gracefully when offline.
+- **Channels tab** surfaces channel status + controls for WhatsApp/Telegram (login QR, logout, probe, last disconnect/error).
 
 ## How the probe works
 
-The app calls the Gateway's `health` RPC over its existing WebSocket
-connection (not a CLI shell-out) every ~60s and on demand. The RPC loads
-creds and reports status without sending messages. The app caches the last
-good snapshot and the last error separately so the UI loads instantly and
-does not flicker while offline.
+- App runs `openclaw health --json` via `ShellExecutor` every ~60s and on demand. The probe loads creds and reports status without sending messages.
+- Cache the last good snapshot and the last error separately to avoid flicker; show the timestamp of each.
 
 ## When in doubt
 
-Use the CLI flow in [Gateway health](/gateway/health) (`openclaw status`,
-`openclaw status --deep`, `openclaw health --json`) and tail
-`/tmp/openclaw/openclaw-*.log`, filtering for `web-heartbeat` / `web-reconnect`.
+- You can still use the CLI flow in [Gateway health](/gateway/health) (`openclaw status`, `openclaw status --deep`, `openclaw health --json`) and tail `/tmp/openclaw/openclaw-*.log` for `web-heartbeat` / `web-reconnect`.
 
 ## Related
 

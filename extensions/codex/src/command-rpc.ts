@@ -5,10 +5,7 @@ import {
   describeControlFailure,
   type CodexControlMethod,
 } from "./app-server/capabilities.js";
-import {
-  resolveCodexAppServerRuntimeOptions,
-  type CodexAppServerStartOptions,
-} from "./app-server/config.js";
+import { resolveCodexAppServerRuntimeOptions } from "./app-server/config.js";
 import { listCodexAppServerModels } from "./app-server/models.js";
 import type {
   CodexAppServerRequestMethod,
@@ -26,20 +23,17 @@ type AuthProfileOrderConfig = Parameters<
 
 export type CodexControlRequestOptions = {
   config?: AuthProfileOrderConfig;
-  authProfileId?: string | null;
+  authProfileId?: string;
   agentDir?: string;
   sessionKey?: string;
   sessionId?: string;
   isolated?: boolean;
-  startOptions?: CodexAppServerStartOptions;
-  timeoutMs?: number;
 };
 
 export function requestOptions(
   pluginConfig: unknown,
   limit: number,
   config?: AuthProfileOrderConfig,
-  agentDir?: string,
 ) {
   const runtime = resolveCodexAppServerRuntimeOptions({ pluginConfig });
   return {
@@ -47,7 +41,6 @@ export function requestOptions(
     timeoutMs: runtime.requestTimeoutMs,
     startOptions: runtime.start,
     config,
-    agentDir,
   };
 }
 
@@ -70,13 +63,13 @@ export async function codexControlRequest(
   method: CodexControlMethod,
   requestParams?: unknown,
   options: CodexControlRequestOptions = {},
-): Promise<unknown> {
+) {
   const runtime = resolveCodexAppServerRuntimeOptions({ pluginConfig });
   return await requestCodexAppServerJson({
     method,
     requestParams,
-    timeoutMs: options.timeoutMs ?? runtime.requestTimeoutMs,
-    startOptions: options.startOptions ?? runtime.start,
+    timeoutMs: runtime.requestTimeoutMs,
+    startOptions: runtime.start,
     config: options.config,
     sessionKey: options.sessionKey,
     sessionId: options.sessionId,
@@ -103,7 +96,7 @@ export async function safeCodexControlRequest(
   method: CodexControlMethod,
   requestParams?: unknown,
   options: CodexControlRequestOptions = {},
-): Promise<SafeValue<unknown>> {
+) {
   return await safeValue(
     async () =>
       await codexControlRequest(pluginConfig, method, requestParams as JsonValue, options),
@@ -114,52 +107,38 @@ async function safeCodexModelList(
   pluginConfig: unknown,
   limit: number,
   config?: AuthProfileOrderConfig,
-  agentDir?: string,
 ) {
   return await safeValue(
-    async () =>
-      await listCodexAppServerModels(requestOptions(pluginConfig, limit, config, agentDir)),
+    async () => await listCodexAppServerModels(requestOptions(pluginConfig, limit, config)),
   );
 }
 
 export async function readCodexStatusProbes(
   pluginConfig: unknown,
   config?: AuthProfileOrderConfig,
-  agentDir?: string,
 ) {
   const [models, account, limits, mcps, skills] = await Promise.all([
-    safeCodexModelList(pluginConfig, 20, config, agentDir),
+    safeCodexModelList(pluginConfig, 20, config),
     safeCodexControlRequest(
       pluginConfig,
       CODEX_CONTROL_METHODS.account,
       { refreshToken: false },
-      { config, agentDir },
+      { config },
     ),
-    safeCodexControlRequest(pluginConfig, CODEX_CONTROL_METHODS.rateLimits, undefined, {
-      config,
-      agentDir,
-    }),
+    safeCodexControlRequest(pluginConfig, CODEX_CONTROL_METHODS.rateLimits, undefined, { config }),
     safeCodexControlRequest(
       pluginConfig,
       CODEX_CONTROL_METHODS.listMcpServers,
       { limit: 100 },
-      { config, agentDir },
+      { config },
     ),
-    safeCodexControlRequest(
-      pluginConfig,
-      CODEX_CONTROL_METHODS.listSkills,
-      {},
-      {
-        config,
-        agentDir,
-      },
-    ),
+    safeCodexControlRequest(pluginConfig, CODEX_CONTROL_METHODS.listSkills, {}, { config }),
   ]);
 
   return { models, account, limits, mcps, skills };
 }
 
-async function safeValue<T>(read: () => Promise<T>): Promise<SafeValue<T>> {
+export async function safeValue<T>(read: () => Promise<T>): Promise<SafeValue<T>> {
   try {
     return { ok: true, value: await read() };
   } catch (error) {

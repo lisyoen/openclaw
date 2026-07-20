@@ -5,12 +5,9 @@ import {
   registerSingleProviderPlugin,
   resolveProviderPluginChoice,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { clearLiveCatalogCacheForTests } from "openclaw/plugin-sdk/provider-catalog-live-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import plugin from "./index.js";
-
-const NVIDIA_FEATURED_MODELS_URL =
-  "https://assets.ngc.nvidia.com/products/api-catalog/featured-models.json";
+import { clearNvidiaFeaturedModelCacheForTests } from "./provider-catalog.js";
 
 const ssrfRuntimeMocks = vi.hoisted(() => ({
   fetchWithSsrFGuard: vi.fn(),
@@ -39,7 +36,7 @@ async function registerNvidiaProvider() {
 }
 
 afterEach(() => {
-  clearLiveCatalogCacheForTests();
+  clearNvidiaFeaturedModelCacheForTests();
   ssrfRuntimeMocks.fetchWithSsrFGuard.mockReset();
   ssrfRuntimeMocks.ssrfPolicyFromHttpBaseUrlAllowedHostname.mockClear();
 });
@@ -47,7 +44,6 @@ afterEach(() => {
 function mockFeaturedCatalogResponse(payload: unknown, status = 200) {
   ssrfRuntimeMocks.fetchWithSsrFGuard.mockResolvedValueOnce({
     response: Response.json(payload, { status }),
-    finalUrl: NVIDIA_FEATURED_MODELS_URL,
     release: vi.fn(),
   });
 }
@@ -121,7 +117,6 @@ describe("nvidia provider hooks", () => {
         provider: "nvidia",
         method: "api-key",
         choiceId: "nvidia-api-key",
-        appGuidedSecret: true,
         choiceLabel: "NVIDIA API key",
         groupId: "nvidia",
         groupLabel: "NVIDIA",
@@ -209,11 +204,11 @@ describe("nvidia provider hooks", () => {
     expect(entries?.map((entry) => entry.id)).toEqual([
       "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-super-120b-a12b",
-      "z-ai/glm-5.2",
-      "moonshotai/kimi-k2.6",
-      "minimaxai/minimax-m3",
-      "deepseek-ai/deepseek-v4-pro",
-      "qwen/qwen3.5-397b-a17b",
+      "moonshotai/kimi-k2.5",
+      "minimaxai/minimax-m2.7",
+      "z-ai/glm-5.1",
+      "minimaxai/minimax-m2.5",
+      "z-ai/glm5",
     ]);
     expect(entries?.every((entry) => entry.provider === "nvidia")).toBe(true);
     expect(ssrfRuntimeMocks.fetchWithSsrFGuard).not.toHaveBeenCalled();
@@ -228,11 +223,11 @@ describe("nvidia provider hooks", () => {
     expect(entries?.map((entry) => entry.id)).toEqual([
       "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-super-120b-a12b",
-      "z-ai/glm-5.2",
-      "moonshotai/kimi-k2.6",
-      "minimaxai/minimax-m3",
-      "deepseek-ai/deepseek-v4-pro",
-      "qwen/qwen3.5-397b-a17b",
+      "moonshotai/kimi-k2.5",
+      "minimaxai/minimax-m2.7",
+      "z-ai/glm-5.1",
+      "minimaxai/minimax-m2.5",
+      "z-ai/glm5",
     ]);
     expect(entries?.every((entry) => entry.provider === "nvidia")).toBe(true);
     expect(ssrfRuntimeMocks.fetchWithSsrFGuard).toHaveBeenCalledTimes(1);
@@ -242,8 +237,8 @@ describe("nvidia provider hooks", () => {
     mockFeaturedCatalogResponse({
       "featured-models": [
         {
-          model: "minimaxai/minimax-m3",
-          "model-name": "Minimax M3",
+          model: "minimaxai/minimax-m2.7",
+          "model-name": "Minimax M2.7",
           context: 196608,
           "max-output": 8192,
         },
@@ -253,7 +248,7 @@ describe("nvidia provider hooks", () => {
 
     const entries = await provider.augmentModelCatalog?.(buildAugmentCatalogContext("nvapi-test"));
 
-    expect(entries?.map((entry) => entry.id)).toEqual(["minimaxai/minimax-m3"]);
+    expect(entries?.map((entry) => entry.id)).toEqual(["minimaxai/minimax-m2.7"]);
   });
 
   it("opts into literal provider-prefix preservation", async () => {
@@ -280,8 +275,8 @@ describe("nvidia provider hooks", () => {
     mockFeaturedCatalogResponse({
       "featured-models": [
         {
-          model: "minimaxai/minimax-m3",
-          "model-name": "Minimax M3",
+          model: "minimaxai/minimax-m2.7",
+          "model-name": "Minimax M2.7",
           context: 196608,
           "max-output": 8192,
         },
@@ -297,18 +292,18 @@ describe("nvidia provider hooks", () => {
     expect(staticRows?.map((entry) => `${entry.source}:${entry.provider}/${entry.model}`)).toEqual([
       "static:nvidia/nvidia/nemotron-3-ultra-550b-a55b",
       "static:nvidia/nvidia/nemotron-3-super-120b-a12b",
-      "static:nvidia/z-ai/glm-5.2",
-      "static:nvidia/moonshotai/kimi-k2.6",
-      "static:nvidia/minimaxai/minimax-m3",
-      "static:nvidia/deepseek-ai/deepseek-v4-pro",
-      "static:nvidia/qwen/qwen3.5-397b-a17b",
+      "static:nvidia/moonshotai/kimi-k2.5",
+      "static:nvidia/minimaxai/minimax-m2.7",
+      "static:nvidia/z-ai/glm-5.1",
+      "static:nvidia/minimaxai/minimax-m2.5",
+      "static:nvidia/z-ai/glm5",
     ]);
 
     await expect(catalogProvider?.liveCatalog?.(buildCatalogContext())).resolves.toEqual([]);
 
     const liveRows = await catalogProvider?.liveCatalog?.(buildCatalogContext("nvapi-test"));
     expect(liveRows?.map((entry) => `${entry.source}:${entry.provider}/${entry.model}`)).toEqual([
-      "live:nvidia/minimaxai/minimax-m3",
+      "live:nvidia/minimaxai/minimax-m2.7",
     ]);
   });
 

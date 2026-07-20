@@ -1,12 +1,11 @@
-import type { ApiRegistry } from "@openclaw/ai";
 /**
  * Google simple-completion stream adapter.
  *
  * This registers a patched Google stream API that keeps the normal Google
  * backend but sanitizes unsupported thinking payload options for simple models.
  */
-import { clampThinkingLevel } from "@openclaw/ai/internal/runtime";
-import type { Api, Model, ModelThinkingLevel } from "../llm/types.js";
+import { streamSimple } from "../llm/stream.js";
+import type { Api, Model } from "../llm/types.js";
 import {
   sanitizeGoogleThinkingPayload,
   streamWithPayloadPatch,
@@ -16,39 +15,33 @@ import { ensureCustomApiRegistered } from "./custom-api-registry.js";
 import type { StreamFn } from "./runtime/index.js";
 
 /** Custom API id for the Google simple-completion stream adapter. */
-const GOOGLE_SIMPLE_COMPLETION_API: Api = "openclaw-google-generative-ai-simple";
+export const GOOGLE_SIMPLE_COMPLETION_API: Api = "openclaw-google-generative-ai-simple";
 
 const SOURCE_API: Api = "google-generative-ai";
 
 function resolveGoogleSimpleThinkingLevel(
-  model: Model,
   reasoning: unknown,
 ): GoogleThinkingInputLevel | undefined {
   switch (reasoning) {
-    case "adaptive":
-      return reasoning;
     case "off":
     case "minimal":
     case "low":
     case "medium":
+    case "adaptive":
     case "high":
     case "max":
     case "xhigh":
-      return clampThinkingLevel(model, reasoning as ModelThinkingLevel);
+      return reasoning;
     default:
       return undefined;
   }
 }
 
-function buildGoogleSimpleCompletionStreamFn(registry: ApiRegistry): StreamFn {
+function buildGoogleSimpleCompletionStreamFn(): StreamFn {
   return (model, context, options) => {
-    const googleModel: Model = { ...model, api: SOURCE_API };
-    const sourceProvider = registry.getApiProvider(SOURCE_API);
-    if (!sourceProvider) {
-      throw new Error(`No API provider registered for api: ${SOURCE_API}`);
-    }
+    const googleModel = { ...model, api: SOURCE_API };
     return streamWithPayloadPatch(
-      sourceProvider.streamSimple as StreamFn,
+      streamSimple as unknown as StreamFn,
       googleModel,
       context,
       options,
@@ -57,7 +50,6 @@ function buildGoogleSimpleCompletionStreamFn(registry: ApiRegistry): StreamFn {
           payload,
           modelId: model.id,
           thinkingLevel: resolveGoogleSimpleThinkingLevel(
-            googleModel,
             (options as { reasoning?: unknown } | undefined)?.reasoning,
           ),
         });
@@ -67,17 +59,10 @@ function buildGoogleSimpleCompletionStreamFn(registry: ApiRegistry): StreamFn {
 }
 
 /** Rewrites Google generative-ai models to the simple-completion adapter when needed. */
-export function prepareGoogleSimpleCompletionModel<TApi extends Api>(
-  registry: ApiRegistry,
-  model: Model<TApi>,
-): Model {
+export function prepareGoogleSimpleCompletionModel<TApi extends Api>(model: Model<TApi>): Model {
   if (model.api !== SOURCE_API) {
     return model;
   }
-  ensureCustomApiRegistered(
-    registry,
-    GOOGLE_SIMPLE_COMPLETION_API,
-    buildGoogleSimpleCompletionStreamFn(registry),
-  );
+  ensureCustomApiRegistered(GOOGLE_SIMPLE_COMPLETION_API, buildGoogleSimpleCompletionStreamFn());
   return { ...model, api: GOOGLE_SIMPLE_COMPLETION_API };
 }

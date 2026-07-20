@@ -4,7 +4,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import net from "node:net";
-import { StringDecoder } from "node:string_decoder";
 import { URL } from "node:url";
 import { ensureDebugProxyCa } from "./ca.js";
 import type { DebugProxySettings } from "./env.js";
@@ -15,7 +14,6 @@ const TRUTHY_ENV = new Set(["1", "true", "yes", "on"]);
 const DEBUG_PROXY_DIRECT_CONNECT_OVERRIDE =
   "OPENCLAW_DEBUG_PROXY_ALLOW_DIRECT_CONNECT_WITH_MANAGED_PROXY";
 const CAPTURE_BODY_PREVIEW_BYTES = 8192;
-const BAD_GATEWAY_BODY = "Bad Gateway\n";
 
 type BodyPreviewCapture = {
   chunks: Buffer[];
@@ -36,7 +34,7 @@ function allowsDirectConnectWithManagedProxy(env: NodeJS.ProcessEnv = process.en
   return isTruthyEnvValue(env[DEBUG_PROXY_DIRECT_CONNECT_OVERRIDE]);
 }
 
-function assertDebugProxyDirectUpstreamAllowed(env: NodeJS.ProcessEnv = process.env): void {
+export function assertDebugProxyDirectUpstreamAllowed(env: NodeJS.ProcessEnv = process.env): void {
   if (!isManagedProxyActive(env) || allowsDirectConnectWithManagedProxy(env)) {
     return;
   }
@@ -71,7 +69,7 @@ function createProxyCaptureRecorder(params: {
   };
 }
 
-function parseConnectTarget(rawTarget: string | undefined): {
+export function parseConnectTarget(rawTarget: string | undefined): {
   hostname: string;
   port: number;
 } {
@@ -139,9 +137,7 @@ function finishBodyPreviewCapture(capture: BodyPreviewCapture): {
   metaJson?: string;
 } {
   return {
-    // write(), unlike end(), omits an incomplete trailing code point introduced
-    // by the byte cap instead of injecting a replacement character into the preview.
-    dataText: new StringDecoder("utf8").write(Buffer.concat(capture.chunks, capture.previewBytes)),
+    dataText: Buffer.concat(capture.chunks, capture.previewBytes).toString("utf8"),
     metaJson: capture.truncated
       ? JSON.stringify({
           bodyBytes: capture.totalBytes,
@@ -152,31 +148,13 @@ function finishBodyPreviewCapture(capture: BodyPreviewCapture): {
   };
 }
 
-function finishProxyResponseAfterUpstreamError(res: ServerResponse): void {
-  if (res.destroyed || res.writableEnded) {
-    return;
-  }
-  // HTTP status cannot be replaced after forwarding upstream headers. Closing
-  // the downstream prevents a partial 2xx body from looking complete.
-  if (res.headersSent) {
-    res.destroy();
-    return;
-  }
-  res.writeHead(502, {
-    Connection: "close",
-    "Content-Type": "text/plain; charset=utf-8",
-    "Content-Length": Buffer.byteLength(BAD_GATEWAY_BODY),
-  });
-  res.end(BAD_GATEWAY_BODY);
-}
-
 export async function startDebugProxyServer(params: {
   host?: string;
   port?: number;
   settings: DebugProxySettings;
 }): Promise<DebugProxyServerHandle> {
   await ensureDebugProxyCa(params.settings.certDir);
-  const store = getDebugProxyCaptureStore();
+  const store = getDebugProxyCaptureStore(params.settings.dbPath, params.settings.blobDir);
   const recordProxyEvent = createProxyCaptureRecorder({ store, settings: params.settings });
   const host = params.host?.trim() || "127.0.0.1";
 
@@ -262,14 +240,6 @@ export async function startDebugProxyServer(params: {
             });
             res.end();
           });
-          upstreamRes.on("error", (error) => {
-            recordTargetEvent({
-              direction: "inbound",
-              kind: "error",
-              errorText: error.message,
-            });
-            finishProxyResponseAfterUpstreamError(res);
-          });
           res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
         },
       );
@@ -298,7 +268,8 @@ export async function startDebugProxyServer(params: {
           kind: "error",
           errorText: error.message,
         });
-        finishProxyResponseAfterUpstreamError(res);
+        res.statusCode = 502;
+        res.end(error.message);
       });
       req.pipe(upstream);
     })();

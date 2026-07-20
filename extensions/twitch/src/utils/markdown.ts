@@ -4,7 +4,6 @@
  * Twitch chat doesn't support markdown formatting, so we strip it before sending.
  * Based on OpenClaw's markdownToText in src/agents/tools/web-fetch-utils.ts.
  */
-import { chunkTextForOutbound } from "openclaw/plugin-sdk/text-chunking";
 
 /**
  * Strip markdown formatting from text for Twitch compatibility.
@@ -30,7 +29,7 @@ export function stripMarkdownForTwitch(markdown: string): string {
       // Italic (*text*)
       .replace(/\*([^*]+)\*/g, "$1")
       // Italic (_text_)
-      .replace(/(?<![\p{L}\p{N}\p{M}])_(?!_)([^_]+)_(?![\p{L}\p{N}\p{M}])/gu, "$1")
+      .replace(/_([^_]+)_/g, "$1")
       // Strikethrough (~~text~~)
       .replace(/~~([^~]+)~~/g, "$1")
       // Code blocks
@@ -65,5 +64,35 @@ export function chunkTextForTwitch(text: string, limit: number): string[] {
   if (!cleaned) {
     return [];
   }
-  return chunkTextForOutbound(cleaned, limit);
+  if (limit <= 0) {
+    return [cleaned];
+  }
+  if (cleaned.length <= limit) {
+    return [cleaned];
+  }
+
+  const chunks: string[] = [];
+  let remaining = cleaned;
+
+  while (remaining.length > limit) {
+    // Find the last space before the limit
+    const window = remaining.slice(0, limit);
+    const lastSpaceIndex = window.lastIndexOf(" ");
+
+    if (lastSpaceIndex === -1) {
+      // No space found, hard split at limit
+      chunks.push(window);
+      remaining = remaining.slice(limit);
+    } else {
+      // Split at the last space
+      chunks.push(window.slice(0, lastSpaceIndex));
+      remaining = remaining.slice(lastSpaceIndex + 1);
+    }
+  }
+
+  if (remaining) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
 }

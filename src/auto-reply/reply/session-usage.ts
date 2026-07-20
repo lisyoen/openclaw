@@ -14,11 +14,10 @@ import {
   resolveSessionGoalDisplayState,
   type SessionSystemPromptReport,
   type SessionEntry,
+  updateSessionStoreEntry,
 } from "../../config/sessions.js";
-import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
-import { resolveNonNegativeNumber } from "../../shared/number-coercion.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../../utils/usage-format.js";
 
 function applyCliSessionIdToSessionPatch(
@@ -68,6 +67,10 @@ function applyCliSessionIdToSessionPatch(
   return patch;
 }
 
+function resolveNonNegativeNumber(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
 function resolveNonNegativeTokenCount(value: number | undefined): number | undefined {
   const resolved = resolveNonNegativeNumber(value);
   return resolved === undefined ? undefined : Math.floor(resolved);
@@ -115,7 +118,6 @@ export async function persistSessionUsageUpdate(params: {
   clearCliSessionBinding?: boolean;
   compactionTokensAfter?: number;
   preserveFreshTotalTokensOnStaleUsage?: boolean;
-  preserveRuntimeModel?: boolean;
   preserveUserFacingSessionModelState?: boolean;
   logLabel?: string;
 }): Promise<void> {
@@ -131,30 +133,24 @@ export async function persistSessionUsageUpdate(params: {
     typeof params.promptTokens === "number" &&
     Number.isFinite(params.promptTokens) &&
     params.promptTokens > 0;
-  const hasUsableLastCallUsage =
-    Boolean(params.lastCallUsage) && params.lastCallUsage?.contextUsage?.state !== "unavailable";
-  const hasUsableUsageContextSnapshot =
-    params.usageIsContextSnapshot === true && params.usage?.contextUsage?.state !== "unavailable";
   const hasFreshContextSnapshot =
-    hasUsableLastCallUsage || hasPromptTokens || hasUsableUsageContextSnapshot;
+    Boolean(params.lastCallUsage) || hasPromptTokens || params.usageIsContextSnapshot === true;
   const compactionTokensAfter = resolveNonNegativeTokenCount(params.compactionTokensAfter);
   const hasCompactionSnapshot = compactionTokensAfter !== undefined;
 
   if (hasUsage || hasFreshContextSnapshot || hasCompactionSnapshot) {
     try {
-      await updateSessionEntry(
-        {
-          storePath,
-          sessionKey,
-        },
-        async (entry) => {
+      await updateSessionStoreEntry({
+        storePath,
+        sessionKey,
+        skipMaintenance: true,
+        takeCacheOwnership: true,
+        update: async (entry) => {
           const updatedAt = Date.now();
           const preserveSessionModelState =
-            params.isHeartbeat === true ||
-            params.preserveRuntimeModel === true ||
-            params.preserveUserFacingSessionModelState === true;
+            params.isHeartbeat === true || params.preserveUserFacingSessionModelState === true;
           const preserveUserFacingRunState = params.preserveUserFacingSessionModelState === true;
-          const resolvedContextTokens = preserveSessionModelState
+          const resolvedContextTokens = preserveUserFacingRunState
             ? entry.contextTokens
             : (params.contextTokensUsed ?? entry.contextTokens);
           // Use last-call usage for totalTokens when available. The accumulated
@@ -242,11 +238,7 @@ export async function persistSessionUsageUpdate(params: {
             ? patch
             : applyCliSessionIdToSessionPatch(params, entry, patch);
         },
-        {
-          skipMaintenance: true,
-          takeCacheOwnership: true,
-        },
-      );
+      });
     } catch (err) {
       logVerbose(`failed to persist ${label}usage update: ${String(err)}`);
     }
@@ -255,18 +247,16 @@ export async function persistSessionUsageUpdate(params: {
 
   if (params.modelUsed || params.contextTokensUsed) {
     try {
-      await updateSessionEntry(
-        {
-          storePath,
-          sessionKey,
-        },
-        async (entry) => {
+      await updateSessionStoreEntry({
+        storePath,
+        sessionKey,
+        skipMaintenance: true,
+        takeCacheOwnership: true,
+        update: async (entry) => {
           const preserveSessionModelState =
-            params.isHeartbeat === true ||
-            params.preserveRuntimeModel === true ||
-            params.preserveUserFacingSessionModelState === true;
+            params.isHeartbeat === true || params.preserveUserFacingSessionModelState === true;
           const preserveUserFacingRunState = params.preserveUserFacingSessionModelState === true;
-          const contextTokens = preserveSessionModelState
+          const contextTokens = preserveUserFacingRunState
             ? entry.contextTokens
             : (params.contextTokensUsed ?? entry.contextTokens);
           const patch: Partial<SessionEntry> = {
@@ -280,24 +270,11 @@ export async function persistSessionUsageUpdate(params: {
               : (params.systemPromptReport ?? entry.systemPromptReport),
             updatedAt: Date.now(),
           };
-          if (
-            !preserveUserFacingRunState &&
-            (params.preserveFreshTotalTokensOnStaleUsage !== true ||
-              entry.totalTokensFresh !== true)
-          ) {
-            // A completed run without a context snapshot invalidates any fresh
-            // zero persisted for the previously empty session.
-            patch.totalTokensFresh = false;
-          }
           return preserveUserFacingRunState
             ? patch
             : applyCliSessionIdToSessionPatch(params, entry, patch);
         },
-        {
-          skipMaintenance: true,
-          takeCacheOwnership: true,
-        },
-      );
+      });
     } catch (err) {
       logVerbose(`failed to persist ${label}model/context update: ${String(err)}`);
     }

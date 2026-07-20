@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findJsonSchemaShapeError, normalizeJsonSchemaForTypeBox } from "./json-schema-defaults.js";
+import { normalizeJsonSchemaForTypeBox } from "./json-schema-defaults.js";
 
 describe("normalizeJsonSchemaForTypeBox", () => {
   it("combines pattern properties that collide after unicode repair", () => {
@@ -33,17 +33,4 @@ describe("normalizeJsonSchemaForTypeBox", () => {
       });
     },
   );
-
-  it("resolves local refs to array entries beyond config path index limits", () => {
-    const prefixItems: (boolean | { type: string })[] = Array.from({ length: 100_002 }, () => true);
-    prefixItems[100_001] = { type: "string" };
-
-    expect(
-      findJsonSchemaShapeError({
-        type: "array",
-        prefixItems,
-        items: { $ref: "#/prefixItems/100001" },
-      }),
-    ).toBeUndefined();
-  });
 });

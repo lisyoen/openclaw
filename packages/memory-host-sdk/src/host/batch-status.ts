@@ -1,7 +1,14 @@
 // Batch status helpers shared by remote embedding providers.
-import type { EmbeddingBatchStatus } from "./batch-provider-common.js";
 
 const TERMINAL_FAILURE_STATES = new Set(["failed", "expired", "cancelled", "canceled"]);
+
+/** Minimal provider batch status used for completion and terminal-failure checks. */
+type BatchStatusLike = {
+  id?: string;
+  status?: string;
+  output_file_id?: string | null;
+  error_file_id?: string | null;
+};
 
 /** File ids returned once a batch has completed. */
 export type BatchCompletionResult = {
@@ -13,7 +20,7 @@ export type BatchCompletionResult = {
 export function resolveBatchCompletionFromStatus(params: {
   provider: string;
   batchId: string;
-  status: EmbeddingBatchStatus;
+  status: BatchStatusLike;
 }): BatchCompletionResult {
   if (!params.status.output_file_id) {
     throw new Error(`${params.provider} batch ${params.batchId} completed without output file`);
@@ -24,25 +31,10 @@ export function resolveBatchCompletionFromStatus(params: {
   };
 }
 
-/** Fail a completed partial/all-error batch before requiring its success file. */
-export async function throwIfBatchCompletionError(params: {
-  provider: string;
-  status: EmbeddingBatchStatus;
-  readError: (errorFileId: string) => Promise<string | undefined>;
-}): Promise<void> {
-  if (params.status.status !== "completed" || !params.status.error_file_id) {
-    return;
-  }
-  const detail = await params.readError(params.status.error_file_id);
-  throw new Error(
-    `${params.provider} batch ${params.status.id ?? "<unknown>"} completed: ${detail ?? "provider error file present"}`,
-  );
-}
-
 /** Throw when a provider reports a terminal failure, including error-file detail if available. */
 export async function throwIfBatchTerminalFailure(params: {
   provider: string;
-  status: EmbeddingBatchStatus;
+  status: BatchStatusLike;
   readError: (errorFileId: string) => Promise<string | undefined>;
 }): Promise<void> {
   const state = params.status.status ?? "unknown";
@@ -59,7 +51,7 @@ export async function throwIfBatchTerminalFailure(params: {
 /** Resolve the completed batch files, optionally waiting according to caller policy. */
 export async function resolveCompletedBatchResult(params: {
   provider: string;
-  status: EmbeddingBatchStatus;
+  status: BatchStatusLike;
   wait: boolean;
   waitForBatch: () => Promise<BatchCompletionResult>;
 }): Promise<BatchCompletionResult> {

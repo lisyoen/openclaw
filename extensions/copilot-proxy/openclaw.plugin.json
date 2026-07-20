@@ -1,6 +1,5 @@
 {
   "id": "copilot-proxy",
-  "icon": "https://cdn.simpleicons.org/githubcopilot",
   "activation": {
     "onStartup": false
   },
@@ -14,10 +13,9 @@
       "choiceId": "copilot-proxy",
       "choiceLabel": "Copilot Proxy",
       "choiceHint": "Configure base URL + model ids",
-      "assistantPriority": 3,
       "groupId": "copilot",
       "groupLabel": "Copilot",
-      "groupHint": "GitHub, GitHub Enterprise + Local Proxy"
+      "groupHint": "GitHub + local proxy"
     }
   ],
   "configSchema": {

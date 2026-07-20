@@ -12,11 +12,8 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { pickFirstExistingAgentId } from "../../routing/resolve-route.js";
 import { resolveChannelConfiguredBindingProvider } from "./binding-provider.js";
 import type { CompiledConfiguredBinding, ConfiguredBindingChannel } from "./binding-types.js";
-import {
-  resolveConfiguredBindingConsumer,
-  type ConfiguredBindingConsumer,
-} from "./configured-binding-consumers.js";
-import { getLoadedChannelPlugin } from "./index.js";
+import { resolveConfiguredBindingConsumer } from "./configured-binding-consumers.js";
+import { getChannelPlugin } from "./index.js";
 import type {
   ChannelConfiguredBindingConversationRef,
   ChannelConfiguredBindingProvider,
@@ -31,7 +28,7 @@ function resolveLoadedChannelPlugin(channel: string) {
   if (!normalized) {
     return undefined;
   }
-  return getLoadedChannelPlugin(normalized as ConfiguredBindingChannel);
+  return getChannelPlugin(normalized as ConfiguredBindingChannel);
 }
 
 function resolveConfiguredBindingAdapter(channel: string): {
@@ -82,10 +79,13 @@ function compileConfiguredBindingRule(params: {
   target: ChannelConfiguredBindingConversationRef;
   bindingConversationId: string;
   provider: ChannelConfiguredBindingProvider;
-  consumer: ConfiguredBindingConsumer;
 }): CompiledConfiguredBinding | null {
   const agentId = pickFirstExistingAgentId(params.cfg, params.binding.agentId ?? "main");
-  const targetFactory = params.consumer.buildTargetFactory({
+  const consumer = resolveConfiguredBindingConsumer(params.binding);
+  if (!consumer) {
+    return null;
+  }
+  const targetFactory = consumer.buildTargetFactory({
     cfg: params.cfg,
     binding: params.binding,
     channel: params.channel,
@@ -126,12 +126,6 @@ function compileConfiguredBindingRegistry(params: {
   const rulesByChannel = new Map<ConfiguredBindingChannel, CompiledConfiguredBinding[]>();
 
   for (const binding of listConfiguredBindings(params.cfg)) {
-    // Ordinary routing bindings share the config array but have no stateful target consumer.
-    // Reject them before consulting the loaded channel registry on request-time route lookups.
-    const consumer = resolveConfiguredBindingConsumer(binding);
-    if (!consumer) {
-      continue;
-    }
     const bindingConversationId = resolveBindingConversationId(binding);
     if (!bindingConversationId) {
       continue;
@@ -158,7 +152,6 @@ function compileConfiguredBindingRegistry(params: {
       target,
       bindingConversationId,
       provider: resolvedChannel.provider,
-      consumer,
     });
     if (!rule) {
       continue;

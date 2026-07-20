@@ -5,9 +5,10 @@ import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coe
 
 export {
   getRuntimeConfig,
+  getRuntimeConfigSnapshot,
   getRuntimeConfigSourceSnapshot,
 } from "openclaw/plugin-sdk/runtime-config-snapshot";
-export { mutateConfigFile } from "openclaw/plugin-sdk/config-mutation";
+export { mutateConfigFile, replaceConfigFile } from "openclaw/plugin-sdk/config-mutation";
 export {
   type BrowserConfig,
   type BrowserProfileConfig,

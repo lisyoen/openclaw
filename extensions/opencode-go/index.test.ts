@@ -10,11 +10,7 @@ import { expectPassthroughReplayPolicy } from "openclaw/plugin-sdk/provider-test
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import plugin from "./index.js";
 import manifest from "./openclaw.plugin.json" with { type: "json" };
-import {
-  buildOpencodeGoLiveProviderConfig,
-  buildStaticOpencodeGoProviderConfig,
-} from "./provider-catalog.js";
-import opencodeGoProviderDiscovery from "./provider-discovery.js";
+import { buildOpencodeGoLiveProviderConfig } from "./provider-catalog.js";
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -90,12 +86,12 @@ describe("opencode-go provider plugin", () => {
       "deepseek-v4-pro",
       "glm-5",
       "glm-5.1",
-      "glm-5.2",
       "hy3-preview",
       "kimi-k2.5",
       "kimi-k2.6",
-      "kimi-k2.7-code",
+      "mimo-v2-omni",
       "mimo-v2.5",
+      "mimo-v2-pro",
       "mimo-v2.5-pro",
       "minimax-m2.5",
       "minimax-m2.7",
@@ -128,20 +124,6 @@ describe("opencode-go provider plugin", () => {
     expect(deepSeekFlash.provider).toBe("opencode-go");
     expect(deepSeekFlash.name).toBe("DeepSeek V4 Flash");
 
-    const glm52 = requireMapEntry(models, "glm-5.2");
-    expect(glm52.api).toBe("openai-completions");
-    expect(glm52.baseUrl).toBe("https://opencode.ai/zen/go/v1");
-    expect(glm52.input).toEqual(["text"]);
-    expect(glm52.reasoning).toBe(true);
-    expect(glm52.contextWindow).toBe(1_000_000);
-    expect(glm52.maxTokens).toBe(131_072);
-    expect(glm52.cost).toEqual({
-      input: 1.4,
-      output: 4.4,
-      cacheRead: 0.26,
-      cacheWrite: 0,
-    });
-
     const kimi = requireMapEntry(models, "kimi-k2.6");
     expect(kimi.api).toBe("openai-completions");
     expect(kimi.baseUrl).toBe("https://opencode.ai/zen/go/v1");
@@ -149,19 +131,6 @@ describe("opencode-go provider plugin", () => {
     expect(kimi.reasoning).toBe(true);
     expect(kimi.contextWindow).toBe(262_144);
     expect(kimi.maxTokens).toBe(65_536);
-
-    const kimiCode = requireMapEntry(models, "kimi-k2.7-code");
-    expect(kimiCode.api).toBe("openai-completions");
-    expect(kimiCode.baseUrl).toBe("https://opencode.ai/zen/go/v1");
-    expect(kimiCode.input).toEqual(["text", "image"]);
-    expect(kimiCode.contextWindow).toBe(262_144);
-    expect(kimiCode.maxTokens).toBe(262_144);
-    expect(kimiCode.cost).toEqual({
-      input: 0.95,
-      output: 4,
-      cacheRead: 0.19,
-      cacheWrite: 0,
-    });
 
     const minimax = requireMapEntry(models, "minimax-m2.7");
     expect(minimax.api).toBe("anthropic-messages");
@@ -240,29 +209,7 @@ describe("opencode-go provider plugin", () => {
   });
 
   it("loads OpenCode Go model discovery through the provider runtime", () => {
-    expect(manifest.providerCatalogEntry).toBe("./provider-discovery.ts");
     expect(manifest.modelCatalog.discovery["opencode-go"]).toBe("runtime");
-  });
-
-  it("exposes the complete offline catalog through provider discovery", async () => {
-    const result = await opencodeGoProviderDiscovery.staticCatalog?.run({} as never);
-    if (!result || !("provider" in result)) {
-      throw new Error("expected OpenCode Go static provider");
-    }
-    const deepSeekPro = result.provider.models.find((model) => model.id === "deepseek-v4-pro");
-    const glm52 = result.provider.models.find((model) => model.id === "glm-5.2");
-
-    expect(result.provider.models).toHaveLength(18);
-    expect(deepSeekPro).toMatchObject({
-      provider: "opencode-go",
-      contextWindow: 1_000_000,
-      maxTokens: 384_000,
-    });
-    expect(glm52).toMatchObject({
-      provider: "opencode-go",
-      contextWindow: 1_000_000,
-      maxTokens: 131_072,
-    });
   });
 
   it("skips live OpenCode Go catalog discovery when no shared key is configured", async () => {
@@ -276,31 +223,6 @@ describe("opencode-go provider plugin", () => {
         resolveProviderAuth: () => ({ apiKey: undefined, mode: "none", source: "none" }),
       } as never),
     ).resolves.toBeNull();
-  });
-
-  it("keeps deprecated upstream MiMo aliases out of static and live catalogs", async () => {
-    const deprecatedModelIds = ["mimo-v2-omni", "mimo-v2-pro"];
-    const activeModelIds = ["mimo-v2.5", "mimo-v2.5-pro"];
-    const staticModelIds = buildStaticOpencodeGoProviderConfig().models.map((model) => model.id);
-
-    expect(staticModelIds).toEqual(expect.arrayContaining(activeModelIds));
-    expect(staticModelIds).toEqual(expect.not.arrayContaining(deprecatedModelIds));
-
-    const fetchGuard = vi.fn(async () => ({
-      response: new Response(
-        JSON.stringify({
-          data: [...deprecatedModelIds, ...activeModelIds].map((id) => ({ id, object: "model" })),
-        }),
-      ),
-      finalUrl: "https://opencode.ai/zen/go/v1/models",
-      release: vi.fn(async () => undefined),
-    }));
-    const live = await buildOpencodeGoLiveProviderConfig({
-      discoveryApiKey: "resolved-opencode-key",
-      fetchGuard,
-    });
-
-    expect(live.models.map((model) => model.id)).toEqual(activeModelIds);
   });
 
   it("does not mix provider-specific runtime auth with shared discovery auth", async () => {
@@ -499,15 +421,15 @@ describe("opencode-go provider plugin", () => {
         provider: "opencode-go",
         model: {
           provider: "opencode-go",
-          id: "kimi-k2.7-code",
-          name: "Kimi K2.7 Code",
+          id: "kimi-k2.6",
+          name: "Kimi K2.6",
           api: "openai-completions",
           baseUrl: "https://opencode.ai/zen/go/v1",
           reasoning: true,
           input: ["text", "image"],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 262_144,
-          maxTokens: 262_144,
+          maxTokens: 65_536,
         },
       } as never),
       "normalized Kimi model",

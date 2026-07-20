@@ -11,7 +11,7 @@ import { A2UI_PATH, CANVAS_HOST_PATH, CANVAS_WS_PATH, handleA2uiHttpRequest } fr
 import { createCanvasHostHandler, type CanvasHostHandler } from "./host/server.js";
 
 /** Canvas route handler shape registered with the plugin HTTP router. */
-type CanvasHttpRouteHandler = {
+export type CanvasHttpRouteHandler = {
   handleHttpRequest: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
   handleUpgrade: (req: IncomingMessage, socket: Duplex, head: Buffer) => Promise<boolean>;
   close: () => Promise<void>;
@@ -24,21 +24,16 @@ export function createCanvasHttpRouteHandler(params: {
   runtime: RuntimeEnv;
   allowInTests?: boolean;
 }): CanvasHttpRouteHandler {
-  let cachedHostConfig: ReturnType<typeof resolveCanvasHostConfig> | null = null;
-  const getHostConfig = () => {
-    cachedHostConfig ??= resolveCanvasHostConfig({
-      config: params.config,
-      pluginConfig: params.pluginConfig,
-    });
-    return cachedHostConfig;
-  };
   let hostHandlerPromise: Promise<CanvasHostHandler | null> | null = null;
   const loadHostHandler = async (): Promise<CanvasHostHandler | null> => {
     if (!isCanvasHostEnabled(params.config)) {
       return null;
     }
     hostHandlerPromise ??= (async () => {
-      const hostConfig = getHostConfig();
+      const hostConfig = resolveCanvasHostConfig({
+        config: params.config,
+        pluginConfig: params.pluginConfig,
+      });
       const handler = await createCanvasHostHandler({
         runtime: params.runtime,
         rootDir: hostConfig.root,
@@ -59,7 +54,7 @@ export function createCanvasHttpRouteHandler(params: {
       }
       const url = new URL(req.url ?? "/", "http://localhost");
       if (url.pathname === A2UI_PATH || url.pathname.startsWith(`${A2UI_PATH}/`)) {
-        return handleA2uiHttpRequest(req, res, { liveReload: getHostConfig().liveReload });
+        return handleA2uiHttpRequest(req, res);
       }
       return handler.handleHttpRequest(req, res);
     },

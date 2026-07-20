@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   auditDiscordChannelPermissionsWithFetcher,
   collectDiscordAuditChannelIdsForAccount,
+  collectDiscordAuditChannelIdsForGuilds,
 } from "./audit-core.js";
 
 const fetchChannelPermissionsDiscordMock = vi.fn();
@@ -42,7 +43,7 @@ describe("discord audit", () => {
       },
     } as unknown as OpenClawConfig;
 
-    const collected = collectDiscordAuditChannelIdsForAccount({ guilds: readDiscordGuilds(cfg) });
+    const collected = collectDiscordAuditChannelIdsForGuilds(readDiscordGuilds(cfg));
     expect(collected.channelIds).toEqual(["111", "222"]);
     expect(collected.unresolvedChannels).toBe(1);
 
@@ -92,7 +93,7 @@ describe("discord audit", () => {
       },
     } as unknown as OpenClawConfig;
 
-    const collected = collectDiscordAuditChannelIdsForAccount({ guilds: readDiscordGuilds(cfg) });
+    const collected = collectDiscordAuditChannelIdsForGuilds(readDiscordGuilds(cfg));
     expect(collected.channelIds).toEqual(["111"]);
     expect(collected.unresolvedChannels).toBe(0);
   });
@@ -115,7 +116,7 @@ describe("discord audit", () => {
       },
     } as unknown as OpenClawConfig;
 
-    const collected = collectDiscordAuditChannelIdsForAccount({ guilds: readDiscordGuilds(cfg) });
+    const collected = collectDiscordAuditChannelIdsForGuilds(readDiscordGuilds(cfg));
     expect(collected.channelIds).toStrictEqual([]);
     expect(collected.unresolvedChannels).toBe(0);
   });
@@ -142,7 +143,7 @@ describe("discord audit", () => {
       },
     } as unknown as OpenClawConfig;
 
-    const collected = collectDiscordAuditChannelIdsForAccount({ guilds: readDiscordGuilds(cfg) });
+    const collected = collectDiscordAuditChannelIdsForGuilds(readDiscordGuilds(cfg));
     expect(collected.channelIds).toEqual(["111"]);
     expect(collected.unresolvedChannels).toBe(1);
   });

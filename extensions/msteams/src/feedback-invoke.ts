@@ -1,6 +1,7 @@
 // Msteams plugin module implements feedback invoke behavior.
-import { recordChannelFeedbackEvent } from "openclaw/plugin-sdk/channel-inbound";
+import path from "node:path";
 import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
+import { appendRegularFile } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { formatUnknownError } from "./errors.js";
 import { buildFeedbackEvent, runFeedbackReflection } from "./feedback-reflection.js";
@@ -130,12 +131,19 @@ export async function runMSTeamsFeedbackInvokeHandler(
     hasComment: Boolean(userComment),
   });
 
+  // Write feedback event to session transcript
   try {
-    await recordChannelFeedbackEvent({
-      cfg: deps.cfg,
+    const storePath = core.channel.session.resolveStorePath(deps.cfg.session?.store, {
       agentId: route.agentId,
-      sessionKey: route.sessionKey,
-      event: feedbackEvent,
+    });
+    const safeKey = route.sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const transcriptFile = path.join(storePath, `${safeKey}.jsonl`);
+    await appendRegularFile({
+      filePath: transcriptFile,
+      content: `${JSON.stringify(feedbackEvent)}\n`,
+      rejectSymlinkParents: true,
+    }).catch(() => {
+      // Best effort — transcript dir may not exist yet
     });
   } catch {
     // Best effort
@@ -150,6 +158,9 @@ export async function runMSTeamsFeedbackInvokeHandler(
       aadObjectId: activity.from?.aadObjectId,
     },
     agent: activity.recipient
+      ? { id: activity.recipient.id, name: activity.recipient.name }
+      : undefined,
+    bot: activity.recipient
       ? { id: activity.recipient.id, name: activity.recipient.name }
       : undefined,
     conversation: {
@@ -173,11 +184,12 @@ export async function runMSTeamsFeedbackInvokeHandler(
     runFeedbackReflection({
       cfg: deps.cfg,
       app: deps.app,
+      appId: deps.appId,
       conversationRef,
       sessionKey: route.sessionKey,
       agentId: route.agentId,
       conversationId,
-      conversationKind: isDirectMessage ? "direct" : isChannel ? "channel" : "group",
+      feedbackMessageId: messageId,
       userComment,
       log: deps.log,
     }).catch((err: unknown) => {

@@ -1,6 +1,4 @@
 // Turn context tracker keeps bounded recent context for realtime voice turns.
-import { resolveNonNegativeIntegerOption } from "@openclaw/normalization-core/number-coercion";
-
 const DEFAULT_REALTIME_VOICE_TURN_CONTEXT_LIMIT = 32;
 const DEFAULT_REALTIME_VOICE_IGNORED_CONTEXT_TTL_MS = 10_000;
 
@@ -62,6 +60,13 @@ type RecentIgnoredContext<TContext> = {
   createdAt: number;
 };
 
+function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
 export function createRealtimeVoiceTurnContextTracker<
   TContext,
   TExtra extends object = Record<never, never>,
@@ -75,11 +80,11 @@ export function createRealtimeVoiceTurnContextTracker<
   // different tracker from closing or consuming another tracker's turn state.
   const owner = Symbol("realtimeVoiceTurnContextTracker");
   const now = options.now ?? Date.now;
-  const limit = resolveNonNegativeIntegerOption(
+  const limit = normalizeNonNegativeInteger(
     options.limit,
     DEFAULT_REALTIME_VOICE_TURN_CONTEXT_LIMIT,
   );
-  const ignoredContextTtlMs = resolveNonNegativeIntegerOption(
+  const ignoredContextTtlMs = normalizeNonNegativeInteger(
     options.ignoredContextTtlMs,
     DEFAULT_REALTIME_VOICE_IGNORED_CONTEXT_TTL_MS,
   );

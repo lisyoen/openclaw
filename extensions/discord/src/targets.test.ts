@@ -1,8 +1,10 @@
 // Discord tests cover targets plugin behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveDiscordDirectoryUserId } from "./directory-cache.js";
-import { clearDiscordDirectoryCacheForTest } from "./directory-cache.test-support.js";
+import {
+  resetDiscordDirectoryCacheForTest,
+  resolveDiscordDirectoryUserId,
+} from "./directory-cache.js";
 import * as directoryLive from "./directory-live.js";
 import {
   resolveDiscordGroupRequireMention,
@@ -102,7 +104,7 @@ describe("resolveDiscordTarget", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    clearDiscordDirectoryCacheForTest();
+    resetDiscordDirectoryCacheForTest();
   });
 
   it("returns a resolved user for usernames", async () => {
@@ -159,13 +161,13 @@ describe("resolveDiscordTarget", () => {
     expect(listPeers).not.toHaveBeenCalled();
   });
 
-  it("uses account allowFrom when disambiguating bare numeric ids", async () => {
+  it("uses legacy dm.allowFrom when disambiguating bare numeric ids", async () => {
     const cfgEntry = {
       channels: {
         discord: {
           accounts: {
             default: {
-              allowFrom: ["456"],
+              dm: { allowFrom: ["456"] },
             },
           },
         },
@@ -182,13 +184,14 @@ describe("resolveDiscordTarget", () => {
     );
   });
 
-  it("uses only canonical allowFrom for bare numeric ids", async () => {
+  it("prefers top-level allowFrom over legacy dm.allowFrom for bare numeric ids", async () => {
     const cfgResult = {
       channels: {
         discord: {
           accounts: {
             default: {
               allowFrom: ["123"],
+              dm: { allowFrom: ["456"] },
             },
           },
         },
@@ -205,14 +208,14 @@ describe("resolveDiscordTarget", () => {
     );
   });
 
-  it("uses account allowFrom before inherited root allowFrom for bare numeric ids", async () => {
+  it("uses account legacy dm.allowFrom before inherited root allowFrom for bare numeric ids", async () => {
     const cfgValue = {
       channels: {
         discord: {
           allowFrom: ["123"],
           accounts: {
             work: {
-              allowFrom: ["456"],
+              dm: { allowFrom: ["456"] },
             },
           },
         },
@@ -297,7 +300,7 @@ describe("discord group policy", () => {
           },
         },
       },
-    } as OpenClawConfig;
+    } as any;
 
     expect(
       resolveDiscordGroupRequireMention({ cfg: discordCfg, groupSpace: "guild1", groupId: "123" }),
@@ -373,7 +376,7 @@ describe("discord group policy", () => {
           },
         },
       },
-    } as OpenClawConfig;
+    } as any;
 
     expect(
       resolveDiscordGroupRequireMention({

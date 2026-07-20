@@ -2,7 +2,6 @@
 import { ChannelType } from "discord-api-types/v10";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { nativeCommandRuntime } from "./native-command.runtime.js";
 import { createMockCommandInteraction as createInteraction } from "./native-command.test-helpers.js";
 import { createNoopThreadBindingManager } from "./thread-bindings.js";
 
@@ -33,6 +32,7 @@ vi.mock("openclaw/plugin-sdk/web-media", () => ({
 }));
 
 let createDiscordNativeCommand: typeof import("./native-command.js").createDiscordNativeCommand;
+let discordNativeCommandTesting: typeof import("./native-command.js").testing;
 
 function createConfig(params?: { requireMention?: boolean }): OpenClawConfig {
   return {
@@ -41,9 +41,7 @@ function createConfig(params?: { requireMention?: boolean }): OpenClawConfig {
     },
     channels: {
       discord: {
-        dm: { enabled: true },
-        dmPolicy: "open",
-        allowFrom: ["*"],
+        dm: { enabled: true, policy: "open", allowFrom: ["*"] },
         guilds: {
           guild1: {
             requireMention: true,
@@ -77,7 +75,7 @@ async function createStatusCommand(cfg: OpenClawConfig) {
 }
 
 function setDefaultRouteState() {
-  nativeCommandRuntime.resolveDiscordNativeInteractionRouteState = async (params) => ({
+  discordNativeCommandTesting.setResolveDiscordNativeInteractionRouteState(async (params) => ({
     route: {
       agentId: "main",
       channel: "discord",
@@ -100,7 +98,7 @@ function setDefaultRouteState() {
     configuredRoute: null,
     configuredBinding: null,
     bindingReadiness: null,
-  });
+  }));
 }
 
 type MockWithCalls = { mock: { calls: unknown[][] } };
@@ -139,7 +137,8 @@ function firstStatusCall(): {
 
 describe("discord native /status", () => {
   beforeAll(async () => {
-    ({ createDiscordNativeCommand } = await import("./native-command.js"));
+    ({ createDiscordNativeCommand, testing: discordNativeCommandTesting } =
+      await import("./native-command.js"));
   });
 
   beforeEach(() => {
@@ -159,10 +158,12 @@ describe("discord native /status", () => {
       buffer: Buffer.from("image"),
       fileName: "status.png",
     });
-    nativeCommandRuntime.dispatchReplyWithDispatcher =
-      runtimeModuleMocks.dispatchReplyWithDispatcher as typeof import("openclaw/plugin-sdk/reply-dispatch-runtime").dispatchReplyWithDispatcher;
-    nativeCommandRuntime.matchPluginCommand = (() =>
-      null) as typeof import("openclaw/plugin-sdk/plugin-runtime").matchPluginCommand;
+    discordNativeCommandTesting.setDispatchReplyWithDispatcher(
+      runtimeModuleMocks.dispatchReplyWithDispatcher as typeof import("openclaw/plugin-sdk/reply-dispatch-runtime").dispatchReplyWithDispatcher,
+    );
+    discordNativeCommandTesting.setMatchPluginCommand(
+      (() => null) as typeof import("openclaw/plugin-sdk/plugin-runtime").matchPluginCommand,
+    );
     setDefaultRouteState();
   });
 
@@ -185,7 +186,7 @@ describe("discord native /status", () => {
 
   it("prioritizes direct status replies over matching plugin commands", async () => {
     const executePluginCommand = vi.fn(async () => ({ text: "plugin status" }));
-    nativeCommandRuntime.matchPluginCommand = (() => ({
+    discordNativeCommandTesting.setMatchPluginCommand((() => ({
       command: {
         name: "status",
         description: "Plugin status",
@@ -194,9 +195,10 @@ describe("discord native /status", () => {
         handler: async () => ({ text: "plugin status" }),
       },
       args: undefined,
-    })) as typeof import("openclaw/plugin-sdk/plugin-runtime").matchPluginCommand;
-    nativeCommandRuntime.executePluginCommand =
-      executePluginCommand as typeof import("openclaw/plugin-sdk/plugin-runtime").executePluginCommand;
+    })) as typeof import("openclaw/plugin-sdk/plugin-runtime").matchPluginCommand);
+    discordNativeCommandTesting.setExecutePluginCommand(
+      executePluginCommand as typeof import("openclaw/plugin-sdk/plugin-runtime").executePluginCommand,
+    );
     const cfg = createConfig();
     const command = await createStatusCommand(cfg);
     const interaction = createInteraction();

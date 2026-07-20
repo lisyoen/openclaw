@@ -3,11 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { collectStatusScanOverview } from "./status.scan-overview.ts";
 
 const mocks = vi.hoisted(() => ({
-  hasConfiguredChannelsForReadOnlyScope: vi.fn(),
+  hasPotentialConfiguredChannels: vi.fn(),
   resolveCommandConfigWithSecrets: vi.fn(),
   getStatusCommandSecretTargetIds: vi.fn(),
   readBestEffortConfigSnapshot: vi.fn(),
-  resolveGatewayPort: vi.fn(),
   resolveOsSummary: vi.fn(),
   createStatusScanCoreBootstrap: vi.fn(),
   callGateway: vi.fn(),
@@ -16,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../plugins/channel-plugin-ids.js", () => ({
-  hasConfiguredChannelsForReadOnlyScope: mocks.hasConfiguredChannelsForReadOnlyScope,
+  hasConfiguredChannelsForReadOnlyScope: mocks.hasPotentialConfiguredChannels,
 }));
 
 vi.mock("../cli/command-config-resolution.js", () => ({
@@ -29,7 +28,6 @@ vi.mock("../cli/command-secret-targets.js", () => ({
 
 vi.mock("../config/config.js", () => ({
   readBestEffortConfigSnapshot: mocks.readBestEffortConfigSnapshot,
-  resolveGatewayPort: mocks.resolveGatewayPort,
 }));
 
 vi.mock("../infra/os-summary.js", () => ({
@@ -80,7 +78,7 @@ describe("collectStatusScanOverview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mocks.hasConfiguredChannelsForReadOnlyScope.mockReturnValue(true);
+    mocks.hasPotentialConfiguredChannels.mockReturnValue(true);
     mocks.getStatusCommandSecretTargetIds.mockReturnValue([]);
     mocks.readBestEffortConfigSnapshot.mockResolvedValue({
       config: { session: {} },
@@ -134,10 +132,6 @@ describe("collectStatusScanOverview", () => {
       useGatewayCallOverridesForChannelsStatus: true,
     });
 
-    expect(mocks.readBestEffortConfigSnapshot).toHaveBeenCalledWith({
-      observe: false,
-      skipPluginValidation: undefined,
-    });
     expect(mocks.callGateway).toHaveBeenCalledOnce();
     const gatewayRequest = firstGatewayRequest();
     expect(gatewayRequest?.method).toBe("channels.status");

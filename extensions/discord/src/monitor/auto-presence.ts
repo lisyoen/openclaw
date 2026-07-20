@@ -198,7 +198,7 @@ function resolvePresenceStatus(state: DiscordAutoPresenceState): UpdatePresenceD
   return "idle";
 }
 
-function resolveDiscordAutoPresenceDecision(params: {
+export function resolveDiscordAutoPresenceDecision(params: {
   discordConfig: Pick<
     DiscordAccountConfig,
     "autoPresence" | "activity" | "status" | "activityType" | "activityUrl"

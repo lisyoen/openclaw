@@ -3,7 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { ensureMatrixCryptoRuntime, ensureMatrixSdkInstalled } from "./deps.js";
+import {
+  ensureMatrixCryptoRuntime,
+  ensureMatrixSdkInstalled,
+  MATRIX_COMMAND_OUTPUT_TAIL_BYTES,
+  runFixedCommandWithTimeout,
+} from "./deps.js";
 
 const logStub = vi.fn();
 
@@ -51,54 +56,55 @@ function resolveTestNativeBindingFilename(): string | null {
 
 describe("ensureMatrixCryptoRuntime", () => {
   it("returns immediately when matrix SDK loads", async () => {
+    const runCommand = vi.fn();
     const requireFn = vi.fn(() => ({}));
 
     await ensureMatrixCryptoRuntime({
       log: logStub,
       requireFn,
+      runCommand,
       resolveFn: () => "/tmp/download-lib.js",
+      nodeExecutable: "/usr/bin/node",
     });
 
     expect(requireFn).toHaveBeenCalledTimes(1);
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it("bootstraps missing crypto runtime and retries matrix SDK load", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "matrix-crypto-bootstrap-"));
-    const scriptPath = path.join(tmpDir, "download-lib.js");
-    const markerPath = path.join(tmpDir, "bootstrapped");
-    fs.writeFileSync(
-      scriptPath,
-      [
-        'const fs = require("node:fs");',
-        `if (fs.realpathSync(process.cwd()) !== ${JSON.stringify(fs.realpathSync(tmpDir))}) process.exit(2);`,
-        'if (process.env.COREPACK_ENABLE_DOWNLOAD_PROMPT !== "0") process.exit(3);',
-        `fs.writeFileSync(${JSON.stringify(markerPath)}, "ok");`,
-      ].join("\n"),
-    );
+    let bootstrapped = false;
     const requireFn = vi.fn(() => {
-      if (!fs.existsSync(markerPath)) {
+      if (!bootstrapped) {
         throw new Error(
           "Cannot find module '@matrix-org/matrix-sdk-crypto-nodejs-linux-x64-gnu' (required by matrix sdk)",
         );
       }
       return {};
     });
+    const runCommand = vi.fn(async () => {
+      bootstrapped = true;
+      return { code: 0, stdout: "", stderr: "" };
+    });
 
-    try {
-      await ensureMatrixCryptoRuntime({
-        log: logStub,
-        requireFn,
-        resolveFn: () => scriptPath,
-      });
+    await ensureMatrixCryptoRuntime({
+      log: logStub,
+      requireFn,
+      runCommand,
+      resolveFn: () => "/tmp/download-lib.js",
+      nodeExecutable: "/usr/bin/node",
+    });
 
-      expect(fs.readFileSync(markerPath, "utf8")).toBe("ok");
-      expect(requireFn).toHaveBeenCalledTimes(2);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    expect(runCommand).toHaveBeenCalledWith({
+      argv: ["/usr/bin/node", "/tmp/download-lib.js"],
+      cwd: "/tmp",
+      timeoutMs: 300_000,
+      env: { COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
+    });
+    expect(requireFn).toHaveBeenCalledTimes(2);
   });
 
   it("rethrows non-crypto module errors without bootstrapping", async () => {
+    const runCommand = vi.fn();
     const requireFn = vi.fn(() => {
       throw new Error("Cannot find module 'not-the-matrix-crypto-runtime'");
     });
@@ -107,10 +113,13 @@ describe("ensureMatrixCryptoRuntime", () => {
       ensureMatrixCryptoRuntime({
         log: logStub,
         requireFn,
+        runCommand,
         resolveFn: () => "/tmp/download-lib.js",
+        nodeExecutable: "/usr/bin/node",
       }),
     ).rejects.toThrow("Cannot find module 'not-the-matrix-crypto-runtime'");
 
+    expect(runCommand).not.toHaveBeenCalled();
     expect(requireFn).toHaveBeenCalledTimes(1);
   });
 
@@ -123,39 +132,61 @@ describe("ensureMatrixCryptoRuntime", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "matrix-crypto-runtime-"));
     const scriptPath = path.join(tmpDir, "download-lib.js");
     const nativeBindingPath = path.join(tmpDir, nativeBindingFilename);
-    fs.writeFileSync(
-      scriptPath,
-      [
-        'const fs = require("node:fs");',
-        `fs.writeFileSync(${JSON.stringify(nativeBindingPath)}, Buffer.alloc(1_000_000));`,
-      ].join("\n"),
-    );
+    fs.writeFileSync(scriptPath, "");
     fs.writeFileSync(nativeBindingPath, Buffer.alloc(16));
 
+    let bootstrapped = false;
     const requireFn = vi.fn(() => {
-      if (!fs.existsSync(nativeBindingPath) || fs.statSync(nativeBindingPath).size < 1_000_000) {
+      if (!bootstrapped) {
         throw new Error(
           "Cannot find module '@matrix-org/matrix-sdk-crypto-nodejs-linux-x64-gnu' (required by matrix sdk)",
         );
       }
       return {};
     });
+    const runCommand = vi.fn(async () => {
+      bootstrapped = true;
+      fs.writeFileSync(nativeBindingPath, Buffer.alloc(1_000_000));
+      return { code: 0, stdout: "", stderr: "" };
+    });
 
-    try {
-      await ensureMatrixCryptoRuntime({
-        log: logStub,
-        requireFn,
-        resolveFn: () => scriptPath,
-      });
+    await ensureMatrixCryptoRuntime({
+      log: logStub,
+      requireFn,
+      runCommand,
+      resolveFn: () => scriptPath,
+      nodeExecutable: "/usr/bin/node",
+    });
 
-      expect(requireFn).toHaveBeenCalledTimes(2);
-      expect(fs.statSync(nativeBindingPath).size).toBe(1_000_000);
-      expect(logStub).toHaveBeenCalledWith(
-        "matrix: removed incomplete native crypto runtime (16 bytes); it will be downloaded again",
-      );
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(requireFn).toHaveBeenCalledTimes(2);
+    expect(fs.statSync(nativeBindingPath).size).toBe(1_000_000);
+    expect(logStub).toHaveBeenCalledWith(
+      "matrix: removed incomplete native crypto runtime (16 bytes); it will be downloaded again",
+    );
+  });
+});
+
+describe("runFixedCommandWithTimeout", () => {
+  it("retains bounded tails from noisy bootstrap commands", async () => {
+    const result = await runFixedCommandWithTimeout({
+      argv: [
+        process.execPath,
+        "-e",
+        [
+          `process.stdout.write("a".repeat(${MATRIX_COMMAND_OUTPUT_TAIL_BYTES + 1}));`,
+          `process.stderr.write("b".repeat(${MATRIX_COMMAND_OUTPUT_TAIL_BYTES + 1}));`,
+        ].join(""),
+      ],
+      cwd: process.cwd(),
+      timeoutMs: 10_000,
+    });
+
+    expect(result.code).toBe(0);
+    expect(Buffer.byteLength(result.stdout, "utf8")).toBe(MATRIX_COMMAND_OUTPUT_TAIL_BYTES);
+    expect(Buffer.byteLength(result.stderr, "utf8")).toBe(MATRIX_COMMAND_OUTPUT_TAIL_BYTES);
+    expect(result.stdout).toBe("a".repeat(MATRIX_COMMAND_OUTPUT_TAIL_BYTES));
+    expect(result.stderr).toBe("b".repeat(MATRIX_COMMAND_OUTPUT_TAIL_BYTES));
   });
 });
 

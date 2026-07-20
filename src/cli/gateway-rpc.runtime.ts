@@ -12,7 +12,6 @@ type CallGatewayFromCliRuntimeExtra = {
   clientName?: Parameters<typeof callGateway>[0]["clientName"];
   mode?: Parameters<typeof callGateway>[0]["mode"];
   deviceIdentity?: Parameters<typeof callGateway>[0]["deviceIdentity"];
-  signal?: Parameters<typeof callGateway>[0]["signal"];
   expectFinal?: boolean;
   progress?: boolean;
   scopes?: Parameters<typeof callGateway>[0]["scopes"];
@@ -46,7 +45,6 @@ export async function callGatewayFromCliRuntime(
         deviceIdentity: extra?.deviceIdentity,
         expectFinal: extra?.expectFinal ?? Boolean(opts.expectFinal),
         scopes: extra?.scopes,
-        signal: extra?.signal,
         timeoutMs,
         clientName: extra?.clientName ?? GATEWAY_CLIENT_NAMES.CLI,
         mode: extra?.mode ?? GATEWAY_CLIENT_MODES.CLI,

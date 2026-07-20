@@ -24,7 +24,7 @@ export const MATRIX_RECOVERY_KEY_FILENAME = "recovery-key.json";
 export const MATRIX_LEGACY_CRYPTO_MIGRATION_FILENAME = "legacy-crypto-migration.json";
 export const MATRIX_IDB_SNAPSHOT_FILENAME = "crypto-idb-snapshot.json";
 
-type MatrixLegacyCryptoCounts = {
+export type MatrixLegacyCryptoCounts = {
   total: number;
   backedUp: number;
 };
@@ -93,7 +93,7 @@ export function openMatrixIdbSnapshotStoreOptions(storageRootDir: string) {
   };
 }
 
-function readMatrixRecoveryKeyState(storageRootDir: string): MatrixStoredRecoveryKey | null {
+export function readMatrixRecoveryKeyState(storageRootDir: string): MatrixStoredRecoveryKey | null {
   return readMatrixRecoveryKeyStateWithKey({
     storageRootDir,
     stateKey: STATE_KEY,
@@ -118,6 +118,17 @@ function readMatrixRecoveryKeyStateWithKey(params: {
       openMatrixRecoveryKeyStoreOptions(params.storageRootDir),
     ).lookup(params.stateKey),
   );
+}
+
+export function writeMatrixRecoveryKeyState(params: {
+  storageRootDir: string;
+  payload: MatrixStoredRecoveryKey;
+}): void {
+  writeMatrixRecoveryKeyStateWithKey({
+    storageRootDir: params.storageRootDir,
+    stateKey: STATE_KEY,
+    payload: params.payload,
+  });
 }
 
 export function writeMatrixRecoveryKeyStateForPath(params: {
@@ -162,7 +173,7 @@ export async function writeMatrixRecoveryKeyStateToStore(params: {
   await params.store.register(STATE_KEY, payload);
 }
 
-function readMatrixLegacyCryptoMigrationState(
+export function readMatrixLegacyCryptoMigrationState(
   storageRootDir: string,
 ): MatrixLegacyCryptoMigrationState | null {
   return normalizeMatrixLegacyCryptoMigrationState(
@@ -172,7 +183,7 @@ function readMatrixLegacyCryptoMigrationState(
   );
 }
 
-function writeMatrixLegacyCryptoMigrationState(params: {
+export function writeMatrixLegacyCryptoMigrationState(params: {
   storageRootDir: string;
   state: MatrixLegacyCryptoMigrationState;
 }): void {
@@ -208,7 +219,7 @@ export function readMatrixIdbSnapshotJson(storageRootDir: string): string | null
   );
 }
 
-function hasMatrixIdbSnapshotState(storageRootDir: string): boolean {
+export function hasMatrixIdbSnapshotState(storageRootDir: string): boolean {
   return isIdbSnapshotMeta(
     openSyncStore<MatrixIdbSnapshotRecord>(
       openMatrixIdbSnapshotStoreOptions(storageRootDir),
@@ -341,7 +352,7 @@ function resolveRecoveryKeyStateKeyForPath(recoveryKeyPath: string): string {
   return `file:${createHash("sha256").update(basename, "utf8").digest("hex").slice(0, 32)}`;
 }
 
-function normalizeMatrixStoredRecoveryKey(value: unknown): MatrixStoredRecoveryKey | null {
+export function normalizeMatrixStoredRecoveryKey(value: unknown): MatrixStoredRecoveryKey | null {
   if (
     !isRecord(value) ||
     value.version !== 1 ||
@@ -372,7 +383,7 @@ function normalizeMatrixStoredRecoveryKey(value: unknown): MatrixStoredRecoveryK
   };
 }
 
-function normalizeMatrixLegacyCryptoMigrationState(
+export function normalizeMatrixLegacyCryptoMigrationState(
   value: unknown,
 ): MatrixLegacyCryptoMigrationState | null {
   if (!isRecord(value) || value.version !== 1 || typeof value.accountId !== "string") {

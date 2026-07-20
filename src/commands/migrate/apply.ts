@@ -7,7 +7,6 @@ import type { MigrationApplyResult, MigrationProviderPlugin } from "../../plugin
 import type { RuntimeEnv } from "../../runtime.js";
 import { backupCreateCommand } from "../backup.js";
 import { buildMigrationContext, buildMigrationReportDir } from "./context.js";
-import { applyMigrationItemSelection } from "./item-selection.js";
 import { assertApplySucceeded, assertConflictFreePlan, writeApplyResult } from "./output.js";
 import { buildMigrationProviderOptions } from "./providers.js";
 import { applyMigrationPluginSelection, applyMigrationSkillSelection } from "./selection.js";
@@ -70,8 +69,6 @@ export async function runMigrationApply(params: {
       (await params.provider.plan(
         buildMigrationContext({
           source: params.opts.source,
-          targetAgentId: params.opts.targetAgentId,
-          itemKinds: params.opts.itemKinds,
           includeSecrets: params.opts.includeSecrets,
           overwrite: params.opts.overwrite,
           configOverride: params.opts.configOverride,
@@ -83,12 +80,9 @@ export async function runMigrationApply(params: {
     if (!params.opts.preflightPlan) {
       tick();
     }
-    const selectedPlan = applyMigrationItemSelection(
-      applyMigrationPluginSelection(
-        applyMigrationSkillSelection(preflightPlan, params.opts.skills),
-        params.opts.plugins,
-      ),
-      params.opts.itemIds,
+    const selectedPlan = applyMigrationPluginSelection(
+      applyMigrationSkillSelection(preflightPlan, params.opts.skills),
+      params.opts.plugins,
     );
     // Selection is applied before conflict checks so deselected conflicting items
     // cannot block an otherwise safe migration.
@@ -107,8 +101,6 @@ export async function runMigrationApply(params: {
     await fs.mkdir(reportDir, { recursive: true });
     const ctx = buildMigrationContext({
       source: params.opts.source,
-      targetAgentId: params.opts.targetAgentId,
-      itemKinds: params.opts.itemKinds,
       includeSecrets: params.opts.includeSecrets,
       overwrite: params.opts.overwrite,
       configOverride: params.opts.configOverride,
@@ -135,8 +127,6 @@ export async function runMigrationApply(params: {
         async (progress) => await applyMigration(progress),
       );
   writeApplyResult(params.runtime, params.opts, withBackup);
-  if (!params.opts.allowPartialResult) {
-    assertApplySucceeded(withBackup);
-  }
+  assertApplySucceeded(withBackup);
   return withBackup;
 }

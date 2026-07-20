@@ -69,10 +69,7 @@ import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import { createTestRegistry } from "../../test-utils/channel-plugins.js";
 
 let sendMessage: typeof import("./message.js").sendMessage;
-
-beforeAll(async () => {
-  ({ sendMessage } = await import("./message.js"));
-});
+let resetOutboundChannelResolutionStateForTest: typeof import("./channel-resolution.js").resetOutboundChannelResolutionStateForTest;
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -133,8 +130,14 @@ function readPayloadSummary(
 }
 
 describe("sendMessage", () => {
+  beforeAll(async () => {
+    ({ sendMessage } = await import("./message.js"));
+    ({ resetOutboundChannelResolutionStateForTest } = await import("./channel-resolution.js"));
+  });
+
   beforeEach(() => {
     setActivePluginRegistry(createTestRegistry([]));
+    resetOutboundChannelResolutionStateForTest();
     mocks.getChannelPlugin.mockClear();
     mocks.resolveOutboundTarget.mockClear();
     mocks.deliverOutboundPayloads.mockClear();
@@ -142,7 +145,7 @@ describe("sendMessage", () => {
     mocks.resolveRuntimePluginRegistry.mockClear();
 
     mocks.getChannelPlugin.mockReturnValue({
-      outbound: { deliveryMode: "direct", sendText: vi.fn() },
+      outbound: { deliveryMode: "direct" },
     });
     mocks.resolveOutboundTarget.mockImplementation(({ to }: { to: string }) => ({ ok: true, to }));
     mocks.deliverOutboundPayloads.mockResolvedValue([{ channel: "forum", messageId: "m1" }]);
@@ -217,7 +220,6 @@ describe("sendMessage", () => {
       to: "123456",
       content: "hi",
       requesterSessionKey: "agent:main:directchat:group:ops",
-      conversationType: "channel",
       requesterAccountId: "work",
       requesterSenderId: "attacker",
       mirror: {
@@ -230,8 +232,6 @@ describe("sendMessage", () => {
       deliveryParams.session,
       {
         key: "agent:main:directchat:group:ops",
-        conversationType: "group",
-        conversationKind: "channel",
         requesterAccountId: "work",
         requesterSenderId: "attacker",
       },
@@ -306,7 +306,6 @@ describe("sendMessage", () => {
 
     const deliveryParams = expectDeliveryCallFields({
       queuePolicy: "required",
-      requireUnknownSendReconciliation: true,
       mediaAccess,
     });
     expectRecordFields(
@@ -335,52 +334,6 @@ describe("sendMessage", () => {
       },
       "durable delivery requirements",
     );
-  });
-
-  it("can require queue persistence without provider unknown-send reconciliation", async () => {
-    const onDeliveryIntent = vi.fn();
-    const onDeliveryResult = vi.fn();
-
-    await sendMessage({
-      cfg: {},
-      channel: "forum",
-      to: "123456",
-      content: "conversation delivery",
-      queuePolicy: "required",
-      requireUnknownSendReconciliation: false,
-      deliveryIntentId: "operation-1",
-      deliveryCompletion: {
-        kind: "conversation",
-        agentId: "main",
-        operationId: "operation-1",
-      },
-      onDeliveryIntent,
-      onDeliveryResult,
-    });
-
-    const deliveryParams = expectDeliveryCallFields({
-      queuePolicy: "required",
-      deliveryIntentId: "operation-1",
-      deliveryCompletion: {
-        kind: "conversation",
-        agentId: "main",
-        operationId: "operation-1",
-      },
-      onDeliveryResult,
-    });
-    const wrappedIntent = deliveryParams.onDeliveryIntent as
-      | ((intent: { id: string; channel: "forum"; to: string; queuePolicy: "required" }) => void)
-      | undefined;
-    wrappedIntent?.({
-      id: "queue-1",
-      channel: "forum",
-      to: "123456",
-      queuePolicy: "required",
-    });
-    expect(onDeliveryIntent).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "queue-1", durability: "required" }),
-    );
-    expect(mocks.resolveOutboundDurableFinalDeliverySupport).not.toHaveBeenCalled();
   });
 
   it("rejects required durable sends before enqueue when replay safety is unsupported", async () => {
@@ -507,7 +460,7 @@ describe("sendMessage", () => {
 
   it("does not load registries while resolving outbound plugins", async () => {
     const forumPlugin = {
-      outbound: { deliveryMode: "direct", sendText: vi.fn() },
+      outbound: { deliveryMode: "direct" },
     };
     mocks.getChannelPlugin
       .mockReturnValueOnce(undefined)
@@ -526,7 +479,6 @@ describe("sendMessage", () => {
         channel: "forum",
         to: "123456",
         via: "direct",
-        deliveryStatus: "sent",
       },
       "send message result",
     );
@@ -535,21 +487,7 @@ describe("sendMessage", () => {
   });
 
   it("preserves suppressed direct-send status", async () => {
-    mocks.deliverOutboundPayloads.mockImplementationOnce(async (params: unknown) => {
-      const callbacks = params as {
-        onPayloadDeliveryOutcome?: (outcome: unknown) => void;
-      };
-      callbacks.onPayloadDeliveryOutcome?.({
-        index: 0,
-        status: "suppressed",
-        reason: "cancelled_by_message_sending_hook",
-        hookEffect: {
-          cancelReason: "owned-by-other-agent",
-          metadata: { unsafeForJson: 1n },
-        },
-      });
-      return [];
-    });
+    mocks.deliverOutboundPayloads.mockResolvedValueOnce([]);
 
     const result = await sendMessage({
       cfg: {},
@@ -559,34 +497,26 @@ describe("sendMessage", () => {
     });
 
     expect(result.deliveryStatus).toBe("suppressed");
-    expect(result.payloadOutcomes).toEqual([
-      {
-        index: 0,
-        status: "suppressed",
-        reason: "cancelled_by_message_sending_hook",
-      },
-    ]);
-    expect(() => JSON.stringify(result)).not.toThrow();
   });
 
-  it("does not throw best-effort direct send failures but reports the failure", async () => {
+  it("does not throw best-effort direct send failures", async () => {
     mocks.deliverOutboundPayloads.mockImplementationOnce(async (params: unknown) => {
       (
         params as {
           onPayloadDeliveryOutcome?: (outcome: {
             index: number;
+            payload: { text: string };
             status: "failed";
             error: Error;
-            sentBeforeError: boolean;
-            stage: "platform_send";
+            stage: "send";
           }) => void;
         }
       ).onPayloadDeliveryOutcome?.({
         index: 0,
+        payload: { text: "hi" },
         status: "failed",
         error: new Error("transport unavailable"),
-        sentBeforeError: false,
-        stage: "platform_send",
+        stage: "send",
       });
       return [];
     });
@@ -605,76 +535,13 @@ describe("sendMessage", () => {
         to: "123456",
         via: "direct",
         result: undefined,
-        deliveryStatus: "failed",
-        error: "transport unavailable",
       },
       "best-effort send message result",
     );
-    expect(result.payloadOutcomes).toEqual([
-      {
-        index: 0,
-        status: "failed",
-        error: "transport unavailable",
-        sentBeforeError: false,
-        stage: "platform_send",
-      },
-    ]);
 
     expectDeliveryCallFields({
       bestEffort: true,
       queuePolicy: "best_effort",
     });
-  });
-
-  it("reports partial delivery on best-effort direct sends instead of plain success", async () => {
-    mocks.deliverOutboundPayloads.mockImplementationOnce(async (params: unknown) => {
-      const callbacks = params as {
-        onPayloadDeliveryOutcome?: (outcome: unknown) => void;
-      };
-      callbacks.onPayloadDeliveryOutcome?.({
-        index: 0,
-        status: "sent",
-        results: [{ channel: "forum", messageId: "m1" }],
-      });
-      callbacks.onPayloadDeliveryOutcome?.({
-        index: 1,
-        status: "failed",
-        error: new Error("chunk 2 rejected"),
-        sentBeforeError: true,
-        stage: "platform_send",
-      });
-      return [{ channel: "forum", messageId: "m1" }];
-    });
-
-    const result = await sendMessage({
-      cfg: {},
-      channel: "forum",
-      to: "123456",
-      content: "hi",
-      bestEffort: true,
-    });
-    expectRecordFields(
-      result,
-      {
-        channel: "forum",
-        to: "123456",
-        via: "direct",
-        result: { channel: "forum", messageId: "m1" },
-        deliveryStatus: "partial_failed",
-        error: "chunk 2 rejected",
-        sentBeforeError: true,
-      },
-      "best-effort partial send message result",
-    );
-    expect(result.payloadOutcomes).toEqual([
-      { index: 0, status: "sent", resultCount: 1 },
-      {
-        index: 1,
-        status: "failed",
-        error: "chunk 2 rejected",
-        sentBeforeError: true,
-        stage: "platform_send",
-      },
-    ]);
   });
 });

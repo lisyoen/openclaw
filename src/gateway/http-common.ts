@@ -1,7 +1,6 @@
 // Shared Gateway HTTP helpers handle small JSON/text responses, SSE headers,
 // body-size errors, and client disconnect aborts.
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { buildMissingScopeErrorDetails } from "../../packages/gateway-protocol/src/index.js";
 import {
   logRejectedLargePayload,
   parseContentLengthHeader,
@@ -34,7 +33,7 @@ export function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-function sendText(res: ServerResponse, status: number, body: string) {
+export function sendText(res: ServerResponse, status: number, body: string) {
   res.statusCode = status;
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.end(body);
@@ -77,33 +76,18 @@ export function sendInvalidRequest(res: ServerResponse, message: string) {
   });
 }
 
-export function buildMissingScopeForbiddenBody(
-  missingScope: string | undefined,
-  requiredScopes?: readonly string[],
-) {
-  const details =
-    typeof missingScope === "string" && missingScope.length > 0
-      ? buildMissingScopeErrorDetails({
-          missingScope,
-          requiredScopes: requiredScopes ?? [missingScope],
-        })
-      : undefined;
+export function buildMissingScopeForbiddenBody(missingScope: string | undefined) {
   return {
     ok: false,
     error: {
       type: "forbidden",
       message: `missing scope: ${missingScope}`,
-      ...(details ? { details } : {}),
     },
   };
 }
 
-export function sendMissingScopeForbidden(
-  res: ServerResponse,
-  missingScope: string | undefined,
-  requiredScopes?: readonly string[],
-) {
-  sendJson(res, 403, buildMissingScopeForbiddenBody(missingScope, requiredScopes));
+export function sendMissingScopeForbidden(res: ServerResponse, missingScope: string | undefined) {
+  sendJson(res, 403, buildMissingScopeForbiddenBody(missingScope));
 }
 
 export async function readJsonBodyOrError(
@@ -150,14 +134,6 @@ export function setSseHeaders(res: ServerResponse) {
   res.flushHeaders?.();
 }
 
-/** Abort reason used when the HTTP client disconnects before delivery. */
-class ClientDisconnectError extends Error {
-  constructor(message = "HTTP client disconnected") {
-    super(message);
-    this.name = "ClientDisconnectError";
-  }
-}
-
 export function watchClientDisconnect(
   req: IncomingMessage,
   res: ServerResponse,
@@ -177,7 +153,7 @@ export function watchClientDisconnect(
   const handleClose = () => {
     onDisconnect?.();
     if (!abortController.signal.aborted) {
-      abortController.abort(new ClientDisconnectError());
+      abortController.abort();
     }
   };
   for (const socket of sockets) {

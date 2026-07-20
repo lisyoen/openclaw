@@ -17,9 +17,13 @@ import type {
   IngressReasonCode,
   InternalChannelIngressAdapter,
   InternalChannelIngressSubject,
+  InternalMatchMaterial,
   InternalNormalizedEntry,
   RouteGateFacts,
 } from "./types.js";
+
+/** Normalized identifier material used to match an inbound sender against allowlist entries. */
+export type ChannelIngressSubjectIdentifier = InternalMatchMaterial;
 
 /** Redacted subject identity assembled from a stable id plus optional platform aliases. */
 export type ChannelIngressSubject = InternalChannelIngressSubject;

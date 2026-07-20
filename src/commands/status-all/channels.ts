@@ -33,7 +33,7 @@ import {
 } from "./channels-token-summary.js";
 import { formatTimeAgo } from "./format.js";
 
-type ChannelRow = {
+export type ChannelRow = {
   id: ChannelId;
   label: string;
   enabled: boolean;

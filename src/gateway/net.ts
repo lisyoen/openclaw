@@ -11,7 +11,10 @@ import {
 } from "@openclaw/net-policy/ip";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import type { GatewayBindMode } from "../config/types.gateway.js";
-import { isContainerEnvironment } from "../infra/container-environment.js";
+import {
+  resetContainerEnvironmentCacheForTest,
+  isContainerEnvironment,
+} from "../infra/container-environment.js";
 import {
   pickMatchingExternalInterfaceAddress,
   readNetworkInterfaces,
@@ -55,6 +58,17 @@ export function resolveHostName(hostHeader?: string): string {
 
 export function isLoopbackAddress(ip: string | undefined): boolean {
   return isLoopbackIpAddress(ip);
+}
+
+export function isLocalInterfaceAddress(
+  ip: string | undefined,
+  snapshot?: NetworkInterfacesSnapshot,
+): boolean {
+  return (
+    (arguments.length >= 2
+      ? resolveLocalInterfaceAddressMatch(ip, snapshot)
+      : resolveLocalInterfaceAddressMatch(ip)) === true
+  );
 }
 
 export function resolveLocalInterfaceAddressMatch(
@@ -229,17 +243,20 @@ export function resolveRequestClientIp(
   });
 }
 
-export { isContainerEnvironment };
+export {
+  isContainerEnvironment,
+  resetContainerEnvironmentCacheForTest as __resetContainerCacheForTest,
+};
 
 /**
  * Resolves gateway bind host with fallback strategy.
  *
  * Modes:
- * - loopback: always 127.0.0.1
+ * - loopback: 127.0.0.1 (rarely fails, but handled gracefully)
  * - lan: always 0.0.0.0 (no fallback)
  * - tailnet: Tailnet IPv4 if available, else loopback
  * - auto: 0.0.0.0 inside containers (Docker/Podman/K8s); loopback otherwise
- * - custom: User-specified IPv4; unavailable values resolve to 0.0.0.0 for caller validation
+ * - custom: User-specified IP, fallback to 0.0.0.0 if unavailable
  *
  * @returns The bind address to use (never null)
  */
@@ -250,7 +267,11 @@ export async function resolveGatewayBindHost(
   const mode = bind ?? "loopback";
 
   if (mode === "loopback") {
-    return "127.0.0.1";
+    // 127.0.0.1 rarely fails, but handle gracefully
+    if (await canBindToHost("127.0.0.1")) {
+      return "127.0.0.1";
+    }
+    return "0.0.0.0"; // extreme fallback
   }
 
   if (mode === "tailnet") {
@@ -277,7 +298,7 @@ export async function resolveGatewayBindHost(
     if (isValidIPv4(host) && (await canBindToHost(host))) {
       return host;
     }
-    // Runtime startup rejects this fallback; status/display callers remain best-effort.
+    // Custom IP failed → fall back to LAN
     return "0.0.0.0";
   }
 
@@ -344,13 +365,7 @@ export async function resolveGatewayListenHosts(
   opts?: { canBindToHost?: (host: string) => Promise<boolean> },
 ): Promise<string[]> {
   if (bindHost !== "127.0.0.1") {
-    if (!isValidIPv4(bindHost) || bindHost === "0.0.0.0") {
-      return [bindHost];
-    }
-    // Same-host clients use the canonical loopback URL even when external access is
-    // pinned to one interface. Startup requires both listeners so a foreign loopback
-    // process cannot receive credentials intended for the local Gateway.
-    return [bindHost, "127.0.0.1"];
+    return [bindHost];
   }
   // Windows: uv_tcp_bind6 creates a dual-stack socket (no UV_TCP_IPV6ONLY), which
   // also accepts ::ffff:127.0.0.1 connections. Binding both ::1 and 127.0.0.1 on

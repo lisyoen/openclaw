@@ -34,7 +34,7 @@ function isValidReasoningReplayId(id: unknown): id is string {
   return typeof id === "string" && id.length > 0 && id.length <= 64;
 }
 
-function sanitizeCopilotReplayResponseIds(input: unknown): boolean {
+export function sanitizeCopilotReplayResponseIds(input: unknown): boolean {
   if (!Array.isArray(input)) {
     return false;
   }
@@ -66,7 +66,11 @@ function sanitizeCopilotReplayResponseIds(input: unknown): boolean {
   return rewrote;
 }
 
-function sanitizeCopilotReplayResponsePayloadIds(payload: unknown): boolean {
+export function rewriteCopilotConnectionBoundResponseIds(input: unknown): boolean {
+  return sanitizeCopilotReplayResponseIds(input);
+}
+
+export function sanitizeCopilotReplayResponsePayloadIds(payload: unknown): boolean {
   if (!payload || typeof payload !== "object") {
     return false;
   }

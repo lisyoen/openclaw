@@ -6,13 +6,19 @@ read_when:
 title: "Webhooks plugin"
 ---
 
-The Webhooks plugin adds authenticated HTTP routes so a trusted external
-system (Zapier, n8n, a CI job, an internal service) can create and drive
-managed OpenClaw TaskFlows over HTTP, without writing a custom plugin.
+The Webhooks plugin adds authenticated HTTP routes that bind external
+automation to OpenClaw TaskFlows.
 
-The plugin runs inside the Gateway process. For a remote Gateway, install and
-configure it on that host, then restart the Gateway. It ships with no routes
-configured, so it is a no-op until you add at least one route.
+Use it when you want a trusted system such as Zapier, n8n, a CI job, or an
+internal service to create and drive managed TaskFlows without writing a custom
+plugin first.
+
+## Where it runs
+
+The Webhooks plugin runs inside the Gateway process.
+
+If your Gateway runs on another machine, install and configure the plugin on
+that Gateway host, then restart the Gateway.
 
 ## Configure routes
 
@@ -47,48 +53,50 @@ Set config under `plugins.entries.webhooks.config`:
 
 Route fields:
 
-| Field          | Required | Default                       | Notes                                         |
-| -------------- | -------- | ----------------------------- | --------------------------------------------- |
-| `enabled`      | no       | `true`                        |                                               |
-| `path`         | no       | `/plugins/webhooks/<routeId>` | Must be unique across routes.                 |
-| `sessionKey`   | yes      | -                             | Session that owns the bound TaskFlows.        |
-| `secret`       | yes      | -                             | Plain string or a SecretRef (below).          |
-| `controllerId` | no       | `webhooks/<routeId>`          | Used as the default `create_flow` controller. |
-| `description`  | no       | -                             | Operator note only.                           |
+- `enabled`: optional, defaults to `true`
+- `path`: optional, defaults to `/plugins/webhooks/<routeId>`
+- `sessionKey`: required session that owns the bound TaskFlows
+- `secret`: required shared secret or SecretRef
+- `controllerId`: optional controller id for created managed flows
+- `description`: optional operator note
 
-`secret` accepts a plain string or a SecretRef: `{ source: "env" | "file" | "exec", provider: "default", id: "..." }`.
+Supported `secret` inputs:
 
-SecretRefs resolve into the Gateway's startup config snapshot. When one route's
-secret cannot resolve, the Gateway keeps running and that exact route stays
-registered but cold: requests receive a generic authentication failure (`401`).
-Other routes remain available. Fix the SecretRef source, then reload or restart
-the Gateway to activate the new snapshot. SecretRef values are never resolved
-on the public request path.
+- Plain string
+- SecretRef with `source: "env" | "file" | "exec"`
+
+If a secret-backed route cannot resolve its secret at startup, the plugin skips
+that route and logs a warning instead of exposing a broken endpoint.
 
 ## Security model
 
-Each route acts with the TaskFlow authority of its configured `sessionKey`: it
-can inspect and mutate any TaskFlow owned by that session. TaskFlow access
-always goes through `api.runtime.tasks.managedFlows.bindSession(...)`, so a
-route can never act outside its bound session. To limit blast radius:
+Each route is trusted to act with the TaskFlow authority of its configured
+`sessionKey`.
 
-- Use a strong, unique secret per route.
-- Prefer a SecretRef over an inline plaintext secret.
-- Bind routes to the narrowest session that fits the workflow.
-- Expose only the specific webhook path you need.
+This means the route can inspect and mutate TaskFlows owned by that session, so
+you should:
 
-Request handling order for each path: HTTP method (`POST` only) and
-`Content-Type: application/json` checks, then fixed-window rate limiting (120
-requests per 60-second window per path+client-IP key, up to 4,096 tracked
-keys), then in-flight request limiting (8 concurrent requests per key, up to
-4,096 tracked keys), then shared-secret authentication, then a 256 KB /
-15-second JSON body read. Requests that fail an earlier check never reach
-later ones.
+- Use a strong unique secret per route
+- Prefer secret references over inline plaintext secrets
+- Bind routes to the narrowest session that fits the workflow
+- Expose only the specific webhook path you need
+
+The plugin applies:
+
+- Shared-secret authentication
+- Request body size and timeout guards
+- Fixed-window rate limiting
+- In-flight request limiting
+- Owner-bound TaskFlow access through `api.runtime.tasks.managedFlows.bindSession(...)`
 
 ## Request format
 
-Send `POST` requests with `Content-Type: application/json` and either
-`Authorization: Bearer <secret>` or `x-openclaw-webhook-secret: <secret>`:
+Send `POST` requests with:
+
+- `Content-Type: application/json`
+- `Authorization: Bearer <secret>` or `x-openclaw-webhook-secret: <secret>`
+
+Example:
 
 ```bash
 curl -X POST https://gateway.example.com/plugins/webhooks/zapier \
@@ -99,27 +107,27 @@ curl -X POST https://gateway.example.com/plugins/webhooks/zapier \
 
 ## Supported actions
 
-| Action             | Purpose                                                            |
-| ------------------ | ------------------------------------------------------------------ |
-| `create_flow`      | Create a managed TaskFlow for the route's session.                 |
-| `get_flow`         | Fetch one TaskFlow by id.                                          |
-| `list_flows`       | List TaskFlows for the route's session.                            |
-| `find_latest_flow` | Fetch the most recently updated TaskFlow.                          |
-| `resolve_flow`     | Resolve a TaskFlow by opaque token.                                |
-| `get_task_summary` | Fetch the task summary for a TaskFlow.                             |
-| `set_waiting`      | Mark a TaskFlow waiting, with optional state/wait data.            |
-| `resume_flow`      | Resume a waiting/blocked TaskFlow.                                 |
-| `finish_flow`      | Mark a TaskFlow finished.                                          |
-| `fail_flow`        | Mark a TaskFlow failed.                                            |
-| `request_cancel`   | Request cooperative cancellation.                                  |
-| `cancel_flow`      | Cancel a TaskFlow (may return `202` if children are still active). |
-| `run_task`         | Create a managed child task inside an existing TaskFlow.           |
+The plugin currently accepts these JSON `action` values:
 
-Mutating actions (`set_waiting`, `resume_flow`, `finish_flow`, `fail_flow`,
-`request_cancel`) require `flowId` and `expectedRevision` for optimistic
-concurrency; a stale revision returns `409 revision_conflict`.
+- `create_flow`
+- `get_flow`
+- `list_flows`
+- `find_latest_flow`
+- `resolve_flow`
+- `get_task_summary`
+- `set_waiting`
+- `resume_flow`
+- `finish_flow`
+- `fail_flow`
+- `request_cancel`
+- `cancel_flow`
+- `run_task`
 
 ### `create_flow`
+
+Creates a managed TaskFlow for the route's bound session.
+
+Example:
 
 ```json
 {
@@ -132,9 +140,14 @@ concurrency; a stale revision returns `409 revision_conflict`.
 
 ### `run_task`
 
-Allowed `runtime` values: `subagent`, `acp`. `startedAt`, `lastEventAt`, and
-`progressSummary` are only valid when `status` is `"running"`; sending them
-with any other status returns `400 invalid_request`.
+Creates a managed child task inside an existing managed TaskFlow.
+
+Allowed runtimes are:
+
+- `subagent`
+- `acp`
+
+Example:
 
 ```json
 {
@@ -148,6 +161,8 @@ with any other status returns `400 invalid_request`.
 
 ## Response shape
 
+Successful responses return:
+
 ```json
 {
   "ok": true,
@@ -155,6 +170,8 @@ with any other status returns `400 invalid_request`.
   "result": {}
 }
 ```
+
+Rejected requests return:
 
 ```json
 {
@@ -166,17 +183,10 @@ with any other status returns `400 invalid_request`.
 }
 ```
 
-Flow and task views never include owner/session metadata, so responses cannot
-leak the route's bound `sessionKey`. `code` values include `not_found`,
-`not_managed`, `revision_conflict`, `persist_failed`, `cancel_requested`,
-`cancel_pending`, `terminal`, `invalid_request`, `request_rejected`, and
-action-specific fallback codes (`mutation_rejected`, `create_rejected`,
-`task_not_created`, `cancel_rejected`) when a mutation is rejected for a
-reason not covered by the named codes above.
+The plugin intentionally scrubs owner/session metadata from webhook responses.
 
-## Related
+## Related docs
 
-- [Hooks](/automation/hooks) - internal event-driven hooks vs. this HTTP-based TaskFlow bridge
-- [Gateway webhooks (`hooks.*` config)](/automation/cron-jobs#webhooks) - separate generic Gateway HTTP endpoint feature; not the same as this plugin's routes
 - [Plugin runtime SDK](/plugins/sdk-runtime)
+- [Hooks and webhooks overview](/automation/hooks)
 - [CLI webhooks](/cli/webhooks)

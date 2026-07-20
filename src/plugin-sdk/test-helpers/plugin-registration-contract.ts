@@ -2,8 +2,7 @@
  * Contract suite for bundled plugin registration ownership and manifest auth metadata.
  */
 import { describe, expect, it } from "vitest";
-import { pluginRegistrationContractRegistry } from "../../plugins/contracts/registry.js";
-import { loadPluginManifestRegistry } from "../../plugins/manifest-registry.js";
+import { loadPluginManifestRegistry, pluginRegistrationContractRegistry } from "../testing.js";
 
 type PluginRegistrationContractParams = {
   pluginId: string;

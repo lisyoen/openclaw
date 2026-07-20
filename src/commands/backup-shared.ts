@@ -10,8 +10,8 @@ import {
 import { pathExists, shortenHomePath } from "../utils.js";
 import { buildCleanupPlan, isPathWithin } from "./cleanup-utils.js";
 
-type BackupAssetKind = "state" | "config" | "credentials" | "workspace";
-type BackupSkipReason = "covered" | "missing";
+export type BackupAssetKind = "state" | "config" | "credentials" | "workspace";
+export type BackupSkipReason = "covered" | "missing";
 
 export type BackupAsset = {
   kind: BackupAssetKind;
@@ -20,7 +20,7 @@ export type BackupAsset = {
   archivePath: string;
 };
 
-type SkippedBackupAsset = {
+export type SkippedBackupAsset = {
   kind: BackupAssetKind;
   sourcePath: string;
   displayPath: string;
@@ -28,7 +28,7 @@ type SkippedBackupAsset = {
   coveredBy?: string;
 };
 
-type BackupPlan = {
+export type BackupPlan = {
   stateDir: string;
   configPath: string;
   oauthDir: string;
@@ -59,7 +59,7 @@ function backupAssetPriority(kind: BackupAssetKind): number {
 }
 
 /** Format a filesystem-safe local timestamp with explicit UTC offset for backup names. */
-function formatBackupArchiveTimestamp(
+export function formatBackupArchiveTimestamp(
   nowMs = Date.now(),
   offsetMinutes = -new Date(nowMs).getTimezoneOffset(),
 ): string {
@@ -90,7 +90,7 @@ export function buildBackupArchiveBasename(nowMs = Date.now()): string {
 }
 
 /** Encode an absolute or relative source path into a traversal-safe archive payload path. */
-function encodeAbsolutePathForBackupArchive(sourcePath: string): string {
+export function encodeAbsolutePathForBackupArchive(sourcePath: string): string {
   const normalized = sourcePath.replaceAll("\\", "/");
   const windowsMatch = normalized.match(/^([A-Za-z]):\/(.*)$/);
   if (windowsMatch) {
@@ -110,7 +110,7 @@ export function buildBackupArchivePath(archiveRoot: string, sourcePath: string):
 }
 
 /** Resolve a backup plan from explicit paths, deduplicating assets already covered by parents. */
-async function resolveBackupPlanFromPaths(params: {
+export async function resolveBackupPlanFromPaths(params: {
   stateDir: string;
   configPath: string;
   oauthDir: string;
@@ -247,12 +247,6 @@ async function resolveBackupPlanFromPaths(params: {
     workspaceDirs: workspaceDirs.map((entry) => path.resolve(entry)),
     included,
     skipped,
-  };
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.backupPlanTestApi")] = {
-    resolveBackupPlanFromPaths,
   };
 }
 

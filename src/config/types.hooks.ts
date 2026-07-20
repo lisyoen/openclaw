@@ -116,6 +116,7 @@ export type HooksConfig = {
    * allow any agent. Set `[]` to deny all agent routing.
    */
   allowedAgentIds?: string[];
+  maxBodyBytes?: number;
   presets?: string[];
   transformsDir?: string;
   mappings?: HookMappingConfig[];

@@ -1,28 +1,23 @@
 // Gateway assistant identity resolver.
 // Combines UI, agent config, and workspace identity files for Control UI display.
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { resolveAgentIdentity } from "../agents/identity.js";
 import { loadAgentIdentity } from "../commands/agents.config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId } from "../routing/session-key.js";
+import { coerceIdentityValue } from "../shared/assistant-identity-values.js";
 import {
-  AVATAR_MAX_DATA_URL_CHARS,
-  isRenderableAvatarImageDataUrl,
-} from "../shared/avatar-limits.js";
-import {
-  hasAvatarUriScheme,
   isAvatarHttpUrl,
-  isWindowsAbsolutePath,
+  isAvatarImageDataUrl,
   looksLikeAvatarPath,
 } from "../shared/avatar-policy.js";
 
-const ASSISTANT_IDENTITY_LIMITS = {
-  name: 50,
-  emoji: 16,
-} as const;
-type AssistantIdentityField = keyof typeof ASSISTANT_IDENTITY_LIMITS;
+const MAX_ASSISTANT_NAME = 50;
+// Image-bearing avatars (data: URLs, paths) need to round-trip through
+// coerceIdentityValue without truncation. Sized to match
+// MAX_LOCAL_USER_IMAGE_AVATAR / AVATAR_MAX_BYTES expansion.
+const MAX_ASSISTANT_AVATAR = 2_000_000;
+const MAX_ASSISTANT_EMOJI = 16;
 
 export const DEFAULT_ASSISTANT_IDENTITY: AssistantIdentity = {
   agentId: "main",
@@ -37,30 +32,20 @@ type AssistantIdentity = {
   emoji?: string;
 };
 
-function normalizeIdentityValue(
-  field: AssistantIdentityField,
-  value: string | undefined,
-): string | undefined {
-  const trimmed = normalizeOptionalString(value);
-  return trimmed ? truncateUtf16Safe(trimmed, ASSISTANT_IDENTITY_LIMITS[field]) : undefined;
-}
-
 function isAvatarUrl(value: string): boolean {
-  return isAvatarHttpUrl(value) || isRenderableAvatarImageDataUrl(value);
+  return isAvatarHttpUrl(value) || isAvatarImageDataUrl(value);
 }
 
 function normalizeAvatarValue(value: string | undefined): string | undefined {
-  const trimmed = normalizeOptionalString(value);
-  if (!trimmed || trimmed.length > AVATAR_MAX_DATA_URL_CHARS) {
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
     return undefined;
   }
   if (isAvatarUrl(trimmed)) {
     return trimmed;
-  }
-  // URI-like values are not local paths. Reject unsupported schemes before
-  // the slash heuristic so a bad high-priority value cannot shadow a fallback.
-  if (hasAvatarUriScheme(trimmed) && !isWindowsAbsolutePath(trimmed)) {
-    return undefined;
   }
   if (looksLikeAvatarPath(trimmed)) {
     return trimmed;
@@ -75,9 +60,16 @@ function normalizeEmojiValue(value: string | undefined): string | undefined {
   if (!value) {
     return undefined;
   }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.length > MAX_ASSISTANT_EMOJI) {
+    return undefined;
+  }
   let hasNonAscii = false;
-  for (let i = 0; i < value.length; i += 1) {
-    if (value.charCodeAt(i) > 127) {
+  for (let i = 0; i < trimmed.length; i += 1) {
+    if (trimmed.charCodeAt(i) > 127) {
       hasNonAscii = true;
       break;
     }
@@ -85,14 +77,10 @@ function normalizeEmojiValue(value: string | undefined): string | undefined {
   if (!hasNonAscii) {
     return undefined;
   }
-  if (
-    isAvatarUrl(value) ||
-    (hasAvatarUriScheme(value) && !isWindowsAbsolutePath(value)) ||
-    looksLikeAvatarPath(value)
-  ) {
+  if (isAvatarUrl(trimmed) || looksLikeAvatarPath(trimmed)) {
     return undefined;
   }
-  return value;
+  return trimmed;
 }
 
 /** Resolve the display name/avatar/emoji for an agent-facing assistant identity. */
@@ -109,30 +97,32 @@ export function resolveAssistantIdentity(params: {
   const agentIdentity = resolveAgentIdentity(params.cfg, agentId);
   const fileIdentity = workspaceDir ? loadAgentIdentity(workspaceDir) : null;
 
-  const uiName = normalizeIdentityValue("name", configAssistant?.name);
-  const agentName = normalizeIdentityValue("name", agentIdentity?.name);
-  const fileName = normalizeIdentityValue("name", fileIdentity?.name);
+  const uiName = coerceIdentityValue(configAssistant?.name, MAX_ASSISTANT_NAME);
+  const agentName = coerceIdentityValue(agentIdentity?.name, MAX_ASSISTANT_NAME);
+  const fileName = coerceIdentityValue(fileIdentity?.name, MAX_ASSISTANT_NAME);
   const name =
     (isDefaultAgent ? (uiName ?? agentName ?? fileName) : (agentName ?? fileName ?? uiName)) ??
     DEFAULT_ASSISTANT_IDENTITY.name;
 
-  const uiAvatar = normalizeAvatarValue(configAssistant?.avatar);
+  const uiAvatar = coerceIdentityValue(configAssistant?.avatar, MAX_ASSISTANT_AVATAR);
   const agentAvatarCandidates = [
-    normalizeAvatarValue(agentIdentity?.avatar),
-    normalizeAvatarValue(agentIdentity?.emoji),
-    normalizeAvatarValue(fileIdentity?.avatar),
-    normalizeAvatarValue(fileIdentity?.emoji),
+    coerceIdentityValue(agentIdentity?.avatar, MAX_ASSISTANT_AVATAR),
+    coerceIdentityValue(agentIdentity?.emoji, MAX_ASSISTANT_AVATAR),
+    coerceIdentityValue(fileIdentity?.avatar, MAX_ASSISTANT_AVATAR),
+    coerceIdentityValue(fileIdentity?.emoji, MAX_ASSISTANT_AVATAR),
   ];
   const avatarCandidates = isDefaultAgent
     ? [uiAvatar, ...agentAvatarCandidates]
     : [...agentAvatarCandidates, uiAvatar];
-  const avatar = avatarCandidates.find(Boolean) ?? DEFAULT_ASSISTANT_IDENTITY.avatar;
+  const avatar =
+    avatarCandidates.map((candidate) => normalizeAvatarValue(candidate)).find(Boolean) ??
+    DEFAULT_ASSISTANT_IDENTITY.avatar;
 
   const emojiCandidates = [
-    normalizeIdentityValue("emoji", agentIdentity?.emoji),
-    normalizeIdentityValue("emoji", fileIdentity?.emoji),
-    normalizeIdentityValue("emoji", agentIdentity?.avatar),
-    normalizeIdentityValue("emoji", fileIdentity?.avatar),
+    coerceIdentityValue(agentIdentity?.emoji, MAX_ASSISTANT_EMOJI),
+    coerceIdentityValue(fileIdentity?.emoji, MAX_ASSISTANT_EMOJI),
+    coerceIdentityValue(agentIdentity?.avatar, MAX_ASSISTANT_EMOJI),
+    coerceIdentityValue(fileIdentity?.avatar, MAX_ASSISTANT_EMOJI),
   ];
   const emoji = emojiCandidates.map((candidate) => normalizeEmojiValue(candidate)).find(Boolean);
 

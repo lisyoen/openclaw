@@ -4,7 +4,6 @@
  * Agent execution uses this to choose a model/provider-specific runtime policy
  * from agent entries, model catalog config, provider config, or QA overrides.
  */
-import { parseModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import type { AgentModelEntryConfig } from "../config/types.agent-defaults.js";
 import type { AgentRuntimePolicyConfig } from "../config/types.agents-shared.js";
@@ -14,10 +13,10 @@ import { normalizeAgentId } from "../routing/session-key.js";
 import { listAgentEntries, resolveSessionAgentIds } from "./agent-scope.js";
 
 /** Config surface that supplied a resolved model runtime policy. */
-type ModelRuntimePolicySource = "model" | "provider";
+export type ModelRuntimePolicySource = "model" | "provider";
 
 /** Runtime policy plus the config surface that supplied it. */
-type ResolvedModelRuntimePolicy = {
+export type ResolvedModelRuntimePolicy = {
   policy?: AgentRuntimePolicyConfig;
   source?: ModelRuntimePolicySource;
   matchedProvider?: string;
@@ -80,18 +79,13 @@ function normalizeModelIdForProvider(
 }
 
 function parseProviderModelKey(key: string): { provider: string; modelId: string } | undefined {
-  return parseModelCatalogRef(key) ?? undefined;
-}
-
-function resolveEffectiveProvider(
-  provider: string | undefined,
-  modelId: string | undefined,
-): string | undefined {
-  const normalizedProvider = normalizeProviderId(provider ?? "");
-  if (normalizedProvider) {
-    return normalizedProvider;
+  const slash = key.indexOf("/");
+  if (slash <= 0) {
+    return undefined;
   }
-  return parseProviderModelKey(modelId?.trim() ?? "")?.provider;
+  const provider = normalizeProviderId(key.slice(0, slash));
+  const modelId = key.slice(slash + 1).trim();
+  return provider && modelId ? { provider, modelId } : undefined;
 }
 
 function providerMatchesCaller(provider: string, callerProvider: string): boolean {
@@ -102,15 +96,11 @@ function resolvePolicyMatch(
   matches: AgentModelRuntimePolicyMatch[],
   callerProvider: string,
 ): AgentModelRuntimePolicyResolution {
-  const providerMatches = callerProvider
-    ? matches.filter((match) => match.provider === callerProvider)
-    : [];
-  const candidates = providerMatches.length > 0 ? providerMatches : matches;
-  const [first] = candidates;
+  const [first] = matches;
   if (!first) {
     return {};
   }
-  if (!callerProvider && candidates.some((match) => match.provider !== first.provider)) {
+  if (!callerProvider && matches.some((match) => match.provider !== first.provider)) {
     return { ambiguous: true };
   }
   return {
@@ -247,9 +237,6 @@ export function resolveModelRuntimePolicy(params: {
   agentId?: string;
   sessionKey?: string;
 }): ResolvedModelRuntimePolicy {
-  const callerProvider = normalizeProviderId(params.provider ?? "");
-  const effectiveProvider = resolveEffectiveProvider(params.provider, params.modelId);
-  const inferredMatchedProvider = callerProvider ? undefined : effectiveProvider;
   if (process.env.OPENCLAW_BUILD_PRIVATE_QA === "1") {
     const forcedRuntime = process.env.OPENCLAW_QA_FORCE_RUNTIME?.trim().toLowerCase();
     if (forcedRuntime === "openclaw" || forcedRuntime === "codex") {
@@ -257,44 +244,31 @@ export function resolveModelRuntimePolicy(params: {
     }
   }
 
-  const agentModelPolicy = resolveAgentModelEntryRuntimePolicy({
-    ...params,
-    provider: effectiveProvider,
-    matchKind: "exact",
-  });
+  const agentModelPolicy = resolveAgentModelEntryRuntimePolicy({ ...params, matchKind: "exact" });
   if (agentModelPolicy.ambiguous) {
     return {};
   }
   if (agentModelPolicy.policy) {
     return agentModelPolicy;
   }
-  const providerConfig = resolveProviderConfig(params.config, effectiveProvider);
+  const providerConfig = resolveProviderConfig(params.config, params.provider);
   const modelConfig = resolveModelConfig({
     providerConfig,
-    provider: effectiveProvider,
+    provider: params.provider,
     modelId: params.modelId,
   });
   if (hasRuntimePolicy(modelConfig?.agentRuntime)) {
-    return {
-      policy: modelConfig?.agentRuntime,
-      source: "model",
-      ...(inferredMatchedProvider ? { matchedProvider: inferredMatchedProvider } : {}),
-    };
+    return { policy: modelConfig?.agentRuntime, source: "model" };
   }
   const agentWildcardModelPolicy = resolveAgentModelEntryRuntimePolicy({
     ...params,
-    provider: effectiveProvider,
     matchKind: "provider-wildcard",
   });
   if (agentWildcardModelPolicy.policy) {
     return agentWildcardModelPolicy;
   }
   if (hasRuntimePolicy(providerConfig?.agentRuntime)) {
-    return {
-      policy: providerConfig?.agentRuntime,
-      source: "provider",
-      ...(inferredMatchedProvider ? { matchedProvider: inferredMatchedProvider } : {}),
-    };
+    return { policy: providerConfig?.agentRuntime, source: "provider" };
   }
   return {};
 }

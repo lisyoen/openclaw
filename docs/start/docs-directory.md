@@ -32,27 +32,27 @@ For a complete map of the docs, see [Docs hubs](/start/hubs).
 - [Discovery and transports](/gateway/discovery)
 - [Remote access](/gateway/remote)
 
-## Channels and UX
+## Providers and UX
 
-- [Control UI (browser)](/web/control-ui)
-- [Discord](/channels/discord)
-- [Groups](/channels/groups)
-- [iMessage](/channels/imessage)
-- [Mattermost](/channels/mattermost)
-- [Media audio](/nodes/audio)
-- [Media images](/nodes/images)
-- [QQ Bot](/channels/qqbot)
-- [Telegram](/channels/telegram)
 - [WebChat](/web/webchat)
+- [Control UI (browser)](/web/control-ui)
+- [Telegram](/channels/telegram)
+- [Discord](/channels/discord)
+- [Mattermost](/channels/mattermost)
+- [QQ Bot](/channels/qqbot)
+- [iMessage](/channels/imessage)
+- [Groups](/channels/groups)
 - [WhatsApp group messages](/channels/group-messages)
+- [Media images](/nodes/images)
+- [Media audio](/nodes/audio)
 
 ## Companion apps
 
-- [Android app](/platforms/android)
-- [iOS app](/platforms/ios)
-- [Linux app](/platforms/linux)
 - [macOS app](/platforms/macos)
+- [iOS app](/platforms/ios)
+- [Android app](/platforms/android)
 - [Windows Hub](/platforms/windows)
+- [Linux app](/platforms/linux)
 
 ## Operations and safety
 

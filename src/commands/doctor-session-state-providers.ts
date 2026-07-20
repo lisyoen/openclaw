@@ -19,7 +19,6 @@ import { updateSessionStore } from "../config/sessions/store.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { listPluginDoctorSessionRouteStateOwners } from "../plugins/doctor-contract-registry.js";
 import type { DoctorSessionRouteStateOwner } from "../plugins/doctor-session-route-state-owner-types.js";
-import { isValidAgentHarnessSessionStoreEntry } from "../sessions/agent-harness-session-key.js";
 import { parseAgentSessionKey } from "../sessions/session-key-utils.js";
 
 type DoctorPrompterLike = {
@@ -61,7 +60,7 @@ function resolveSessionAgentId(cfg: OpenClawConfig, sessionKey: string): string 
 }
 
 /** Resolves the currently configured provider/model/runtime route for a session key. */
-function resolveConfiguredDoctorSessionStateRoute(params: {
+export function resolveConfiguredDoctorSessionStateRoute(params: {
   cfg: OpenClawConfig;
   sessionKey: string;
   env?: NodeJS.ProcessEnv;
@@ -106,10 +105,7 @@ function resolvePluginDoctorSessionRouteStateOwners(params: {
   return listPluginDoctorSessionRouteStateOwners({ config: params.cfg, env: params.env });
 }
 
-function entryMayContainPluginSessionRouteState(sessionKey: string, entry: SessionEntry): boolean {
-  if (isValidAgentHarnessSessionStoreEntry(sessionKey, entry)) {
-    return false;
-  }
+function entryMayContainPluginSessionRouteState(entry: SessionEntry): boolean {
   const record = entry as unknown as Record<string, unknown>;
   return (
     normalizeString(record.providerOverride) !== undefined ||
@@ -128,19 +124,19 @@ function entryMayContainPluginSessionRouteState(sessionKey: string, entry: Sessi
 }
 
 /** Fast prefilter for session stores that might contain plugin-owned routing state. */
-function storeMayContainPluginSessionRouteState(store: Record<string, SessionEntry>): boolean {
-  return Object.entries(store).some(([sessionKey, entry]) =>
-    entryMayContainPluginSessionRouteState(sessionKey, entry),
-  );
+export function storeMayContainPluginSessionRouteState(
+  store: Record<string, SessionEntry>,
+): boolean {
+  return Object.values(store).some((entry) => entryMayContainPluginSessionRouteState(entry));
 }
 
-type DoctorSessionRouteState = {
+export type DoctorSessionRouteState = {
   defaultProvider: string;
   configuredModelRefs: string[];
   runtime?: string;
 };
 
-type DoctorSessionRouteStateRepair = {
+export type DoctorSessionRouteStateRepair = {
   key: string;
   ownerId: string;
   ownerLabel: string;
@@ -149,13 +145,13 @@ type DoctorSessionRouteStateRepair = {
   cliSessionKeys: string[];
 };
 
-type DoctorSessionRouteStateManualReview = {
+export type DoctorSessionRouteStateManualReview = {
   key: string;
   ownerLabel: string;
   message: string;
 };
 
-type DoctorSessionRouteStateScan = {
+export type DoctorSessionRouteStateScan = {
   repairs: DoctorSessionRouteStateRepair[];
   manualReview: DoctorSessionRouteStateManualReview[];
 };
@@ -336,7 +332,7 @@ function scanEntryForOwner(params: {
 }
 
 /** Scans session entries for state owned by plugins that no longer match the configured route. */
-function scanSessionRouteStateOwners(params: {
+export function scanSessionRouteStateOwners(params: {
   owners: readonly DoctorSessionRouteStateOwner[];
   store: Record<string, Record<string, unknown>>;
   routes: Record<string, DoctorSessionRouteState>;
@@ -344,7 +340,7 @@ function scanSessionRouteStateOwners(params: {
   const repairs: DoctorSessionRouteStateRepair[] = [];
   const manualReview: DoctorSessionRouteStateManualReview[] = [];
   for (const [key, entry] of Object.entries(params.store)) {
-    if (!entry || typeof entry !== "object" || isValidAgentHarnessSessionStoreEntry(key, entry)) {
+    if (!entry || typeof entry !== "object") {
       continue;
     }
     for (const owner of params.owners) {
@@ -395,16 +391,11 @@ function clearRecordKeys(
 }
 
 /** Clears stale plugin-owned routing fields from a session entry and refreshes updatedAt. */
-function applySessionRouteStateRepair(params: {
-  sessionKey: string;
+export function applySessionRouteStateRepair(params: {
   entry: Record<string, unknown>;
   repair: DoctorSessionRouteStateRepair;
   now: number;
 }): boolean {
-  // Revalidate at mutation time: the harness may have claimed and locked this row after the scan.
-  if (isValidAgentHarnessSessionStoreEntry(params.sessionKey, params.entry)) {
-    return false;
-  }
   let changed = false;
   const clear = (key: string) => {
     changed = clearEntryKey(params.entry, key) || changed;
@@ -490,7 +481,7 @@ export async function runPluginSessionStateDoctorRepairs(params: {
     if (!entry || typeof entry !== "object") {
       continue;
     }
-    if (!entryMayContainPluginSessionRouteState(sessionKey, entry)) {
+    if (!entryMayContainPluginSessionRouteState(entry)) {
       continue;
     }
     scanStore[sessionKey] = entry as unknown as Record<string, unknown>;
@@ -537,12 +528,7 @@ export async function runPluginSessionStateDoctorRepairs(params: {
             const current = currentMutableStore[key];
             if (
               current &&
-              applySessionRouteStateRepair({
-                sessionKey: key,
-                entry: current,
-                repair,
-                now: repairedAt,
-              })
+              applySessionRouteStateRepair({ entry: current, repair, now: repairedAt })
             ) {
               repaired += 1;
             }

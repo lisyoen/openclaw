@@ -4,8 +4,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { evaluateEntryRequirementsForCurrentPlatform } from "../shared/entry-status.js";
 import type { RequirementConfigCheck, Requirements } from "../shared/requirements.js";
 import { CONFIG_DIR } from "../utils.js";
-import { hasBinary, isHookConfigPathTruthy, isHookEnvSatisfied } from "./config.js";
-import { isKnownInternalHookEventKey } from "./internal-hook-types.js";
+import { hasBinary, isConfigPathTruthy } from "./config.js";
 import {
   resolveHookConfig,
   resolveHookEnableState,
@@ -15,9 +14,9 @@ import {
 import type { HookEligibilityContext, HookEntry, HookInstallSpec } from "./types.js";
 import { loadWorkspaceHookEntries } from "./workspace.js";
 
-type HookStatusConfigCheck = RequirementConfigCheck;
+export type HookStatusConfigCheck = RequirementConfigCheck;
 
-type HookInstallOption = {
+export type HookInstallOption = {
   id: string;
   kind: HookInstallSpec["kind"];
   label: string;
@@ -36,8 +35,6 @@ export type HookStatusEntry = {
   emoji?: string;
   homepage?: string;
   events: string[];
-  /** Declared events no core trigger site emits (likely typos; fire only if a plugin emits them). */
-  unknownEvents: string[];
   always: boolean;
   enabledByConfig: boolean;
   requirementsSatisfied: boolean;
@@ -99,9 +96,9 @@ function buildHookStatus(
   const enableState = resolveHookEnableState({ entry, config, hookConfig });
   const always = entry.metadata?.always === true;
   const events = entry.metadata?.events ?? [];
-  const unknownEvents = events.filter((event) => !isKnownInternalHookEventKey(event));
-  const isEnvSatisfied = (envName: string) => isHookEnvSatisfied(envName, hookConfig);
-  const isConfigSatisfied = (pathStr: string) => isHookConfigPathTruthy(config, pathStr);
+  const isEnvSatisfied = (envName: string) =>
+    Boolean(process.env[envName] || hookConfig?.env?.[envName]);
+  const isConfigSatisfied = (pathStr: string) => isConfigPathTruthy(config, pathStr);
 
   const { emoji, homepage, required, missing, requirementsSatisfied, configChecks } =
     evaluateEntryRequirementsForCurrentPlatform({
@@ -130,7 +127,6 @@ function buildHookStatus(
     emoji,
     homepage,
     events,
-    unknownEvents,
     always,
     enabledByConfig,
     requirementsSatisfied,

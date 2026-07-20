@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Plugin Boundary Report script supports OpenClaw repository automation.
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -9,7 +10,7 @@ import {
   reservedBundledPluginSdkEntrypoints,
   supportedBundledFacadeSdkEntrypoints,
 } from "../src/plugin-sdk/entrypoints.ts";
-import { listPluginCompatRecords } from "../src/plugins/compat/registry.ts";
+import { PLUGIN_COMPAT_RECORDS } from "../src/plugins/compat/registry.ts";
 import type { PluginCompatRecord } from "../src/plugins/compat/types.ts";
 
 const REPO_ROOT = process.cwd();
@@ -321,9 +322,6 @@ function extractCompatTokens(record: PluginCompatRecord): string[] {
   const tokens = new Set<string>();
   const values = [record.code, record.replacement, ...record.surfaces, ...record.diagnostics];
   for (const value of values) {
-    if (value === undefined) {
-      continue;
-    }
     for (const match of value.matchAll(/`([^`]+)`/g)) {
       const token = match[1]?.trim();
       if (token && !token.includes(" ")) {
@@ -373,8 +371,7 @@ function collectCompatDebt(
   today = new Date(),
   options: { includeReferenceFiles?: boolean } = {},
 ): CompatDebtRecord[] {
-  return listPluginCompatRecords()
-    .filter((record) => record.status === "deprecated")
+  return PLUGIN_COMPAT_RECORDS.filter((record) => record.status === "deprecated")
     .map((record) => {
       const tokens = extractCompatTokens(record);
       const references =
@@ -389,7 +386,7 @@ function collectCompatDebt(
         owner: record.owner,
         status: record.status,
         removeAfter: record.removeAfter,
-        replacement: record.replacement as string,
+        replacement: record.replacement,
         docsPath: record.docsPath,
         surfaces: record.surfaces,
         tokens,
@@ -526,7 +523,7 @@ function buildSummary(report: BoundaryReport, owner?: string): BoundaryReportSum
   };
 }
 
-function buildReport(options: Partial<Pick<CliOptions, "owner" | "summary">> = {}): BoundaryReport {
+function buildReport(options: Pick<CliOptions, "owner" | "summary"> = {}): BoundaryReport {
   const files = options.summary
     ? collectSummaryWorkspaceTextFileSources()
     : collectWorkspaceTextFileSources();
@@ -539,7 +536,7 @@ function buildReport(options: Partial<Pick<CliOptions, "owner" | "summary">> = {
       matchesOwner(options.owner, entry.owner) || matchesOwner(options.owner, entry.consumerOwner),
   );
   const usedReserved = new Set(reservedImports.map((entry) => entry.subpath));
-  const unusedReservedSubpaths = (reservedBundledPluginSdkEntrypoints as readonly string[])
+  const unusedReservedSubpaths = reservedBundledPluginSdkEntrypoints
     .filter(
       (subpath) =>
         !usedReserved.has(subpath) &&

@@ -5,33 +5,13 @@
  * Twitch usernames to user IDs via the Twitch Helix API.
  */
 
-import {
-  callTwitchApi,
-  HttpStatusCodeError,
-  type TwitchApiCallFetchOptions,
-} from "@twurple/api-call";
+import { ApiClient } from "@twurple/api";
+import { StaticAuthProvider } from "@twurple/auth";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { withTimeout } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { ChannelResolveKind, ChannelResolveResult } from "./types.js";
 import type { ChannelLogSink, TwitchAccountConfig } from "./types.js";
 import { normalizeToken } from "./utils/twitch.js";
-
-const TWITCH_HELIX_USER_LOOKUP_TIMEOUT_MS = 10_000;
-
-type TwitchTokenInfo = {
-  user_id?: string;
-};
-
-type TwitchUser = {
-  id: string;
-  login: string;
-  display_name: string;
-};
-
-type TwitchUsersResponse = {
-  data: TwitchUser[];
-};
 
 /**
  * Normalize a Twitch username - strip @ prefix and convert to lowercase
@@ -53,59 +33,6 @@ function createLogger(logger?: ChannelLogSink): ChannelLogSink {
     warn: (msg: string) => logger?.warn(msg),
     error: (msg: string) => logger?.error(msg),
     debug: (msg: string) => logger?.debug?.(msg) ?? (() => {}),
-  };
-}
-
-function createHelixUserResolver(clientId: string, accessToken: string) {
-  let tokenValidated = false;
-
-  return async (query: { id: string } | { login: string }): Promise<TwitchUser | null> => {
-    const controller = new AbortController();
-    // ApiClient retries AbortError past the deadline. This sequential startup
-    // resolver uses Twurple's public one-shot call so cancellation stays bounded.
-    const fetchOptions = { signal: controller.signal } as TwitchApiCallFetchOptions;
-    const request = (async () => {
-      if (!tokenValidated) {
-        let tokenInfo: TwitchTokenInfo;
-        try {
-          tokenInfo = await callTwitchApi<TwitchTokenInfo>(
-            { type: "auth", url: "validate" },
-            clientId,
-            accessToken,
-            undefined,
-            fetchOptions,
-          );
-        } catch (error) {
-          if (error instanceof HttpStatusCodeError && error.statusCode === 401) {
-            throw new Error("Invalid token supplied", { cause: error });
-          }
-          throw error;
-        }
-        if (!tokenInfo.user_id) {
-          throw new Error("Trying to use an app access token as a user access token");
-        }
-        tokenValidated = true;
-      }
-
-      const response = await callTwitchApi<TwitchUsersResponse>(
-        { type: "helix", url: "users", query },
-        clientId,
-        accessToken,
-        undefined,
-        fetchOptions,
-      );
-      return response.data[0] ?? null;
-    })();
-
-    try {
-      return await withTimeout(
-        request,
-        TWITCH_HELIX_USER_LOOKUP_TIMEOUT_MS,
-        "Twitch Helix user lookup",
-      );
-    } finally {
-      controller.abort();
-    }
   };
 }
 
@@ -137,7 +64,8 @@ export async function resolveTwitchTargets(
 
   const normalizedToken = normalizeToken(account.accessToken);
 
-  const resolveHelixUser = createHelixUserResolver(account.clientId, normalizedToken);
+  const authProvider = new StaticAuthProvider(account.clientId, normalizedToken);
+  const apiClient = new ApiClient({ authProvider });
 
   const results: ChannelResolveResult[] = [];
 
@@ -157,16 +85,16 @@ export async function resolveTwitchTargets(
 
     try {
       if (looksLikeUserId) {
-        const user = await resolveHelixUser({ id: normalized });
+        const user = await apiClient.users.getUserById(normalized);
 
         if (user) {
           results.push({
             input,
             resolved: true,
             id: user.id,
-            name: user.login,
+            name: user.name,
           });
-          log.debug?.(`Resolved user ID ${normalized} -> ${user.login}`);
+          log.debug?.(`Resolved user ID ${normalized} -> ${user.name}`);
         } else {
           results.push({
             input,
@@ -176,17 +104,17 @@ export async function resolveTwitchTargets(
           log.warn(`User ID ${normalized} not found`);
         }
       } else {
-        const user = await resolveHelixUser({ login: normalized });
+        const user = await apiClient.users.getUserByName(normalized);
 
         if (user) {
           results.push({
             input,
             resolved: true,
             id: user.id,
-            name: user.login,
-            note: user.display_name !== user.login ? `display: ${user.display_name}` : undefined,
+            name: user.name,
+            note: user.displayName !== user.name ? `display: ${user.displayName}` : undefined,
           });
-          log.debug?.(`Resolved username ${normalized} -> ${user.id} (${user.login})`);
+          log.debug?.(`Resolved username ${normalized} -> ${user.id} (${user.name})`);
         } else {
           results.push({
             input,

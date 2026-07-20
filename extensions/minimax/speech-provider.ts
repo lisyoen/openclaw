@@ -15,7 +15,6 @@ import type {
 import {
   asObject,
   parseSpeechDirectiveNumberOverride,
-  resolveSpeechProviderApiKey,
   trimToUndefined,
 } from "openclaw/plugin-sdk/speech-core";
 import { asFiniteNumberInRange } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -60,9 +59,13 @@ function resolveConfiguredPortalTtsBaseUrl(cfg: OpenClawConfig | undefined): str
 }
 
 function resolveMinimaxTokenPlanEnvKey(): string | undefined {
-  return resolveSpeechProviderApiKey(
-    ...MINIMAX_TOKEN_PLAN_ENV_VARS.map((envVar) => process.env[envVar]),
-  );
+  for (const envVar of MINIMAX_TOKEN_PLAN_ENV_VARS) {
+    const value = trimToUndefined(process.env[envVar]);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 async function resolveMinimaxPortalProfileToken(
@@ -78,18 +81,11 @@ async function resolveMinimaxTtsApiKey(params: {
   cfg: OpenClawConfig | undefined;
   configApiKey?: string;
 }): Promise<string | undefined> {
-  return resolveSpeechProviderApiKey(
-    params.configApiKey,
-    await resolveMinimaxPortalProfileToken(params.cfg),
-    resolveMinimaxDirectTtsApiKey(),
-  );
-}
-
-function resolveMinimaxDirectTtsApiKey(configApiKey?: string): string | undefined {
-  return resolveSpeechProviderApiKey(
-    configApiKey,
-    resolveMinimaxTokenPlanEnvKey(),
-    process.env.MINIMAX_API_KEY,
+  return (
+    params.configApiKey ??
+    (await resolveMinimaxPortalProfileToken(params.cfg)) ??
+    resolveMinimaxTokenPlanEnvKey() ??
+    trimToUndefined(process.env.MINIMAX_API_KEY)
   );
 }
 
@@ -204,8 +200,7 @@ function parseDirectiveToken(ctx: SpeechDirectiveTokenParseContext): {
         ctx,
         overrideKey: "vol",
         range: { min: 0, minExclusive: true, max: 10 },
-        warning: (value) =>
-          `invalid MiniMax volume "${value}" (must be greater than 0 and at most 10)`,
+        warning: (value) => `invalid MiniMax volume "${value}" (0-10, exclusive)`,
       });
     }
     case "pitch": {
@@ -283,8 +278,10 @@ export function buildMinimaxSpeechProvider(): SpeechProviderPlugin {
     listVoices: async () => MINIMAX_TTS_VOICES.map((voice) => ({ id: voice, name: voice })),
     isConfigured: ({ cfg, providerConfig }) =>
       Boolean(
-        resolveMinimaxDirectTtsApiKey(readMinimaxProviderConfig(providerConfig, cfg).apiKey) ||
-        isProviderAuthProfileConfigured({ cfg, provider: MINIMAX_PORTAL_PROVIDER_ID }),
+        readMinimaxProviderConfig(providerConfig, cfg).apiKey ||
+        isProviderAuthProfileConfigured({ cfg, provider: MINIMAX_PORTAL_PROVIDER_ID }) ||
+        resolveMinimaxTokenPlanEnvKey() ||
+        process.env.MINIMAX_API_KEY,
       ),
     synthesize: async (req) => {
       const config = readMinimaxProviderConfig(req.providerConfig, req.cfg);

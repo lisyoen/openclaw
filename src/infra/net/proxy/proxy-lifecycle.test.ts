@@ -47,30 +47,22 @@ vi.mock("../../../logger.js", () => ({
 }));
 
 import { logInfo, logWarn } from "../../../logger.js";
-import { getActiveManagedProxyTlsOptions } from "./active-proxy-state.js";
+import {
+  resetActiveManagedProxyStateForTests,
+  getActiveManagedProxyTlsOptions,
+} from "./active-proxy-state.js";
 import {
   ensureInheritedManagedProxyRoutingActive,
   resetProxyLifecycleForTests,
   registerManagedProxyBrowserCdpBypass,
   registerManagedProxyGatewayLoopbackBypass,
-  startProxy as startProxyRuntime,
+  startProxy,
   stopProxy,
   type ProxyHandle,
 } from "./proxy-lifecycle.js";
 
 const mockLogInfo = vi.mocked(logInfo);
 const mockLogWarn = vi.mocked(logWarn);
-const activeProxyHandles: ProxyHandle[] = [];
-
-async function startProxy(
-  config: Parameters<typeof startProxyRuntime>[0],
-): Promise<Awaited<ReturnType<typeof startProxyRuntime>>> {
-  const handle = await startProxyRuntime(config);
-  if (handle) {
-    activeProxyHandles.push(handle);
-  }
-  return handle;
-}
 
 function expectProxyHandle(handle: Awaited<ReturnType<typeof startProxy>>): ProxyHandle {
   if (handle === null) {
@@ -116,6 +108,7 @@ describe("startProxy", () => {
     mockLogInfo.mockReset();
     mockLogWarn.mockReset();
     resetProxyLifecycleForTests();
+    resetActiveManagedProxyStateForTests();
     installGlobalProxyMock.mockClear();
     proxylineRegisterBypassMock.mockClear();
     proxylineStopMock.mockClear();
@@ -123,11 +116,9 @@ describe("startProxy", () => {
     forceResetGlobalDispatcherMock.mockClear();
   });
 
-  afterEach(async () => {
-    for (const handle of activeProxyHandles.splice(0).toReversed()) {
-      await stopProxy(handle);
-    }
+  afterEach(() => {
     resetProxyLifecycleForTests();
+    resetActiveManagedProxyStateForTests();
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }

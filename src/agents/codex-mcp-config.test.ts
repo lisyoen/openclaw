@@ -1,8 +1,7 @@
 // Covers conversion from OpenClaw bundle-MCP config into Codex app-server
 // thread config patches.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildCodexMcpServersConfig, loadCodexBundleMcpThreadConfig } from "./codex-mcp-config.js";
-import { testing as resolverTesting } from "./mcp-connection-resolver.js";
 
 const mocks = vi.hoisted(() => ({
   bundleMcp: {
@@ -24,10 +23,6 @@ beforeEach(() => {
     },
     diagnostics: [],
   };
-});
-
-afterEach(() => {
-  resolverTesting.setMcpServerConnectionResolversForTest();
 });
 
 describe("buildCodexMcpServersConfig", () => {
@@ -182,98 +177,5 @@ describe("loadCodexBundleMcpThreadConfig", () => {
     expect(loaded.configPatch).toBeUndefined();
     expect(loaded.fingerprint).toBeUndefined();
     expect(loaded.evaluated).toBe(true);
-  });
-
-  it("excludes requester-scoped servers from projection and fingerprint", () => {
-    resolverTesting.setMcpServerConnectionResolversForTest([
-      {
-        serverName: "user-mail",
-        resolve: async () => ({ url: "https://should-never-project.example/mcp" }),
-      },
-    ]);
-    mocks.bundleMcp = {
-      config: {
-        mcpServers: {
-          search: {
-            type: "http",
-            url: "https://mcp.example.com/mcp",
-          },
-          "user-mail": {
-            type: "http",
-            url: "https://unresolved.invalid",
-          },
-        },
-      },
-      diagnostics: [],
-    };
-
-    const loaded = loadCodexBundleMcpThreadConfig({
-      workspaceDir: "/workspace",
-      cfg: {},
-      toolsEnabled: true,
-    });
-    // Same static set without a scoped entry must fingerprint identically.
-    mocks.bundleMcp = {
-      config: {
-        mcpServers: {
-          search: {
-            type: "http",
-            url: "https://mcp.example.com/mcp",
-          },
-        },
-      },
-      diagnostics: [],
-    };
-    const withoutScopedConfig = loadCodexBundleMcpThreadConfig({
-      workspaceDir: "/workspace",
-      cfg: {},
-      toolsEnabled: true,
-    });
-
-    expect(loaded.configPatch).toEqual({
-      mcp_servers: {
-        search: {
-          url: "https://mcp.example.com/mcp",
-        },
-      },
-    });
-    expect(JSON.stringify(loaded.configPatch)).not.toContain("unresolved.invalid");
-    expect(JSON.stringify(loaded.configPatch)).not.toContain("user-mail");
-    expect(loaded.configPatch).toEqual(withoutScopedConfig.configPatch);
-    expect(loaded.fingerprint).toBe(withoutScopedConfig.fingerprint);
-  });
-
-  it("keeps static projection byte-identical when no resolver exists", () => {
-    mocks.bundleMcp = {
-      config: {
-        mcpServers: {
-          search: {
-            type: "http",
-            url: "https://mcp.example.com/mcp",
-          },
-        },
-      },
-      diagnostics: [],
-    };
-
-    const a = loadCodexBundleMcpThreadConfig({
-      workspaceDir: "/workspace",
-      cfg: {},
-      toolsEnabled: true,
-    });
-    const b = loadCodexBundleMcpThreadConfig({
-      workspaceDir: "/workspace",
-      cfg: {},
-      toolsEnabled: true,
-    });
-    expect(a.configPatch).toEqual(b.configPatch);
-    expect(a.fingerprint).toBe(b.fingerprint);
-    expect(a.configPatch).toEqual({
-      mcp_servers: {
-        search: {
-          url: "https://mcp.example.com/mcp",
-        },
-      },
-    });
   });
 });

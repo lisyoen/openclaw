@@ -41,6 +41,10 @@ import {
 
 const WHATSAPP_CHANNEL = "whatsapp" as const;
 
+export async function loadWhatsAppChannelRuntime() {
+  return await import("./channel.runtime.js");
+}
+
 async function loadWhatsAppSetupSurface() {
   return await import("./setup-surface.js");
 }
@@ -154,7 +158,7 @@ export function createWhatsAppPluginBase(params: {
       docsLabel: "whatsapp",
       blurb: "works with your own number; recommend a separate phone + eSIM.",
       systemImage: "message",
-      exposure: { configured: false },
+      showConfigured: false,
       quickstartAllowFrom: true,
       forceAccountBinding: true,
       preferSessionLookupForAnnounceTarget: true,
@@ -177,7 +181,7 @@ export function createWhatsAppPluginBase(params: {
     // the broad `channels.whatsapp` noop prefix below otherwise swallows it as a
     // hot no-op and leaves the account connected until a full restart.
     reload: {
-      configPrefixes: ["web", "channels.whatsapp.accounts", "channels.whatsapp.selfChatMode"],
+      configPrefixes: ["web", "channels.whatsapp.accounts"],
       noopPrefixes: ["channels.whatsapp"],
     },
     gatewayMethodDescriptors: [{ name: "web.login.start" }, { name: "web.login.wait" }],

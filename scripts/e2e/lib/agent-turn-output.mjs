@@ -67,19 +67,6 @@ function parseJson(text) {
   }
 }
 
-function isJsonObjectRecordStart(text, index) {
-  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
-    const char = text[cursor];
-    if (char === "\n" || char === "\r") {
-      return true;
-    }
-    if (char !== " " && char !== "\t") {
-      return false;
-    }
-  }
-  return true;
-}
-
 function parseJsonObjectsFromText(text) {
   const payloads = [];
   let start = -1;
@@ -90,7 +77,7 @@ function parseJsonObjectsFromText(text) {
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
     if (start === -1) {
-      if (char === "{" && isJsonObjectRecordStart(text, index)) {
+      if (char === "{") {
         start = index;
         depth = 1;
         inString = false;

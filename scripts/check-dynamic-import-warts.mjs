@@ -14,44 +14,64 @@ import {
 const repoRoot = resolveRepoRoot(import.meta.url);
 const defaultRoots = [path.join(repoRoot, "src"), path.join(repoRoot, "extensions")];
 
+function readStringLiteral(node) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return node.text;
+  }
+  return null;
+}
+
 function isTypeOnlyImportDeclaration(node) {
   const clause = node.importClause;
-  return Boolean(
-    clause &&
-    (ts.isTypeOnlyImportDeclaration(clause) ||
-      (!clause.name &&
-        ts.isNamedImports(clause.namedBindings) &&
-        clause.namedBindings.elements.length > 0 &&
-        clause.namedBindings.elements.every(ts.isTypeOnlyImportOrExportDeclaration))),
+  if (!clause) {
+    return false;
+  }
+  if (clause.isTypeOnly) {
+    return true;
+  }
+  if (clause.name) {
+    return false;
+  }
+  const bindings = clause.namedBindings;
+  return (
+    Boolean(bindings) &&
+    ts.isNamedImports(bindings) &&
+    bindings.elements.length > 0 &&
+    bindings.elements.every((element) => element.isTypeOnly)
   );
 }
 
 function isTypeOnlyExportDeclaration(node) {
+  if (node.isTypeOnly === true) {
+    return true;
+  }
   const clause = node.exportClause;
   return (
-    node.isTypeOnly === true ||
-    Boolean(
-      clause &&
-      ts.isNamedExports(clause) &&
-      clause.elements.length > 0 &&
-      clause.elements.every(ts.isTypeOnlyImportOrExportDeclaration),
-    )
+    Boolean(clause) &&
+    ts.isNamedExports(clause) &&
+    clause.elements.length > 0 &&
+    clause.elements.every((element) => element.isTypeOnly)
   );
 }
 
-function isExecuteDeclaration(node) {
+function readDeclarationName(node) {
   if (
-    !ts.isFunctionDeclaration(node) &&
-    !ts.isMethodDeclaration(node) &&
-    !ts.isVariableDeclaration(node) &&
-    !ts.isPropertyAssignment(node)
+    (ts.isFunctionDeclaration(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isVariableDeclaration(node)) &&
+    node.name &&
+    ts.isIdentifier(node.name)
   ) {
-    return false;
+    return node.name.text;
   }
-  const name = ts.getNameOfDeclaration(node);
-  return Boolean(
-    name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === "execute",
-  );
+
+  if (ts.isPropertyAssignment(node)) {
+    if (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) {
+      return node.name.text;
+    }
+  }
+
+  return null;
 }
 
 function isIgnoredTestHelperContent(content) {
@@ -79,6 +99,7 @@ export function findDynamicImportAdvisories(content, fileName = "source.ts") {
   const staticRuntimeImports = new Map();
   const dynamicImports = new Map();
   const directExecuteImports = [];
+  const declarationStack = [];
 
   const addLine = (map, specifier, line) => {
     const lines = map.get(specifier) ?? [];
@@ -87,6 +108,11 @@ export function findDynamicImportAdvisories(content, fileName = "source.ts") {
   };
 
   const visit = (node) => {
+    const declarationName = readDeclarationName(node);
+    if (declarationName) {
+      declarationStack.push(declarationName);
+    }
+
     if (
       ts.isImportDeclaration(node) &&
       ts.isStringLiteral(node.moduleSpecifier) &&
@@ -109,11 +135,11 @@ export function findDynamicImportAdvisories(content, fileName = "source.ts") {
       node.expression.kind === ts.SyntaxKind.ImportKeyword &&
       node.arguments.length > 0
     ) {
-      const specifier = ts.isStringLiteralLike(node.arguments[0]) ? node.arguments[0].text : null;
+      const specifier = readStringLiteral(node.arguments[0]);
       if (specifier) {
         const line = toLine(sourceFile, node);
         addLine(dynamicImports, specifier, line);
-        if (ts.findAncestor(node, isExecuteDeclaration)) {
+        if (declarationStack.includes("execute")) {
           directExecuteImports.push({
             line,
             reason: `direct dynamic import of "${specifier}" inside execute path; move it behind a cached loader`,
@@ -123,6 +149,9 @@ export function findDynamicImportAdvisories(content, fileName = "source.ts") {
     }
 
     ts.forEachChild(node, visit);
+    if (declarationName) {
+      declarationStack.pop();
+    }
   };
 
   visit(sourceFile);
@@ -149,7 +178,7 @@ export function findDynamicImportAdvisories(content, fileName = "source.ts") {
 /**
  * Collects dynamic import advisories across configured source roots.
  */
-async function collectDynamicImportAdvisories(options = {}) {
+export async function collectDynamicImportAdvisories(options = {}) {
   const roots = options.roots ?? defaultRoots;
   const files = await collectTypeScriptFilesFromRoots(roots, {
     extraTestSuffixes: [".suite.ts"],

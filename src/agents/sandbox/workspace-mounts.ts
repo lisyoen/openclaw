@@ -41,6 +41,10 @@ export function resolveMaterializedSandboxSkillsWorkspaceDir(rootDir: string): s
   return path.join(rootDir, ...MATERIALIZED_SANDBOX_SKILLS_WORKSPACE_PARTS);
 }
 
+export function resolveMaterializedSandboxSkillsRoot(rootDir: string): string {
+  return path.join(resolveMaterializedSandboxSkillsWorkspaceDir(rootDir), "skills");
+}
+
 /** Returns true when a skill mount source exists inside the canonical mount root. */
 export function isExistingWorkspaceSkillMountSource(params: {
   rootDir: string;
@@ -74,8 +78,7 @@ export function resolveReadOnlyWorkspaceSkillMounts(params: {
   // RW workspaces mount the project as writable, but skill sources remain read-only so agent
   // instructions are visible without letting sandbox commands mutate them.
   const materializedSkillsWorkspaceDir =
-    params.skillsWorkspaceDir ??
-    resolveMaterializedSandboxSkillsWorkspaceDir(params.agentWorkspaceDir);
+    params.skillsWorkspaceDir ?? resolveMaterializedSandboxSkillsWorkspaceDir(params.agentWorkspaceDir);
   const mounts = [
     {
       hostPath: path.join(params.agentWorkspaceDir, "skills"),

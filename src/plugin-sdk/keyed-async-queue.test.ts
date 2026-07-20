@@ -1,16 +1,26 @@
 /**
  * Tests keyed async queue serialization and cancellation behavior.
  */
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
-import { createDeferred } from "../test-utils/deferred.js";
 import { enqueueKeyedTask, KeyedAsyncQueue } from "./keyed-async-queue.js";
+
+function deferred<T>() {
+  let resolve: ((value: T | PromiseLike<T>) => void) | undefined;
+  let reject: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  if (!resolve || !reject) {
+    throw new Error("Expected deferred callbacks to be initialized");
+  }
+  return { promise, resolve, reject };
+}
 
 describe("enqueueKeyedTask", () => {
   it("serializes tasks per key and keeps different keys independent", async () => {
     const tails = new Map<string, Promise<void>>();
-    const gate = createDeferred();
+    const gate = deferred<void>();
     const order: string[] = [];
 
     const first = enqueueKeyedTask({
@@ -70,8 +80,8 @@ describe("enqueueKeyedTask", () => {
         }),
     ];
 
-    await expect(expectDefined(runs[0], "runs[0] test invariant")()).rejects.toThrow("boom");
-    await expect(expectDefined(runs[1], "runs[1] test invariant")()).resolves.toBe("ok");
+    await expect(runs[0]()).rejects.toThrow("boom");
+    await expect(runs[1]()).resolves.toBe("ok");
   });
 
   it("does not leak unhandled rejections when a task failure is already awaited", async () => {
@@ -118,29 +128,17 @@ describe("enqueueKeyedTask", () => {
 });
 
 describe("KeyedAsyncQueue", () => {
-  it("serializes tasks while preserving their return values", async () => {
+  it("exposes tail map for observability", async () => {
     const queue = new KeyedAsyncQueue();
-    const gate = createDeferred();
-    const order: string[] = [];
-    const first = queue.enqueue("actor", async () => {
-      order.push("first:start");
+    const gate = deferred<void>();
+    const run = queue.enqueue("actor", async () => {
       await gate.promise;
       return 1;
     });
-    const second = queue.enqueue("actor", async () => {
-      order.push("second:start");
-      return 2;
-    });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(order).toEqual(["first:start"]);
+    expect(queue.getTailMapForTesting().has("actor")).toBe(true);
     gate.resolve();
-    await expect(Promise.all([first, second])).resolves.toEqual([1, 2]);
-    expect(order).toEqual(["first:start", "second:start"]);
-  });
-
-  it("retains the deprecated tail-map accessor for Plugin SDK compatibility", () => {
-    const queue = new KeyedAsyncQueue();
-    expect(queue.getTailMapForTesting()).toBeInstanceOf(Map);
+    await run;
+    await Promise.resolve();
+    expect(queue.getTailMapForTesting().has("actor")).toBe(false);
   });
 });

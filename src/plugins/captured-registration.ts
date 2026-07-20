@@ -22,7 +22,6 @@ import type {
 import type { MemoryEmbeddingProviderAdapter } from "./memory-embedding-providers.js";
 import type { PluginAgentToolResultMiddlewareRegistration } from "./registry-types.js";
 import type { PluginRuntime } from "./runtime/types.js";
-import type { SessionCatalogProvider } from "./session-catalog.js";
 import type {
   AnyAgentTool,
   AgentHarness,
@@ -44,7 +43,6 @@ import type {
   VideoGenerationProviderPlugin,
   WebFetchProviderPlugin,
   WebSearchProviderPlugin,
-  WorkerProvider,
 } from "./types.js";
 
 type CapturedPluginCliRegistration = {
@@ -74,7 +72,6 @@ export type CapturedPluginRegistration = {
   musicGenerationProviders: MusicGenerationProviderPlugin[];
   webFetchProviders: WebFetchProviderPlugin[];
   webSearchProviders: WebSearchProviderPlugin[];
-  workerProviders: WorkerProvider[];
   migrationProviders: MigrationProviderPlugin[];
   memoryEmbeddingProviders: MemoryEmbeddingProviderAdapter[];
   sessionExtensions: PluginSessionExtensionRegistration[];
@@ -87,7 +84,6 @@ export type CapturedPluginRegistration = {
   sessionActions: PluginSessionActionRegistration[];
   tools: AnyAgentTool[];
   modelCatalogProviders: UnifiedModelCatalogProviderPlugin[];
-  sessionCatalogs: SessionCatalogProvider[];
 };
 
 export function createCapturedPluginRegistration(params?: {
@@ -115,7 +111,6 @@ export function createCapturedPluginRegistration(params?: {
   const musicGenerationProviders: MusicGenerationProviderPlugin[] = [];
   const webFetchProviders: WebFetchProviderPlugin[] = [];
   const webSearchProviders: WebSearchProviderPlugin[] = [];
-  const workerProviders: WorkerProvider[] = [];
   const migrationProviders: MigrationProviderPlugin[] = [];
   const memoryEmbeddingProviders: MemoryEmbeddingProviderAdapter[] = [];
   const sessionExtensions: PluginSessionExtensionRegistration[] = [];
@@ -129,7 +124,6 @@ export function createCapturedPluginRegistration(params?: {
   let capturedSessionTurnCount = 0;
   const tools: AnyAgentTool[] = [];
   const modelCatalogProviders: UnifiedModelCatalogProviderPlugin[] = [];
-  const sessionCatalogs: SessionCatalogProvider[] = [];
   const pluginId = params?.id ?? "captured-plugin-registration";
   const pluginName = params?.name ?? "Captured Plugin Registration";
   const pluginSource = params?.source ?? "captured-plugin-registration";
@@ -159,7 +153,6 @@ export function createCapturedPluginRegistration(params?: {
     musicGenerationProviders,
     webFetchProviders,
     webSearchProviders,
-    workerProviders,
     migrationProviders,
     memoryEmbeddingProviders,
     sessionExtensions,
@@ -172,7 +165,6 @@ export function createCapturedPluginRegistration(params?: {
     sessionActions,
     tools,
     modelCatalogProviders,
-    sessionCatalogs,
     api: buildPluginApi({
       id: pluginId,
       name: pluginName,
@@ -211,9 +203,6 @@ export function createCapturedPluginRegistration(params?: {
         },
         registerModelCatalogProvider(provider: UnifiedModelCatalogProviderPlugin) {
           modelCatalogProviders.push(provider);
-        },
-        registerSessionCatalog(provider: SessionCatalogProvider) {
-          sessionCatalogs.push(provider);
         },
         registerAgentHarness(harness: AgentHarness) {
           agentHarnesses.push(harness);
@@ -273,9 +262,6 @@ export function createCapturedPluginRegistration(params?: {
         },
         registerWebSearchProvider(provider: WebSearchProviderPlugin) {
           webSearchProviders.push(provider);
-        },
-        registerWorkerProvider(provider: WorkerProvider) {
-          workerProviders.push(provider);
         },
         registerMigrationProvider(provider: MigrationProviderPlugin) {
           migrationProviders.push(provider);

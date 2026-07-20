@@ -1,6 +1,6 @@
 // Computes deterministic heartbeat schedule phases and due times.
 import { createHash } from "node:crypto";
-import { resolveIntegerOption } from "@openclaw/normalization-core/number-coercion";
+import { resolveIntegerOption } from "./numeric-options.js";
 
 function resolvePositiveIntervalMs(value: number): number {
   return resolveIntegerOption(value, 1, { min: 1 });
@@ -80,10 +80,8 @@ export function resolveNextHeartbeatDueMs(params: {
  * `startMs` is already phase-aligned and `intervalMs` addition maintains it.
  */
 const MAX_SEEK_HORIZON_MS = 7 * 24 * 60 * 60_000;
-// Batch in whole-interval multiples of at least 30 seconds. Active-hours
-// boundaries have minute granularity, while each sub-30-second batch is less
-// than one minute, so every possible active window still contains a probe.
-const MIN_SEEK_STEP_MS = 30_000;
+// Prevent pathological sub-minute intervals from blocking the event loop.
+const MAX_SEEK_ITERATIONS = 10_080; // 7 days at 1-minute steps
 
 export function seekNextActivePhaseDueMs(params: {
   startMs: number;
@@ -97,41 +95,15 @@ export function seekNextActivePhaseDueMs(params: {
   }
   const intervalMs = resolvePositiveIntervalMs(params.intervalMs);
   const horizonMs = params.startMs + MAX_SEEK_HORIZON_MS;
-
-  // For intervals of at least 30 seconds, inspect every phase candidate. For
-  // shorter intervals, phase-aligned batches bound the forward scan at 20,160
-  // predicate calls across the exclusive seven-day horizon.
-  const multiplier = Math.max(1, Math.ceil(MIN_SEEK_STEP_MS / intervalMs));
-  const batchStepMs = intervalMs * multiplier;
-
   let candidateMs = params.startMs;
-  let previousInactiveMs: number | undefined;
-
-  while (candidateMs < horizonMs) {
+  let iterations = 0;
+  while (candidateMs <= horizonMs && iterations < MAX_SEEK_ITERATIONS) {
     if (isActive(candidateMs)) {
-      if (previousInactiveMs !== undefined && multiplier > 1) {
-        // A sub-minute batch cannot contain a complete minute-granular active
-        // window. Binary-search its single inactive→active transition instead
-        // of walking every sub-second phase slot backward.
-        let inactiveMs = previousInactiveMs;
-        let activeMs = candidateMs;
-        while (activeMs - inactiveMs > intervalMs) {
-          const remainingSteps = (activeMs - inactiveMs) / intervalMs;
-          const probeMs = inactiveMs + Math.floor(remainingSteps / 2) * intervalMs;
-          if (isActive(probeMs)) {
-            activeMs = probeMs;
-          } else {
-            inactiveMs = probeMs;
-          }
-        }
-        return activeMs;
-      }
       return candidateMs;
     }
-    previousInactiveMs = candidateMs;
-    candidateMs += batchStepMs;
+    candidateMs += intervalMs;
+    iterations++;
   }
-
   // No in-window slot found; fall back so the runtime guard can gate it.
   return params.startMs;
 }

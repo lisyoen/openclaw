@@ -7,7 +7,7 @@ import {
   installQQBotRuntimeForStateTests,
   resetQQBotStateTestRuntime,
 } from "../../test-support/runtime.js";
-type SessionState = Parameters<(typeof import("./session-store.js"))["saveSession"]>[0];
+import type { SessionState } from "./session-store.js";
 
 const createdDirs: string[] = [];
 
@@ -91,13 +91,14 @@ describe("engine/session/session-store", () => {
     expect(fs.existsSync(sessionPath(homeDir, "acct-1"))).toBe(false);
   });
 
-  it("does not import legacy JSON session cache files", async () => {
+  it("imports legacy JSON sessions and removes the old file", async () => {
     const { loadSession } = await import("./session-store.js");
     const homeDir = process.env.HOME!;
     const legacyPath = writeLegacySession(homeDir, makeSession({ sessionId: "legacy-session" }));
 
-    expect(loadSession("acct-1", "app-1")).toBeNull();
-    expect(fs.existsSync(legacyPath)).toBe(true);
+    expect(loadSession("acct-1", "app-1")?.sessionId).toBe("legacy-session");
+    expect(fs.existsSync(legacyPath)).toBe(false);
+    expect(loadSession("acct-1", "app-1")?.sessionId).toBe("legacy-session");
   });
 
   it("deletes mismatched appId sessions from SQLite", async () => {
@@ -106,5 +107,17 @@ describe("engine/session/session-store", () => {
 
     expect(loadSession("acct-1", "app-b")).toBeNull();
     expect(loadSession("acct-1", "app-a")).toBeNull();
+  });
+
+  it("drops expired legacy JSON sessions during import", async () => {
+    const { loadSession } = await import("./session-store.js");
+    const homeDir = process.env.HOME!;
+    const legacyPath = writeLegacySession(
+      homeDir,
+      makeSession({ savedAt: Date.now() - 10 * 60 * 1000 }),
+    );
+
+    expect(loadSession("acct-1", "app-1")).toBeNull();
+    expect(fs.existsSync(legacyPath)).toBe(false);
   });
 });

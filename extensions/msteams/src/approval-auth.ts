@@ -1,5 +1,8 @@
 // Msteams plugin module implements approval auth behavior.
-import { createChannelApprovalAuth } from "openclaw/plugin-sdk/approval-auth-runtime";
+import {
+  createResolvedApproverActionAuthAdapter,
+  resolveApprovalApprovers,
+} from "openclaw/plugin-sdk/approval-auth-runtime";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { OpenClawConfig } from "../runtime-api.js";
 import { normalizeMSTeamsMessagingTarget } from "./resolve-allowlist.js";
@@ -22,13 +25,16 @@ function resolveMSTeamsChannelConfig(cfg: OpenClawConfig) {
   return cfg.channels?.msteams;
 }
 
-export const msTeamsApprovalAuth = createChannelApprovalAuth({
+export const msTeamsApprovalAuth = createResolvedApproverActionAuthAdapter({
   channelLabel: "Microsoft Teams",
-  resolveInputs: ({ cfg }) => {
+  resolveApprovers: ({ cfg }) => {
     const channel = resolveMSTeamsChannelConfig(cfg);
-    return { allowFrom: channel?.allowFrom, defaultTo: channel?.defaultTo };
+    return resolveApprovalApprovers({
+      allowFrom: channel?.allowFrom,
+      defaultTo: channel?.defaultTo,
+      normalizeApprover: normalizeMSTeamsApproverId,
+    });
   },
-  normalizeApprover: normalizeMSTeamsApproverId,
   normalizeSenderId: (value) => {
     const trimmed = normalizeOptionalLowercaseString(value);
     if (!trimmed) {
@@ -36,4 +42,4 @@ export const msTeamsApprovalAuth = createChannelApprovalAuth({
     }
     return MSTEAMS_ID_RE.test(trimmed) ? trimmed : undefined;
   },
-}).approvalAuth;
+});

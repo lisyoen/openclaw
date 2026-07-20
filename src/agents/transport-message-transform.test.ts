@@ -61,18 +61,6 @@ describe("transformTransportMessages synthetic tool-result policy", () => {
       target: { provider: "anthropic-vertex", model: "claude-opus-4-8" },
     },
     {
-      source: { provider: "anthropic", model: "claude-mythos-5" },
-      target: { provider: "anthropic", model: "claude-opus-4-8" },
-    },
-    {
-      source: { provider: "anthropic", model: "claude-fable-5" },
-      target: { provider: "anthropic-vertex", model: "claude-mythos-5" },
-    },
-    {
-      source: { provider: "anthropic", model: "claude-mythos-5" },
-      target: { provider: "anthropic", model: "claude-fable-5" },
-    },
-    {
       source: { provider: "anthropic", model: "claude-sonnet-4-6" },
       target: { provider: "anthropic", model: "claude-fable-5" },
     },
@@ -112,7 +100,7 @@ describe("transformTransportMessages synthetic tool-result policy", () => {
         canonicalModelId: "claude-fable-5",
       },
     },
-  ])("drops model-bound thinking for Fable/Mythos switches", ({ source, target }) => {
+  ])("drops model-bound thinking for Fable switches", ({ source, target }) => {
     const result = transformTransportMessages(
       [
         {
@@ -197,17 +185,8 @@ describe("transformTransportMessages synthetic tool-result policy", () => {
       targetModel: "prod-primary",
       targetCanonicalModelId: "claude-fable-5",
     },
-    {
-      sourceProvider: "anthropic",
-      sourceModel: "claude-mythos-5",
-      sourceResponseModel: undefined,
-      targetProvider: "anthropic-vertex",
-      targetApi: "anthropic-messages" as const,
-      targetModel: "claude-mythos-5",
-      targetCanonicalModelId: undefined,
-    },
   ])(
-    "preserves Fable/Mythos thinking across compatible Anthropic transports",
+    "preserves Fable thinking across compatible Anthropic transports",
     ({
       sourceProvider,
       sourceModel,
@@ -465,65 +444,6 @@ describe("transformTransportMessages synthetic tool-result policy", () => {
     expect(JSON.stringify(result)).not.toContain("partial error output");
   });
 
-  it("drops max-token reasoning-only transport assistant turns before replay", () => {
-    const messages: Context["messages"] = [
-      {
-        role: "assistant",
-        provider: "amazon-bedrock",
-        api: "bedrock-converse-stream",
-        model: "global.anthropic.claude-sonnet-4-6",
-        stopReason: "length",
-        timestamp: Date.now(),
-        content: [
-          {
-            type: "thinking",
-            thinking: "partial hidden reasoning",
-            thinkingSignature: "partial-signature",
-          },
-        ],
-      } as Extract<Context["messages"][number], { role: "assistant" }>,
-      { role: "user", content: "retry after max token thinking", timestamp: Date.now() },
-    ];
-
-    const result = transformTransportMessages(
-      messages,
-      makeModel(
-        "bedrock-converse-stream" as Api,
-        "amazon-bedrock",
-        "global.anthropic.claude-sonnet-4-6",
-      ),
-    );
-
-    expect(result.map((msg) => msg.role)).toEqual(["user"]);
-    expect(JSON.stringify(result)).not.toContain("partial-signature");
-  });
-
-  it("keeps max-token transport turns with visible or tool content", () => {
-    const messages: Context["messages"] = [
-      {
-        role: "assistant",
-        provider: "anthropic",
-        api: "anthropic-messages",
-        model: "claude-sonnet-4-6",
-        stopReason: "length",
-        timestamp: Date.now(),
-        content: [
-          { type: "thinking", thinking: "partial", thinkingSignature: "sig-visible" },
-          { type: "text", text: "partial visible answer" },
-        ],
-      },
-      assistantToolCall("call_length", "exec", "length"),
-    ] as Context["messages"];
-
-    const result = transformTransportMessages(
-      messages,
-      makeModel("anthropic-messages", "anthropic", "claude-sonnet-4-6"),
-    );
-
-    expect(result[0]).toMatchObject({ role: "assistant", stopReason: "length" });
-    expect(result[1]).toMatchObject({ role: "assistant", stopReason: "length" });
-  });
-
   it("drops errored Anthropic transport assistant tool calls and matching results before replay", () => {
     const messages: Context["messages"] = [
       assistantToolCall("call_error", "exec", "error"),
@@ -545,35 +465,6 @@ describe("transformTransportMessages synthetic tool-result policy", () => {
 
     expect(result.map((msg) => msg.role)).toEqual(["user"]);
     expect(JSON.stringify(result)).not.toContain("call_error");
-  });
-
-  it("does not reassign a dropped errored turn's repeated-id result to an older turn", () => {
-    const messages: Context["messages"] = [
-      assistantToolCall("call_repeated"),
-      assistantToolCall("call_repeated", "exec", "error"),
-      {
-        role: "toolResult",
-        toolCallId: "call_repeated",
-        toolName: "exec",
-        content: [{ type: "text", text: "failed turn output" }],
-        isError: true,
-        timestamp: Date.now(),
-      },
-      { role: "user", content: "retry after error", timestamp: Date.now() },
-    ];
-
-    const result = transformTransportMessages(
-      messages,
-      makeModel("anthropic-messages", "anthropic", "claude-opus-4-6"),
-    );
-
-    expect(result.map((message) => message.role)).toEqual(["assistant", "toolResult", "user"]);
-    expect(requireToolResultMessage(result[1])).toMatchObject({
-      toolCallId: "call_repeated",
-      isError: true,
-      content: [{ type: "text", text: "No result provided" }],
-    });
-    expect(JSON.stringify(result)).not.toContain("failed turn output");
   });
 
   it("still synthesizes missing tool results for Anthropic transports", () => {

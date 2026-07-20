@@ -39,7 +39,7 @@ describe("resolveNativeCommandSessionTargets", () => {
         sessionPrefix: "Slack:Slash",
         userId: "U123",
         targetSessionKey: "agent:qwen:slack:channel:c1",
-        sessionKeyCase: "lowercase",
+        lowercaseSessionKey: true,
       }),
     ).toEqual({
       sessionKey: "agent:qwen:slack:slash:u123",

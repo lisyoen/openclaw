@@ -26,7 +26,7 @@ const VIDEO_RESOLUTION_ORDER: readonly VideoGenerationResolution[] = [
   "1080P",
 ];
 
-type ResolvedVideoGenerationOverrides = {
+export type ResolvedVideoGenerationOverrides = {
   size?: string;
   aspectRatio?: string;
   resolution?: VideoGenerationResolution;

@@ -1,10 +1,13 @@
 // Telegram tests cover account throttler plugin behavior.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getOrCreateAccountThrottler } from "./account-throttler.js";
-import { resetTelegramAccountThrottlersForTest } from "./runtime.test-support.js";
+import {
+  clearAccountThrottlersForTest,
+  createTelegramAccountThrottler,
+  getOrCreateAccountThrottler,
+} from "./account-throttler.js";
 
-type TelegramTransform = ReturnType<typeof getOrCreateAccountThrottler>;
-type TelegramPreviousCall = Parameters<TelegramTransform>[0];
+type TelegramPreviousCall = Parameters<ReturnType<typeof createTelegramAccountThrottler>>[0];
+type TelegramTransform = ReturnType<typeof createTelegramAccountThrottler>;
 
 function callLooseSendMessage(
   throttler: TelegramTransform,
@@ -30,7 +33,7 @@ function deferred<T>() {
 
 describe("getOrCreateAccountThrottler", () => {
   beforeEach(() => {
-    resetTelegramAccountThrottlersForTest();
+    clearAccountThrottlersForTest();
   });
 
   it("shares throttlers per bot token", () => {
@@ -45,8 +48,7 @@ describe("getOrCreateAccountThrottler", () => {
   it("round-robins group topic requests before entering the Telegram throttler", async () => {
     const firstGate = deferred<void>();
     const entered: string[] = [];
-    const throttler = getOrCreateAccountThrottler(
-      "round-robin",
+    const throttler = createTelegramAccountThrottler(
       () => async (prev, method, payload, signal) => prev(method, payload, signal),
     );
     const prev = vi.fn(async (_method: string, payload: unknown) => {
@@ -92,8 +94,7 @@ describe("getOrCreateAccountThrottler", () => {
   it("uses edited message ids as lanes when Telegram omits topic ids", async () => {
     const firstGate = deferred<void>();
     const entered: string[] = [];
-    const throttler = getOrCreateAccountThrottler(
-      "edited-message",
+    const throttler = createTelegramAccountThrottler(
       () => async (prev, method, payload, signal) => prev(method, payload, signal),
     );
     const prev = vi.fn(async (_method: string, payload: unknown) => {
@@ -137,8 +138,7 @@ describe("getOrCreateAccountThrottler", () => {
   it("does not group-throttle fractional chat ids", async () => {
     const firstGate = deferred<void>();
     const entered: string[] = [];
-    const throttler = getOrCreateAccountThrottler(
-      "direct-topic",
+    const throttler = createTelegramAccountThrottler(
       () => async (prev, method, payload, signal) => prev(method, payload, signal),
     );
     const prev = vi.fn(async (_method: string, payload: unknown) => {
@@ -173,8 +173,7 @@ describe("getOrCreateAccountThrottler", () => {
   it("uses strict decimal string ids for fair group lanes", async () => {
     const firstGate = deferred<void>();
     const entered: string[] = [];
-    const throttler = getOrCreateAccountThrottler(
-      "private-chat",
+    const throttler = createTelegramAccountThrottler(
       () => async (prev, method, payload, signal) => prev(method, payload, signal),
     );
     const prev = vi.fn(async (_method: string, payload: unknown) => {

@@ -10,7 +10,7 @@ import { log } from "./logger.js";
 type AssistantContentBlock = Extract<AgentMessage, { role: "assistant" }>["content"][number];
 type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
 type RecoveryAssessment = "valid" | "incomplete-thinking" | "incomplete-text";
-type AnthropicThinkingRecovery = {
+export type AnthropicThinkingRecovery = {
   originalMessages: AgentMessage[];
   cleanedMessages: AgentMessage[];
 };
@@ -22,9 +22,9 @@ type RecoverySessionMeta = {
 
 const THINKING_BLOCK_ERROR_PATTERN =
   /(?:thinking|redacted_thinking).*?(?:cannot be modified|signature|invalid|missing|empty|blank)|(?:signature|invalid|missing|empty|blank).*?(?:thinking|redacted_thinking)/i;
-const OMITTED_ASSISTANT_REASONING_TEXT = "[assistant reasoning omitted]";
+export const OMITTED_ASSISTANT_REASONING_TEXT = "[assistant reasoning omitted]";
 
-function isAssistantMessageWithContent(message: AgentMessage): message is AssistantMessage {
+export function isAssistantMessageWithContent(message: AgentMessage): message is AssistantMessage {
   return (
     Boolean(message) &&
     typeof message === "object" &&
@@ -261,8 +261,7 @@ export function stripInvalidThinkingSignatures(
   let latestAssistantIndex = -1;
   if (preserveLatestAssistant) {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages.at(i);
-      if (message && isAssistantMessageWithContent(message)) {
+      if (isAssistantMessageWithContent(messages[i])) {
         latestAssistantIndex = i;
         break;
       }
@@ -272,7 +271,8 @@ export function stripInvalidThinkingSignatures(
   let touched = false;
   const out: AgentMessage[] = [];
 
-  for (const [i, message] of messages.entries()) {
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
     if (!isAssistantMessageWithContent(message)) {
       out.push(message);
       continue;
@@ -324,8 +324,7 @@ export function stripInvalidThinkingSignatures(
 export function dropThinkingBlocks(messages: AgentMessage[]): AgentMessage[] {
   let latestAssistantIndex = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages.at(i);
-    if (message && isAssistantMessageWithContent(message)) {
+    if (isAssistantMessageWithContent(messages[i])) {
       latestAssistantIndex = i;
       break;
     }
@@ -333,7 +332,8 @@ export function dropThinkingBlocks(messages: AgentMessage[]): AgentMessage[] {
 
   let touched = false;
   const out: AgentMessage[] = [];
-  for (const [i, msg] of messages.entries()) {
+  for (let i = 0; i < messages.length; i += 1) {
+    const msg = messages[i];
     if (!isAssistantMessageWithContent(msg)) {
       out.push(msg);
       continue;
@@ -367,9 +367,8 @@ function shouldPreserveCurrentToolTurnReasoning(
   index: number,
   latestUserIndex: number,
 ): boolean {
-  const message = messages.at(index);
+  const message = messages[index];
   if (
-    !message ||
     index < latestUserIndex ||
     !isAssistantMessageWithContent(message) ||
     !hasAssistantToolCall(message)
@@ -378,7 +377,7 @@ function shouldPreserveCurrentToolTurnReasoning(
   }
 
   for (let i = index - 1; i >= 0; i -= 1) {
-    const role = messages.at(i)?.role;
+    const role = (messages[i] as { role?: unknown })?.role;
     if (role === "user") {
       break;
     }
@@ -388,9 +387,9 @@ function shouldPreserveCurrentToolTurnReasoning(
   }
 
   for (let i = index + 1; i < messages.length; i += 1) {
-    const next = messages.at(i);
-    const role = next?.role;
-    if (next && isToolResultMessage(next)) {
+    const next = messages[i];
+    const role = (next as { role?: unknown })?.role;
+    if (isToolResultMessage(next)) {
       return true;
     }
     if (role === "user") {
@@ -404,8 +403,7 @@ function shouldPreserveCurrentToolTurnReasoning(
 export function shouldPreserveLatestAssistantThinking(messages: AgentMessage[]): boolean {
   let latestAssistantIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages.at(index);
-    if (message && isAssistantMessageWithContent(message)) {
+    if (isAssistantMessageWithContent(messages[index])) {
       latestAssistantIndex = index;
       break;
     }
@@ -419,7 +417,7 @@ export function shouldPreserveLatestAssistantThinking(messages: AgentMessage[]):
 
   let latestUserIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages.at(index)?.role === "user") {
+    if ((messages[index] as { role?: unknown })?.role === "user") {
       latestUserIndex = index;
       break;
     }
@@ -459,7 +457,7 @@ function stripAllThinkingBlocks(messages: AgentMessage[]): AgentMessage[] {
 export function dropReasoningFromHistory(messages: AgentMessage[]): AgentMessage[] {
   let latestUserIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages.at(index)?.role === "user") {
+    if ((messages[index] as { role?: unknown })?.role === "user") {
       latestUserIndex = index;
       break;
     }
@@ -467,7 +465,8 @@ export function dropReasoningFromHistory(messages: AgentMessage[]): AgentMessage
 
   let touched = false;
   const out: AgentMessage[] = [];
-  for (const [index, message] of messages.entries()) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
     if (!isAssistantMessageWithContent(message)) {
       out.push(message);
       continue;
@@ -535,6 +534,39 @@ export function assessLastAssistantMessage(message: AgentMessage): RecoveryAsses
   return "valid";
 }
 
+export function sanitizeThinkingForRecovery(messages: AgentMessage[]): {
+  messages: AgentMessage[];
+  prefill: boolean;
+} {
+  if (messages.length === 0) {
+    return { messages, prefill: false };
+  }
+
+  let lastAssistantIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if ((messages[index] as { role?: unknown }).role === "assistant") {
+      lastAssistantIndex = index;
+      break;
+    }
+  }
+  if (lastAssistantIndex === -1) {
+    return { messages, prefill: false };
+  }
+
+  const assessment = assessLastAssistantMessage(messages[lastAssistantIndex]);
+  if (assessment === "valid") {
+    return { messages, prefill: false };
+  }
+  if (assessment === "incomplete-text") {
+    return { messages, prefill: true };
+  }
+
+  return {
+    messages: [...messages.slice(0, lastAssistantIndex), ...messages.slice(lastAssistantIndex + 1)],
+    prefill: false,
+  };
+}
+
 function shouldRecoverAnthropicThinkingError(
   error: unknown,
   sessionMeta: RecoverySessionMeta,
@@ -546,7 +578,6 @@ function shouldRecoverAnthropicThinkingError(
     current.error,
     current.rawError,
     current.errorMessage,
-    current.errorBody,
     current.message,
   ]);
   for (const candidate of candidates) {
@@ -699,26 +730,6 @@ async function pumpStreamWithRecovery(
   }
 }
 
-function createRecoveryStream(
-  stream: Awaited<ReturnType<StreamFn>>,
-  sessionMeta: RecoverySessionMeta,
-  retry: () => ReturnType<StreamFn>,
-  notify: () => Promise<void>,
-): Awaited<ReturnType<StreamFn>> {
-  const outer = createAssistantMessageEventStream();
-  const finalResultPromise = pumpStreamWithRecovery(
-    outer,
-    stream,
-    sessionMeta,
-    retry,
-    notify,
-  ).finally(() => {
-    outer.end();
-  });
-  outer.result = () => finalResultPromise;
-  return outer;
-}
-
 export function wrapAnthropicStreamWithRecovery(
   innerStreamFn: StreamFn,
   sessionMeta: RecoverySessionMeta,
@@ -748,20 +759,28 @@ export function wrapAnthropicStreamWithRecovery(
 
     const stream = innerStreamFn(model, context, options);
     if (stream instanceof Promise) {
-      return stream.then(
-        (resolved) => createRecoveryStream(resolved, requestMeta, retry, notify),
-        (error: unknown) => {
-          if (!shouldRecoverAnthropicThinkingError(error, requestMeta)) {
-            throw error;
-          }
-          requestMeta.recoveredAnthropicThinking = true;
-          log.warn(
-            `[session-recovery] Anthropic thinking request rejected; retrying once without thinking blocks: sessionId=${requestMeta.id}`,
-          );
-          return wrapRetryStreamWithRecoveryNotification(retry(), notify);
-        },
-      ) as ReturnType<StreamFn>;
+      return stream.catch((error: unknown) => {
+        if (!shouldRecoverAnthropicThinkingError(error, requestMeta)) {
+          throw error;
+        }
+        requestMeta.recoveredAnthropicThinking = true;
+        log.warn(
+          `[session-recovery] Anthropic thinking request rejected; retrying once without thinking blocks: sessionId=${requestMeta.id}`,
+        );
+        return wrapRetryStreamWithRecoveryNotification(retry(), notify);
+      }) as ReturnType<StreamFn>;
     }
-    return createRecoveryStream(stream, requestMeta, retry, notify);
+    const outer = createAssistantMessageEventStream();
+    const finalResultPromise = pumpStreamWithRecovery(
+      outer,
+      stream,
+      requestMeta,
+      retry,
+      notify,
+    ).finally(() => {
+      outer.end();
+    });
+    outer.result = () => finalResultPromise;
+    return outer as unknown as ReturnType<StreamFn>;
   };
 }

@@ -69,6 +69,7 @@ function isUpdateInProgress(): boolean {
   return value === "1" || value === "true";
 }
 
+const ROOT_STRIP_PROTECTED_KEYS = new Set(["defaultModel"]);
 const STRIP_PROTECTED_KEYS: Record<string, Set<string>> = {
   plugins: new Set(["installs"]),
 };
@@ -107,7 +108,11 @@ export function stripUnknownConfigKeys(config: OpenClawConfig): {
     const parentKey =
       issuePath.length === 1 && typeof issuePath[0] === "string" ? issuePath[0] : undefined;
     const protectedSet =
-      issuePath.length === 0 ? undefined : parentKey ? STRIP_PROTECTED_KEYS[parentKey] : undefined;
+      issuePath.length === 0
+        ? ROOT_STRIP_PROTECTED_KEYS
+        : parentKey
+          ? STRIP_PROTECTED_KEYS[parentKey]
+          : undefined;
     for (const key of issue.keys) {
       if (typeof key !== "string" || !(key in record)) {
         continue;
@@ -180,7 +185,7 @@ function isImplicitFallbackClobber(model: unknown): boolean {
 }
 
 /** Collects warnings for agent model shapes that unintentionally drop default fallbacks. */
-function collectImplicitFallbackClobberWarnings(cfg: OpenClawConfig): string[] {
+export function collectImplicitFallbackClobberWarnings(cfg: OpenClawConfig): string[] {
   const defaultFallbacks = resolveAgentModelFallbackValues(cfg.agents?.defaults?.model);
   if (defaultFallbacks.length === 0) {
     return [];

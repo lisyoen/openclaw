@@ -31,6 +31,13 @@ export function findContainingAllowedSkillSymlinkTarget(
   return null;
 }
 
+export function isPathInsideAnyAllowedSkillSymlinkTarget(
+  rootRealPaths: readonly string[],
+  candidateRealPath: string,
+): boolean {
+  return findContainingAllowedSkillSymlinkTarget(rootRealPaths, candidateRealPath) !== null;
+}
+
 export function tryRealpath(filePath: string): string | null {
   try {
     return fs.realpathSync(filePath);

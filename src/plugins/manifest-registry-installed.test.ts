@@ -1,13 +1,12 @@
 // Covers installed plugin manifest registry behavior.
 import fs from "node:fs";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   readPersistedInstalledPluginIndex,
   writePersistedInstalledPluginIndex,
 } from "./installed-plugin-index-store.js";
-import type { InstalledPluginIndex, InstalledPluginIndexRecord } from "./installed-plugin-index.js";
+import type { InstalledPluginIndex } from "./installed-plugin-index.js";
 import {
   loadPluginManifestRegistryForInstalledIndex,
   resolveInstalledManifestRegistryIndexFingerprint,
@@ -152,24 +151,6 @@ function createIndexWithPackageJson(rootDir: string): InstalledPluginIndex {
   };
 }
 
-function createIndexWithUnhashedPackageJson(rootDir: string): InstalledPluginIndex {
-  const index = createIndexWithFileSignatures(rootDir);
-  const packageJsonPath = writePackageManifest(rootDir, "Installed");
-  const record = index.plugins[0];
-  if (!record) {
-    throw new Error("expected index record");
-  }
-  record.packageJson = {
-    path: "package.json",
-    hash: "",
-    fileSignature: fileSignature(packageJsonPath),
-  };
-  return {
-    ...index,
-    plugins: [record],
-  };
-}
-
 describe("loadPluginManifestRegistryForInstalledIndex", () => {
   it("reuses frozen installed-index fingerprints when file signatures are persisted", () => {
     const rootDir = makeTempDir();
@@ -197,97 +178,6 @@ describe("loadPluginManifestRegistryForInstalledIndex", () => {
     const second = resolveInstalledManifestRegistryIndexFingerprint(index);
 
     expect(second).not.toBe(first);
-  });
-
-  it("reuses package realpaths across mutable installed-index fingerprint builds", () => {
-    const rootDir = makeTempDir();
-    writePlugin(rootDir, "installed", "installed-");
-    const index = createIndexWithUnhashedPackageJson(rootDir);
-    const packageJsonPath = path.join(fs.realpathSync(rootDir), "package.json");
-    const realpathSpy = vi.spyOn(fs, "realpathSync");
-    let rootPathCalls: unknown[][];
-    let packageJsonPathCalls: unknown[][];
-    try {
-      resolveInstalledManifestRegistryIndexFingerprint(index);
-      resolveInstalledManifestRegistryIndexFingerprint(index);
-      rootPathCalls = realpathSpy.mock.calls.filter(([filePath]) => filePath === rootDir);
-      packageJsonPathCalls = realpathSpy.mock.calls.filter(
-        ([filePath]) => filePath === packageJsonPath,
-      );
-    } finally {
-      realpathSpy.mockRestore();
-    }
-
-    expect(rootPathCalls).toHaveLength(1);
-    expect(packageJsonPathCalls).toHaveLength(1);
-  });
-
-  it("clears package realpath memoization with plugin metadata lifecycle caches", () => {
-    const rootDir = makeTempDir();
-    writePlugin(rootDir, "installed", "installed-");
-    const index = createIndexWithUnhashedPackageJson(rootDir);
-    const packageJsonPath = path.join(fs.realpathSync(rootDir), "package.json");
-    const realpathSpy = vi.spyOn(fs, "realpathSync");
-    let rootPathCalls: unknown[][];
-    let packageJsonPathCalls: unknown[][];
-    try {
-      resolveInstalledManifestRegistryIndexFingerprint(index);
-      clearPluginMetadataLifecycleCaches();
-      resolveInstalledManifestRegistryIndexFingerprint(index);
-      rootPathCalls = realpathSpy.mock.calls.filter(([filePath]) => filePath === rootDir);
-      packageJsonPathCalls = realpathSpy.mock.calls.filter(
-        ([filePath]) => filePath === packageJsonPath,
-      );
-    } finally {
-      realpathSpy.mockRestore();
-    }
-
-    expect(rootPathCalls).toHaveLength(2);
-    expect(packageJsonPathCalls).toHaveLength(2);
-  });
-
-  it("bounds package realpath memoization across many fingerprint roots", () => {
-    const firstRootDir = makeTempDir();
-    writePlugin(firstRootDir, "installed", "installed-");
-    const firstIndex = createIndexWithUnhashedPackageJson(firstRootDir);
-    resolveInstalledManifestRegistryIndexFingerprint(firstIndex);
-
-    const records: InstalledPluginIndexRecord[] = [];
-    for (let index = 0; index < 300; index += 1) {
-      const rootDir = makeTempDir();
-      const pluginId = `installed-${index}`;
-      writePlugin(rootDir, pluginId, `${pluginId}-`);
-      const record = createIndexWithUnhashedPackageJson(rootDir).plugins[0];
-      if (!record) {
-        throw new Error("expected index record");
-      }
-      records.push({
-        ...record,
-        pluginId,
-        manifestHash: `manifest-hash-${index}`,
-      });
-    }
-    resolveInstalledManifestRegistryIndexFingerprint({
-      ...firstIndex,
-      plugins: records,
-    });
-
-    const packageJsonPath = path.join(fs.realpathSync(firstRootDir), "package.json");
-    const realpathSpy = vi.spyOn(fs, "realpathSync");
-    let rootPathCalls: unknown[][];
-    let packageJsonPathCalls: unknown[][];
-    try {
-      resolveInstalledManifestRegistryIndexFingerprint(firstIndex);
-      rootPathCalls = realpathSpy.mock.calls.filter(([filePath]) => filePath === firstRootDir);
-      packageJsonPathCalls = realpathSpy.mock.calls.filter(
-        ([filePath]) => filePath === packageJsonPath,
-      );
-    } finally {
-      realpathSpy.mockRestore();
-    }
-
-    expect(rootPathCalls).toHaveLength(1);
-    expect(packageJsonPathCalls).toHaveLength(1);
   });
 
   it("does not cache shallow-frozen installed-index fingerprints with mutable nested records", () => {
@@ -469,7 +359,7 @@ describe("loadPluginManifestRegistryForInstalledIndex", () => {
         ...index,
         plugins: [
           {
-            ...expectDefined(index.plugins[0], "index.plugins[0] test invariant"),
+            ...index.plugins[0],
             pluginId: "claude-bundle",
             manifestPath: path.join(rootDir, ".claude-plugin", "plugin.json"),
             source: rootDir,
@@ -519,7 +409,7 @@ describe("loadPluginManifestRegistryForInstalledIndex", () => {
         ...index,
         plugins: [
           {
-            ...expectDefined(index.plugins[0], "index.plugins[0] test invariant"),
+            ...index.plugins[0],
             packageChannel: {
               id: "installed",
               label: "Installed",
@@ -571,7 +461,7 @@ describe("loadPluginManifestRegistryForInstalledIndex", () => {
         ...index,
         plugins: [
           {
-            ...expectDefined(index.plugins[0], "index.plugins[0] test invariant"),
+            ...index.plugins[0],
             packageJson: {
               path: "..meta/package.json",
               hash: "old-index-hash",
@@ -624,7 +514,7 @@ describe("loadPluginManifestRegistryForInstalledIndex", () => {
           ...index,
           plugins: [
             {
-              ...expectDefined(index.plugins[0], "index.plugins[0] test invariant"),
+              ...index.plugins[0],
               packageJson: {
                 path: "package.json",
                 hash: "old-index-hash",
@@ -693,7 +583,7 @@ describe("loadPluginManifestRegistryForInstalledIndex", () => {
 
     const index = createIndex(rootDir);
     const persistedPlugin = {
-      ...expectDefined(index.plugins[0], "index.plugins[0] test invariant"),
+      ...index.plugins[0],
       pluginId: "claude-bundle",
       manifestPath: path.join(rootDir, ".claude-plugin", "plugin.json"),
       source: rootDir,

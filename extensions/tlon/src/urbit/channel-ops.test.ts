@@ -12,7 +12,7 @@ describe("Urbit channel operations", () => {
     vi.mocked(urbitFetch).mockReset();
   });
 
-  it("rejects malformed scry response JSON", async () => {
+  it("wraps malformed scry response JSON", async () => {
     const release = vi.fn().mockResolvedValue(undefined);
     vi.mocked(urbitFetch).mockResolvedValue({
       response: new Response("{not json", {
@@ -31,7 +31,7 @@ describe("Urbit channel operations", () => {
         },
         { path: "/chat/inbox.json", auditContext: "test" },
       ),
-    ).rejects.toThrow("Tlon scry response for path /chat/inbox.json: malformed JSON response");
+    ).rejects.toThrow("Urbit scry response was malformed JSON for path /chat/inbox.json");
     expect(release).toHaveBeenCalledTimes(1);
   });
 });

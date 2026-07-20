@@ -25,7 +25,7 @@ registerPluginMetadataProcessMemoLifecycleClear(() => {
   setCurrentManifestModelIdNormalizationRecords(undefined);
 });
 
-function resolvePluginMetadataControlPlaneFingerprint(
+export function resolvePluginMetadataControlPlaneFingerprint(
   config?: OpenClawConfig,
   options: Omit<ResolvePluginControlPlaneContextParams, "config"> = {},
 ): string {

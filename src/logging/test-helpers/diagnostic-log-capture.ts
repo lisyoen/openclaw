@@ -1,22 +1,15 @@
 // Diagnostic log capture helpers collect emitted diagnostic logs for tests.
 import {
-  hasPendingInternalDiagnosticEvent,
   onInternalDiagnosticEvent,
   type DiagnosticEventPayload,
 } from "../../infra/diagnostic-events.js";
 
 /** Captured diagnostic event shape for emitted log records. */
-type CapturedDiagnosticLogRecord = Extract<DiagnosticEventPayload, { type: "log.record" }>;
+export type CapturedDiagnosticLogRecord = Extract<DiagnosticEventPayload, { type: "log.record" }>;
 
 /** Flushes asynchronous diagnostic log record delivery. */
-async function flushDiagnosticLogRecords(): Promise<void> {
-  // The dispatcher drains 100 records per turn. A busy shared test process can
-  // have several batches ahead of the log under test, so wait for queued log
-  // records instead of assuming a fixed small number of turns.
-  for (let index = 0; index < 128; index += 1) {
-    if (!hasPendingInternalDiagnosticEvent((event) => event.type === "log.record")) {
-      return;
-    }
+export async function flushDiagnosticLogRecords(): Promise<void> {
+  for (let index = 0; index < 3; index += 1) {
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });

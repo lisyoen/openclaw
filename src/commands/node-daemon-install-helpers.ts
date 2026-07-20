@@ -9,7 +9,7 @@ import {
   resolveDaemonNodeBinDir,
 } from "./daemon-install-plan.shared.js";
 import type { DaemonInstallWarnFn } from "./daemon-install-runtime-warning.js";
-import type { GatewayDaemonRuntime } from "./daemon-runtime.js";
+import type { NodeDaemonRuntime } from "./node-daemon-runtime.js";
 
 type NodeInstallPlan = {
   programArguments: string[];
@@ -25,7 +25,6 @@ function buildNodeInstallEnvironmentValueSources(): Record<
 > {
   return {
     OPENCLAW_GATEWAY_TOKEN: "file",
-    OPENCLAW_GATEWAY_PASSWORD: "file", // pragma: allowlist secret
   };
 }
 
@@ -34,13 +33,11 @@ export async function buildNodeInstallPlan(params: {
   env: Record<string, string | undefined>;
   host: string;
   port: number;
-  contextPath?: string;
   tls?: boolean;
   tlsFingerprint?: string;
   nodeId?: string;
   displayName?: string;
-  installedAppsSharing?: boolean;
-  runtime: GatewayDaemonRuntime;
+  runtime: NodeDaemonRuntime;
   devMode?: boolean;
   nodePath?: string;
   warn?: DaemonInstallWarnFn;
@@ -54,12 +51,10 @@ export async function buildNodeInstallPlan(params: {
   const { programArguments, workingDirectory } = await resolveNodeProgramArguments({
     host: params.host,
     port: params.port,
-    contextPath: params.contextPath,
     tls: params.tls,
     tlsFingerprint: params.tlsFingerprint,
     nodeId: params.nodeId,
     displayName: params.displayName,
-    installedAppsSharing: params.installedAppsSharing,
     dev: devMode,
     runtime: params.runtime,
     nodePath,

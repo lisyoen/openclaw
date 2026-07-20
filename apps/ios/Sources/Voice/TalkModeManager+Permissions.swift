@@ -50,9 +50,33 @@ extension TalkModeManager {
                 onTimeout: { NSError(domain: "TalkMode", code: 6, userInfo: [
                     NSLocalizedDescriptionKey: "permission request timed out",
                 ]) },
-                operation: { await PermissionRequestBridge.awaitRequest(operation) })
+                operation: {
+                    await withCheckedContinuation(isolation: nil) { cont in
+                        Task { @MainActor in
+                            operation { ok in
+                                cont.resume(returning: ok)
+                            }
+                        }
+                    }
+                })
         } catch {
             return false
+        }
+    }
+
+    static func permissionMessage(
+        kind: String,
+        status: AVAudioSession.RecordPermission) -> String
+    {
+        switch status {
+        case .denied:
+            return "\(kind) permission denied"
+        case .undetermined:
+            return "\(kind) permission not granted"
+        case .granted:
+            return "\(kind) permission denied"
+        @unknown default:
+            return "\(kind) permission denied"
         }
     }
 
@@ -62,25 +86,15 @@ extension TalkModeManager {
     {
         switch status {
         case .denied:
-            return String(
-                format: String(localized: "%@ permission denied"),
-                kind)
+            return "\(kind) permission denied"
         case .restricted:
-            return String(
-                format: String(localized: "%@ permission restricted"),
-                kind)
+            return "\(kind) permission restricted"
         case .notDetermined:
-            return String(
-                format: String(localized: "%@ permission not granted"),
-                kind)
+            return "\(kind) permission not granted"
         case .authorized:
-            return String(
-                format: String(localized: "%@ permission denied"),
-                kind)
+            return "\(kind) permission denied"
         @unknown default:
-            return String(
-                format: String(localized: "%@ permission denied"),
-                kind)
+            return "\(kind) permission denied"
         }
     }
 }

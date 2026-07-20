@@ -6,21 +6,22 @@ import {
 } from "openclaw/plugin-sdk/channel-feedback";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
-import { requireWhatsAppInboundAdmission } from "../../inbound/admission.js";
-import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
+import { getSenderIdentity } from "../../identity.js";
+import type { WebInboundMessage } from "../../inbound/types.js";
 import { resolveWhatsAppReactionLevel } from "../../reaction-level.js";
 import { sendReactionWhatsApp } from "../../send.js";
 import { formatError } from "../../session.js";
 import { resolveWhatsAppAckEmoji } from "./ack-emoji.js";
 import { resolveGroupActivationFor } from "./group-activation.js";
-import { resolveReactionParticipant } from "./reaction-participant.js";
 
 export async function maybeSendAckReaction(params: {
   cfg: OpenClawConfig;
-  msg: AdmittedWebInboundMessage;
+  msg: WebInboundMessage;
   agentId: string;
   sessionKey: string;
+  conversationId: string;
   verbose: boolean;
+  accountId?: string;
   info: (obj: unknown, msg: string) => void;
   warn: (obj: unknown, msg: string) => void;
 }): Promise<AckReactionHandle | null> {
@@ -28,13 +29,11 @@ export async function maybeSendAckReaction(params: {
     return null;
   }
 
-  const admission = requireWhatsAppInboundAdmission(params.msg);
-  const accountId = admission.accountId;
   // Keep ackReaction as the emoji/scope control, while letting reactionLevel
   // suppress all automatic reactions when it is explicitly set to "off".
   const reactionLevel = resolveWhatsAppReactionLevel({
     cfg: params.cfg,
-    accountId,
+    accountId: params.accountId,
   });
   if (reactionLevel.level === "off") {
     return null;
@@ -48,26 +47,26 @@ export async function maybeSendAckReaction(params: {
   });
   const directEnabled = ackConfig?.direct ?? true;
   const groupMode = ackConfig?.group ?? "mentions";
-  const isGroup = admission.conversation.kind === "group";
-  const conversationIdForCheck = admission.conversation.id;
+  const conversationIdForCheck = params.msg.conversationId ?? params.msg.from;
 
-  const activation = isGroup
-    ? await resolveGroupActivationFor({
-        cfg: params.cfg,
-        accountId,
-        agentId: params.agentId,
-        sessionKey: params.sessionKey,
-        conversationId: conversationIdForCheck,
-      })
-    : null;
+  const activation =
+    params.msg.chatType === "group"
+      ? await resolveGroupActivationFor({
+          cfg: params.cfg,
+          accountId: params.accountId,
+          agentId: params.agentId,
+          sessionKey: params.sessionKey,
+          conversationId: conversationIdForCheck,
+        })
+      : null;
   const shouldSendReaction = () =>
     shouldAckReactionForWhatsApp({
       emoji,
-      isDirect: admission.conversation.kind === "direct",
-      isGroup,
+      isDirect: params.msg.chatType === "direct",
+      isGroup: params.msg.chatType === "group",
       directEnabled,
       groupMode,
-      wasMentioned: (params.msg.groupMention?.wasMentioned ?? params.msg.wasMentioned) === true,
+      wasMentioned: params.msg.wasMentioned === true,
       groupActivated: activation === "always",
     });
 
@@ -79,12 +78,12 @@ export async function maybeSendAckReaction(params: {
     { chatId: params.msg.platform.chatJid, messageId: params.msg.event.id, emoji },
     "sending ack reaction",
   );
-  const participant = resolveReactionParticipant(params.msg);
+  const sender = getSenderIdentity(params.msg);
   const reactionOptions = {
     verbose: params.verbose,
     fromMe: false,
-    ...(participant ? { participant } : {}),
-    accountId,
+    ...(sender.jid ? { participant: sender.jid } : {}),
+    ...(params.accountId ? { accountId: params.accountId } : {}),
     cfg: params.cfg,
   };
   return createAckReactionHandle({

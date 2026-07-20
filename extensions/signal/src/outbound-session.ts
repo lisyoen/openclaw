@@ -2,7 +2,6 @@
 import type { RoutePeer } from "openclaw/plugin-sdk/routing";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveSignalPeerId, resolveSignalRecipient, resolveSignalSender } from "./identity.js";
-import { normalizeSignalMessagingTarget } from "./normalize.js";
 import { looksLikeUuid } from "./uuid.js";
 
 export type ResolvedSignalOutboundTarget = {
@@ -13,13 +12,13 @@ export type ResolvedSignalOutboundTarget = {
 };
 
 export function resolveSignalOutboundTarget(target: string): ResolvedSignalOutboundTarget | null {
-  const normalized = normalizeSignalMessagingTarget(target);
-  if (!normalized) {
-    return null;
-  }
-  const lowered = normalizeLowercaseStringOrEmpty(normalized);
+  const stripped = target.replace(/^signal:/i, "").trim();
+  const lowered = normalizeLowercaseStringOrEmpty(stripped);
   if (lowered.startsWith("group:")) {
-    const groupId = normalized.slice("group:".length);
+    const groupId = stripped.slice("group:".length).trim();
+    if (!groupId) {
+      return null;
+    }
     return {
       peer: { kind: "group", id: groupId },
       chatType: "group",
@@ -28,18 +27,15 @@ export function resolveSignalOutboundTarget(target: string): ResolvedSignalOutbo
     };
   }
 
+  let recipient = stripped.trim();
   if (lowered.startsWith("username:")) {
-    // Keep delivery and session identity on the canonical username target. Phone normalization
-    // would digit-strip the username and could collide with a real phone session.
-    return {
-      peer: { kind: "direct", id: normalized },
-      chatType: "direct",
-      from: `signal:${normalized}`,
-      to: `signal:${normalized}`,
-    };
+    recipient = stripped.slice("username:".length).trim();
+  } else if (lowered.startsWith("u:")) {
+    recipient = stripped.slice("u:".length).trim();
   }
-
-  const recipient = normalized;
+  if (!recipient) {
+    return null;
+  }
 
   const uuidCandidate = normalizeLowercaseStringOrEmpty(recipient).startsWith("uuid:")
     ? recipient.slice("uuid:".length)

@@ -11,10 +11,10 @@ export function buildDiscordUnresolvedResults<T extends { input: string; resolve
   entries: string[],
   buildResult: (input: string) => T,
 ): T[] {
-  return entries.map(buildResult);
+  return entries.map((input) => buildResult(input));
 }
 
-function findDiscordGuildByName(
+export function findDiscordGuildByName(
   guilds: DiscordGuildSummary[],
   input: string,
 ): DiscordGuildSummary | undefined {

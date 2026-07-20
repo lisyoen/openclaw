@@ -10,7 +10,7 @@ import type {
 
 export type MemoryWikiImportedSourceGroup = "bridge" | "unsafe-local";
 
-type MemoryWikiImportedSourceStateEntry = {
+export type MemoryWikiImportedSourceStateEntry = {
   group: MemoryWikiImportedSourceGroup;
   pagePath: string;
   sourcePath: string;
@@ -19,28 +19,14 @@ type MemoryWikiImportedSourceStateEntry = {
   renderFingerprint: string;
 };
 
-type MemoryWikiImportedSourceState = {
+export type MemoryWikiImportedSourceState = {
   version: 1;
   entries: Record<string, MemoryWikiImportedSourceStateEntry>;
 };
 
-type MemoryWikiSourceSyncStateChanges = {
-  upsertKeys: Set<string>;
-  deleteKeys: Set<string>;
-};
-
-type MemoryWikiSourceSyncStateWritePlan = {
-  upsertKeys: string[];
-  deleteKeys: string[];
-};
-
 type MemoryWikiSourceSyncStateStore = {
   read: (vaultRoot: string) => Promise<MemoryWikiImportedSourceState>;
-  write: (
-    vaultRoot: string,
-    state: MemoryWikiImportedSourceState,
-    plan?: MemoryWikiSourceSyncStateWritePlan,
-  ) => Promise<void>;
+  write: (vaultRoot: string, state: MemoryWikiImportedSourceState) => Promise<void>;
 };
 
 type MemoryWikiSourceSyncStateRecord = MemoryWikiImportedSourceStateEntry & {
@@ -58,10 +44,6 @@ const EMPTY_STATE: MemoryWikiImportedSourceState = {
 
 let configuredSourceSyncStore: MemoryWikiSourceSyncStateStore | undefined;
 const memorySourceSyncStateByVault = new Map<string, MemoryWikiImportedSourceState>();
-const sourceSyncStateChanges = new WeakMap<
-  MemoryWikiImportedSourceState,
-  MemoryWikiSourceSyncStateChanges
->();
 
 export function resolveMemoryWikiSourceSyncStatePath(vaultRoot: string): string {
   return path.join(vaultRoot, ".openclaw-wiki", "source-sync.json");
@@ -165,7 +147,6 @@ export function createMemoryWikiSourceSyncStateStore(
     openKeyedStore<MemoryWikiSourceSyncStateRecord>({
       namespace: MEMORY_WIKI_SOURCE_SYNC_STATE_NAMESPACE,
       maxEntries: MEMORY_WIKI_SOURCE_SYNC_STATE_MAX_ENTRIES,
-      overflowPolicy: "reject-new",
     });
 
   return {
@@ -188,44 +169,25 @@ export function createMemoryWikiSourceSyncStateStore(
       }
       return { version: 1, entries };
     },
-    async write(vaultRoot, state, plan) {
+    async write(vaultRoot, state) {
       assertSourceSyncStateWithinLimit(state);
       const vaultRootKey = resolveVaultRootKey(vaultRoot);
       const store = openStore();
-      if (plan) {
-        for (const syncKey of plan.deleteKeys) {
-          await store.delete(resolveStateEntryKey(vaultRootKey, syncKey));
-        }
-        for (const syncKey of plan.upsertKeys) {
-          const entry = state.entries[syncKey];
-          if (!entry) {
-            throw new Error(`Missing tracked Memory Wiki source sync entry: ${syncKey}`);
-          }
-          await store.register(resolveStateEntryKey(vaultRootKey, syncKey), {
-            ...entry,
-            vaultRootKey,
-            syncKey,
-          });
-        }
-        return;
-      }
       const normalized = normalizeSourceSyncState(state);
-      const nextKeys = new Set(
-        Object.keys(normalized.entries).map((syncKey) =>
-          resolveStateEntryKey(vaultRootKey, syncKey),
-        ),
-      );
-      for (const row of await store.entries()) {
-        if (row.value.vaultRootKey === vaultRootKey && !nextKeys.has(row.key)) {
-          await store.delete(row.key);
-        }
-      }
+      const nextKeys = new Set<string>();
       for (const [syncKey, entry] of Object.entries(normalized.entries)) {
-        await store.register(resolveStateEntryKey(vaultRootKey, syncKey), {
+        const key = resolveStateEntryKey(vaultRootKey, syncKey);
+        nextKeys.add(key);
+        await store.register(key, {
           ...entry,
           vaultRootKey,
           syncKey,
         });
+      }
+      for (const row of await store.entries()) {
+        if (row.value.vaultRootKey === vaultRootKey && !nextKeys.has(row.key)) {
+          await store.delete(row.key);
+        }
       }
     },
   };
@@ -247,9 +209,7 @@ export async function readMemoryWikiSourceSyncState(
   vaultRoot: string,
   store?: MemoryWikiSourceSyncStateStore,
 ): Promise<MemoryWikiImportedSourceState> {
-  const state = await resolveSourceSyncStore(store).read(vaultRoot);
-  sourceSyncStateChanges.set(state, { upsertKeys: new Set(), deleteKeys: new Set() });
-  return state;
+  return await resolveSourceSyncStore(store).read(vaultRoot);
 }
 
 export async function readLegacyMemoryWikiSourceSyncState(
@@ -265,19 +225,7 @@ export async function writeMemoryWikiSourceSyncState(
   state: MemoryWikiImportedSourceState,
   store?: MemoryWikiSourceSyncStateStore,
 ): Promise<void> {
-  const changes = sourceSyncStateChanges.get(state);
-  if (changes && changes.upsertKeys.size === 0 && changes.deleteKeys.size === 0) {
-    return;
-  }
-  const plan = changes
-    ? {
-        upsertKeys: [...changes.upsertKeys],
-        deleteKeys: [...changes.deleteKeys],
-      }
-    : undefined;
-  await resolveSourceSyncStore(store).write(vaultRoot, state, plan);
-  changes?.upsertKeys.clear();
-  changes?.deleteKeys.clear();
+  await resolveSourceSyncStore(store).write(vaultRoot, state);
 }
 
 export async function shouldSkipImportedSourceWrite(params: {
@@ -324,9 +272,6 @@ export async function pruneImportedSourceEntries(params: {
     const pageAbsPath = path.join(params.vaultRoot, entry.pagePath);
     await fs.rm(pageAbsPath, { force: true }).catch(() => undefined);
     delete params.state.entries[syncKey];
-    const changes = sourceSyncStateChanges.get(params.state);
-    changes?.upsertKeys.delete(syncKey);
-    changes?.deleteKeys.add(syncKey);
     removedCount += 1;
   }
   return removedCount;
@@ -337,19 +282,5 @@ export function setImportedSourceEntry(params: {
   entry: MemoryWikiImportedSourceStateEntry;
   state: MemoryWikiImportedSourceState;
 }): void {
-  const current = params.state.entries[params.syncKey];
-  if (
-    current?.group === params.entry.group &&
-    current.pagePath === params.entry.pagePath &&
-    current.sourcePath === params.entry.sourcePath &&
-    current.sourceUpdatedAtMs === params.entry.sourceUpdatedAtMs &&
-    current.sourceSize === params.entry.sourceSize &&
-    current.renderFingerprint === params.entry.renderFingerprint
-  ) {
-    return;
-  }
   params.state.entries[params.syncKey] = params.entry;
-  const changes = sourceSyncStateChanges.get(params.state);
-  changes?.deleteKeys.delete(params.syncKey);
-  changes?.upsertKeys.add(params.syncKey);
 }

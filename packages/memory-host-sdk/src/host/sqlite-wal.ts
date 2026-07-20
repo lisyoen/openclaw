@@ -1,11 +1,8 @@
 // Public SQLite WAL maintenance facade for memory database callers.
 
 export {
-  configureSqliteConnectionPragmas,
+  DEFAULT_SQLITE_WAL_AUTOCHECKPOINT_PAGES,
+  DEFAULT_SQLITE_WAL_TRUNCATE_INTERVAL_MS,
   configureSqliteWalMaintenance,
 } from "./openclaw-runtime-io.js";
-export type {
-  SqliteConnectionPragmaOptions,
-  SqliteWalMaintenance,
-  SqliteWalMaintenanceOptions,
-} from "./openclaw-runtime-io.js";
+export type { SqliteWalMaintenance, SqliteWalMaintenanceOptions } from "./openclaw-runtime-io.js";

@@ -5,18 +5,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
-// This zero-install hook runs on Node 22.22.3+, where native TypeScript stripping is enabled.
-import { truncateUtf16Safe } from "../../packages/normalization-core/src/utf16-slice.ts";
-import { readBoundedResponseText as readBoundedResponseTextWithLimit } from "../lib/bounded-response.mjs";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const BULK_ADVISORY_PATH = "/-/npm/v1/security/advisories/bulk";
 const MIN_SEVERITY = "high";
 /** Maximum advisory error body characters retained in messages. */
-const BULK_ADVISORY_ERROR_BODY_MAX_CHARS = 4096;
-const BULK_ADVISORY_RESPONSE_BODY_MAX_BYTES = 8 * 1024 * 1024;
-const BULK_ADVISORY_REQUEST_TIMEOUT_MS = 60_000;
-const MAX_TIMER_TIMEOUT_MS = 2_147_000_000;
+export const BULK_ADVISORY_ERROR_BODY_MAX_CHARS = 4096;
+export const BULK_ADVISORY_RESPONSE_BODY_MAX_BYTES = 8 * 1024 * 1024;
+export const BULK_ADVISORY_REQUEST_TIMEOUT_MS = 60_000;
 const SEVERITY_RANK = {
   info: 0,
   low: 1,
@@ -43,7 +39,7 @@ const AUDIT_ADVISORY_VERSION_OVERRIDES = [
   },
 ];
 
-function normalizeAuditLevel(level) {
+export function normalizeAuditLevel(level) {
   const normalized = String(level ?? "").toLowerCase();
   if (normalized in SEVERITY_RANK) {
     return normalized;
@@ -364,7 +360,7 @@ function parsePnpmLockfileSections(lockfileText) {
   let hasImportersSection = false;
   let hasSnapshotsSection = false;
 
-  for (let index = 0; index < lines.length;) {
+  for (let index = 0; index < lines.length; ) {
     const line = lines[index];
     const trimmed = line.trim();
     const indentation = countIndentation(line);
@@ -698,11 +694,9 @@ function parsePositiveIntegerEnv(name, fallback) {
 }
 
 function resolveBulkAdvisoryRequestTimeoutMs() {
-  return clampTimerTimeoutMs(
-    parsePositiveIntegerEnv(
-      "OPENCLAW_PNPM_AUDIT_BULK_TIMEOUT_MS",
-      BULK_ADVISORY_REQUEST_TIMEOUT_MS,
-    ),
+  return parsePositiveIntegerEnv(
+    "OPENCLAW_PNPM_AUDIT_BULK_TIMEOUT_MS",
+    BULK_ADVISORY_REQUEST_TIMEOUT_MS,
   );
 }
 
@@ -713,24 +707,20 @@ function resolveBulkAdvisoryResponseBodyMaxBytes() {
   );
 }
 
-function clampTimerTimeoutMs(valueMs) {
-  const value = Number.isFinite(valueMs) ? valueMs : BULK_ADVISORY_REQUEST_TIMEOUT_MS;
-  return Math.min(Math.max(Math.floor(value), 1), MAX_TIMER_TIMEOUT_MS);
-}
-
 async function withBulkAdvisoryTimeout({ label, timeoutMs, run }) {
-  const resolvedTimeoutMs = clampTimerTimeoutMs(timeoutMs);
   const controller = new AbortController();
   let timeout;
-  const timeoutPromise = new Promise((_resolve, reject) => {
-    timeout = setTimeout(() => {
-      const error = new Error(`${label} exceeded timeout of ${resolvedTimeoutMs}ms`);
-      controller.abort(error);
-      reject(error);
-    }, resolvedTimeoutMs);
-  });
   try {
-    return await Promise.race([run({ signal: controller.signal, timeoutPromise }), timeoutPromise]);
+    return await Promise.race([
+      run(controller.signal),
+      new Promise((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          const error = new Error(`${label} exceeded timeout of ${timeoutMs}ms`);
+          controller.abort(error);
+          reject(error);
+        }, timeoutMs);
+      }),
+    ]);
   } finally {
     if (timeout) {
       clearTimeout(timeout);
@@ -738,19 +728,49 @@ async function withBulkAdvisoryTimeout({ label, timeoutMs, run }) {
   }
 }
 
-async function readBoundedResponseText(response, maxBytes, label, options = {}) {
-  return await readBoundedResponseTextWithLimit(response, label, maxBytes, {
-    signal: options.signal,
-    timeoutPromise: options.timeoutPromise,
-    formatTooLargeMessage: (messageLabel, bytes) => `${messageLabel} exceeded ${bytes} bytes`,
-    createTooLargeError: (message) => Object.assign(new Error(message), { code: "ETOOBIG" }),
-  });
+async function readBoundedResponseText(response, maxBytes, label) {
+  const contentLength = Number.parseInt(response.headers?.get?.("content-length") ?? "", 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw Object.assign(new Error(`${label} exceeded ${maxBytes} bytes`), { code: "ETOOBIG" });
+  }
+
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        const tail = decoder.decode();
+        if (tail) {
+          chunks.push(tail);
+        }
+        break;
+      }
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw Object.assign(new Error(`${label} exceeded ${maxBytes} bytes`), { code: "ETOOBIG" });
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return chunks.join("");
 }
 
 export async function readBoundedBulkAdvisoryErrorText(
   response,
   maxChars = BULK_ADVISORY_ERROR_BODY_MAX_CHARS,
-  options = {},
 ) {
   if (!response.body) {
     return "";
@@ -760,24 +780,10 @@ export async function readBoundedBulkAdvisoryErrorText(
   const decoder = new TextDecoder();
   let text = "";
   let truncated = false;
-  let canceled = false;
 
   try {
     while (text.length <= maxChars) {
-      const read = reader.read();
-      const readWithTimeout = options.timeoutPromise
-        ? Promise.race([
-            read,
-            options.timeoutPromise.catch((error) => {
-              canceled = true;
-              void Promise.resolve()
-                .then(() => reader.cancel())
-                .catch(() => undefined);
-              throw error;
-            }),
-          ])
-        : read;
-      const { done, value } = await readWithTimeout;
+      const { done, value } = await reader.read();
       if (done) {
         text += decoder.decode();
         break;
@@ -785,7 +791,7 @@ export async function readBoundedBulkAdvisoryErrorText(
 
       text += decoder.decode(value, { stream: true });
       if (text.length > maxChars) {
-        text = truncateUtf16Safe(text, maxChars);
+        text = text.slice(0, maxChars);
         truncated = true;
         break;
       }
@@ -793,7 +799,7 @@ export async function readBoundedBulkAdvisoryErrorText(
   } finally {
     if (truncated) {
       await reader.cancel().catch(() => undefined);
-    } else if (!canceled) {
+    } else {
       reader.releaseLock();
     }
   }
@@ -801,13 +807,8 @@ export async function readBoundedBulkAdvisoryErrorText(
   return truncated ? `${text}\n[truncated]` : text;
 }
 
-async function readBulkAdvisoryJson(response, maxBytes, options = {}) {
-  const text = await readBoundedResponseText(
-    response,
-    maxBytes,
-    "Bulk advisory response body",
-    options,
-  );
+async function readBulkAdvisoryJson(response, maxBytes) {
+  const text = await readBoundedResponseText(response, maxBytes, "Bulk advisory response body");
   if (!text.trim()) {
     throw new Error("Bulk advisory response body was empty");
   }
@@ -825,7 +826,7 @@ export async function fetchBulkAdvisories({
   return await withBulkAdvisoryTimeout({
     label: "Bulk advisory request",
     timeoutMs,
-    run: async ({ signal, timeoutPromise }) => {
+    run: async (signal) => {
       const response = await fetchImpl(url, {
         method: "POST",
         headers: {
@@ -837,18 +838,13 @@ export async function fetchBulkAdvisories({
       });
 
       if (!response.ok) {
-        const bodyText = await readBoundedBulkAdvisoryErrorText(response, undefined, {
-          timeoutPromise,
-        });
+        const bodyText = await readBoundedBulkAdvisoryErrorText(response);
         throw new Error(
           `Bulk advisory request failed (${response.status} ${response.statusText}): ${bodyText}`,
         );
       }
 
-      return await readBulkAdvisoryJson(response, responseBodyMaxBytes, {
-        signal,
-        timeoutPromise,
-      });
+      return await readBulkAdvisoryJson(response, responseBodyMaxBytes);
     },
   });
 }
@@ -918,7 +914,7 @@ export async function runPnpmAuditProd({
 }
 
 function readSeverityValue(value, optionName) {
-  if (value === undefined || value === "" || value.startsWith("-")) {
+  if (value === undefined || value === "" || value.startsWith("--")) {
     throw new Error(`${optionName} requires a value`);
   }
   return value;

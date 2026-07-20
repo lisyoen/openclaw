@@ -1,15 +1,14 @@
 // Gateway service lifecycle command core: install, uninstall, start, stop, restart.
 import type { Writable } from "node:stream";
-import { readBestEffortConfig } from "../../config/config.js";
+import { readBestEffortConfig, readConfigFileSnapshot } from "../../config/config.js";
+import { resolveFutureConfigActionBlock } from "../../config/future-version-guard.js";
+import { formatConfigIssueLines } from "../../config/issue-format.js";
 import { resolveIsNixMode } from "../../config/paths.js";
+import { isPluginPackagingRuntimeOutputInvalidConfigSnapshot } from "../../config/recovery-policy.js";
 import { checkTokenDrift } from "../../daemon/service-audit.js";
 import type { GatewayServiceRestartResult } from "../../daemon/service-types.js";
 import type { GatewayServiceStartRepairIssue, GatewayServiceState } from "../../daemon/service.js";
-import {
-  describeGatewayServiceRestart,
-  inspectGatewayServiceStartRepair,
-  startGatewayService,
-} from "../../daemon/service.js";
+import { describeGatewayServiceRestart, startGatewayService } from "../../daemon/service.js";
 import type { GatewayService } from "../../daemon/service.js";
 import { renderSystemdUnavailableHints } from "../../daemon/systemd-hints.js";
 import { isSystemdUserServiceAvailable } from "../../daemon/systemd.js";
@@ -18,22 +17,19 @@ import {
   clearGatewayRestartIntentSync,
   type GatewayRestartIntent,
   writeGatewayRestartIntentSync,
-} from "../../infra/restart-intent.js";
+} from "../../infra/restart.js";
 import { isWSL } from "../../infra/wsl.js";
 import { defaultRuntime } from "../../runtime.js";
 import { formatCliCommand } from "../command-format.js";
-import { formatInvalidConfigRecoveryHint } from "../config-recovery-hints.js";
-import { resolveGatewayTokenForDriftCheck } from "./gateway-token-drift.js";
 import {
-  appendServiceLifecycleRepairAudit,
-  createServiceLifecycleMutationAudit,
-} from "./lifecycle-audit.js";
-import { getConfigActionPreflightFailure } from "./lifecycle-config-preflight.js";
+  formatInvalidConfigRecoveryHint,
+  formatPluginPackagingRuntimeOutputRecoveryHint,
+} from "../config-recovery-hints.js";
+import { resolveGatewayTokenForDriftCheck } from "./gateway-token-drift.js";
 import {
   buildDaemonServiceSnapshot,
   createDaemonActionContext,
-  emitDaemonAlreadyRunning,
-  emitDaemonScheduledRestart,
+  type DaemonActionResponse,
 } from "./response.js";
 import { filterContainerGenericHints } from "./shared.js";
 
@@ -49,12 +45,11 @@ type RestartPostCheckContext = {
   json: boolean;
   stdout: Writable;
   warnings: string[];
-  warn?: (message: string) => void;
   fail: (message: string, hints?: string[]) => void;
 };
 
-type ServiceRecoveryResult<TResult extends "started" | "stopped" | "restarted"> = {
-  result: TResult;
+type ServiceRecoveryResult = {
+  result: "started" | "stopped" | "restarted";
   message?: string;
   warnings?: string[];
   loaded?: boolean;
@@ -63,7 +58,6 @@ type ServiceRecoveryResult<TResult extends "started" | "stopped" | "restarted"> 
 type ServiceRecoveryContext = {
   json: boolean;
   stdout: Writable;
-  warn?: (message: string) => void;
   fail: (message: string, hints?: string[]) => void;
 };
 
@@ -86,12 +80,15 @@ async function maybeAugmentSystemdHints(hints: string[]): Promise<string[]> {
   ];
 }
 
-function mergeWarnings(
-  captured: readonly string[],
-  reported?: readonly string[],
-): string[] | undefined {
-  const combined = [...captured, ...(reported ?? [])];
-  return combined.length > 0 ? combined : undefined;
+function emitActionMessage(params: {
+  json: boolean;
+  emit: ReturnType<typeof createDaemonActionContext>["emit"];
+  payload: Omit<DaemonActionResponse, "action">;
+}) {
+  params.emit(params.payload);
+  if (!params.json && params.payload.message) {
+    defaultRuntime.log(params.payload.message);
+  }
 }
 
 async function handleServiceNotLoaded(params: {
@@ -132,6 +129,57 @@ async function resolveServiceLoadedOrFail(params: {
     params.fail(`${params.serviceNoun} service check failed: ${String(err)}`);
     return null;
   }
+}
+
+/**
+ * Best-effort config validation. Returns a string describing the issues if
+ * config exists and is invalid, or null if config is valid/missing/unreadable.
+ *
+ * Note: This reads the config file snapshot in the current CLI environment.
+ * Configs using env vars only available in the service context (launchd/systemd)
+ * may produce false positives, but the check is intentionally best-effort —
+ * a false positive here is safer than a crash on startup. (#35862)
+ */
+type ConfigActionPreflightFailure = {
+  message: string;
+  hints?: string[];
+};
+
+function formatPluginPackagingRuntimeOutputRecoveryHints(): string[] {
+  return formatPluginPackagingRuntimeOutputRecoveryHint().split("\n");
+}
+
+async function getConfigActionPreflightFailure(
+  action: string,
+): Promise<ConfigActionPreflightFailure | null> {
+  let snapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>>;
+  try {
+    snapshot = await readConfigFileSnapshot();
+    if (snapshot.exists && !snapshot.valid) {
+      const message =
+        snapshot.issues.length > 0
+          ? formatConfigIssueLines(snapshot.issues, "", { normalizeRoot: true }).join("\n")
+          : "Unknown validation issue.";
+      return {
+        message,
+        ...(isPluginPackagingRuntimeOutputInvalidConfigSnapshot(snapshot)
+          ? { hints: formatPluginPackagingRuntimeOutputRecoveryHints() }
+          : {}),
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  const futureBlock = resolveFutureConfigActionBlock({ action, snapshot });
+  if (futureBlock) {
+    return {
+      message: futureBlock.message,
+      hints: futureBlock.hints,
+    };
+  }
+
+  return null;
 }
 
 export async function runServiceUninstall(params: {
@@ -197,15 +245,11 @@ export async function runServiceStart(params: {
   service: GatewayService;
   renderStartHints: () => string[];
   opts?: DaemonLifecycleOptions;
-  onNotLoaded?: (ctx: ServiceRecoveryContext) => Promise<ServiceRecoveryResult<"started"> | null>;
-  repairLoadedService?: (
-    ctx: ServiceStartRepairContext,
-  ) => Promise<ServiceRecoveryResult<"started"> | null>;
-  expectedPort?: number;
+  onNotLoaded?: (ctx: ServiceRecoveryContext) => Promise<ServiceRecoveryResult | null>;
+  repairLoadedService?: (ctx: ServiceStartRepairContext) => Promise<ServiceRecoveryResult | null>;
 }) {
   const json = Boolean(params.opts?.json);
-  const { stdout, warnings, emit, fail } = createDaemonActionContext({ action: "start", json });
-  const warn = json ? (message: string) => warnings.push(message) : undefined;
+  const { stdout, emit, fail } = createDaemonActionContext({ action: "start", json });
   const loaded = await resolveServiceLoadedOrFail({
     serviceNoun: params.serviceNoun,
     service: params.service,
@@ -231,13 +275,13 @@ export async function runServiceStart(params: {
   }
   if (!loaded) {
     try {
-      const handled = await params.onNotLoaded?.({ json, stdout, warn, fail });
+      const handled = await params.onNotLoaded?.({ json, stdout, fail });
       if (handled) {
         emit({
           ok: true,
           result: handled.result,
           message: handled.message,
-          warnings: mergeWarnings(warnings, handled.warnings),
+          warnings: handled.warnings,
           service: buildDaemonServiceSnapshot(params.service, handled.loaded ?? false),
         });
         if (!json && handled.message) {
@@ -252,19 +296,7 @@ export async function runServiceStart(params: {
     }
   }
   try {
-    const startResult = await startGatewayService(
-      params.service,
-      {
-        env: process.env,
-        stdout,
-        warn,
-        onMutation: createServiceLifecycleMutationAudit({
-          serviceNoun: params.serviceNoun,
-          action: "start",
-        }),
-      },
-      params.expectedPort,
-    );
+    const startResult = await startGatewayService(params.service, { env: process.env, stdout });
     if (startResult.outcome === "missing-install") {
       await handleServiceNotLoaded({
         serviceNoun: params.serviceNoun,
@@ -276,23 +308,19 @@ export async function runServiceStart(params: {
       });
       return;
     }
-    if (startResult.outcome === "already-running") {
-      if (startResult.issues.length > 0) {
-        const warning = `${params.serviceNoun} service already running, but its installed service definition needs repair: ${startResult.issues
-          .map((issue) => issue.message)
-          .join("; ")}; run \`openclaw gateway restart\` to apply.`;
-        warnings.push(warning);
-        if (!json) {
-          defaultRuntime.log(warning);
-        }
-      }
-      emitDaemonAlreadyRunning({
-        serviceNoun: params.serviceNoun,
-        service: params.service,
-        pid: startResult.state.runtime?.pid,
+    if (startResult.outcome === "scheduled") {
+      const restartStatus = describeGatewayServiceRestart(params.serviceNoun, {
+        outcome: "scheduled",
+      });
+      emitActionMessage({
         json,
-        warnings,
         emit,
+        payload: {
+          ok: true,
+          result: "scheduled",
+          message: restartStatus.message,
+          service: buildDaemonServiceSnapshot(params.service, startResult.state.loaded),
+        },
       });
       return;
     }
@@ -301,21 +329,16 @@ export async function runServiceStart(params: {
         const handled = await params.repairLoadedService?.({
           json,
           stdout,
-          warn,
           fail,
           state: startResult.state,
           issues: startResult.issues,
         });
         if (handled) {
-          appendServiceLifecycleRepairAudit({
-            serviceNoun: params.serviceNoun,
-            action: "start",
-          });
           emit({
             ok: true,
             result: handled.result,
             message: handled.message,
-            warnings: mergeWarnings(warnings, handled.warnings),
+            warnings: handled.warnings,
             service: buildDaemonServiceSnapshot(params.service, handled.loaded ?? true),
           });
           if (!json && handled.message) {
@@ -340,7 +363,6 @@ export async function runServiceStart(params: {
       ok: true,
       result: "started",
       service: buildDaemonServiceSnapshot(params.service, startResult.state.loaded),
-      warnings: warnings.length ? warnings : undefined,
     });
   } catch (err) {
     const hints = params.renderStartHints();
@@ -352,15 +374,11 @@ export async function runServiceStop(params: {
   serviceNoun: string;
   service: GatewayService;
   opts?: DaemonLifecycleOptions;
-  onNotLoaded?: (ctx: ServiceRecoveryContext) => Promise<ServiceRecoveryResult<"stopped"> | null>;
+  onNotLoaded?: (ctx: ServiceRecoveryContext) => Promise<ServiceRecoveryResult | null>;
   stopWhenNotLoaded?: boolean;
 }) {
   const json = Boolean(params.opts?.json);
   const { stdout, emit, fail } = createDaemonActionContext({ action: "stop", json });
-  const gatewayStopAudit = createServiceLifecycleMutationAudit({
-    serviceNoun: params.serviceNoun,
-    action: "stop",
-  });
 
   const loaded = await resolveServiceLoadedOrFail({
     serviceNoun: params.serviceNoun,
@@ -380,12 +398,7 @@ export async function runServiceStop(params: {
   if (!loaded) {
     if (params.stopWhenNotLoaded) {
       try {
-        await params.service.stop({
-          env: process.env,
-          stdout,
-          disable: params.opts?.disable,
-          onMutation: gatewayStopAudit,
-        });
+        await params.service.stop({ env: process.env, stdout, disable: params.opts?.disable });
       } catch (err) {
         fail(`${params.serviceNoun} stop failed: ${String(err)}`);
         return;
@@ -428,12 +441,7 @@ export async function runServiceStop(params: {
     return;
   }
   try {
-    await params.service.stop({
-      env: process.env,
-      stdout,
-      disable: params.opts?.disable,
-      onMutation: gatewayStopAudit,
-    });
+    await params.service.stop({ env: process.env, stdout, disable: params.opts?.disable });
   } catch (err) {
     fail(`${params.serviceNoun} stop failed: ${String(err)}`);
     return;
@@ -458,55 +466,31 @@ export async function runServiceRestart(params: {
   renderStartHints: () => string[];
   opts?: DaemonLifecycleOptions;
   checkTokenDrift?: boolean;
-  expectedPort?: number;
-  repairLoadedService?: (
-    ctx: ServiceStartRepairContext,
-  ) => Promise<ServiceRecoveryResult<"restarted"> | null>;
   postRestartCheck?: (ctx: RestartPostCheckContext) => Promise<GatewayServiceRestartResult | void>;
-  onNotLoaded?: (ctx: ServiceRecoveryContext) => Promise<ServiceRecoveryResult<"restarted"> | null>;
+  onNotLoaded?: (ctx: ServiceRecoveryContext) => Promise<ServiceRecoveryResult | null>;
 }): Promise<boolean> {
   const json = Boolean(params.opts?.json);
-  const { stdout, warnings, emit, fail } = createDaemonActionContext({ action: "restart", json });
-  const warn = json ? (message: string) => warnings.push(message) : undefined;
+  const { stdout, emit, fail } = createDaemonActionContext({ action: "restart", json });
+  const warnings: string[] = [];
   const restartIntent = params.opts?.restartIntent;
-  const gatewayRestartAudit = createServiceLifecycleMutationAudit({
-    serviceNoun: params.serviceNoun,
-    action: "restart",
-  });
-  let handledRecovery: ServiceRecoveryResult<"restarted"> | null = null;
-  let handledRepair: ServiceRecoveryResult<"restarted"> | null = null;
+  let handledRecovery: ServiceRecoveryResult | null = null;
   let recoveredLoadedState: boolean | null = null;
-  let wroteRestartIntent = false;
-  const prepareGatewayRestartIntent = async () => {
-    if (params.serviceNoun !== "Gateway" || wroteRestartIntent) {
-      return;
-    }
-    const runtime = await params.service.readRuntime(process.env).catch(() => null);
-    wroteRestartIntent = writeGatewayRestartIntentSync({
-      targetPid: runtime?.pid,
-      reason: "gateway.restart",
-      ...(restartIntent ? { intent: restartIntent } : {}),
-    });
-  };
-  const clearPreparedRestartIntent = () => {
-    if (wroteRestartIntent) {
-      clearGatewayRestartIntentSync();
-      wroteRestartIntent = false;
-    }
-  };
   const emitScheduledRestart = (
     restartStatus: ReturnType<typeof describeGatewayServiceRestart>,
     serviceLoaded: boolean,
   ) => {
-    return emitDaemonScheduledRestart({
+    emitActionMessage({
       json,
       emit,
-      result: restartStatus.daemonActionResult,
-      message: restartStatus.message,
-      service: params.service,
-      loaded: serviceLoaded,
-      warnings,
+      payload: {
+        ok: true,
+        result: restartStatus.daemonActionResult,
+        message: restartStatus.message,
+        service: buildDaemonServiceSnapshot(params.service, serviceLoaded),
+        warnings: warnings.length ? warnings : undefined,
+      },
     });
+    return true;
   };
 
   const loaded = await resolveServiceLoadedOrFail({
@@ -535,7 +519,7 @@ export async function runServiceRestart(params: {
 
   if (!loaded) {
     try {
-      handledRecovery = (await params.onNotLoaded?.({ json, stdout, warn, fail })) ?? null;
+      handledRecovery = (await params.onNotLoaded?.({ json, stdout, fail })) ?? null;
     } catch (err) {
       fail(`${params.serviceNoun} restart failed: ${String(err)}`);
       return false;
@@ -555,50 +539,6 @@ export async function runServiceRestart(params: {
       warnings.push(...handledRecovery.warnings);
     }
     recoveredLoadedState = handledRecovery.loaded ?? null;
-  }
-
-  if (loaded && params.repairLoadedService) {
-    try {
-      const { state, issues } = await inspectGatewayServiceStartRepair(
-        params.service,
-        { env: process.env },
-        params.expectedPort,
-      );
-      if (issues.length > 0) {
-        await prepareGatewayRestartIntent();
-        handledRepair = await params.repairLoadedService({
-          json,
-          stdout,
-          warn,
-          fail,
-          state,
-          issues,
-        });
-        if (!handledRepair) {
-          clearPreparedRestartIntent();
-          fail(
-            `${params.serviceNoun} service needs repair before restart: ${issues
-              .map((issue) => issue.message)
-              .join("; ")}`,
-            [formatCliCommand("openclaw gateway install --force")],
-          );
-          return false;
-        }
-        appendServiceLifecycleRepairAudit({
-          serviceNoun: params.serviceNoun,
-          action: "restart",
-          pid: state.runtime?.pid,
-        });
-        if (handledRepair.warnings?.length) {
-          warnings.push(...handledRepair.warnings);
-        }
-      }
-    } catch (err) {
-      clearPreparedRestartIntent();
-      const hints = params.renderStartHints();
-      fail(`${params.serviceNoun} repair failed: ${String(err)}`, hints);
-      return false;
-    }
   }
 
   if (loaded && params.checkTokenDrift) {
@@ -639,17 +579,22 @@ export async function runServiceRestart(params: {
 
   try {
     let restartResult: GatewayServiceRestartResult = { outcome: "completed" };
-    if (loaded && !handledRepair) {
-      await prepareGatewayRestartIntent();
-      try {
-        restartResult = await params.service.restart({
-          env: process.env,
-          stdout,
-          warn,
-          onMutation: gatewayRestartAudit,
+    if (loaded) {
+      let wroteRestartIntent = false;
+      if (params.serviceNoun === "Gateway") {
+        const runtime = await params.service.readRuntime(process.env).catch(() => null);
+        wroteRestartIntent = writeGatewayRestartIntentSync({
+          targetPid: runtime?.pid,
+          reason: "gateway.restart",
+          ...(restartIntent ? { intent: restartIntent } : {}),
         });
+      }
+      try {
+        restartResult = await params.service.restart({ env: process.env, stdout });
       } catch (err) {
-        clearPreparedRestartIntent();
+        if (wroteRestartIntent) {
+          clearGatewayRestartIntentSync();
+        }
         throw err;
       }
     }
@@ -658,13 +603,7 @@ export async function runServiceRestart(params: {
       return emitScheduledRestart(restartStatus, loaded || recoveredLoadedState === true);
     }
     if (params.postRestartCheck) {
-      const postRestartResult = await params.postRestartCheck({
-        json,
-        stdout,
-        warnings,
-        warn,
-        fail,
-      });
+      const postRestartResult = await params.postRestartCheck({ json, stdout, warnings, fail });
       if (postRestartResult) {
         restartStatus = describeGatewayServiceRestart(params.serviceNoun, postRestartResult);
         if (restartStatus.scheduled) {
@@ -685,13 +624,12 @@ export async function runServiceRestart(params: {
     emit({
       ok: true,
       result: "restarted",
-      message: handledRecovery?.message ?? handledRepair?.message,
+      message: handledRecovery?.message,
       service: buildDaemonServiceSnapshot(params.service, restarted),
       warnings: warnings.length ? warnings : undefined,
     });
-    const actionMessage = handledRecovery?.message ?? handledRepair?.message;
-    if (!json && actionMessage) {
-      defaultRuntime.log(actionMessage);
+    if (!json && handledRecovery?.message) {
+      defaultRuntime.log(handledRecovery.message);
     }
     return true;
   } catch (err) {

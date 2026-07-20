@@ -308,7 +308,6 @@ describe("provider-catalog-shared manifest provider configs", () => {
           contextWindow: 128_000,
           contextTokens: 64_000,
           maxTokens: 8192,
-          thinkingLevelMap: { off: null, minimal: "low", max: "max" },
           mediaInput: {
             image: { maxSidePx: 2048, preferredSidePx: 1024, tokenMode: "detail" },
           },
@@ -360,7 +359,6 @@ describe("provider-catalog-shared manifest provider configs", () => {
           contextWindow: 128_000,
           contextTokens: 64_000,
           maxTokens: 8192,
-          thinkingLevelMap: { off: null, minimal: "low", max: "max" },
           mediaInput: {
             image: { maxSidePx: 2048, preferredSidePx: 1024, tokenMode: "detail" },
           },

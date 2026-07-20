@@ -5,7 +5,7 @@ import type { ActiveRunQueueAction } from "./queue-policy.js";
 import type { QueueSettings } from "./queue.js";
 
 /** Snapshot of the active reply run state used by queue admission. */
-type ReplyRunQueueBusyState = {
+export type ReplyRunQueueBusyState = {
   activeSessionId: string | undefined;
   isActive: boolean;
   isStreaming: boolean;

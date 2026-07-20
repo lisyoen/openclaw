@@ -2,22 +2,68 @@ import SwiftUI
 import UIKit
 
 struct TalkRuntimeIssueBanner: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     let issue: TalkRuntimeIssue
     var onOpenSettings: (() -> Void)?
     var onShowDetails: (() -> Void)?
 
     var body: some View {
-        OpenClawNoticeBanner(
-            icon: self.iconName,
-            title: .verbatim(self.issue.fallbackBannerTitle),
-            message: .verbatim(self.issue.fallbackBannerMessage),
-            ownerLabel: .verbatim(self.issue.fallbackBannerOwnerLabel),
-            tint: self.tint,
-            detail: .accent(self.issue.displayMessage),
-            primaryActionTitle: "Open Settings",
-            onPrimaryAction: self.onOpenSettings,
-            secondaryActionTitle: "Details",
-            onSecondaryAction: self.onShowDetails)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: self.iconName)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(self.tint)
+                    .frame(width: 20)
+                    .padding(.top, 2)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(self.issue.fallbackBannerTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                        Text(self.issue.fallbackBannerOwnerLabel)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(self.issue.fallbackBannerMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(self.issue.displayMessage)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(self.tint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(spacing: 10) {
+                if let onOpenSettings {
+                    Button("Open Settings", action: onOpenSettings)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+                if let onShowDetails {
+                    Button("Details", action: onShowDetails)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(13)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThickMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(self.colorScheme == .dark ? 0.12 : 0.07), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(self.colorScheme == .dark ? 0.16 : 0.07), radius: 16, y: 7)
+        }
     }
 
     private var iconName: String {
@@ -25,7 +71,7 @@ struct TalkRuntimeIssueBanner: View {
     }
 
     private var tint: Color {
-        OpenClawBrand.warn
+        .orange
     }
 }
 
@@ -43,39 +89,33 @@ struct TalkRuntimeIssueDetailsSheet: View {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(self.issue.fallbackBannerTitle)
-                            .font(OpenClawType.title3SemiBold)
+                            .font(.title3.weight(.semibold))
                         Text(self.issue.fallbackBannerMessage)
-                            .font(OpenClawType.body)
+                            .font(.body)
                             .foregroundStyle(.secondary)
                         Text(self.issue.displayMessage)
-                            .font(OpenClawType.footnoteSemiBold)
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
                 }
 
-                Section {
+                Section("Technical details") {
                     Text(verbatim: self.issue.technicalDetails)
-                        .font(OpenClawType.monoFootnote)
+                        .font(.system(.footnote, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
-                    Button {
+                    Button("Copy diagnostics") {
                         UIPasteboard.general.string = self.issue.technicalDetails
                         self.copyFeedback = "Copied diagnostics"
-                    } label: {
-                        Text("Copy diagnostics")
-                            .font(OpenClawType.subheadSemiBold)
                     }
-                } header: {
-                    Text("Technical details")
-                        .font(OpenClawType.captionSemiBold)
                 }
 
                 if let copyFeedback {
                     Section {
                         Text(copyFeedback)
-                            .font(OpenClawType.footnote)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -85,21 +125,15 @@ struct TalkRuntimeIssueDetailsSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if let onOpenSettings {
-                        Button {
+                        Button("Open Settings") {
                             self.dismiss()
                             onOpenSettings()
-                        } label: {
-                            Text("Open Settings")
-                                .font(OpenClawType.subheadSemiBold)
                         }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
+                    Button("Done") {
                         self.dismiss()
-                    } label: {
-                        Text("Done")
-                            .font(OpenClawType.subheadSemiBold)
                     }
                 }
             }

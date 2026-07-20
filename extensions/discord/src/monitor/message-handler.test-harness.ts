@@ -47,7 +47,6 @@ export async function createBaseDiscordMessageContext(
     commandAuthorized: true,
     baseText: "hi",
     messageText: "hi",
-    preparedMedia: [],
     wasMentioned: false,
     shouldRequireMention: true,
     canDetectMention: true,

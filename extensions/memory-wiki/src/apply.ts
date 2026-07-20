@@ -5,20 +5,18 @@ import {
   withTrailingNewline,
 } from "openclaw/plugin-sdk/memory-host-markdown";
 import { readFiniteNumberParam } from "openclaw/plugin-sdk/param-readers";
-import { FsSafeError, root as fsRoot } from "openclaw/plugin-sdk/security-runtime";
+import { root as fsRoot } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeStringEntries, uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { compileMemoryWikiVault, type CompileMemoryWikiResult } from "./compile.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import {
   parseWikiMarkdown,
   renderWikiMarkdown,
-  slugifyWikiPageStem,
   slugifyWikiSegment,
   normalizeSourceIds,
   normalizeWikiClaims,
   type WikiClaim,
 } from "./markdown.js";
-import { withMemoryWikiVaultMutation } from "./mutation-coordinator.js";
 import {
   readQueryableWikiPages,
   resolveQueryableWikiPageByLookup,
@@ -54,7 +52,9 @@ type UpdateMetadataMemoryWikiMutation = {
   status?: string;
 };
 
-type ApplyMemoryWikiMutation = CreateSynthesisMemoryWikiMutation | UpdateMetadataMemoryWikiMutation;
+export type ApplyMemoryWikiMutation =
+  | CreateSynthesisMemoryWikiMutation
+  | UpdateMetadataMemoryWikiMutation;
 
 type MemoryWikiMutationInputOp = ApplyMemoryWikiMutation["op"] | "synthesis" | "metadata";
 
@@ -190,27 +190,6 @@ function buildSynthesisBody(params: {
   return ensureHumanNotesBlock(withGenerated);
 }
 
-type VaultRoot = Awaited<ReturnType<typeof fsRoot>>;
-
-function isMissingWikiPageError(error: unknown): boolean {
-  return error instanceof FsSafeError && error.code === "not-found";
-}
-
-async function readExistingWikiPage(root: VaultRoot, pagePath: string): Promise<string> {
-  try {
-    return await root.readText(pagePath);
-  } catch {
-    try {
-      return await root.readText(pagePath);
-    } catch (retryError) {
-      if (isMissingWikiPageError(retryError)) {
-        return "";
-      }
-      throw retryError;
-    }
-  }
-}
-
 async function writeWikiPage(params: {
   rootDir: string;
   relativePath: string;
@@ -224,7 +203,7 @@ async function writeWikiPage(params: {
       body: params.body,
     }),
   );
-  const existing = await readExistingWikiPage(root, params.relativePath);
+  const existing = await root.readText(params.relativePath).catch(() => "");
   if (existing === rendered) {
     return false;
   }
@@ -245,10 +224,9 @@ async function applyCreateSynthesisMutation(params: {
   mutation: CreateSynthesisMemoryWikiMutation;
 }): Promise<{ changed: boolean; pagePath: string; pageId: string }> {
   const slug = slugifyWikiSegment(params.mutation.title);
-  const pageStem = slugifyWikiPageStem(params.mutation.title);
-  const pagePath = path.join("syntheses", `${pageStem}.md`).replace(/\\/g, "/");
+  const pagePath = path.join("syntheses", `${slug}.md`).replace(/\\/g, "/");
   const root = await fsRoot(params.config.vault.path);
-  const existing = await readExistingWikiPage(root, pagePath);
+  const existing = await root.readText(pagePath).catch(() => "");
   const parsed = parseWikiMarkdown(existing);
   const pageId =
     (typeof parsed.frontmatter.id === "string" && parsed.frontmatter.id.trim()) ||
@@ -358,7 +336,7 @@ async function applyUpdateMetadataMutation(params: {
   };
 }
 
-async function applyMemoryWikiMutationUnlocked(params: {
+export async function applyMemoryWikiMutation(params: {
   config: ResolvedMemoryWikiConfig;
   mutation: ApplyMemoryWikiMutation;
 }): Promise<ApplyMemoryWikiMutationResult> {
@@ -381,13 +359,4 @@ async function applyMemoryWikiMutationUnlocked(params: {
     ...(result.pageId ? { pageId: result.pageId } : {}),
     compile,
   };
-}
-
-export async function applyMemoryWikiMutation(params: {
-  config: ResolvedMemoryWikiConfig;
-  mutation: ApplyMemoryWikiMutation;
-}): Promise<ApplyMemoryWikiMutationResult> {
-  return await withMemoryWikiVaultMutation(params.config.vault.path, () =>
-    applyMemoryWikiMutationUnlocked(params),
-  );
 }

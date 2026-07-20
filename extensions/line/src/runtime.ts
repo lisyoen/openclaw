@@ -22,9 +22,12 @@ type LineRuntime = PluginRuntime & {
   };
 };
 
-const { setRuntime: setLineRuntime, getRuntime: getLineRuntime } =
-  createPluginRuntimeStore<LineRuntime>({
-    pluginId: "line",
-    errorMessage: "LINE runtime not initialized - plugin not registered",
-  });
-export { getLineRuntime, setLineRuntime };
+const {
+  setRuntime: setLineRuntime,
+  clearRuntime: clearLineRuntime,
+  getRuntime: getLineRuntime,
+} = createPluginRuntimeStore<LineRuntime>({
+  pluginId: "line",
+  errorMessage: "LINE runtime not initialized - plugin not registered",
+});
+export { clearLineRuntime, getLineRuntime, setLineRuntime };

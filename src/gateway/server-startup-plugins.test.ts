@@ -205,7 +205,6 @@ async function prepareBootstrapWithRuntimeConfig(
   options: {
     loadRuntimePlugins?: boolean;
     loadSetupRuntimePlugins?: boolean;
-    workerProviderIds?: readonly string[];
   } = {},
 ) {
   const log = createLog();
@@ -399,17 +398,6 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
     });
   });
 
-  it("threads durable worker provider ids into startup lookup planning", async () => {
-    await prepareBootstrapWithRuntimeConfig({ channels: {} } as OpenClawConfig, {
-      workerProviderIds: ["static-ssh"],
-    });
-
-    const lookupInput = firstCallArg<{ workerProviderIds?: readonly string[] }>(
-      loadPluginLookUpTable,
-    );
-    expect(lookupInput.workerProviderIds).toEqual(["static-ssh"]);
-  });
-
   it("bypasses plugin lookup when plugins are globally disabled", async () => {
     const cfg = {
       channels: {
@@ -426,9 +414,7 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
       },
     } as OpenClawConfig;
 
-    const result = await prepareBootstrapWithRuntimeConfig(cfg, {
-      workerProviderIds: ["static-ssh"],
-    });
+    const result = await prepareBootstrapWithRuntimeConfig(cfg);
     expect(result.startupPluginIds).toEqual([]);
     expect(result.deferredConfiguredChannelPluginIds).toEqual([]);
     expect(result.pluginLookUpTable).toBeUndefined();
@@ -450,7 +436,7 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
   });
 });
 
-describe("loadGatewayStartupPluginRuntime", () => {
+describe("loadGatewayStartupPluginRuntime memory provider diagnostics", () => {
   beforeEach(() => {
     loadGatewayStartupPlugins.mockClear().mockReturnValue({
       pluginRegistry: { diagnostics: [], gatewayHandlers: {}, plugins: [] },

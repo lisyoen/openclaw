@@ -155,9 +155,7 @@ struct RemoteGatewayProbeSuccess: Equatable {
 enum RemoteGatewayProbe {
     @MainActor
     static func run() async -> RemoteGatewayProbeResult {
-        guard AppStateStore.shared.syncGatewayConfigNow() else {
-            return .failed("Save valid remote gateway settings before checking the connection")
-        }
+        AppStateStore.shared.syncGatewayConfigNow()
         let settings = CommandResolver.connectionSettings()
         let transport = AppStateStore.shared.remoteTransport
 
@@ -177,18 +175,14 @@ enum RemoteGatewayProbe {
             if let validationMessage = CommandResolver.sshTargetValidationMessage(trimmedTarget) {
                 return .failed(validationMessage)
             }
-            guard let sshCommand = self.sshCheckCommand(
-                target: settings.target,
-                identity: settings.identity,
-                hostKeyPolicy: settings.sshHostKeyPolicy)
-            else {
+            guard let sshCommand = self.sshCheckCommand(target: settings.target, identity: settings.identity) else {
                 return .failed("SSH target is invalid")
             }
 
             let sshResult = await ShellExecutor.run(
                 command: sshCommand,
                 cwd: nil,
-                env: CommandResolver.sshEnvironment(),
+                env: nil,
                 timeout: 8)
             guard sshResult.ok else {
                 return .failed(self.formatSSHFailure(sshResult, target: settings.target))
@@ -211,16 +205,12 @@ enum RemoteGatewayProbe {
         GatewayRemoteConfig.normalizeGatewayUrl(raw) != nil
     }
 
-    private static func sshCheckCommand(
-        target: String,
-        identity: String,
-        hostKeyPolicy: CommandResolver.SSHHostKeyPolicy) -> [String]?
-    {
+    private static func sshCheckCommand(target: String, identity: String) -> [String]? {
         guard let parsed = CommandResolver.parseSSHTarget(target) else { return nil }
         let options = [
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=5",
-        ] + hostKeyPolicy.commandOptions
+        ] + CommandResolver.strictHostKeyCheckingSSHOptions + CommandResolver.updateHostKeysSSHOptions
         let args = CommandResolver.sshArguments(
             target: parsed,
             identity: identity,
@@ -228,15 +218,6 @@ enum RemoteGatewayProbe {
             remoteCommand: ["echo", "ok"])
         return ["/usr/bin/ssh"] + args
     }
-
-    #if SWIFT_PACKAGE
-    static func _testSSHCheckCommand(
-        target: String,
-        hostKeyPolicy: CommandResolver.SSHHostKeyPolicy) -> [String]?
-    {
-        self.sshCheckCommand(target: target, identity: "", hostKeyPolicy: hostKeyPolicy)
-    }
-    #endif
 
     private static func formatSSHFailure(_ response: Response, target: String) -> String {
         let payload = response.payload.flatMap { String(data: $0, encoding: .utf8) }

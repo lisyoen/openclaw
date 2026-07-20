@@ -9,7 +9,10 @@ import os from "node:os";
 import path from "node:path";
 import { completeSimple, type Model } from "openclaw/plugin-sdk/llm";
 import { describe, expect, it } from "vitest";
-import { validateAnthropicSetupToken } from "../commands/auth-token.js";
+import {
+  ANTHROPIC_SETUP_TOKEN_PREFIX,
+  validateAnthropicSetupToken,
+} from "../commands/auth-token.js";
 import { getRuntimeConfig } from "../config/config.js";
 import { discoverAuthStorage, discoverModels } from "./agent-model-discovery.js";
 import { resolveDefaultAgentDir } from "./agent-scope.js";
@@ -39,7 +42,7 @@ type TokenSource = {
 };
 
 function isSetupToken(value: string): boolean {
-  return validateAnthropicSetupToken(value) === undefined;
+  return value.startsWith(ANTHROPIC_SETUP_TOKEN_PREFIX);
 }
 
 function listSetupTokenProfiles(store: {

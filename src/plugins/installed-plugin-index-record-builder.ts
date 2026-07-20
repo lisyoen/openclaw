@@ -70,6 +70,12 @@ export function collectPluginManifestCompatCodes(
   record: PluginManifestRecord,
 ): readonly PluginCompatCode[] {
   const codes: PluginCompatCode[] = [];
+  if (record.providerAuthEnvVars && Object.keys(record.providerAuthEnvVars).length > 0) {
+    codes.push("provider-auth-env-vars");
+  }
+  if (record.channelEnvVars && Object.keys(record.channelEnvVars).length > 0) {
+    codes.push("channel-env-vars");
+  }
   if (record.activation?.onProviders?.length) {
     codes.push("activation-provider-hint");
   }
@@ -316,9 +322,6 @@ export function buildInstalledPluginIndexRecords(params: {
     }
     if (packageChannel) {
       indexRecord.packageChannel = packageChannel;
-    }
-    if (candidate?.packageManifest?.build) {
-      indexRecord.packageBuild = structuredClone(candidate.packageManifest.build);
     }
     if (packageJson) {
       indexRecord.packageJson = packageJson;

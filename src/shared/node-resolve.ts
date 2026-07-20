@@ -4,7 +4,6 @@ import { type NodeMatchCandidate, resolveNodeIdFromCandidates } from "./node-mat
 
 type ResolveNodeFromListOptions<TNode extends NodeMatchCandidate> = {
   allowDefault?: boolean;
-  allowCompactDisplayName?: boolean;
   pickDefaultNode?: (nodes: TNode[]) => TNode | null;
 };
 
@@ -24,7 +23,7 @@ export function resolveNodeIdFromNodeList<TNode extends NodeMatchCandidate>(
     }
     throw new Error("node required");
   }
-  return resolveNodeIdFromCandidates(nodes, q, options.allowCompactDisplayName);
+  return resolveNodeIdFromCandidates(nodes, q);
 }
 
 /** Resolves a full node entry, preserving synthetic defaults returned by the picker. */

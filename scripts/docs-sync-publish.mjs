@@ -91,13 +91,6 @@ const GENERATED_LOCALES = [
     navMode: "clone-en",
   },
   {
-    language: "hi",
-    dir: "hi",
-    navFile: "hi-navigation.json",
-    tmFile: "hi.tm.jsonl",
-    navMode: "clone-en",
-  },
-  {
     language: "ar",
     dir: "ar",
     navFile: "ar-navigation.json",
@@ -175,18 +168,11 @@ const GENERATED_LOCALES = [
     // once the docs host accepts it.
     navigation: false,
   },
-  {
-    language: "ru",
-    dir: "ru",
-    navFile: "ru-navigation.json",
-    tmFile: "ru.tm.jsonl",
-    navMode: "clone-en",
-  },
 ];
 
 function readOptionValue(argv, index, optionName) {
   const value = argv[index + 1];
-  if (value === undefined || value === "" || value.startsWith("-")) {
+  if (value === undefined || value === "" || value.startsWith("--")) {
     throw new Error(`${optionName} requires a value`);
   }
   return value;
@@ -439,33 +425,30 @@ function composeDocsConfig() {
   };
 }
 
-export function reportOrphanLocaleDocs(targetDocsDir) {
-  let orphaned = 0;
+function pruneOrphanLocaleDocs(targetDocsDir) {
+  let pruned = 0;
   for (const locale of GENERATED_LOCALES) {
     const localeDir = path.join(targetDocsDir, locale.dir);
     if (!fs.existsSync(localeDir)) {
       continue;
     }
     for (const filePath of walkMarkdownFiles(localeDir)) {
-      const relativePath = path.relative(localeDir, filePath);
-      // Check the assembled publish tree so externally mirrored docs, such as
-      // ClawHub pages, count as valid English sources too.
-      const englishBase = path.join(targetDocsDir, relativePath);
+      const relativeToLocale = path.relative(localeDir, filePath);
+      // The English source file lives at docs/<relativeToLocale> with either .md or .mdx.
+      const englishBase = path.join(SOURCE_DOCS_DIR, relativeToLocale);
       const englishMd = englishBase.replace(/\.mdx?$/i, ".md");
       const englishMdx = englishBase.replace(/\.mdx?$/i, ".mdx");
       if (fs.existsSync(englishMd) || fs.existsSync(englishMdx)) {
         continue;
       }
-      orphaned += 1;
+      fs.rmSync(filePath, { force: true });
+      pruned += 1;
     }
   }
 
-  if (orphaned > 0) {
-    // Translation artifacts update inbound links and delete their old target
-    // together. Docs sync must not publish the deletion ahead of that step.
-    console.log(`Deferred ${orphaned} orphan localized doc(s) to translation finalization.`);
+  if (pruned > 0) {
+    console.log(`Pruned ${pruned} orphan localized doc(s) with no matching English source file.`);
   }
-  return orphaned;
 }
 
 function repairGeneratedLocaleDocs(targetDocsDir) {
@@ -712,7 +695,7 @@ function syncDocsTree(targetRoot, options = {}) {
     sourceRepo: options.clawhubSourceRepo,
     sourceSha: options.clawhubSourceSha,
   });
-  reportOrphanLocaleDocs(targetDocsDir);
+  pruneOrphanLocaleDocs(targetDocsDir);
   repairGeneratedLocaleDocs(targetDocsDir);
   writeJson(path.join(targetDocsDir, "docs.json"), composeDocsConfig());
   return { clawhub: clawhubSource };

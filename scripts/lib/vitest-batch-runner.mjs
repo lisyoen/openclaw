@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnPnpmRunner } from "../pnpm-runner.mjs";
 import {
-  forceKillVitestProcessGroup,
   installVitestProcessGroupCleanup,
   shouldUseDetachedVitestProcessGroup,
 } from "../vitest-process-group.mjs";
@@ -27,10 +26,8 @@ export async function runVitestBatch(params) {
     });
     const teardownChildCleanup = installVitestProcessGroupCleanup({
       child,
-      forceSignal: "SIGKILL",
-      forceSignalDelayMs: 100,
       onSignal(signal) {
-        forwardedSignal ??= signal;
+        forwardedSignal = signal;
       },
     });
 
@@ -40,13 +37,12 @@ export async function runVitestBatch(params) {
     });
     child.on("exit", (code, signal) => {
       teardownChildCleanup();
-      if (forwardedSignal) {
-        forceKillVitestProcessGroup(child);
-        process.kill(process.pid, forwardedSignal);
-        return;
-      }
       if (signal) {
         process.kill(process.pid, signal);
+        return;
+      }
+      if (forwardedSignal) {
+        process.kill(process.pid, forwardedSignal);
         return;
       }
       resolve(code ?? 1);

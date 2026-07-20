@@ -20,7 +20,6 @@ function createTelegramAccount(
     enabled: true,
     token: "t",
     tokenSource: "config",
-    tokenStatus: "available",
     config,
   };
 }

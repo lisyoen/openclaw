@@ -30,27 +30,6 @@ function normalizeSilenceTimeoutMs(value: unknown): number | undefined {
   return value;
 }
 
-function normalizeVadThreshold(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-    return undefined;
-  }
-  return value;
-}
-
-function normalizePositiveInteger(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-    return undefined;
-  }
-  return value;
-}
-
-function normalizeNonNegativeInteger(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    return undefined;
-  }
-  return value;
-}
-
 function buildLegacyTalkProviderCompat(
   value: Record<string, unknown>,
 ): TalkProviderConfig | undefined {
@@ -131,13 +110,17 @@ function normalizeTalkRealtimeConfig(value: unknown): TalkRealtimeConfig | undef
   if (model) {
     normalized.model = model;
   }
-  const speakerVoice = normalizeOptionalString(source.speakerVoice);
+  const voice = normalizeOptionalString(source.voice);
+  const speakerVoice = normalizeOptionalString(source.speakerVoice) ?? voice;
   const speakerVoiceId = normalizeOptionalString(source.speakerVoiceId);
   if (speakerVoice) {
     normalized.speakerVoice = speakerVoice;
   }
   if (speakerVoiceId) {
     normalized.speakerVoiceId = speakerVoiceId;
+  }
+  if (voice) {
+    normalized.voice = voice;
   }
   const instructions = normalizeOptionalString(source.instructions);
   if (instructions) {
@@ -153,22 +136,6 @@ function normalizeTalkRealtimeConfig(value: unknown): TalkRealtimeConfig | undef
     source.transport === "managed-room"
   ) {
     normalized.transport = source.transport;
-  }
-  const vadThreshold = normalizeVadThreshold(source.vadThreshold);
-  if (vadThreshold !== undefined) {
-    normalized.vadThreshold = vadThreshold;
-  }
-  const silenceDurationMs = normalizePositiveInteger(source.silenceDurationMs);
-  if (silenceDurationMs !== undefined) {
-    normalized.silenceDurationMs = silenceDurationMs;
-  }
-  const prefixPaddingMs = normalizeNonNegativeInteger(source.prefixPaddingMs);
-  if (prefixPaddingMs !== undefined) {
-    normalized.prefixPaddingMs = prefixPaddingMs;
-  }
-  const reasoningEffort = normalizeOptionalString(source.reasoningEffort);
-  if (reasoningEffort) {
-    normalized.reasoningEffort = reasoningEffort;
   }
   if (
     source.brain === "agent-consult" ||
@@ -190,7 +157,7 @@ function activeProviderFromTalk(talk: TalkConfig): string | undefined {
   const provider = normalizeOptionalString(talk.provider);
   const providers = talk.providers;
   if (provider) {
-    if (providers && !Object.hasOwn(providers, provider)) {
+    if (providers && !(provider in providers)) {
       return undefined;
     }
     return provider;
@@ -228,7 +195,7 @@ export function normalizeTalkSection(value: TalkConfig | undefined): TalkConfig 
     typeof rawConsultFastMode === "boolean" || typeof rawConsultFastMode === "string"
       ? normalizeFastMode(rawConsultFastMode)
       : undefined;
-  if (typeof consultFastMode === "boolean") {
+  if (consultFastMode !== undefined) {
     normalized.consultFastMode = consultFastMode;
   }
   const silenceTimeoutMs = normalizeSilenceTimeoutMs(source.silenceTimeoutMs);

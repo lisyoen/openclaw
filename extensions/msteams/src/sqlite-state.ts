@@ -1,10 +1,9 @@
 // Msteams plugin module implements sqlite state behavior.
 import path from "node:path";
-import { withFileLock } from "openclaw/plugin-sdk/file-lock";
-import { KeyedAsyncQueue } from "openclaw/plugin-sdk/keyed-async-queue";
 import { getMSTeamsRuntime } from "./runtime.js";
+import { withFileLock } from "./store-fs.js";
 
-type MSTeamsSqliteStateOptions = {
+export type MSTeamsSqliteStateOptions = {
   env?: NodeJS.ProcessEnv;
   homedir?: () => string;
   stateDir?: string;
@@ -47,36 +46,46 @@ export function toPluginJsonValue<T>(value: T): T {
   return JSON.parse(serialized) as T;
 }
 
-function resolveMSTeamsSqliteStateDir(options: MSTeamsSqliteStateOptions | undefined): string {
+export function resolveMSTeamsSqliteStateDir(
+  options: MSTeamsSqliteStateOptions | undefined,
+): string {
   return (
     resolveStateDirOverride(options) ??
     getMSTeamsRuntime().state.resolveStateDir(options?.env ?? process.env, options?.homedir)
   );
 }
 
-const sqliteMutationLocks = new KeyedAsyncQueue();
-const MSTEAMS_MUTATION_LOCK_OPTIONS = {
-  retries: {
-    retries: 10,
-    factor: 2,
-    minTimeout: 100,
-    maxTimeout: 10_000,
-    randomize: true,
-  },
-  stale: 30_000,
-} as const;
+const sqliteMutationLocks = new Map<string, Promise<unknown>>();
 
 async function withProcessMutationLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
-  return await sqliteMutationLocks.enqueue(lockPath, fn);
+  const previous = sqliteMutationLocks.get(lockPath) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const next = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.then(
+    () => next,
+    () => next,
+  );
+  sqliteMutationLocks.set(lockPath, chained);
+  await previous.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (sqliteMutationLocks.get(lockPath) === chained) {
+      sqliteMutationLocks.delete(lockPath);
+    }
+  }
 }
 
 export async function withMSTeamsSqliteMutationLock<T>(
   options: MSTeamsSqliteStateOptions | undefined,
-  mutationKey: string,
+  lockFilename: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const scopedMutationKey = path.join(resolveMSTeamsSqliteStateDir(options), mutationKey);
-  return await withProcessMutationLock(scopedMutationKey, async () => {
-    return await withFileLock(scopedMutationKey, MSTEAMS_MUTATION_LOCK_OPTIONS, fn);
+  const lockPath = path.join(resolveMSTeamsSqliteStateDir(options), lockFilename);
+  return await withProcessMutationLock(lockPath, async () => {
+    return await withFileLock(lockPath, { version: 1 }, fn);
   });
 }

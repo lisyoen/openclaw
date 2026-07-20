@@ -6,11 +6,6 @@
 import fs from "node:fs/promises";
 import { formatErrorMessage } from "../infra/errors.js";
 
-const DASH_PUNCTUATION = /[\u2010-\u2015\u2212]/g;
-const SINGLE_QUOTE_PUNCTUATION = /[\u2018-\u201B]/g;
-const DOUBLE_QUOTE_PUNCTUATION = /[\u201C-\u201F]/g;
-const SPACE_PUNCTUATION = /[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g;
-
 type UpdateFileChunk = {
   changeContext?: string;
   oldLines: string[];
@@ -116,8 +111,8 @@ function applyReplacements(
         result.splice(startIndex, 1);
       }
     }
-    for (const [i, line] of newLines.entries()) {
-      result.splice(startIndex + i, 0, line);
+    for (let i = 0; i < newLines.length; i += 1) {
+      result.splice(startIndex + i, 0, newLines[i]);
     }
   }
   return result;
@@ -142,20 +137,27 @@ function seekSequence(
     return null;
   }
 
+  for (let i = searchStart; i <= maxStart; i += 1) {
+    if (linesMatch(lines, pattern, i, (value) => value)) {
+      return i;
+    }
+  }
   // Fall back through increasingly tolerant comparisons. This preserves normal
   // exact matching while accepting whitespace/punctuation differences common in
   // generated patch text.
-  const normalizers = [
-    (value: string) => value,
-    (value: string) => value.trimEnd(),
-    (value: string) => value.trim(),
-    (value: string) => normalizePunctuation(value.trim()),
-  ];
-  for (const normalize of normalizers) {
-    for (let i = searchStart; i <= maxStart; i += 1) {
-      if (linesMatch(lines, pattern, i, normalize)) {
-        return i;
-      }
+  for (let i = searchStart; i <= maxStart; i += 1) {
+    if (linesMatch(lines, pattern, i, (value) => value.trimEnd())) {
+      return i;
+    }
+  }
+  for (let i = searchStart; i <= maxStart; i += 1) {
+    if (linesMatch(lines, pattern, i, (value) => value.trim())) {
+      return i;
+    }
+  }
+  for (let i = searchStart; i <= maxStart; i += 1) {
+    if (linesMatch(lines, pattern, i, (value) => normalizePunctuation(value.trim()))) {
+      return i;
     }
   }
 
@@ -169,9 +171,7 @@ function linesMatch(
   normalize: (value: string) => string,
 ): boolean {
   for (let idx = 0; idx < pattern.length; idx += 1) {
-    const line = lines.at(start + idx);
-    const expected = pattern.at(idx);
-    if (line === undefined || expected === undefined || normalize(line) !== normalize(expected)) {
+    if (normalize(lines[start + idx]) !== normalize(pattern[idx])) {
       return false;
     }
   }
@@ -179,9 +179,44 @@ function linesMatch(
 }
 
 function normalizePunctuation(value: string): string {
-  return value
-    .replace(DASH_PUNCTUATION, "-")
-    .replace(SINGLE_QUOTE_PUNCTUATION, "'")
-    .replace(DOUBLE_QUOTE_PUNCTUATION, '"')
-    .replace(SPACE_PUNCTUATION, " ");
+  return Array.from(value)
+    .map((char) => {
+      switch (char) {
+        case "\u2010":
+        case "\u2011":
+        case "\u2012":
+        case "\u2013":
+        case "\u2014":
+        case "\u2015":
+        case "\u2212":
+          return "-";
+        case "\u2018":
+        case "\u2019":
+        case "\u201A":
+        case "\u201B":
+          return "'";
+        case "\u201C":
+        case "\u201D":
+        case "\u201E":
+        case "\u201F":
+          return '"';
+        case "\u00A0":
+        case "\u2002":
+        case "\u2003":
+        case "\u2004":
+        case "\u2005":
+        case "\u2006":
+        case "\u2007":
+        case "\u2008":
+        case "\u2009":
+        case "\u200A":
+        case "\u202F":
+        case "\u205F":
+        case "\u3000":
+          return " ";
+        default:
+          return char;
+      }
+    })
+    .join("");
 }

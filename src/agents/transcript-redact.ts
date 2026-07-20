@@ -7,7 +7,6 @@ import {
   sanitizeInlineImageBase64,
   sanitizeInlineImageDataUrlForStorage,
 } from "@openclaw/media-core/inline-image-data-url";
-import { findNormalizedProviderValue } from "@openclaw/model-catalog-core/provider-id";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readLoggingConfig } from "../logging/config.js";
 import {
@@ -15,8 +14,6 @@ import {
   redactSensitiveFieldValue,
   redactSensitiveText,
 } from "../logging/redact.js";
-import type { ProviderEndpointClass } from "./provider-attribution.js";
-import { resolveProviderEndpoint } from "./provider-attribution.js";
 import type { AgentMessage } from "./runtime/index.js";
 
 function resolveTranscriptRedactPatterns(patterns?: string[]) {
@@ -195,7 +192,6 @@ type TranscriptValueLocation =
 
 type TranscriptAssistantRoute = {
   api?: string;
-  endpointClass?: ProviderEndpointClass;
   model?: string;
   provider?: string;
 };
@@ -223,8 +219,6 @@ const OPENAI_COMPLETIONS_APIS = new Set([
   "openclaw-openai-completions-transport",
 ]);
 const OPAQUE_REPLAY_TOKEN_RE = /^[A-Za-z0-9+/_-]+={0,2}$/;
-const GOOGLE_THOUGHT_SIGNATURE_RE =
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const OPENAI_REPLAY_CONTEXT_HASH_RE = /^[a-f0-9]{16}$/;
 
 function isOpenAIResponsesRoute(route: TranscriptAssistantRoute | undefined): boolean {
@@ -241,15 +235,6 @@ function isAnthropicReasoningRoute(route: TranscriptAssistantRoute | undefined):
 
 function isOpenAICompletionsRoute(route: TranscriptAssistantRoute | undefined): boolean {
   return typeof route?.api === "string" && OPENAI_COMPLETIONS_APIS.has(route.api);
-}
-
-function isGoogleOpenAICompletionsRoute(route: TranscriptAssistantRoute | undefined): boolean {
-  return (
-    isOpenAICompletionsRoute(route) &&
-    (route?.provider === "google" ||
-      route?.endpointClass === "google-generative-ai" ||
-      route?.endpointClass === "google-vertex")
-  );
 }
 
 function isCustomProviderRoute(route: TranscriptAssistantRoute | undefined): boolean {
@@ -270,56 +255,19 @@ function isGitHubCopilotResponsesRoute(route: TranscriptAssistantRoute | undefin
   );
 }
 
-function isStructurallyValidOpaqueReplayToken(value: string): boolean {
-  return (
-    value.length > 0 &&
-    value === value.trim() &&
-    OPAQUE_REPLAY_TOKEN_RE.test(value) &&
-    !value.includes("\u2026")
-  );
-}
-
-function isCredentialSafeOpaqueReplayToken(value: string): boolean {
-  if (!isStructurallyValidOpaqueReplayToken(value)) {
+function isOpaqueReplayToken(value: string): boolean {
+  if (
+    value.length === 0 ||
+    value !== value.trim() ||
+    !OPAQUE_REPLAY_TOKEN_RE.test(value) ||
+    value.includes("\u2026")
+  ) {
     return false;
   }
   // OpenAI encrypted reasoning is commonly Fernet-shaped and intentionally
-  // matches the generic gAAAA secret detector. Custom routes retain the
-  // credential-sensitive gate because their opaque fields are not attributable
-  // to a known provider contract.
+  // matches the generic gAAAA secret detector. Other known credential forms
+  // must never gain a transcript-redaction bypass.
   return value.startsWith("gAAAA") || redactSensitiveText(value, { mode: "tools" }) === value;
-}
-
-function isGoogleThoughtSignature(value: string): boolean {
-  return (
-    value.length > 0 &&
-    value === value.trim() &&
-    !value.includes("\u2026") &&
-    GOOGLE_THOUGHT_SIGNATURE_RE.test(value)
-  );
-}
-
-function resolveTranscriptAssistantRoute(
-  source: Record<string, unknown>,
-  cfg: OpenClawConfig | undefined,
-): TranscriptAssistantRoute {
-  const api = typeof source.api === "string" ? source.api : undefined;
-  const model = typeof source.model === "string" ? source.model : undefined;
-  const provider = typeof source.provider === "string" ? source.provider : undefined;
-  const providerConfig = provider
-    ? findNormalizedProviderValue(cfg?.models?.providers, provider)
-    : undefined;
-  const modelConfig = model
-    ? providerConfig?.models?.find((candidate) => candidate.id === model)
-    : undefined;
-  const baseUrl = modelConfig?.baseUrl ?? providerConfig?.baseUrl;
-  const endpointClass = baseUrl ? resolveProviderEndpoint(baseUrl).endpointClass : undefined;
-  return {
-    ...(api ? { api } : {}),
-    ...(endpointClass ? { endpointClass } : {}),
-    ...(model ? { model } : {}),
-    ...(provider ? { provider } : {}),
-  };
 }
 
 function isSafeReplayIdentifier(value: string, maxLength = 512): boolean {
@@ -435,39 +383,30 @@ function shouldPreserveOpaqueProviderPayload(
   location: TranscriptValueLocation,
   route: TranscriptAssistantRoute | undefined,
 ): boolean {
-  if (location !== "assistant-content-block" || typeof item !== "string") {
+  if (
+    location !== "assistant-content-block" ||
+    typeof item !== "string" ||
+    !isOpaqueReplayToken(item)
+  ) {
     return false;
   }
   const type = source.type;
-  const isAnthropicSlot =
-    (type === "thinking" && (key === "thinkingSignature" || key === "signature")) ||
-    (type === "redacted_thinking" &&
-      (key === "data" || key === "signature" || key === "thinkingSignature"));
-  if (isAnthropicReasoningRoute(route) && isAnthropicSlot) {
-    return isStructurallyValidOpaqueReplayToken(item);
-  }
-  const isGoogleSlot =
-    (type === "text" && key === "textSignature") ||
-    (type === "thinking" && (key === "thinkingSignature" || key === "thought_signature")) ||
-    (type === "toolCall" && key === "thoughtSignature");
-  if (isGoogleReasoningRoute(route) && isGoogleSlot) {
-    return isGoogleThoughtSignature(item);
-  }
-  if (isGoogleOpenAICompletionsRoute(route) && type === "toolCall" && key === "thoughtSignature") {
-    // The OpenAI-compatible transport captures provider-owned opaque signatures
-    // such as SIG-OPAQUE-ABC==; native Google routes require standard base64.
-    return isStructurallyValidOpaqueReplayToken(item);
-  }
-  if (!isCustomProviderRoute(route) || !isCredentialSafeOpaqueReplayToken(item)) {
-    return false;
-  }
+  const customRoute = isCustomProviderRoute(route);
   return (
-    (type === "text" && key === "textSignature") ||
+    (type === "text" &&
+      key === "textSignature" &&
+      (isGoogleReasoningRoute(route) || customRoute)) ||
     (type === "thinking" &&
-      (key === "thinkingSignature" || key === "signature" || key === "thought_signature")) ||
+      ((key === "thinkingSignature" &&
+        (isAnthropicReasoningRoute(route) || isGoogleReasoningRoute(route) || customRoute)) ||
+        (key === "signature" && (isAnthropicReasoningRoute(route) || customRoute)) ||
+        (key === "thought_signature" && (isGoogleReasoningRoute(route) || customRoute)))) ||
     (type === "redacted_thinking" &&
+      (isAnthropicReasoningRoute(route) || customRoute) &&
       (key === "data" || key === "signature" || key === "thinkingSignature")) ||
-    (type === "toolCall" && key === "thoughtSignature")
+    (type === "toolCall" &&
+      key === "thoughtSignature" &&
+      (isGoogleReasoningRoute(route) || isOpenAICompletionsRoute(route) || customRoute))
   );
 }
 
@@ -492,13 +431,10 @@ function sanitizeOpenAIReasoningSignature(
   }
   const encryptedContent = parsed.encrypted_content;
   const hasEncryptedContent = Object.hasOwn(parsed, "encrypted_content");
-  const isValidEncryptedContent = isOpenAIResponsesRoute(route)
-    ? isStructurallyValidOpaqueReplayToken
-    : isCredentialSafeOpaqueReplayToken;
   if (
     encryptedContent !== undefined &&
     encryptedContent !== null &&
-    (typeof encryptedContent !== "string" || !isValidEncryptedContent(encryptedContent))
+    (typeof encryptedContent !== "string" || !isOpaqueReplayToken(encryptedContent))
   ) {
     return undefined;
   }
@@ -533,26 +469,20 @@ function sanitizeOpenAIReasoningSignature(
   });
 }
 
-function sanitizeOpenAICompletionsToolSignature(
-  value: string,
-  route: TranscriptAssistantRoute | undefined,
-): string | undefined {
+function sanitizeOpenAICompletionsToolSignature(value: string): string | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
   } catch {
     return undefined;
   }
-  const isValidEncryptedData = isOpenAICompletionsRoute(route)
-    ? isStructurallyValidOpaqueReplayToken
-    : isCredentialSafeOpaqueReplayToken;
   if (
     !parsed ||
     typeof parsed !== "object" ||
     !isPlainTranscriptObject(parsed) ||
     parsed.type !== "reasoning.encrypted" ||
     typeof parsed.data !== "string" ||
-    !isValidEncryptedData(parsed.data) ||
+    !isOpaqueReplayToken(parsed.data) ||
     (parsed.id !== undefined &&
       parsed.id !== null &&
       (typeof parsed.id !== "string" || !isSafeReplayIdentifier(parsed.id))) ||
@@ -631,7 +561,11 @@ function redactTranscriptStructuredValue(
   const source = sanitizedImageRecord ?? value;
   const currentAssistantRoute =
     location === "root" && source.role === "assistant"
-      ? resolveTranscriptAssistantRoute(source, cfg)
+      ? {
+          ...(typeof source.api === "string" ? { api: source.api } : {}),
+          ...(typeof source.model === "string" ? { model: source.model } : {}),
+          ...(typeof source.provider === "string" ? { provider: source.provider } : {}),
+        }
       : assistantRoute;
   let next: Record<string, unknown> | null = null;
   if (source !== value) {
@@ -690,10 +624,7 @@ function redactTranscriptStructuredValue(
       key === "thoughtSignature" &&
       typeof item === "string"
     ) {
-      const sanitizedSignature = sanitizeOpenAICompletionsToolSignature(
-        item,
-        currentAssistantRoute,
-      );
+      const sanitizedSignature = sanitizeOpenAICompletionsToolSignature(item);
       if (sanitizedSignature !== undefined) {
         if (sanitizedSignature !== item) {
           next ??= { ...source };

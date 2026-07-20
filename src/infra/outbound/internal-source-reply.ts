@@ -6,7 +6,7 @@ import {
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
 import type { ChannelThreadingToolContext } from "../../channels/plugins/types.public.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { parseSessionDeliveryRoute } from "../../routing/session-key.js";
+import { parseAgentSessionKey, parseThreadSessionSuffix } from "../../routing/session-key.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
 import { resolveOutboundChannelPlugin } from "./channel-resolution.js";
 import { isConfiguredChannel, listConfiguredMessageChannels } from "./channel-selection.js";
@@ -19,13 +19,29 @@ type InternalSourceReplySinkInput = {
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
 };
 
+const SESSION_DELIVERY_PEER_KINDS = new Set(["channel", "direct", "dm", "group"]);
+
 function hasExternalSessionDeliveryRoute(sessionKey: string | undefined): boolean {
-  const route = parseSessionDeliveryRoute(sessionKey);
-  if (!route) {
+  const parsedThread = parseThreadSessionSuffix(sessionKey);
+  const baseSessionKey = parsedThread.baseSessionKey ?? sessionKey;
+  const parsed = parseAgentSessionKey(baseSessionKey);
+  if (!parsed) {
     return false;
   }
-  const channel = normalizeMessageChannel(route.channel);
-  return Boolean(channel && channel !== INTERNAL_MESSAGE_CHANNEL);
+  const parts = parsed.rest.split(":").filter(Boolean);
+  if (parts.length < 3) {
+    return false;
+  }
+  const channel = normalizeMessageChannel(parts[0]);
+  if (!channel || channel === INTERNAL_MESSAGE_CHANNEL) {
+    return false;
+  }
+  if (parts.length >= 4 && (parts[2] === "direct" || parts[2] === "dm")) {
+    return Boolean(parts.slice(3).join(":").trim());
+  }
+  return (
+    SESSION_DELIVERY_PEER_KINDS.has(parts[1] ?? "") && Boolean(parts.slice(2).join(":").trim())
+  );
 }
 
 function hasExplicitRouteParam(params: Record<string, unknown>): boolean {
@@ -52,7 +68,6 @@ function hasCurrentSourceReplyContext(input: InternalSourceReplySinkInput): bool
   const currentMessageId = input.toolContext?.currentMessageId;
   return Boolean(
     normalizeOptionalString(input.toolContext?.currentChannelId) ||
-    normalizeOptionalString(input.toolContext?.currentMessagingTarget) ||
     normalizeOptionalString(input.toolContext?.currentThreadTs) ||
     (typeof currentMessageId === "number" && Number.isFinite(currentMessageId)) ||
     normalizeOptionalString(currentMessageId),
@@ -92,10 +107,7 @@ export async function shouldUseInternalSourceReplySink(
   if (!hasImplicitCurrentSourceRoute) {
     return false;
   }
-  if (
-    !normalizeOptionalString(input.toolContext?.currentChannelId) &&
-    !normalizeOptionalString(input.toolContext?.currentMessagingTarget)
-  ) {
+  if (!normalizeOptionalString(input.toolContext?.currentChannelId)) {
     return true;
   }
   // Configured current-source channels can infer the target and deliver through

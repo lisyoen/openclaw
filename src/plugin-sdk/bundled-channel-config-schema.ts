@@ -3,18 +3,16 @@
  *
  * Third-party plugins should define plugin-local schemas and import primitives
  * from openclaw/plugin-sdk/channel-config-schema instead of depending on these
- * bundled channel schemas. Internal callers use this subpath only for the
- * bundled provider schemas; generic primitives come from channel-config-schema.
+ * bundled channel schemas.
  */
 export {
   AllowFromListSchema,
-  ChannelGroupEntrySchema,
-  BlockStreamingCoalesceSchema,
-  buildCatchallMultiAccountChannelSchema,
   buildChannelConfigSchema,
+  buildCatchallMultiAccountChannelSchema,
   buildNestedDmConfigSchema,
-  buildGroupEntrySchema,
-  buildMultiAccountChannelSchema,
+} from "../channels/plugins/config-schema.js";
+export {
+  BlockStreamingCoalesceSchema,
   ContextVisibilityModeSchema,
   DmConfigSchema,
   DmPolicySchema,
@@ -23,8 +21,8 @@ export {
   ReplyRuntimeConfigSchemaShape,
   requireAllowlistAllowFrom,
   requireOpenAllowFrom,
-  ToolPolicySchema,
-} from "./channel-config-schema.js";
+} from "../config/zod-schema.core.js";
+export { ToolPolicySchema } from "../config/zod-schema.agent-runtime.js";
 export {
   DiscordConfigSchema,
   IMessageConfigSchema,

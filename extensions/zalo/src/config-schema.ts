@@ -1,7 +1,7 @@
 // Zalo helper module supports config schema behavior.
 import {
   AllowFromListSchema,
-  buildMultiAccountChannelSchema,
+  buildCatchallMultiAccountChannelSchema,
   DmPolicySchema,
   GroupPolicySchema,
   MarkdownConfigSchema,
@@ -27,6 +27,4 @@ const zaloAccountSchema = z.object({
   responsePrefix: z.string().optional(),
 });
 
-export const ZaloConfigSchema = buildMultiAccountChannelSchema(zaloAccountSchema, {
-  accountsMode: "catchall",
-});
+export const ZaloConfigSchema = buildCatchallMultiAccountChannelSchema(zaloAccountSchema);

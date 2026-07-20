@@ -2,20 +2,15 @@
  * Implements Chutes OAuth PKCE, callback parsing, token exchange, and refresh
  * for agent model authentication.
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { sha256Base64Url } from "../infra/crypto-digest.js";
 import { resolveExpiresAtMsFromDurationSeconds } from "../infra/parse-finite-number.js";
 import type { OAuthCredentials } from "../llm/oauth.js";
-import { buildOAuthRequestSignal } from "../llm/utils/oauth/abort.js";
-import { assertOkOrThrowProviderError, readProviderJsonResponse } from "./provider-http-errors.js";
-
-const CHUTES_OAUTH_REQUEST_TIMEOUT_MS = 30_000;
 
 const CHUTES_OAUTH_ISSUER = "https://api.chutes.ai";
 export const CHUTES_AUTHORIZE_ENDPOINT = `${CHUTES_OAUTH_ISSUER}/idp/authorize`;
-const CHUTES_TOKEN_ENDPOINT = `${CHUTES_OAUTH_ISSUER}/idp/token`;
-const CHUTES_USERINFO_ENDPOINT = `${CHUTES_OAUTH_ISSUER}/idp/userinfo`;
+export const CHUTES_TOKEN_ENDPOINT = `${CHUTES_OAUTH_ISSUER}/idp/token`;
+export const CHUTES_USERINFO_ENDPOINT = `${CHUTES_OAUTH_ISSUER}/idp/userinfo`;
 
 const DEFAULT_EXPIRES_BUFFER_MS = 5 * 60 * 1000;
 
@@ -42,7 +37,7 @@ type ChutesStoredOAuth = OAuthCredentials & {
 /** Generates a PKCE verifier/challenge pair for Chutes login. */
 export function generateChutesPkce(): ChutesPkce {
   const verifier = randomBytes(32).toString("hex");
-  const challenge = sha256Base64Url(verifier);
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
   return { verifier, challenge };
 }
 
@@ -102,12 +97,6 @@ function resolveChutesExpiresAt(value: unknown, now: number): number | undefined
   });
 }
 
-async function cancelUnreadResponseBody(response: Response): Promise<void> {
-  if (!response.bodyUsed) {
-    await response.body?.cancel().catch(() => undefined);
-  }
-}
-
 async function fetchChutesUserInfo(params: {
   accessToken: string;
   fetchFn?: typeof fetch;
@@ -115,13 +104,11 @@ async function fetchChutesUserInfo(params: {
   const fetchFn = params.fetchFn ?? fetch;
   const response = await fetchFn(CHUTES_USERINFO_ENDPOINT, {
     headers: { Authorization: `Bearer ${params.accessToken}` },
-    signal: buildOAuthRequestSignal({ timeoutMs: CHUTES_OAUTH_REQUEST_TIMEOUT_MS }),
   });
   if (!response.ok) {
-    await cancelUnreadResponseBody(response);
     return null;
   }
-  const data = await readProviderJsonResponse<unknown>(response, "Chutes userinfo");
+  const data = (await response.json()) as unknown;
   if (!data || typeof data !== "object") {
     return null;
   }
@@ -155,15 +142,17 @@ export async function exchangeChutesCodeForTokens(params: {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
-    signal: buildOAuthRequestSignal({ timeoutMs: CHUTES_OAUTH_REQUEST_TIMEOUT_MS }),
   });
-  await assertOkOrThrowProviderError(response, "Chutes token exchange failed");
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Chutes token exchange failed: ${text}`);
+  }
 
-  const data = await readProviderJsonResponse<{
+  const data = (await response.json()) as {
     access_token?: string;
     refresh_token?: string;
     expires_in?: number;
-  }>(response, "Chutes token exchange");
+  };
 
   const access = data.access_token?.trim();
   const refresh = data.refresh_token?.trim();
@@ -179,13 +168,7 @@ export async function exchangeChutesCodeForTokens(params: {
     throw new Error("Chutes token exchange returned invalid expires_in");
   }
 
-  let info: ChutesUserInfo | null = null;
-  try {
-    info = await fetchChutesUserInfo({ accessToken: access, fetchFn });
-  } catch {
-    // Token exchange completes authentication; optional profile enrichment must
-    // not discard issued credentials when userinfo is unavailable or times out.
-  }
+  const info = await fetchChutesUserInfo({ accessToken: access, fetchFn });
 
   return {
     access,
@@ -230,15 +213,17 @@ export async function refreshChutesTokens(params: {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
-    signal: buildOAuthRequestSignal({ timeoutMs: CHUTES_OAUTH_REQUEST_TIMEOUT_MS }),
   });
-  await assertOkOrThrowProviderError(response, "Chutes token refresh failed");
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Chutes token refresh failed: ${text}`);
+  }
 
-  const data = await readProviderJsonResponse<{
+  const data = (await response.json()) as {
     access_token?: string;
     refresh_token?: string;
     expires_in?: number;
-  }>(response, "Chutes token refresh");
+  };
   const access = data.access_token?.trim();
   const newRefresh = data.refresh_token?.trim();
   const expires = resolveChutesExpiresAt(data.expires_in, now);

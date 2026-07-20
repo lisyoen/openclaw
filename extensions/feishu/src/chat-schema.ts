@@ -6,8 +6,9 @@ const CHAT_ACTION_VALUES = ["members", "info", "member_info"] as const;
 const MEMBER_ID_TYPE_VALUES = ["open_id", "user_id", "union_id"] as const;
 
 export const FeishuChatSchema = Type.Object({
-  action: Type.Enum(CHAT_ACTION_VALUES, {
+  action: Type.Unsafe<(typeof CHAT_ACTION_VALUES)[number]>({
     type: "string",
+    enum: [...CHAT_ACTION_VALUES],
     description: "Action to run: members | info | member_info",
   }),
   chat_id: Type.Optional(Type.String({ description: "Chat ID (from URL or event payload)" })),
@@ -18,8 +19,9 @@ export const FeishuChatSchema = Type.Object({
   }),
   page_token: Type.Optional(Type.String({ description: "Pagination token" })),
   member_id_type: Type.Optional(
-    Type.Enum(MEMBER_ID_TYPE_VALUES, {
+    Type.Unsafe<(typeof MEMBER_ID_TYPE_VALUES)[number]>({
       type: "string",
+      enum: [...MEMBER_ID_TYPE_VALUES],
       description: "Member ID type (default: open_id)",
     }),
   ),

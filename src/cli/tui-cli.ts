@@ -17,7 +17,6 @@ export function registerTuiCli(program: Command) {
     .option("--url <url>", "Gateway WebSocket URL (defaults to gateway.remote.url when configured)")
     .option("--token <token>", "Gateway token (if required)")
     .option("--password <password>", "Gateway password (if required)")
-    .option("--tls-fingerprint <sha256>", "Expected Gateway TLS certificate fingerprint")
     .option("--session <key>", 'Session key (default: "main", or "global" when scope is global)')
     .option("--deliver", "Deliver assistant replies", false)
     .option("--thinking <level>", "Thinking level override")
@@ -36,10 +35,8 @@ export function registerTuiCli(program: Command) {
         const invokedAsLocalAlias =
           invokedSubcommand === "terminal" || invokedSubcommand === "chat";
         const isLocal = Boolean(opts.local) || invokedAsLocalAlias;
-        if (isLocal && (opts.url || opts.token || opts.password || opts.tlsFingerprint)) {
-          throw new Error(
-            "--local cannot be combined with --url, --token, --password, or --tls-fingerprint",
-          );
+        if (isLocal && (opts.url || opts.token || opts.password)) {
+          throw new Error("--local cannot be combined with --url, --token, or --password");
         }
         const timeoutMs = parseTimeoutMs(opts.timeoutMs);
         if (opts.timeoutMs !== undefined && timeoutMs === undefined) {
@@ -57,7 +54,6 @@ export function registerTuiCli(program: Command) {
           url: opts.url as string | undefined,
           token: opts.token as string | undefined,
           password: opts.password as string | undefined,
-          tlsFingerprint: opts.tlsFingerprint as string | undefined,
           session: opts.session as string | undefined,
           deliver: Boolean(opts.deliver),
           thinking: opts.thinking as string | undefined,

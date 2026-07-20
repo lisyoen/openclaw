@@ -7,11 +7,9 @@ type FacadeModule = {
 };
 
 function loadFacadeModule(): FacadeModule {
-  // cli-api.js, not api.js: this facade evaluates at module scope, and the
-  // full barrel costs ~130s per cold jiti worker on source checkouts.
   return loadBundledPluginPublicSurfaceModuleSync<FacadeModule>({
     dirName: "anthropic",
-    artifactBasename: "cli-api.js",
+    artifactBasename: "api.js",
   });
 }
 /** Anthropic plugin backend id for Claude CLI provider detection. */

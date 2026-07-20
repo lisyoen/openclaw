@@ -1,5 +1,4 @@
 // Doctor deprecated CLI profile tests cover legacy auth profile migration and warnings.
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { OpenClawConfig } from "../config/config.js";
@@ -65,7 +64,7 @@ function requireFirstMockArg<T>(mock: { mock: { calls: T[][] } }, label: string)
     throw new Error(`expected ${label} call`);
   }
   const [arg] = call;
-  return expectDefined(arg, "arg test invariant");
+  return arg;
 }
 
 beforeEach(() => {

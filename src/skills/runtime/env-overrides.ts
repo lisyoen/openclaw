@@ -7,7 +7,7 @@ import {
   isDangerousHostEnvVarName,
 } from "../../infra/host-env-security.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { isSkillSecretOwnerUnavailable, resolveSkillConfig } from "../loading/config.js";
+import { resolveSkillConfig } from "../loading/config.js";
 import { resolveSkillKey } from "../loading/frontmatter.js";
 import { resolveSkillRuntimeConfig } from "../loading/runtime-config.js";
 import type { SkillEntry, SkillSnapshot } from "../types.js";
@@ -228,9 +228,6 @@ export function applySkillEnvOverrides(params: { skills: SkillEntry[]; config?: 
 
   for (const entry of skills) {
     const skillKey = resolveSkillKey(entry.skill, entry);
-    if (isSkillSecretOwnerUnavailable(skillKey)) {
-      continue;
-    }
     const skillConfig = resolveSkillConfig(config, skillKey);
     if (!skillConfig) {
       continue;
@@ -263,11 +260,7 @@ export function applySkillEnvOverridesFromSnapshot(params: {
   const updates: EnvUpdate[] = [];
 
   for (const skill of snapshot.skills) {
-    const skillKey = skill.skillKey ?? skill.name;
-    if (isSkillSecretOwnerUnavailable(skillKey)) {
-      continue;
-    }
-    const skillConfig = resolveSkillConfig(config, skillKey);
+    const skillConfig = resolveSkillConfig(config, skill.name);
     if (!skillConfig) {
       continue;
     }
@@ -280,7 +273,7 @@ export function applySkillEnvOverridesFromSnapshot(params: {
       skillConfig,
       primaryEnv: skill.primaryEnv,
       requiredEnv: skill.requiredEnv,
-      skillKey,
+      skillKey: skill.name,
     });
   }
 

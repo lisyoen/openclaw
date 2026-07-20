@@ -1,6 +1,5 @@
 // Logger timestamp tests cover timestamp formatting in log output.
 import fs from "node:fs";
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { getLogger, resetLogger, setLoggerOverride } from "../logging.js";
 import { createSuiteLogPathTracker } from "./log-test-helpers.js";
@@ -44,9 +43,7 @@ describe("logger timestamp format", () => {
     // Read the log file
     const content = fs.readFileSync(logPath, "utf8");
     const lines = content.trim().split("\n");
-    const lastLine = JSON.parse(
-      expectDefined(lines[lines.length - 1], "lines[lines.length - 1] test invariant"),
-    );
+    const lastLine = JSON.parse(lines[lines.length - 1]);
 
     // Should use local time format like "2026-02-27T15:04:00.000+08:00"
     // NOT UTC format like "2026-02-27T07:04:00.000Z"

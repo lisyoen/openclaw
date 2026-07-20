@@ -6,7 +6,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { MigrationApplyResult, MigrationPlan } from "../plugins/types.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { makeTempWorkspace } from "../test-helpers/workspace.js";
-import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
+import { captureEnv } from "../test-utils/env.js";
 import { createThrowingRuntime } from "./onboard-non-interactive.test-helpers.js";
 import type { installGatewayDaemonNonInteractive } from "./onboard-non-interactive/local/daemon-install.js";
 
@@ -135,10 +135,6 @@ vi.mock("./onboard-helpers.js", () => {
       httpUrl: `http://127.0.0.1:${port}`,
       wsUrl: `ws://127.0.0.1:${port}`,
     }),
-    resolveLocalControlUiProbeLinks: ({ port }: { port: number }) => ({
-      httpUrl: `http://127.0.0.1:${port}`,
-      wsUrl: `ws://127.0.0.1:${port}`,
-    }),
     waitForGatewayReachable: (params: {
       url: string;
       token?: string;
@@ -181,13 +177,13 @@ vi.mock("../daemon/diagnostics.js", () => ({
 }));
 
 let runNonInteractiveSetup: typeof import("./onboard-non-interactive.js").runNonInteractiveSetup;
-let resolveInstallDaemonGatewayHealthTiming: typeof import("./onboard-non-interactive/local.test-support.js").resolveInstallDaemonGatewayHealthTiming;
+let resolveInstallDaemonGatewayHealthTiming: typeof import("./onboard-non-interactive/local.js").resolveInstallDaemonGatewayHealthTiming;
 
 async function loadGatewayOnboardModules(): Promise<void> {
   vi.resetModules();
   ({ runNonInteractiveSetup } = await import("./onboard-non-interactive.js"));
   ({ resolveInstallDaemonGatewayHealthTiming } =
-    await import("./onboard-non-interactive/local.test-support.js"));
+    await import("./onboard-non-interactive/local.js"));
 }
 
 function getPseudoPort(base: number): number {
@@ -340,8 +336,8 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
       throw new Error("temp home not initialized");
     }
     const stateDir = await fs.mkdtemp(path.join(tempHome, prefix));
-    setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
-    deleteTestEnvValue("OPENCLAW_CONFIG_PATH");
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    delete process.env.OPENCLAW_CONFIG_PATH;
     return stateDir;
   };
   const withStateDir = async (
@@ -368,16 +364,16 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
       "OPENCLAW_GATEWAY_TOKEN",
       "OPENCLAW_GATEWAY_PASSWORD",
     ]);
-    setTestEnvValue("OPENCLAW_SKIP_CHANNELS", "1");
-    setTestEnvValue("OPENCLAW_SKIP_GMAIL_WATCHER", "1");
-    setTestEnvValue("OPENCLAW_SKIP_CRON", "1");
-    setTestEnvValue("OPENCLAW_SKIP_CANVAS_HOST", "1");
-    setTestEnvValue("OPENCLAW_SKIP_BROWSER_CONTROL_SERVER", "1");
-    deleteTestEnvValue("OPENCLAW_GATEWAY_TOKEN");
-    deleteTestEnvValue("OPENCLAW_GATEWAY_PASSWORD");
+    process.env.OPENCLAW_SKIP_CHANNELS = "1";
+    process.env.OPENCLAW_SKIP_GMAIL_WATCHER = "1";
+    process.env.OPENCLAW_SKIP_CRON = "1";
+    process.env.OPENCLAW_SKIP_CANVAS_HOST = "1";
+    process.env.OPENCLAW_SKIP_BROWSER_CONTROL_SERVER = "1";
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.OPENCLAW_GATEWAY_PASSWORD;
 
     tempHome = await makeTempWorkspace("openclaw-onboard-");
-    setTestEnvValue("HOME", tempHome);
+    process.env.HOME = tempHome;
 
     await loadGatewayOnboardModules();
   });
@@ -404,10 +400,9 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
     readLastGatewayErrorLineMock.mockClear();
   });
 
-  it("preserves existing config on onboard rerun (openclaw#84692)", async () => {
+  it("preserves existing agents.list and bindings on onboard rerun (openclaw#84692)", async () => {
     await withStateDir("state-preserve-agents-", async (stateDir) => {
       const workspace = path.join(stateDir, "openclaw");
-      const passwordRef = { source: "env" as const, provider: "default", id: "GATEWAY_PASSWORD" };
       const seededAgents = [
         { id: "alpha", model: "anthropic/claude-3-5-sonnet" },
         { id: "beta", model: "openai/gpt-4o" },
@@ -433,13 +428,7 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
       testConfigStore.set(resolveTestConfigPath(), {
         agents: { list: seededAgents, defaults: { workspace } },
         bindings: seededBindings,
-        gateway: {
-          mode: "local",
-          port: 24680,
-          bind: "loopback",
-          auth: { mode: "password", password: passwordRef },
-          tailscale: { mode: "serve", resetOnExit: true },
-        },
+        gateway: { mode: "local", port: 18789, auth: { mode: "token", token: "seed_tok" } },
       } as OpenClawConfig);
 
       await runNonInteractiveSetup(
@@ -451,6 +440,9 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
           skipSkills: true,
           skipHealth: true,
           installDaemon: false,
+          gatewayBind: "loopback",
+          gatewayAuth: "token",
+          gatewayToken: "seed_tok",
         },
         runtime,
       );
@@ -458,13 +450,6 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
       const cfg = readTestConfig();
       expect(cfg.agents?.list?.map((a) => a.id)).toEqual(["alpha", "beta"]);
       expect(cfg.bindings).toEqual(seededBindings);
-      expect(cfg.gateway).toEqual({
-        mode: "local",
-        port: 24680,
-        bind: "loopback",
-        auth: { mode: "password", password: passwordRef },
-        tailscale: { mode: "serve", resetOnExit: true },
-      });
 
       const onboardWrite = capturedReplaceConfigFileCalls.at(-1);
       expect(onboardWrite?.writeOptions?.allowConfigSizeDrop).toBe(false);
@@ -517,13 +502,6 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
     await withStateDir("state-noninteractive-", async (stateDir) => {
       const token = "tok_test_123";
       const workspace = path.join(stateDir, "openclaw");
-      testConfigStore.set(resolveTestConfigPath(), {
-        gateway: {
-          bind: "lan",
-          auth: { mode: "password", password: "test-password" },
-          tailscale: { mode: "serve", resetOnExit: true },
-        },
-      } as OpenClawConfig);
 
       await runNonInteractiveSetup(
         {
@@ -537,59 +515,21 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
           gatewayBind: "loopback",
           gatewayAuth: "token",
           gatewayToken: token,
-          tailscale: "off",
-          tailscaleResetOnExit: false,
         },
         runtime,
       );
 
       const cfg = readTestConfig<{
-        gateway?: {
-          mode?: string;
-          bind?: string;
-          auth?: { mode?: string; token?: string };
-          tailscale?: { mode?: string; resetOnExit?: boolean };
-        };
+        gateway?: { mode?: string; auth?: { mode?: string; token?: string } };
         agents?: { defaults?: { workspace?: string } };
         tools?: { profile?: string };
-        hooks?: { internal?: { entries?: Record<string, { enabled?: boolean }> } };
       }>();
 
       expect(cfg?.agents?.defaults?.workspace).toBe(workspace);
       expect(cfg?.gateway?.mode).toBe("local");
-      expect(cfg?.gateway?.bind).toBe("loopback");
       expect(cfg?.tools?.profile).toBe("coding");
       expect(cfg?.gateway?.auth?.mode).toBe("token");
       expect(cfg?.gateway?.auth?.token).toBe(token);
-      expect(cfg?.gateway?.tailscale).toEqual({ mode: "off", resetOnExit: false });
-      expect(cfg?.hooks?.internal?.entries?.["session-memory"]).toEqual({ enabled: true });
-    });
-  }, 60_000);
-
-  it("does not auto-enable default hooks when skipHooks is set", async () => {
-    await withStateDir("state-skip-hooks-", async (stateDir) => {
-      const workspace = path.join(stateDir, "openclaw");
-      testConfigStore.set(resolveTestConfigPath(), {
-        gateway: { mode: "local", bind: "lan" },
-      } as OpenClawConfig);
-
-      await runNonInteractiveSetup(
-        {
-          nonInteractive: true,
-          mode: "local",
-          workspace,
-          authChoice: "skip",
-          skipHooks: true,
-          skipSkills: true,
-          skipHealth: true,
-          installDaemon: false,
-        },
-        runtime,
-      );
-
-      const cfg = readTestConfig();
-      expect(cfg.hooks).toBeUndefined();
-      expect(cfg.gateway?.bind).toBe("lan");
     });
   }, 60_000);
 
@@ -708,21 +648,6 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
     await withStateDir("state-remote-", async (_stateDir) => {
       const port = getPseudoPort(30_000);
       const token = "tok_remote_123";
-      testConfigStore.set(resolveTestConfigPath(), {
-        gateway: {
-          remote: {
-            url: "wss://old.example.test",
-            transport: "ssh",
-            remotePort: 24680,
-            sshTarget: "operator@old.example.test",
-            sshIdentity: "/tmp/old-identity",
-            sshHostKeyPolicy: "openssh",
-            token: "test-token",
-            password: { source: "env", provider: "default", id: "REMOTE_PASSWORD" },
-            tlsFingerprint: "sha256:test-fingerprint",
-          },
-        },
-      } as OpenClawConfig);
       await runNonInteractiveSetup(
         {
           nonInteractive: true,
@@ -735,26 +660,20 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
         runtime,
       );
 
-      const cfg = readTestConfig();
+      const cfg = readTestConfig<{
+        gateway?: { mode?: string; remote?: { url?: string; token?: string } };
+      }>();
 
       expect(cfg.gateway?.mode).toBe("remote");
-      expect(cfg.gateway?.remote).toEqual({
-        url: `ws://127.0.0.1:${port}`,
-        token,
-      });
-      expect(cfg.hooks?.internal?.entries?.["session-memory"]).toEqual({ enabled: true });
+      expect(cfg.gateway?.remote?.url).toBe(`ws://127.0.0.1:${port}`);
+      expect(cfg.gateway?.remote?.token).toBe(token);
     });
   }, 60_000);
 
   it("preserves existing agents.list and bindings on remote onboard rerun (openclaw#84692)", async () => {
     await withStateDir("state-remote-preserve-agents-", async (_stateDir) => {
       const port = getPseudoPort(30_000);
-      const passwordRef = {
-        source: "env" as const,
-        provider: "default",
-        id: "OPENCLAW_REMOTE_GATEWAY_PASSWORD",
-      };
-      const tokenRef = { source: "env" as const, provider: "default", id: "REMOTE_TOKEN" };
+      const token = "tok_remote_seed";
       const seededAgents = [
         { id: "alpha", model: "anthropic/claude-3-5-sonnet" },
         { id: "beta", model: "openai/gpt-4o" },
@@ -774,12 +693,7 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
         bindings: seededBindings,
         gateway: {
           mode: "remote",
-          remote: {
-            url: `ws://127.0.0.1:${port}`,
-            token: tokenRef,
-            password: passwordRef,
-            tlsFingerprint: "sha256:test-fingerprint",
-          },
+          remote: { url: `ws://127.0.0.1:${port}`, token },
         },
       } as OpenClawConfig);
 
@@ -788,6 +702,7 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
           nonInteractive: true,
           mode: "remote",
           remoteUrl: `ws://127.0.0.1:${port}`,
+          remoteToken: token,
           authChoice: "skip",
           json: true,
         },
@@ -797,12 +712,6 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
       const cfg = readTestConfig();
       expect(cfg.agents?.list?.map((a) => a.id)).toEqual(["alpha", "beta"]);
       expect(cfg.bindings).toEqual(seededBindings);
-      expect(cfg.gateway?.remote).toEqual({
-        url: `ws://127.0.0.1:${port}`,
-        token: tokenRef,
-        password: passwordRef,
-        tlsFingerprint: "sha256:test-fingerprint",
-      });
 
       const remoteWrite = capturedReplaceConfigFileCalls.at(-1);
       expect(remoteWrite?.writeOptions?.allowConfigSizeDrop).toBe(false);
@@ -874,7 +783,7 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
           runtime,
         ),
       ).rejects.toThrow(
-        /only waits for an already-running gateway unless you pass `--install-daemon` to `openclaw onboard`[\s\S]*openclaw onboard --install-daemon[\s\S]*openclaw onboard --skip-health/,
+        /only waits for an already-running gateway unless you pass --install-daemon[\s\S]*--skip-health/,
       );
     });
   }, 60_000);
@@ -1060,8 +969,8 @@ describe("onboard (non-interactive): gateway and remote auth", () => {
       return;
     }
     await withStateDir("state-lan-", async (stateDir) => {
-      setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
-      setTestEnvValue("OPENCLAW_CONFIG_PATH", path.join(stateDir, "openclaw.json"));
+      process.env.OPENCLAW_STATE_DIR = stateDir;
+      process.env.OPENCLAW_CONFIG_PATH = path.join(stateDir, "openclaw.json");
 
       const port = getPseudoPort(40_000);
       const workspace = path.join(stateDir, "openclaw");

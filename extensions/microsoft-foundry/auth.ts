@@ -35,19 +35,13 @@ import {
   resolveFoundryApi,
 } from "./shared.js";
 
-function shouldTestFoundryTextConnection(params: {
+export function shouldTestFoundryTextConnection(params: {
   modelId: string;
   modelNameHint?: string | null;
 }): boolean {
   return !isFoundryMaiImageModel(
     resolveConfiguredModelNameHint(params.modelId, params.modelNameHint),
   );
-}
-
-if (process.env.VITEST === "true") {
-  const key = Symbol.for("openclaw.microsoftFoundryTestApi");
-  const api = (Reflect.get(globalThis, key) as Record<string, unknown> | undefined) ?? {};
-  Reflect.set(globalThis, key, { ...api, shouldTestFoundryTextConnection });
 }
 
 export const entraIdAuthMethod: ProviderAuthMethod = {

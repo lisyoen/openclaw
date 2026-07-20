@@ -9,14 +9,10 @@ import {
 import type { GatewayDaemonRuntime } from "./daemon-runtime.js";
 
 /** Detect source-checkout dev mode from the current CLI entrypoint. */
-function resolveGatewayDevMode(argv: string[] = process.argv): boolean {
+export function resolveGatewayDevMode(argv: string[] = process.argv): boolean {
   const entry = argv[1];
   const normalizedEntry = entry?.replaceAll("\\", "/");
-  return (
-    normalizedEntry !== undefined &&
-    normalizedEntry.includes("/src/") &&
-    normalizedEntry.endsWith(".ts")
-  );
+  return normalizedEntry?.includes("/src/") && normalizedEntry.endsWith(".ts");
 }
 
 /** Resolve dev-mode and Node path inputs for daemon service install planning. */
@@ -96,7 +92,7 @@ function addUniquePathDir(dirs: string[], dir: string | undefined): void {
 }
 
 /** Resolve the OpenClaw CLI binary directory from argv/PATH for daemon PATH. */
-function resolveDaemonOpenClawBinDir(
+export function resolveDaemonOpenClawBinDir(
   params: {
     argv?: string[];
     env?: Record<string, string | undefined>;

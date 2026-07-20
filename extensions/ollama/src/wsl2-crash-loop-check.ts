@@ -1,9 +1,11 @@
 // Ollama plugin module implements wsl2 crash loop check behavior.
+import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
+import { promisify } from "node:util";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
-import { runExec } from "openclaw/plugin-sdk/process-runtime";
 import { isWSL2Sync } from "openclaw/plugin-sdk/runtime-env";
 
+const execFileAsync = promisify(execFile);
 const SYSTEMCTL_TIMEOUT_MS = 5_000;
 const WSL_CUDA_MARKERS = [
   "/dev/dxg",
@@ -12,7 +14,7 @@ const WSL_CUDA_MARKERS = [
   "/usr/local/cuda",
 ];
 
-function parseSystemctlShowProperties(stdout: string): Map<string, string> {
+export function parseSystemctlShowProperties(stdout: string): Map<string, string> {
   const properties = new Map<string, string>();
   for (const line of stdout.split(/\r?\n/u)) {
     const separator = line.indexOf("=");
@@ -24,12 +26,12 @@ function parseSystemctlShowProperties(stdout: string): Map<string, string> {
   return properties;
 }
 
-async function isOllamaEnabledWithRestartAlways(): Promise<boolean> {
+export async function isOllamaEnabledWithRestartAlways(): Promise<boolean> {
   try {
-    const { stdout } = await runExec(
+    const { stdout } = await execFileAsync(
       "systemctl",
       ["show", "ollama.service", "--property=UnitFileState,Restart", "--no-pager"],
-      { logOutput: false, timeoutMs: SYSTEMCTL_TIMEOUT_MS },
+      { timeout: SYSTEMCTL_TIMEOUT_MS },
     );
     const properties = parseSystemctlShowProperties(stdout);
     return properties.get("UnitFileState") === "enabled" && properties.get("Restart") === "always";
@@ -38,7 +40,7 @@ async function isOllamaEnabledWithRestartAlways(): Promise<boolean> {
   }
 }
 
-async function hasWslCuda(): Promise<boolean> {
+export async function hasWslCuda(): Promise<boolean> {
   for (const marker of WSL_CUDA_MARKERS) {
     try {
       await access(marker);

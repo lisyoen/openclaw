@@ -6,14 +6,14 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderCatFacePngBase64 } from "../../test/helpers/live-image-probe.js";
 import { isLiveTestEnabled } from "../agents/live-test-helpers.js";
-import type { ChannelOutboundContext } from "../channels/plugins/types.adapters.js";
+import type { ChannelOutboundContext } from "../channels/plugins/types.public.js";
 import { clearConfigCache, clearRuntimeConfigSnapshot } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
-import { findBundledPluginMetadataById } from "../plugins/bundled-plugin-metadata.js";
+import { resolveBundledPluginWorkspaceSourcePath } from "../plugins/bundled-plugin-metadata.js";
 import { pluginCommands } from "../plugins/command-registry-state.js";
-import { clearPluginLoaderCache } from "../plugins/loader.test-fixtures.js";
+import { clearPluginLoaderCache } from "../plugins/loader.js";
 import {
   pinActivePluginChannelRegistry,
   releasePinnedPluginChannelRegistry,
@@ -21,14 +21,12 @@ import {
 } from "../plugins/runtime.js";
 import { extractFirstTextBlock } from "../shared/chat-message-content.js";
 import { createTestRegistry } from "../test-utils/channel-plugins.js";
-import { deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import { sleep } from "../utils.js";
 import type { GatewayClient } from "./client.js";
 import {
   connectTestGatewayClient,
   getFreeGatewayPort,
 } from "./gateway-cli-backend.live-helpers.js";
-import { restoreLiveEnv, snapshotLiveEnv, type LiveEnvSnapshot } from "./live-env-test-helpers.js";
 import { startGatewayServer } from "./server.js";
 
 const LIVE = isLiveTestEnabled();
@@ -42,7 +40,7 @@ const CODEX_BIND_REQUEST_TIMEOUT_MS = resolveLiveTimeoutMs(
   process.env.OPENCLAW_LIVE_CODEX_BIND_REQUEST_TIMEOUT_MS,
   300_000,
 );
-const DEFAULT_CODEX_BIND_MODEL = "gpt-5.6-luna";
+const DEFAULT_CODEX_BIND_MODEL = "gpt-5.5";
 
 type CapturedOutboundReply = {
   accountId?: string;
@@ -174,6 +172,14 @@ async function waitForOutboundText(params: {
   );
 }
 
+function restoreEnvVar(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
+
 async function waitForAgentRunOk(
   client: GatewayClient,
   runId: string,
@@ -278,15 +284,14 @@ function resolveCodexPluginRoot(): string {
   if (command?.pluginRoot) {
     return command.pluginRoot;
   }
-  const metadata = findBundledPluginMetadataById("codex", {
+  const pluginRoot = resolveBundledPluginWorkspaceSourcePath({
     rootDir: process.cwd(),
-    includeChannelConfigs: false,
-    includeSyntheticChannelConfigs: false,
+    pluginId: "codex",
   });
-  if (!metadata) {
+  if (!pluginRoot) {
     throw new Error("Codex bundled plugin root was not found");
   }
-  return path.resolve(process.cwd(), "extensions", metadata.dirName);
+  return pluginRoot;
 }
 
 function resolveBoundSessionKey(params: {
@@ -395,7 +400,17 @@ describeLive("gateway live (native Codex conversation binding)", () => {
   it(
     "binds a Slack DM to Codex app-server, updates controls, and forwards image media paths",
     async () => {
-      const previous: LiveEnvSnapshot = snapshotLiveEnv(["CODEX_HOME", "HOME"]);
+      const previous = {
+        codexHome: process.env.CODEX_HOME,
+        configPath: process.env.OPENCLAW_CONFIG_PATH,
+        gatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+        home: process.env.HOME,
+        skipCanvas: process.env.OPENCLAW_SKIP_CANVAS_HOST,
+        skipChannels: process.env.OPENCLAW_SKIP_CHANNELS,
+        skipCron: process.env.OPENCLAW_SKIP_CRON,
+        skipGmail: process.env.OPENCLAW_SKIP_GMAIL_WATCHER,
+        stateDir: process.env.OPENCLAW_STATE_DIR,
+      };
       const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-live-codex-bind-"));
       const tempHome = path.join(tempRoot, "home");
       const stateDir = path.join(tempRoot, "state");
@@ -438,20 +453,20 @@ describeLive("gateway live (native Codex conversation binding)", () => {
       clearPluginLoaderCache();
       resetPluginRuntimeStateForTest();
       const codexHome =
-        previous.CODEX_HOME || (previous.HOME ? path.join(previous.HOME, ".codex") : "");
+        previous.codexHome || (previous.home ? path.join(previous.home, ".codex") : "");
       if (codexHome) {
-        setTestEnvValue("CODEX_HOME", codexHome);
+        process.env.CODEX_HOME = codexHome;
       } else {
-        deleteTestEnvValue("CODEX_HOME");
+        delete process.env.CODEX_HOME;
       }
-      setTestEnvValue("HOME", tempHome);
-      setTestEnvValue("OPENCLAW_CONFIG_PATH", configPath);
-      setTestEnvValue("OPENCLAW_GATEWAY_TOKEN", token);
-      setTestEnvValue("OPENCLAW_SKIP_CANVAS_HOST", "1");
-      setTestEnvValue("OPENCLAW_SKIP_CHANNELS", "1");
-      setTestEnvValue("OPENCLAW_SKIP_CRON", "1");
-      setTestEnvValue("OPENCLAW_SKIP_GMAIL_WATCHER", "1");
-      setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
+      process.env.HOME = tempHome;
+      process.env.OPENCLAW_CONFIG_PATH = configPath;
+      process.env.OPENCLAW_GATEWAY_TOKEN = token;
+      process.env.OPENCLAW_SKIP_CANVAS_HOST = "1";
+      process.env.OPENCLAW_SKIP_CHANNELS = "1";
+      process.env.OPENCLAW_SKIP_CRON = "1";
+      process.env.OPENCLAW_SKIP_GMAIL_WATCHER = "1";
+      process.env.OPENCLAW_STATE_DIR = stateDir;
       let server: Awaited<ReturnType<typeof startGatewayServer>> | undefined;
       let client: Awaited<ReturnType<typeof connectTestGatewayClient>> | undefined;
       let pinnedChannelRegistry:
@@ -616,7 +631,15 @@ describeLive("gateway live (native Codex conversation binding)", () => {
           }
         } finally {
           await fs.rm(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-          restoreLiveEnv(previous);
+          restoreEnvVar("CODEX_HOME", previous.codexHome);
+          restoreEnvVar("OPENCLAW_CONFIG_PATH", previous.configPath);
+          restoreEnvVar("OPENCLAW_GATEWAY_TOKEN", previous.gatewayToken);
+          restoreEnvVar("HOME", previous.home);
+          restoreEnvVar("OPENCLAW_SKIP_CANVAS_HOST", previous.skipCanvas);
+          restoreEnvVar("OPENCLAW_SKIP_CHANNELS", previous.skipChannels);
+          restoreEnvVar("OPENCLAW_SKIP_CRON", previous.skipCron);
+          restoreEnvVar("OPENCLAW_SKIP_GMAIL_WATCHER", previous.skipGmail);
+          restoreEnvVar("OPENCLAW_STATE_DIR", previous.stateDir);
         }
       }
     },

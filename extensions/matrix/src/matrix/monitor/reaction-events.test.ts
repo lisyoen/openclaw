@@ -1,43 +1,14 @@
 // Matrix tests cover reaction events plugin behavior.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  registerMatrixApprovalReactionTarget as registerMatrixApprovalReactionTargetRaw,
-  resolveMatrixApprovalReactionTargetWithPersistence as resolveMatrixApprovalReactionTargetWithPersistenceRaw,
-  unregisterMatrixApprovalReactionTarget,
+  clearMatrixApprovalReactionTargetsForTest,
+  registerMatrixApprovalReactionTarget,
+  resolveMatrixApprovalReactionTarget,
 } from "../../approval-reactions.js";
 import type { CoreConfig } from "../../types.js";
 import { handleInboundMatrixReaction } from "./reaction-events.js";
 
-type RegisterTargetParams = Parameters<typeof registerMatrixApprovalReactionTargetRaw>[0];
-type ResolveTargetParams = Parameters<
-  typeof resolveMatrixApprovalReactionTargetWithPersistenceRaw
->[0];
-const touchedTargets = new Map<
-  string,
-  Parameters<typeof unregisterMatrixApprovalReactionTarget>[0]
->();
-
-function registerMatrixApprovalReactionTarget(
-  params: Omit<RegisterTargetParams, "accountId"> & { accountId?: string },
-): void {
-  const { accountId = "default", ...target } = params;
-  const targetRef = { accountId, roomId: target.roomId, eventId: target.eventId };
-  touchedTargets.set(JSON.stringify(targetRef), targetRef);
-  registerMatrixApprovalReactionTargetRaw({ ...target, accountId });
-}
-
-function resolveMatrixApprovalReactionTargetWithPersistence(
-  params: Omit<ResolveTargetParams, "accountId"> & { accountId?: string },
-) {
-  const { accountId = "default", ...target } = params;
-  return resolveMatrixApprovalReactionTargetWithPersistenceRaw({
-    ...target,
-    accountId,
-  });
-}
-
 const resolveMatrixApproval = vi.fn();
-const editMessageMatrix = vi.fn();
 type MatrixReactionParams = Parameters<typeof handleInboundMatrixReaction>[0];
 type MatrixReactionClient = MatrixReactionParams["client"];
 type MatrixReactionCore = MatrixReactionParams["core"];
@@ -49,23 +20,9 @@ vi.mock("../../exec-approval-resolver.js", () => ({
   resolveMatrixApproval: (...args: unknown[]) => resolveMatrixApproval(...args),
 }));
 
-vi.mock("../send.js", () => ({
-  editMessageMatrix: (...args: unknown[]) => editMessageMatrix(...args),
-}));
-
 beforeEach(() => {
-  resolveMatrixApproval.mockReset().mockResolvedValue({
-    applied: true,
-    approval: { id: "req-123", status: "allowed", decision: "allow-once" },
-  });
-  editMessageMatrix.mockReset().mockResolvedValue("$edit");
-});
-
-afterEach(() => {
-  for (const target of touchedTargets.values()) {
-    unregisterMatrixApprovalReactionTarget(target);
-  }
-  touchedTargets.clear();
+  resolveMatrixApproval.mockReset();
+  clearMatrixApprovalReactionTargetsForTest();
 });
 
 function buildConfig(): CoreConfig {
@@ -140,7 +97,6 @@ async function handleReaction(params: {
   cfg?: CoreConfig;
   targetEventId?: string;
   reactionKey?: string;
-  logVerboseMessage?: (message: string) => void;
 }): Promise<void> {
   await handleInboundMatrixReaction({
     client: params.client,
@@ -156,7 +112,7 @@ async function handleReaction(params: {
     senderLabel: "Owner",
     selfUserId: "@bot:example.org",
     isDirectMessage: false,
-    logVerboseMessage: params.logVerboseMessage ?? vi.fn<(message: string) => void>(),
+    logVerboseMessage: vi.fn(),
   });
 }
 
@@ -168,7 +124,6 @@ describe("matrix approval reactions", () => {
       roomId: "!ops:example.org",
       eventId: "$approval-msg",
       approvalId: "req-123",
-      approvalKind: "exec",
       allowedDecisions: ["allow-once", "allow-always", "deny"],
     });
     const client = createReactionClient(
@@ -188,7 +143,6 @@ describe("matrix approval reactions", () => {
     expect(resolveMatrixApproval).toHaveBeenCalledWith({
       cfg,
       approvalId: "req-123",
-      approvalKind: "exec",
       decision: "allow-once",
       senderId: "@owner:example.org",
     });
@@ -236,7 +190,6 @@ describe("matrix approval reactions", () => {
       roomId: "!ops:example.org",
       eventId: "$approval-msg",
       approvalId: "req-123",
-      approvalKind: "exec",
       allowedDecisions: ["deny"],
     });
     const client = createReactionClient(
@@ -257,7 +210,6 @@ describe("matrix approval reactions", () => {
     expect(resolveMatrixApproval).toHaveBeenCalledWith({
       cfg,
       approvalId: "req-123",
-      approvalKind: "exec",
       decision: "deny",
       senderId: "@owner:example.org",
     });
@@ -270,7 +222,6 @@ describe("matrix approval reactions", () => {
       roomId: "!ops:example.org",
       eventId: "$approval-msg",
       approvalId: "req-123",
-      approvalKind: "exec",
       allowedDecisions: ["allow-once"],
     });
     const client = createReactionClient(vi.fn().mockRejectedValue(new Error("boom")));
@@ -284,7 +235,6 @@ describe("matrix approval reactions", () => {
     expect(resolveMatrixApproval).toHaveBeenCalledWith({
       cfg: buildConfig(),
       approvalId: "req-123",
-      approvalKind: "exec",
       decision: "allow-once",
       senderId: "@owner:example.org",
     });
@@ -303,7 +253,6 @@ describe("matrix approval reactions", () => {
       roomId: "!ops:example.org",
       eventId: "$plugin-approval-msg",
       approvalId: "plugin:req-123",
-      approvalKind: "plugin",
       allowedDecisions: ["allow-once", "deny"],
     });
     const client = createReactionClient();
@@ -319,7 +268,6 @@ describe("matrix approval reactions", () => {
     expect(resolveMatrixApproval).toHaveBeenCalledWith({
       cfg,
       approvalId: "plugin:req-123",
-      approvalKind: "plugin",
       decision: "allow-once",
       senderId: "@owner:example.org",
     });
@@ -335,7 +283,6 @@ describe("matrix approval reactions", () => {
       roomId: "!ops:example.org",
       eventId: "$approval-msg",
       approvalId: "req-123",
-      approvalKind: "exec",
       allowedDecisions: ["deny"],
     });
     const client = createReactionClient();
@@ -348,126 +295,12 @@ describe("matrix approval reactions", () => {
 
     expect(client.getEvent).not.toHaveBeenCalled();
     expect(
-      await resolveMatrixApprovalReactionTargetWithPersistence({
+      resolveMatrixApprovalReactionTarget({
         roomId: "!ops:example.org",
         eventId: "$approval-msg",
         reactionKey: "❌",
       }),
     ).toBeNull();
-  });
-
-  it("terminalizes every sibling prompt when this surface wins", async () => {
-    const core = buildCore();
-    const cfg = buildConfig();
-    registerMatrixApprovalReactionTarget({
-      roomId: "!ops:example.org",
-      eventId: "$approval-msg",
-      approvalId: "req-123",
-      approvalKind: "exec",
-      allowedDecisions: ["allow-once", "deny"],
-    });
-    registerMatrixApprovalReactionTarget({
-      roomId: "!approvals:example.org",
-      eventId: "$approval-dm",
-      approvalId: "req-123",
-      approvalKind: "exec",
-      allowedDecisions: ["allow-once", "deny"],
-    });
-    const client = createReactionClient();
-
-    await handleReaction({ client, core, cfg, reactionKey: "✅" });
-
-    expect(
-      await resolveMatrixApprovalReactionTargetWithPersistence({
-        roomId: "!ops:example.org",
-        eventId: "$approval-msg",
-        reactionKey: "✅",
-      }),
-    ).toBeNull();
-    expect(
-      await resolveMatrixApprovalReactionTargetWithPersistence({
-        roomId: "!approvals:example.org",
-        eventId: "$approval-dm",
-        reactionKey: "✅",
-      }),
-    ).toBeNull();
-    expect(editMessageMatrix).toHaveBeenCalledTimes(2);
-    expect(editMessageMatrix).toHaveBeenCalledWith(
-      "!ops:example.org",
-      "$approval-msg",
-      "Resolved: Allowed once\n\nID: req-123",
-      { cfg, accountId: "default", client },
-    );
-    expect(editMessageMatrix).toHaveBeenCalledWith(
-      "!approvals:example.org",
-      "$approval-dm",
-      "Resolved: Allowed once\n\nID: req-123",
-      { cfg, accountId: "default", client },
-    );
-  });
-
-  it("unregisters losing surfaces and reports the canonical terminal decision", async () => {
-    const core = buildCore();
-    const cfg = buildConfig();
-    const logVerboseMessage = vi.fn();
-    resolveMatrixApproval.mockResolvedValueOnce({
-      applied: false,
-      approval: { id: "req-123", status: "denied", decision: "deny" },
-    });
-    registerMatrixApprovalReactionTarget({
-      roomId: "!ops:example.org",
-      eventId: "$approval-msg",
-      approvalId: "req-123",
-      approvalKind: "exec",
-      allowedDecisions: ["allow-once", "deny"],
-    });
-    registerMatrixApprovalReactionTarget({
-      roomId: "!approvals:example.org",
-      eventId: "$approval-dm",
-      approvalId: "req-123",
-      approvalKind: "exec",
-      allowedDecisions: ["allow-once", "deny"],
-    });
-    const client = createReactionClient();
-
-    await handleReaction({
-      client,
-      core,
-      cfg,
-      reactionKey: "✅",
-      logVerboseMessage,
-    });
-
-    expect(
-      await resolveMatrixApprovalReactionTargetWithPersistence({
-        roomId: "!ops:example.org",
-        eventId: "$approval-msg",
-        reactionKey: "✅",
-      }),
-    ).toBeNull();
-    expect(
-      await resolveMatrixApprovalReactionTargetWithPersistence({
-        roomId: "!approvals:example.org",
-        eventId: "$approval-dm",
-        reactionKey: "✅",
-      }),
-    ).toBeNull();
-    expect(editMessageMatrix).toHaveBeenCalledTimes(2);
-    expect(editMessageMatrix).toHaveBeenCalledWith(
-      "!ops:example.org",
-      "$approval-msg",
-      "Already resolved: Denied\n\nID: req-123",
-      { cfg, accountId: "default", client },
-    );
-    expect(editMessageMatrix).toHaveBeenCalledWith(
-      "!approvals:example.org",
-      "$approval-dm",
-      "Already resolved: Denied\n\nID: req-123",
-      { cfg, accountId: "default", client },
-    );
-    expect(logVerboseMessage).toHaveBeenCalledWith(
-      "matrix: approval reaction resolved id=req-123 sender=@owner:example.org applied=false status=denied decision=deny",
-    );
   });
 
   it("skips target fetches for ordinary reactions when notifications are off", async () => {

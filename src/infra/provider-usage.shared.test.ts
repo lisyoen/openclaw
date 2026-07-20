@@ -10,18 +10,15 @@ describe("provider-usage.shared", () => {
   });
 
   it.each([
-    { value: "clawrouter", expected: "clawrouter" },
     { value: "deepseek", expected: "deepseek" },
     { value: "zai", expected: "zai" },
-    { value: "z-ai", expected: "z-ai" },
+    { value: "z-ai", expected: undefined },
     { value: " GOOGLE-GEMINI-CLI ", expected: "google-gemini-cli" },
     { value: "minimax-portal", expected: "minimax" },
     { value: "minimax-cn", expected: "minimax" },
     { value: "minimax-portal-cn", expected: "minimax" },
-    { value: "claude-cli", expected: "anthropic" },
-    { value: " CLAUDE-CLI ", expected: "anthropic" },
     { value: " XIAOMI-TOKEN-PLAN ", expected: "xiaomi-token-plan" },
-    { value: "unknown-provider", expected: "unknown-provider" },
+    { value: "unknown-provider", expected: undefined },
     { value: undefined, expected: undefined },
     { value: null, expected: undefined },
   ])("normalizes provider ids for %j", ({ value, expected }) => {

@@ -1,9 +1,6 @@
 // Zalouser tests cover security audit plugin behavior.
 import { describe, expect, it } from "vitest";
-import {
-  collectZalouserSecurityAuditFindings,
-  isZalouserMutableGroupEntry,
-} from "./security-audit.js";
+import { collectZalouserSecurityAuditFindings } from "./security-audit.js";
 import type { ResolvedZalouserAccount, ZalouserAccountConfig } from "./types.js";
 
 function createAccount(config: ZalouserAccountConfig): ResolvedZalouserAccount {
@@ -17,12 +14,6 @@ function createAccount(config: ZalouserAccountConfig): ResolvedZalouserAccount {
 }
 
 describe("Zalouser security audit findings", () => {
-  it("preserves the ordered stable-id prefix grammar", () => {
-    expect(isZalouserMutableGroupEntry("zalouser:group:g-123")).toBe(false);
-    expect(isZalouserMutableGroupEntry("group:zalouser:g-123")).toBe(true);
-    expect(isZalouserMutableGroupEntry("zalouser:")).toBe(false);
-  });
-
   const cases: Array<{
     name: string;
     config: ZalouserAccountConfig;

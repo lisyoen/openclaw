@@ -1,4 +1,5 @@
 /** Loads manifest and installed-index contributions used to build plugin registry snapshots. */
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeSortedUniqueStringEntries } from "@openclaw/normalization-core/string-normalization";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
@@ -25,19 +26,22 @@ import {
   type LoadPluginRegistryParams,
   type PluginRegistrySnapshot,
 } from "./plugin-registry-snapshot.js";
-export { createPluginRegistryIdNormalizer } from "./plugin-registry-id-normalizer.js";
+export {
+  createPluginRegistryIdNormalizer,
+  type PluginRegistryIdNormalizerOptions,
+} from "./plugin-registry-id-normalizer.js";
 
-type PluginLookUpTable = Pick<
+export type PluginLookUpTable = Pick<
   PluginMetadataSnapshot,
   "index" | "manifestRegistry" | "plugins" | "normalizePluginId" | "owners"
 >;
 
-type PluginRegistryContributionOptions = LoadPluginRegistryParams & {
+export type PluginRegistryContributionOptions = LoadPluginRegistryParams & {
   includeDisabled?: boolean;
   lookUpTable?: PluginLookUpTable;
 };
 
-type LoadPluginRegistryManifestParams = LoadPluginRegistryParams & {
+export type LoadPluginRegistryManifestParams = LoadPluginRegistryParams & {
   includeDisabled?: boolean;
   pluginIds?: readonly string[];
   bundledChannelConfigCollector?: BundledChannelConfigCollector;
@@ -53,26 +57,49 @@ export type PluginRegistryContributionKey =
   | "commandAliases"
   | "contracts";
 
-type ResolvePluginContributionOwnersParams = PluginRegistryContributionOptions & {
+export type ResolvePluginContributionOwnersParams = PluginRegistryContributionOptions & {
   contribution: PluginRegistryContributionKey;
   matches: string | ((contributionId: string) => boolean);
 };
 
-type ListPluginContributionIdsParams = PluginRegistryContributionOptions & {
+export type ListPluginContributionIdsParams = PluginRegistryContributionOptions & {
   contribution: PluginRegistryContributionKey;
 };
 
-type ResolveManifestContractPluginIdsParams = LoadPluginRegistryParams & {
+export type ResolveProviderOwnersParams = PluginRegistryContributionOptions & {
+  providerId: string;
+};
+
+export type ResolveChannelOwnersParams = PluginRegistryContributionOptions & {
+  channelId: string;
+};
+
+export type ResolveCliBackendOwnersParams = PluginRegistryContributionOptions & {
+  cliBackendId: string;
+};
+
+export type ResolveSetupProviderOwnersParams = PluginRegistryContributionOptions & {
+  setupProviderId: string;
+};
+
+export type ResolveManifestContractPluginIdsParams = LoadPluginRegistryParams & {
   contract: PluginManifestContractListKey;
   origin?: PluginOrigin;
   onlyPluginIds?: readonly string[];
 };
 
-type ResolveManifestContractOwnerPluginIdParams = LoadPluginRegistryParams & {
+export type ResolveManifestContractOwnerPluginIdParams = LoadPluginRegistryParams & {
   contract: PluginManifestContractListKey;
   value: string | undefined;
   origin?: PluginOrigin;
 };
+
+export type ResolveManifestContractPluginIdsByCompatibilityRuntimePathParams =
+  LoadPluginRegistryParams & {
+    contract: PluginManifestContractListKey;
+    path: string | undefined;
+    origin?: PluginOrigin;
+  };
 
 function normalizeContributionId(value: string): string {
   return value.trim();
@@ -358,6 +385,71 @@ export function resolvePluginContributionOwners(
   );
 }
 
+export function resolveProviderOwners(params: ResolveProviderOwnersParams): readonly string[] {
+  const providerId = normalizeProviderId(params.providerId);
+  if (!providerId) {
+    return [];
+  }
+  if (params.lookUpTable) {
+    const index = params.lookUpTable.index;
+    const owners: string[] = [];
+    for (const [contributionId, ownerIds] of params.lookUpTable.owners.providers.entries()) {
+      if (normalizeProviderId(contributionId) === providerId) {
+        owners.push(...ownerIds);
+      }
+    }
+    return filterContributionOwnerIds({
+      owners,
+      index,
+      includeDisabled: params.includeDisabled,
+      config: params.config,
+    });
+  }
+  return resolvePluginContributionOwners({
+    ...params,
+    contribution: "providers",
+    matches: (contributionId) => normalizeProviderId(contributionId) === providerId,
+  });
+}
+
+export function resolveChannelOwners(params: ResolveChannelOwnersParams): readonly string[] {
+  const channelId = normalizeContributionId(params.channelId);
+  if (!channelId) {
+    return [];
+  }
+  return resolvePluginContributionOwners({
+    ...params,
+    contribution: "channels",
+    matches: channelId,
+  });
+}
+
+export function resolveCliBackendOwners(params: ResolveCliBackendOwnersParams): readonly string[] {
+  const cliBackendId = normalizeContributionId(params.cliBackendId);
+  if (!cliBackendId) {
+    return [];
+  }
+  return resolvePluginContributionOwners({
+    ...params,
+    contribution: "cliBackends",
+    matches: cliBackendId,
+  });
+}
+
+export function resolveSetupProviderOwners(
+  params: ResolveSetupProviderOwnersParams,
+): readonly string[] {
+  const setupProviderId = normalizeContributionId(params.setupProviderId);
+  if (!setupProviderId) {
+    return [];
+  }
+  return resolvePluginContributionOwners({
+    ...params,
+    contribution: "setupProviders",
+    matches: setupProviderId,
+  });
+}
+
 export function resolveManifestContractPluginIds(
   params: ResolveManifestContractPluginIdsParams,
 ): string[] {
@@ -366,6 +458,24 @@ export function resolveManifestContractPluginIds(
       (plugin) =>
         (!params.origin || plugin.origin === params.origin) &&
         listManifestContractValues(plugin, params.contract).length > 0,
+    )
+    .map((plugin) => plugin.id)
+    .toSorted((left, right) => left.localeCompare(right));
+}
+
+export function resolveManifestContractPluginIdsByCompatibilityRuntimePath(
+  params: ResolveManifestContractPluginIdsByCompatibilityRuntimePathParams,
+): string[] {
+  const normalizedPath = params.path?.trim();
+  if (!normalizedPath) {
+    return [];
+  }
+  return loadManifestContractRegistry(params)
+    .plugins.filter(
+      (plugin) =>
+        (!params.origin || plugin.origin === params.origin) &&
+        listManifestContractValues(plugin, params.contract).length > 0 &&
+        (plugin.configContracts?.compatibilityRuntimePaths ?? []).includes(normalizedPath),
     )
     .map((plugin) => plugin.id)
     .toSorted((left, right) => left.localeCompare(right));

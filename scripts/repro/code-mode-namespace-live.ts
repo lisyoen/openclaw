@@ -1,7 +1,6 @@
 #!/usr/bin/env -S node --import tsx
 // Code Mode Namespace Live script supports OpenClaw repository automation.
 import { performance } from "node:perf_hooks";
-import { pathToFileURL } from "node:url";
 import { Type } from "typebox";
 import type { Model } from "../../packages/agent-core/src/llm.js";
 import type { AgentEvent, AgentTool } from "../../packages/agent-core/src/types.js";
@@ -81,7 +80,6 @@ type RunMetrics = {
 };
 
 const PLUGIN_ID = "fictions-live";
-const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/u;
 
 function cloneState(): FictionServiceState {
   return {
@@ -200,7 +198,7 @@ function stringParam(params: Record<string, unknown>, key: string): string {
 function makeTool(
   name: string,
   description: string,
-  properties: Parameters<typeof Type.Object>[0],
+  properties: Record<string, unknown>,
   execute: (params: Record<string, unknown>) => unknown,
 ): AnyAgentTool {
   const tool = {
@@ -600,32 +598,19 @@ function readArg(name: string): string | undefined {
   return match?.slice(prefix.length);
 }
 
-export function parseTaskLimit(raw: string | undefined, label: string): number {
-  const text = raw?.trim() ?? "3";
-  if (!POSITIVE_INTEGER_PATTERN.test(text)) {
-    throw new Error(`${label} must be a positive integer`);
-  }
-  const parsed = Number(text);
-  if (!Number.isSafeInteger(parsed)) {
-    throw new Error(`${label} must be a safe positive integer`);
-  }
-  return parsed;
-}
-
 async function main() {
-  const model = readArg("model") ?? process.env.OPENCLAW_CODE_MODE_LIVE_MODEL ?? "gpt-5.4-mini";
-  const modeArg = readArg("modes");
-  const modes = (modeArg ? modeArg.split(",") : ["regular", "code-namespace"]) as Mode[];
-  const taskArg = readArg("tasks");
-  const taskLimit = parseTaskLimit(
-    taskArg ?? process.env.OPENCLAW_CODE_MODE_LIVE_TASKS,
-    taskArg === undefined ? "OPENCLAW_CODE_MODE_LIVE_TASKS" : "--tasks",
-  );
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is required");
   }
-  const selectedTasks = tasks.slice(0, taskLimit);
+  const model = readArg("model") ?? process.env.OPENCLAW_CODE_MODE_LIVE_MODEL ?? "gpt-5.4-mini";
+  const modeArg = readArg("modes");
+  const modes = (modeArg ? modeArg.split(",") : ["regular", "code-namespace"]) as Mode[];
+  const taskLimit = Number(readArg("tasks") ?? process.env.OPENCLAW_CODE_MODE_LIVE_TASKS ?? "3");
+  const selectedTasks = tasks.slice(
+    0,
+    Number.isFinite(taskLimit) && taskLimit > 0 ? taskLimit : tasks.length,
+  );
   const results: RunMetrics[] = [];
   for (const task of selectedTasks) {
     for (const mode of modes) {
@@ -655,8 +640,6 @@ async function main() {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  await main().finally(() => {
-    clearCodeModeNamespacesForPlugin(PLUGIN_ID);
-  });
-}
+await main().finally(() => {
+  clearCodeModeNamespacesForPlugin(PLUGIN_ID);
+});

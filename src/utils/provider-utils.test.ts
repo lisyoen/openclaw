@@ -15,29 +15,62 @@ vi.mock("../plugins/provider-runtime.js", async () => {
   };
 });
 
-import { isReasoningTagProvider } from "./provider-utils.js";
+import { isReasoningTagProvider, resolveReasoningOutputMode } from "./provider-utils.js";
 
-describe("isReasoningTagProvider", () => {
+describe("resolveReasoningOutputMode", () => {
   beforeEach(() => {
     resolveProviderReasoningOutputModeWithPluginMock.mockReset();
     resolveProviderReasoningOutputModeWithPluginMock.mockReturnValue(undefined);
+  });
+
+  it.each([["google-generative-ai", "native"]] as const)(
+    "falls back to native for %s when no plugin override is present",
+    (provider, expected) => {
+      expect(resolveReasoningOutputMode({ provider, workspaceDir: process.cwd() })).toBe(expected);
+      expect(resolveProviderReasoningOutputModeWithPluginMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ["google", "tagged"],
+    ["Google", "tagged"],
+    ["google-gemini-cli", "tagged"],
+    ["anthropic", "native"],
+    ["openai", "native"],
+    ["openrouter", "native"],
+    ["ollama", "native"],
+    ["minimax", "native"],
+    ["minimax-cn", "native"],
+  ] as const)("prefers provider hooks for %s", (provider, expected) => {
+    resolveProviderReasoningOutputModeWithPluginMock.mockReturnValueOnce(expected);
+
+    expect(resolveReasoningOutputMode({ provider, workspaceDir: process.cwd() })).toBe(expected);
+    expect(resolveProviderReasoningOutputModeWithPluginMock).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to provider hooks for unknown providers", () => {
     resolveProviderReasoningOutputModeWithPluginMock.mockReturnValue("tagged");
 
     expect(
-      isReasoningTagProvider("custom-provider", {
+      resolveReasoningOutputMode({
+        provider: "custom-provider",
         workspaceDir: process.cwd(),
         modelId: "custom/model",
       }),
-    ).toBe(true);
+    ).toBe("tagged");
     expect(resolveProviderReasoningOutputModeWithPluginMock).toHaveBeenCalledTimes(1);
   });
 
   it("returns native when hooks do not provide an override", () => {
-    expect(isReasoningTagProvider("custom-provider")).toBe(false);
+    expect(resolveReasoningOutputMode({ provider: "custom-provider" })).toBe("native");
     expect(resolveProviderReasoningOutputModeWithPluginMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isReasoningTagProvider", () => {
+  beforeEach(() => {
+    resolveProviderReasoningOutputModeWithPluginMock.mockReset();
+    resolveProviderReasoningOutputModeWithPluginMock.mockReturnValue(undefined);
   });
 
   it.each([

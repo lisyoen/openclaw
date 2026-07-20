@@ -66,6 +66,10 @@ export function setInteractionCallbackUrl(accountId: string, url: string): void 
   callbackUrls.set(accountId, url);
 }
 
+export function getInteractionCallbackUrl(accountId: string): string | undefined {
+  return callbackUrls.get(accountId);
+}
+
 type InteractionCallbackConfig = Pick<OpenClawConfig, "gateway" | "channels"> & {
   interactions?: {
     callbackBaseUrl?: string;
@@ -183,7 +187,7 @@ export function setInteractionSecret(accountIdOrBotToken: string, botToken?: str
   defaultInteractionSecret = deriveInteractionSecret(accountIdOrBotToken);
 }
 
-function getInteractionSecret(accountId?: string): string {
+export function getInteractionSecret(accountId?: string): string {
   const scoped = accountId ? interactionSecrets.get(accountId) : undefined;
   if (scoped) {
     return scoped;
@@ -217,13 +221,16 @@ function canonicalizeInteractionContext(value: unknown): unknown {
   return value;
 }
 
-function generateInteractionToken(context: Record<string, unknown>, accountId?: string): string {
+export function generateInteractionToken(
+  context: Record<string, unknown>,
+  accountId?: string,
+): string {
   const secret = getInteractionSecret(accountId);
   const payload = JSON.stringify(canonicalizeInteractionContext(context));
   return createHmac("sha256", secret).update(payload).digest("hex");
 }
 
-function verifyInteractionToken(
+export function verifyInteractionToken(
   context: Record<string, unknown>,
   token: string,
   accountId?: string,

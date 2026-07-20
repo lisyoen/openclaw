@@ -13,10 +13,8 @@ import type { ResolvedSlackAccount } from "../../accounts.js";
 import { parseSlackTarget, type SlackTargetKind } from "../../targets.js";
 import { resolveSlackThreadContext } from "../../threading.js";
 import type { SlackMessageEvent } from "../../types.js";
-import type { SlackChannelConfigResolved } from "../channel-config.js";
-import type { SlackEventScope } from "../event-scope.js";
 
-type SlackRoutingContextDeps = {
+export type SlackRoutingContextDeps = {
   cfg: OpenClawConfig;
   teamId: string;
   threadInheritParent: boolean;
@@ -125,23 +123,10 @@ function normalizeSlackRouteBindingConfig(cfg: OpenClawConfig): OpenClawConfig {
 function resolveSlackBaseConversationId(params: {
   message: SlackMessageEvent;
   isDirectMessage: boolean;
-  eventScope?: SlackEventScope;
 }): string {
-  const raw = params.isDirectMessage
+  return params.isDirectMessage
     ? `user:${params.message.user ?? "unknown"}`
     : params.message.channel;
-  return params.eventScope ? `team:${encodeURIComponent(params.eventScope.teamId)}:${raw}` : raw;
-}
-
-function qualifySlackPeerId(params: {
-  id: string;
-  kind: "user" | "channel";
-  eventScope?: SlackEventScope;
-}): string {
-  if (!params.eventScope) {
-    return params.id;
-  }
-  return `team:${encodeURIComponent(params.eventScope.teamId)}:${params.kind}:${encodeURIComponent(params.id)}`;
 }
 
 function resolveSlackInitialAgentRoute(params: {
@@ -150,28 +135,17 @@ function resolveSlackInitialAgentRoute(params: {
   message: SlackMessageEvent;
   isDirectMessage: boolean;
   isRoom: boolean;
-  eventScope?: SlackEventScope;
 }) {
-  const route = resolveAgentRoute({
+  return resolveAgentRoute({
     cfg: normalizeSlackRouteBindingConfig(params.ctx.cfg),
     channel: "slack",
     accountId: params.account.accountId,
-    teamId: params.eventScope?.teamId || params.ctx.teamId || undefined,
+    teamId: params.ctx.teamId || undefined,
     peer: {
       kind: params.isDirectMessage ? "direct" : params.isRoom ? "channel" : "group",
-      id: qualifySlackPeerId({
-        id: params.isDirectMessage ? (params.message.user ?? "unknown") : params.message.channel,
-        kind: params.isDirectMessage ? "user" : "channel",
-        eventScope: params.eventScope,
-      }),
+      id: params.isDirectMessage ? (params.message.user ?? "unknown") : params.message.channel,
     },
   });
-  if (!params.eventScope || !params.isDirectMessage || route.dmScope !== "main") {
-    return route;
-  }
-  const partition = `account:${encodeURIComponent(params.account.accountId).toLowerCase()}:team:${encodeURIComponent(params.eventScope.teamId).toLowerCase()}`;
-  const sessionKey = `${route.sessionKey}:${partition}`;
-  return { ...route, sessionKey, mainSessionKey: sessionKey };
 }
 
 export function resolveSlackRoutingContext(params: {
@@ -182,10 +156,8 @@ export function resolveSlackRoutingContext(params: {
   isGroupDm: boolean;
   isRoom: boolean;
   isRoomish: boolean;
-  channelConfig?: SlackChannelConfigResolved | null;
   seedTopLevelRoomThread?: boolean;
   assistantThreadTs?: string;
-  eventScope?: SlackEventScope;
 }): SlackRoutingContext {
   const {
     ctx,
@@ -195,10 +167,8 @@ export function resolveSlackRoutingContext(params: {
     isGroupDm,
     isRoom,
     isRoomish,
-    channelConfig,
     seedTopLevelRoomThread,
     assistantThreadTs,
-    eventScope,
   } = params;
   let route = resolveSlackInitialAgentRoute({
     ctx,
@@ -206,11 +176,10 @@ export function resolveSlackRoutingContext(params: {
     message,
     isDirectMessage,
     isRoom,
-    eventScope,
   });
 
   const chatType = isDirectMessage ? "direct" : isGroupDm ? "group" : "channel";
-  const replyToMode = channelConfig?.replyToMode ?? resolveSlackReplyToMode(account, chatType);
+  const replyToMode = resolveSlackReplyToMode(account, chatType);
   const threadContext = resolveSlackThreadContext({ message, replyToMode, isDirectMessage });
   const threadTs = threadContext.incomingThreadTs;
   const isThreadReply = threadContext.isThreadReply;
@@ -251,28 +220,22 @@ export function resolveSlackRoutingContext(params: {
         ? threadTs
         : autoThreadId;
   const routedThreadId = canonicalThreadId ?? (isRoomish ? seededRoomThreadId : undefined);
-  const baseConversationId = resolveSlackBaseConversationId({
-    message,
-    isDirectMessage,
-    eventScope,
-  });
+  const baseConversationId = resolveSlackBaseConversationId({ message, isDirectMessage });
   const runtimeBindingThreadId =
     routedThreadId ?? (isDirectMessage && isThreadReply ? threadTs : undefined);
-  const boundThreadRoute =
-    !eventScope && runtimeBindingThreadId
-      ? resolveRuntimeConversationBindingRoute({
-          route,
-          conversation: {
-            channel: "slack",
-            accountId: account.accountId,
-            conversationId: runtimeBindingThreadId,
-            parentConversationId: baseConversationId,
-          },
-        })
-      : null;
-  const runtimeRoute = eventScope
-    ? { route, bindingRecord: null, boundSessionKey: undefined }
-    : boundThreadRoute?.boundSessionKey || boundThreadRoute?.bindingRecord
+  const boundThreadRoute = runtimeBindingThreadId
+    ? resolveRuntimeConversationBindingRoute({
+        route,
+        conversation: {
+          channel: "slack",
+          accountId: account.accountId,
+          conversationId: runtimeBindingThreadId,
+          parentConversationId: baseConversationId,
+        },
+      })
+    : null;
+  const runtimeRoute =
+    boundThreadRoute?.boundSessionKey || boundThreadRoute?.bindingRecord
       ? boundThreadRoute
       : resolveRuntimeConversationBindingRoute({
           route,
@@ -286,7 +249,7 @@ export function resolveSlackRoutingContext(params: {
   let configuredBindingSessionKey = "";
   if (runtimeRoute.boundSessionKey || runtimeRoute.bindingRecord) {
     route = runtimeRoute.route;
-  } else if (!eventScope) {
+  } else {
     const configuredRoute = resolveConfiguredBindingRoute({
       cfg: ctx.cfg,
       route,
@@ -311,11 +274,7 @@ export function resolveSlackRoutingContext(params: {
         });
   const sessionKey = threadKeys.sessionKey;
   const historyKey =
-    isThreadReply && ctx.threadHistoryScope === "thread"
-      ? sessionKey
-      : eventScope
-        ? `${account.accountId}:${eventScope.teamId}:${message.channel}`
-        : message.channel;
+    isThreadReply && ctx.threadHistoryScope === "thread" ? sessionKey : message.channel;
 
   return {
     route,
@@ -333,3 +292,8 @@ export function resolveSlackRoutingContext(params: {
     historyKey,
   };
 }
+
+export const testing = {
+  normalizeSlackRouteBindingConfig,
+};
+export { testing as __testing };

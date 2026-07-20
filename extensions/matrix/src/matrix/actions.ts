@@ -1,4 +1,9 @@
 // Matrix plugin module implements actions behavior.
+export type {
+  MatrixActionClientOpts,
+  MatrixMessageSummary,
+  MatrixReactionSummary,
+} from "./actions/types.js";
 export {
   sendMatrixMessage,
   editMatrixMessage,
@@ -9,6 +14,7 @@ export { voteMatrixPoll } from "./actions/polls.js";
 export { listMatrixReactions, removeMatrixReactions } from "./actions/reactions.js";
 export { pinMatrixMessage, unpinMatrixMessage, listMatrixPins } from "./actions/pins.js";
 export { getMatrixMemberInfo, getMatrixRoomInfo } from "./actions/room.js";
+export { updateMatrixOwnProfile } from "./actions/profile.js";
 export {
   bootstrapMatrixVerification,
   acceptMatrixVerification,
@@ -23,8 +29,10 @@ export {
   listMatrixVerifications,
   mismatchMatrixVerificationSas,
   requestMatrixVerification,
+  resetMatrixRoomKeyBackup,
   restoreMatrixRoomKeyBackup,
   scanMatrixVerificationQr,
   startMatrixVerification,
   verifyMatrixRecoveryKey,
 } from "./actions/verification.js";
+export { reactMatrixMessage } from "./send.js";

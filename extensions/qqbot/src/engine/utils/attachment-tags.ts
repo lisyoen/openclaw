@@ -33,7 +33,7 @@ import type { RefAttachmentSummary } from "../ref/types.js";
 // ============ Types ============
 
 /** Canonical attachment shape shared by history entries and ref entries. */
-type AttachmentSummary = RefAttachmentSummary;
+export type AttachmentSummary = RefAttachmentSummary;
 
 /**
  * Rendering mode.
@@ -47,7 +47,7 @@ type AttachmentSummary = RefAttachmentSummary;
 type RenderMode = "inline" | "ref";
 
 /** Human-readable labels for transcript provenance (prompt contract). */
-const TRANSCRIPT_SOURCE_LABELS: Record<
+export const TRANSCRIPT_SOURCE_LABELS: Record<
   NonNullable<RefAttachmentSummary["transcriptSource"]>,
   string
 > = {

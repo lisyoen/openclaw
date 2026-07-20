@@ -1,43 +1,44 @@
 ---
 name: channel-message-flows
-description: "Use when running QA Lab channel message flow evidence."
+description: "Use when previewing local channel message flow fixtures."
 ---
 
 # Channel Message Flows
 
-Use this from the OpenClaw repo root to run the QA Lab evidence for Telegram
-draft/final delivery sequencing. The behavior is owned by one transport-native
-QA flow that can run through QA Channel or Crabline Telegram.
+Use this from the OpenClaw repo root to send canned channel preview flows while iterating on message UX. These are real sends/edits/deletes against the configured channel target.
 
-## QA Scenario
+## Telegram
 
-Run the scenario through QA Lab:
+Native Telegram `sendMessageDraft` tool progress, then a final answer:
 
 ```bash
-OPENCLAW_BUILD_PRIVATE_QA=1 node scripts/run-node.mjs qa suite \
-  --provider-mode mock-openai \
-  --scenario channel-message-flows \
-  --channel-driver qa-channel
+node --import tsx scripts/dev/channel-message-flows.ts \
+  --channel telegram \
+  --target <telegram-chat-id> \
+  --flow working-final \
+  --duration-ms 20000
 ```
 
-Run the same YAML through the real Telegram plugin against Crabline's local
-provider server:
+Thinking preview, then a final answer:
 
 ```bash
-OPENCLAW_BUILD_PRIVATE_QA=1 node scripts/run-node.mjs qa suite \
-  --provider-mode mock-openai \
-  --scenario channel-message-flows \
-  --channel-driver crabline \
-  --channel telegram
+node --import tsx scripts/dev/channel-message-flows.ts \
+  --channel telegram \
+  --target <telegram-chat-id> \
+  --flow thinking-final
 ```
 
-## References
+## Options
 
-- `qa/scenarios/channels/channel-message-flows.yaml`
-- `extensions/qa-channel/src/inbound.ts`
-- `extensions/qa-lab/src/qa-transport.ts`
-- `extensions/qa-lab/src/crabline-transport.ts`
-- `extensions/telegram/src/draft-stream.ts`
+- `--account <accountId>`: Telegram account id when not using the default.
+- `--thread-id <id>`: Telegram forum topic/message thread id.
+- `--delay-ms <ms>`: Override preview update cadence.
+- `--duration-ms <ms>`: Simulated working duration for `working-final`.
+- `--final-text <text>`: Override the durable final message.
 
-The scenario covers `channels.streaming` as primary evidence and
-`runtime.delivery` as secondary evidence.
+## Notes
+
+- `--target` is the numeric Telegram chat id.
+- `working-final` exercises native Telegram `sendMessageDraft` with static `Working` status and sample tool progress.
+- `thinking-final` exercises formatted `Thinking` reasoning preview clearing before the final answer.
+- Only `--channel telegram` is implemented for now.

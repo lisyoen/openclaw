@@ -1,8 +1,5 @@
 // Signal plugin module implements inbound context behavior.
-import {
-  filterChannelInboundQuoteContext,
-  resolveInboundSupplementalSenderAllowed,
-} from "openclaw/plugin-sdk/channel-inbound";
+import { filterChannelInboundQuoteContext } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveChannelContextVisibilityMode } from "openclaw/plugin-sdk/context-visibility-runtime";
 import type { ContextVisibilityDecision } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -38,13 +35,12 @@ export function resolveSignalQuoteContext(params: {
     sourceNumber: params.dataMessage?.quote?.author ?? null,
     sourceUuid: params.dataMessage?.quote?.authorUuid ?? null,
   });
-  const quoteSenderAllowed = resolveInboundSupplementalSenderAllowed({
-    isGroup: params.isGroup,
-    groupPolicy: params.effectiveGroupAllow.length === 0 ? "open" : "allowlist",
-    allowFrom: params.effectiveGroupAllow,
-    isSenderAllowed: (allowFrom) =>
-      quoteSender ? isSignalSenderAllowed(quoteSender, allowFrom) : false,
-  });
+  const quoteSenderAllowed =
+    !params.isGroup || params.effectiveGroupAllow.length === 0
+      ? true
+      : quoteSender
+        ? isSignalSenderAllowed(quoteSender, params.effectiveGroupAllow)
+        : false;
   const visibleQuote = filterChannelInboundQuoteContext(contextVisibilityMode, {
     body: quoteText,
     sender: quoteSender ? formatSignalSenderDisplay(quoteSender) : undefined,

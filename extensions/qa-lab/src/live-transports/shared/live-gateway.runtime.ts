@@ -8,29 +8,24 @@ import {
 import type { QaProviderMode } from "../../model-selection.js";
 import { startQaProviderServer } from "../../providers/server-runtime.js";
 import type { QaThinkingLevel } from "../../qa-gateway-config.js";
-import type { RuntimeId } from "../../runtime-parity.js";
 import { appendQaLiveLaneIssue as appendLiveLaneIssue } from "./live-artifacts.js";
 
 async function stopQaLiveLaneResources(
   resources: {
-    gateway: Awaited<ReturnType<typeof startQaGatewayChild>> | null;
+    gateway: Awaited<ReturnType<typeof startQaGatewayChild>>;
     mock: { baseUrl: string; stop(): Promise<void> } | null;
   },
   opts?: { keepTemp?: boolean; preserveToDir?: string },
 ) {
   const errors: string[] = [];
-  if (resources.gateway) {
-    try {
-      await resources.gateway.stop(opts);
-      resources.gateway = null;
-    } catch (error) {
-      appendLiveLaneIssue(errors, "gateway stop failed", error);
-    }
+  try {
+    await resources.gateway.stop(opts);
+  } catch (error) {
+    appendLiveLaneIssue(errors, "gateway stop failed", error);
   }
   if (resources.mock) {
     try {
       await resources.mock.stop();
-      resources.mock = null;
     } catch (error) {
       appendLiveLaneIssue(errors, "mock provider stop failed", error);
     }
@@ -101,16 +96,12 @@ export async function startQaLiveLaneGateway(params: {
   primaryModel: string;
   alternateModel: string;
   fastMode?: boolean;
-  forcedRuntime?: RuntimeId;
   thinkingDefault?: QaThinkingLevel;
   claudeCliAuthMode?: QaCliBackendAuthMode;
   controlUiEnabled?: boolean;
-  mockAuthAgentIds?: readonly string[];
   mutateConfig?: (cfg: OpenClawConfig) => OpenClawConfig;
 }) {
-  const mock = await startQaProviderServer(params.providerMode, {
-    modelRefs: [params.primaryModel, params.alternateModel],
-  });
+  const mock = await startQaProviderServer(params.providerMode);
   try {
     const gateway = await startQaGatewayChild({
       repoRoot: params.repoRoot,
@@ -123,35 +114,21 @@ export async function startQaLiveLaneGateway(params: {
       primaryModel: params.primaryModel,
       alternateModel: params.alternateModel,
       fastMode: params.fastMode,
-      forcedRuntime: params.forcedRuntime,
       thinkingDefault: params.thinkingDefault,
       claudeCliAuthMode: params.claudeCliAuthMode,
       controlUiEnabled: params.controlUiEnabled,
-      mockAuthAgentIds: params.mockAuthAgentIds,
       mutateConfig: (cfg) =>
         prepareLiveTransportGatewayConfig(params.mutateConfig ? params.mutateConfig(cfg) : cfg),
     });
-    const resources = { gateway, mock };
     return {
       gateway,
       mock,
       async stop(opts?: { keepTemp?: boolean; preserveToDir?: string }) {
-        await stopQaLiveLaneResources(resources, opts);
+        await stopQaLiveLaneResources({ gateway, mock }, opts);
       },
     };
   } catch (error) {
-    if (mock) {
-      try {
-        await mock.stop();
-      } catch (cleanupError) {
-        const errors: string[] = [];
-        appendLiveLaneIssue(errors, "gateway startup failed", error);
-        appendLiveLaneIssue(errors, "mock provider stop failed", cleanupError);
-        throw new Error(`failed to start QA live lane gateway:\n${errors.join("\n")}`, {
-          cause: cleanupError,
-        });
-      }
-    }
+    await mock?.stop().catch(() => {});
     throw error;
   }
 }

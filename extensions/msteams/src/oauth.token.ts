@@ -75,8 +75,10 @@ async function fetchMSTeamsTokens(params: {
   auditContext: string;
   failureLabel: string;
 }): Promise<MSTeamsTokenResponse> {
+  const currentFetch = globalThis.fetch;
   const { response, release } = await fetchWithSsrFGuard({
     url: params.tokenUrl,
+    fetchImpl: async (input, guardedInit) => await currentFetch(input, guardedInit),
     init: {
       method: "POST",
       headers: {

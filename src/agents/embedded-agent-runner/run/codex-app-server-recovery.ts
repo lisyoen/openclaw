@@ -3,14 +3,6 @@
  */
 import type { EmbeddedRunAttemptResult } from "./types.js";
 
-export function hasCodexAppServerRecoveryRetryBudget(params: {
-  alreadyRetried: boolean;
-  runLoopIterations: number;
-  maxRunLoopIterations: number;
-}): boolean {
-  return !params.alreadyRetried && params.runLoopIterations < params.maxRunLoopIterations;
-}
-
 /**
  * Decides whether a Codex app-server failure can be retried by replaying the
  * same turn. The retry is intentionally narrow: stdio-only, replay-safe, once
@@ -18,7 +10,7 @@ export function hasCodexAppServerRecoveryRetryBudget(params: {
  */
 export function resolveCodexAppServerRecoveryRetry(params: {
   attempt: EmbeddedRunAttemptResult;
-  retryAvailable: boolean;
+  alreadyRetried: boolean;
 }): { retry: boolean; reason?: string } {
   const failure = params.attempt.codexAppServerFailure;
   if (!failure) {
@@ -39,7 +31,7 @@ export function resolveCodexAppServerRecoveryRetry(params: {
   if (failure.transport !== "stdio") {
     return { retry: false, reason: "non_stdio_transport" };
   }
-  if (!params.retryAvailable) {
+  if (params.alreadyRetried) {
     return { retry: false, reason: "retry_exhausted" };
   }
   if (!failure.replaySafe || !params.attempt.replayMetadata.replaySafe) {
@@ -64,3 +56,10 @@ export function resolveCodexAppServerRecoveryRetry(params: {
   }
   return { retry: true };
 }
+
+/**
+ * Backward-compatible name for the original client-close retry decision. The
+ * resolver now also handles completion idle timeouts under the same replay-safe
+ * side-effect gate.
+ */
+export const resolveCodexAppServerClientCloseRetry = resolveCodexAppServerRecoveryRetry;

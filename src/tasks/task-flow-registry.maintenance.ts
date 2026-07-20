@@ -1,6 +1,5 @@
 // Reconciles stale task-flow records with their child task state.
 import { listTasksForFlowId } from "./runtime-internal.js";
-import { isTaskFlowCancellationPending } from "./task-cancellation-state.js";
 import {
   listTaskFlowAuditFindings,
   summarizeTaskFlowAuditFindings,
@@ -9,7 +8,6 @@ import {
 import {
   deleteTaskFlowRecordById,
   getTaskFlowById,
-  getTaskFlowRegistryRestoreFailure,
   listTaskFlowRecords,
   updateFlowRecordByIdExpectedRevision,
 } from "./task-flow-registry.js";
@@ -18,19 +16,10 @@ import type { TaskFlowRecord } from "./task-flow-registry.types.js";
 const TASK_FLOW_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 /** Counts task-flow registry maintenance actions without exposing individual records. */
-type TaskFlowRegistryMaintenanceSummary = {
+export type TaskFlowRegistryMaintenanceSummary = {
   reconciled: number;
   pruned: number;
 };
-
-export function assertTaskFlowRegistryMaintenanceReady(): void {
-  const restoreFailure = getTaskFlowRegistryRestoreFailure();
-  if (restoreFailure) {
-    throw new Error(
-      `Task-flow registry restore failed: ${restoreFailure}. Refusing task maintenance.`,
-    );
-  }
-}
 
 function isTerminalFlow(flow: TaskFlowRecord): boolean {
   return (
@@ -43,7 +32,9 @@ function isTerminalFlow(flow: TaskFlowRecord): boolean {
 }
 
 function hasActiveLinkedTasks(flowId: string): boolean {
-  return listTasksForFlowId(flowId).some(isTaskFlowCancellationPending);
+  return listTasksForFlowId(flowId).some(
+    (task) => task.status === "queued" || task.status === "running",
+  );
 }
 
 function resolveTerminalAt(flow: TaskFlowRecord): number {

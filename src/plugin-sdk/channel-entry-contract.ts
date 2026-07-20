@@ -1,3 +1,4 @@
+// Channel entry contracts validate plugin channel entrypoints and runtime API facades.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -361,18 +362,13 @@ function resolveBundledEntryModulePath(importMetaUrl: string, specifier: string)
   );
 }
 
-function getSourceModuleLoader(
-  modulePath: string,
-  options: BundledEntryModuleLoadOptions,
-  transformOpenClawDependencies = false,
-) {
+function getSourceModuleLoader(modulePath: string, options: BundledEntryModuleLoadOptions) {
   return getCachedPluginSourceModuleLoader({
     cache: moduleLoaders,
     modulePath,
     importerUrl: import.meta.url,
     preferBuiltDist: true,
     loaderFilename: import.meta.url,
-    transformOpenClawDependencies,
     ...(options.createLoaderForTest ? { createLoader: options.createLoaderForTest } : {}),
   });
 }
@@ -411,9 +407,7 @@ function loadBundledEntryModuleSync(
     if (native.ok) {
       loaded = native.moduleExport;
     } else {
-      // Native require can leave an SDK module inside an active dynamic-import graph.
-      // Transform the fallback graph end-to-end so it cannot require that module again.
-      const moduleLoader = getSourceModuleLoader(modulePath, options, true);
+      const moduleLoader = getSourceModuleLoader(modulePath, options);
       sourceLoaderReadyMs = profile ? performance.now() : 0;
       loaded = moduleLoader(toSafeImportPath(modulePath));
     }
@@ -424,14 +418,19 @@ function loadBundledEntryModuleSync(
   }
   if (profile) {
     const endMs = performance.now();
-    // Split source-loader creation from graph loading while preserving canonical elapsedMs.
+    // Use shared formatter — but split timing fields ourselves so we can
+    // attribute time spent in source-loader creation vs the actual graph load.
+    // Both are emitted as extras
+    // alongside the canonical `elapsedMs=<total>` field.
     console.error(
       formatPluginLoadProfileLine({
         phase: "bundled-entry-module-load",
         pluginId: "(bundled-entry)",
         source: modulePath,
         elapsedMs: endMs - loadStartMs,
-        // Native loads leave the source timestamp at zero, so elapsedMs owns the full load.
+        // When the built-artifact fast path resolves natively, the
+        // source-loader timestamp stays `0`; keep its breakdown at zero so
+        // `elapsedMs=` owns the native load time.
         extras: [
           ["sourceLoaderCreateMs", sourceLoaderReadyMs ? sourceLoaderReadyMs - loadStartMs : 0],
           ["sourceLoaderCallMs", sourceLoaderReadyMs ? endMs - sourceLoaderReadyMs : 0],
@@ -577,8 +576,9 @@ export function defineBundledChannelSetupEntry<TPlugin = ChannelPlugin>({
   registerSetupRuntime,
   features,
 }: DefineBundledChannelSetupEntryOptions): BundledChannelSetupEntryContract<TPlugin> {
-  // Setup loads stay light; expose only the setter needed to inject the active runtime
-  // without importing the full channel entry.
+  // Bundled setup entries stay on a light path during setup-only/setup-runtime loads.
+  // When runtime wiring is needed, expose only the setter so the loader can hand
+  // the setup surface the active runtime without importing the full channel entry.
   const setChannelRuntime = runtime
     ? (pluginRuntime: BundledChannelRuntime) => {
         const setter = loadBundledEntryExportSync<(runtime: BundledChannelRuntime) => void>(

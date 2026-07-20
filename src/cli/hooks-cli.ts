@@ -1,3 +1,4 @@
+// Hooks CLI for listing, checking, toggling, installing, and updating hook integrations.
 import type { Command } from "commander";
 import {
   decorativeEmoji,
@@ -23,7 +24,6 @@ import { defaultRuntime } from "../runtime.js";
 import { shortenHomePath } from "../utils.js";
 import { formatCliCommand } from "./command-format.js";
 import { runNativeHookRelayCli, type NativeHookRelayCliOptions } from "./native-hook-relay-cli.js";
-import { requestExitAfterOneShotOutput } from "./one-shot-exit.js";
 import { runPluginInstallCommand } from "./plugins-install-command.js";
 import { runPluginUpdateCommand } from "./plugins-update-command.js";
 
@@ -41,7 +41,7 @@ export type HooksCheckOptions = {
   json?: boolean;
 };
 
-type HooksUpdateOptions = {
+export type HooksUpdateOptions = {
   all?: boolean;
   dryRun?: boolean;
 };
@@ -149,8 +149,7 @@ function formatHookMissingSummary(hook: HookStatusEntry): string {
 
 function exitHooksCliWithError(err: unknown): never {
   defaultRuntime.error(`${theme.error("Error:")} ${formatErrorMessage(err)}`);
-  defaultRuntime.exit(1);
-  throw new Error("unreachable");
+  process.exit(1);
 }
 
 function writeHooksOutput(value: string, json: boolean | undefined): void {
@@ -161,20 +160,12 @@ function writeHooksOutput(value: string, json: boolean | undefined): void {
   defaultRuntime.log(value);
 }
 
-async function runHooksCliAction<T>(action: () => Promise<T> | T): Promise<T> {
+async function runHooksCliAction(action: () => Promise<void> | void): Promise<void> {
   try {
-    return await action();
+    await action();
   } catch (err) {
-    return exitHooksCliWithError(err);
+    exitHooksCliWithError(err);
   }
-}
-
-async function runOneShotHooksCliAction(action: () => Promise<number | void>): Promise<void> {
-  const result = await runHooksCliAction(action);
-  const exitCode = typeof result === "number" ? result : 0;
-  // CLI setup and handlers can leave ref'd handles behind. Defer exit until
-  // runCli finishes shared teardown and drains both output streams.
-  requestExitAfterOneShotOutput(defaultRuntime, exitCode);
 }
 
 /**
@@ -200,7 +191,6 @@ export function formatHooksList(report: HookStatusReport, opts: HooksListOptions
         source: h.source,
         pluginId: h.pluginId,
         events: h.events,
-        unknownEvents: h.unknownEvents,
         homepage: h.homepage,
         missing: h.missing,
         managedByPlugin: h.managedByPlugin,
@@ -309,13 +299,6 @@ export function formatHookInfo(
   }
   if (hook.events.length > 0) {
     lines.push(`${theme.muted("  Events:")} ${hook.events.join(", ")}`);
-  }
-  if (hook.unknownEvents.length > 0) {
-    lines.push(
-      theme.warn(
-        `  ⚠ Event${hook.unknownEvents.length === 1 ? "" : "s"} not emitted by core (likely typo): ${hook.unknownEvents.join(", ")}`,
-      ),
-    );
   }
   if (hook.managedByPlugin) {
     lines.push(theme.muted("  Managed by plugin; enable/disable via hooks CLI not available."));
@@ -441,7 +424,7 @@ export function formatHooksCheck(report: HookStatusReport, opts: HooksCheckOptio
   return lines.join("\n");
 }
 
-async function enableHook(hookName: string): Promise<void> {
+export async function enableHook(hookName: string): Promise<void> {
   const snapshot = await readConfigFileSnapshot();
   const config = (snapshot.sourceConfig ?? snapshot.config) as OpenClawConfig;
   const hook = resolveHookForToggle(buildHooksReport(config), hookName, { requireEligible: true });
@@ -461,7 +444,7 @@ async function enableHook(hookName: string): Promise<void> {
   );
 }
 
-async function disableHook(hookName: string): Promise<void> {
+export async function disableHook(hookName: string): Promise<void> {
   const snapshot = await readConfigFileSnapshot();
   const config = (snapshot.sourceConfig ?? snapshot.config) as OpenClawConfig;
   const hook = resolveHookForToggle(buildHooksReport(config), hookName);
@@ -493,7 +476,7 @@ export function registerHooksCli(program: Command): void {
     .option("--json", "Output as JSON", false)
     .option("-v, --verbose", "Show more details including missing requirements", false)
     .action(async (opts) =>
-      runOneShotHooksCliAction(async () => {
+      runHooksCliAction(async () => {
         const config = getRuntimeConfig();
         const report = buildHooksReport(config);
         writeHooksOutput(formatHooksList(report, opts), opts.json);
@@ -505,7 +488,7 @@ export function registerHooksCli(program: Command): void {
     .description("Show detailed information about a hook")
     .option("--json", "Output as JSON", false)
     .action(async (name, opts) =>
-      runOneShotHooksCliAction(async () => {
+      runHooksCliAction(async () => {
         const config = getRuntimeConfig();
         const report = buildHooksReport(config);
         writeHooksOutput(formatHookInfo(report, name, opts), opts.json);
@@ -517,7 +500,7 @@ export function registerHooksCli(program: Command): void {
     .description("Check hooks eligibility status")
     .option("--json", "Output as JSON", false)
     .action(async (opts) =>
-      runOneShotHooksCliAction(async () => {
+      runHooksCliAction(async () => {
         const config = getRuntimeConfig();
         const report = buildHooksReport(config);
         writeHooksOutput(formatHooksCheck(report, opts), opts.json);
@@ -528,7 +511,7 @@ export function registerHooksCli(program: Command): void {
     .command("enable <name>")
     .description("Enable a hook")
     .action(async (name) =>
-      runOneShotHooksCliAction(async () => {
+      runHooksCliAction(async () => {
         await enableHook(name);
       }),
     );
@@ -537,7 +520,7 @@ export function registerHooksCli(program: Command): void {
     .command("disable <name>")
     .description("Disable a hook")
     .action(async (name) =>
-      runOneShotHooksCliAction(async () => {
+      runHooksCliAction(async () => {
         await disableHook(name);
       }),
     );
@@ -547,7 +530,6 @@ export function registerHooksCli(program: Command): void {
     .description("Internal native harness hook relay")
     .requiredOption("--provider <provider>", "Native harness provider")
     .requiredOption("--relay-id <id>", "Native hook relay id")
-    .option("--state-db <path>", "Shared state database path")
     .option("--generation <generation>", "Native hook relay registration generation")
     .requiredOption("--event <event>", "Native hook event")
     .option(
@@ -556,7 +538,9 @@ export function registerHooksCli(program: Command): void {
     )
     .option("--timeout <ms>", "Gateway timeout in ms", "5000")
     .action(async (opts: NativeHookRelayCliOptions) =>
-      runOneShotHooksCliAction(() => runNativeHookRelayCli(opts)),
+      runHooksCliAction(async () => {
+        process.exitCode = await runNativeHookRelayCli(opts);
+      }),
     );
 
   hooks
@@ -565,8 +549,7 @@ export function registerHooksCli(program: Command): void {
     .argument("<path-or-spec>", "Path to a hook pack or npm package spec")
     .option("-l, --link", "Link a local path instead of copying", false)
     .option("--pin", "Record npm installs as exact resolved <name>@<version>", false)
-    .option("--force", "Confirm non-ClawHub sources and overwrite an existing hook pack", false)
-    .action(async (raw: string, opts: { force?: boolean; link?: boolean; pin?: boolean }) => {
+    .action(async (raw: string, opts: { link?: boolean; pin?: boolean }) => {
       defaultRuntime.log(
         theme.warn("`openclaw hooks install` is deprecated; use `openclaw plugins install`."),
       );
@@ -587,7 +570,7 @@ export function registerHooksCli(program: Command): void {
     });
 
   hooks.action(async () =>
-    runOneShotHooksCliAction(async () => {
+    runHooksCliAction(async () => {
       const config = getRuntimeConfig();
       const report = buildHooksReport(config);
       defaultRuntime.log(formatHooksList(report, {}));

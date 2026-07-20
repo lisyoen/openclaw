@@ -1,5 +1,8 @@
 // Whatsapp plugin module implements approval native behavior.
-import { createChannelApprovalCapability } from "openclaw/plugin-sdk/approval-delivery-runtime";
+import {
+  createChannelApprovalCapability,
+  splitChannelApprovalCapability,
+} from "openclaw/plugin-sdk/approval-delivery-runtime";
 import { createLazyChannelApprovalNativeRuntimeAdapter } from "openclaw/plugin-sdk/approval-handler-adapter-runtime";
 import type { ChannelApprovalNativeRuntimeAdapter } from "openclaw/plugin-sdk/approval-handler-runtime";
 import {
@@ -9,7 +12,6 @@ import {
   createNativeApprovalForwardingFallbackSuppressor,
 } from "openclaw/plugin-sdk/approval-native-runtime";
 import { buildApprovalReactionPromptPayloadForRequest } from "openclaw/plugin-sdk/approval-reaction-runtime";
-import { buildTypedApprovalPresentation } from "openclaw/plugin-sdk/approval-reply-runtime";
 import type {
   ExecApprovalRequest,
   PluginApprovalRequest,
@@ -173,30 +175,14 @@ const shouldSuppressWhatsAppForwardingFallback =
   });
 
 function buildWhatsAppExecPendingPayload(params: { request: ExecApprovalRequest; nowMs: number }) {
-  const payload = buildApprovalReactionPromptPayloadForRequest(params);
-  return {
-    ...payload,
-    presentation: buildTypedApprovalPresentation({
-      approvalId: params.request.id,
-      approvalKind: "exec",
-      allowedDecisions: payload.allowedDecisions,
-    }),
-  };
+  return buildApprovalReactionPromptPayloadForRequest(params);
 }
 
 function buildWhatsAppPluginPendingPayload(params: {
   request: PluginApprovalRequest;
   nowMs: number;
 }) {
-  const payload = buildApprovalReactionPromptPayloadForRequest(params);
-  return {
-    ...payload,
-    presentation: buildTypedApprovalPresentation({
-      approvalId: params.request.id,
-      approvalKind: "plugin",
-      allowedDecisions: payload.allowedDecisions,
-    }),
-  };
+  return buildApprovalReactionPromptPayloadForRequest(params);
 }
 
 export const whatsappApprovalCapability: ChannelApprovalCapability =
@@ -282,11 +268,14 @@ export const whatsappApprovalCapability: ChannelApprovalCapability =
           accountId,
           nativeSessionOnly: true,
         }),
-      shouldHandle: ({ cfg, accountId, context, approvalKind, request }) =>
-        Boolean(context) &&
-        shouldHandleWhatsAppApprovalRequest({ cfg, accountId, approvalKind, request }),
+      shouldHandle: ({ cfg, accountId, context, request }) =>
+        Boolean(context) && shouldHandleWhatsAppApprovalRequest({ cfg, accountId, request }),
       load: async () =>
         (await import("./approval-handler.runtime.js"))
           .whatsappApprovalNativeRuntime as unknown as ChannelApprovalNativeRuntimeAdapter,
     }),
   });
+
+export const whatsappNativeApprovalAdapter = splitChannelApprovalCapability(
+  whatsappApprovalCapability,
+);

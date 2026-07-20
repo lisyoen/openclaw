@@ -15,7 +15,7 @@ import { resolveUserPath } from "../utils.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 
 /** Static install metadata for a runtime plugin required by model selection. */
-type RuntimePluginInstallDescriptor = {
+export type RuntimePluginInstallDescriptor = {
   pluginId: string;
   label: string;
   npmSpec: string;
@@ -23,41 +23,34 @@ type RuntimePluginInstallDescriptor = {
 };
 
 /** Result returned after ensuring a runtime plugin for a selected model. */
-type RuntimePluginInstallResult = {
+export type RuntimePluginInstallResult = {
   cfg: OpenClawConfig;
   required: boolean;
   installed: boolean;
   status?: "installed" | "skipped" | "failed" | "timed_out";
-  reason?: string;
 };
 
 /** Predicate that decides whether a config/model pair needs the runtime plugin. */
-type RuntimePluginSelection = (params: {
-  cfg: OpenClawConfig;
-  model?: string;
-  agentId?: string;
-}) => boolean;
+export type RuntimePluginSelection = (params: { cfg: OpenClawConfig; model?: string }) => boolean;
 
 /** Parameters for installing or enabling a runtime plugin during setup. */
-type RuntimePluginEnsureParams = {
+export type RuntimePluginEnsureParams = {
   cfg: OpenClawConfig;
   model?: string;
-  agentId?: string;
   prompter: WizardPrompter;
   runtime: RuntimeEnv;
   workspaceDir?: string;
 };
 
 /** Parameters for doctor-style runtime plugin repair. */
-type RuntimePluginRepairParams = {
+export type RuntimePluginRepairParams = {
   cfg: OpenClawConfig;
   model?: string;
-  agentId?: string;
   env?: NodeJS.ProcessEnv;
 };
 
 /** Convenience helpers bound to one runtime plugin descriptor. */
-type RuntimePluginModelSelectionHelpers = {
+export type RuntimePluginModelSelectionHelpers = {
   ensure: (params: RuntimePluginEnsureParams) => Promise<RuntimePluginInstallResult>;
   repair: (
     params: RuntimePluginRepairParams,
@@ -76,23 +69,16 @@ function isInstalledRecordPresentOnDisk(
 }
 
 /** Ensures the runtime plugin required by the selected model is installed and enabled. */
-async function ensureRuntimePluginForModelSelection(params: {
+export async function ensureRuntimePluginForModelSelection(params: {
   cfg: OpenClawConfig;
   model?: string;
-  agentId?: string;
   prompter: WizardPrompter;
   runtime: RuntimeEnv;
   workspaceDir?: string;
   descriptor: RuntimePluginInstallDescriptor;
   shouldEnsure: RuntimePluginSelection;
 }): Promise<RuntimePluginInstallResult> {
-  if (
-    !params.shouldEnsure({
-      cfg: params.cfg,
-      model: params.model,
-      agentId: params.agentId,
-    })
-  ) {
+  if (!params.shouldEnsure({ cfg: params.cfg, model: params.model })) {
     return {
       cfg: params.cfg,
       required: false,
@@ -106,7 +92,6 @@ async function ensureRuntimePluginForModelSelection(params: {
     const repair = await repairRuntimePluginInstallForModelSelection({
       cfg: params.cfg,
       model: params.model,
-      agentId: params.agentId,
       env: process.env,
       descriptor: params.descriptor,
       shouldEnsure: params.shouldEnsure,
@@ -119,11 +104,10 @@ async function ensureRuntimePluginForModelSelection(params: {
     }
     const enableResult = enablePluginInConfig(params.cfg, params.descriptor.pluginId);
     return {
-      cfg: enableResult.config,
+      cfg: enableResult.enabled ? enableResult.config : params.cfg,
       required: true,
-      installed: enableResult.enabled,
-      status: enableResult.enabled ? "installed" : "failed",
-      ...(enableResult.reason ? { reason: enableResult.reason } : {}),
+      installed: true,
+      status: "installed",
     };
   }
   const { ensureOnboardingPluginInstalled } = await import("./onboarding-plugin-install.js");
@@ -139,6 +123,7 @@ async function ensureRuntimePluginForModelSelection(params: {
         defaultChoice: "npm",
       },
       trustedSourceLinkedOfficialInstall: true,
+      preferRemoteInstall: true,
     },
     prompter: params.prompter,
     runtime: params.runtime,
@@ -151,26 +136,18 @@ async function ensureRuntimePluginForModelSelection(params: {
     required: true,
     installed: result.installed,
     status: result.status,
-    ...(result.error ? { reason: result.error } : {}),
   };
 }
 
 /** Repairs missing install records for runtime plugins required by model selection. */
-async function repairRuntimePluginInstallForModelSelection(params: {
+export async function repairRuntimePluginInstallForModelSelection(params: {
   cfg: OpenClawConfig;
   model?: string;
-  agentId?: string;
   env?: NodeJS.ProcessEnv;
   descriptor: RuntimePluginInstallDescriptor;
   shouldEnsure: RuntimePluginSelection;
 }): Promise<{ required: boolean; changes: string[]; warnings: string[] }> {
-  if (
-    !params.shouldEnsure({
-      cfg: params.cfg,
-      model: params.model,
-      agentId: params.agentId,
-    })
-  ) {
+  if (!params.shouldEnsure({ cfg: params.cfg, model: params.model })) {
     return { required: false, changes: [], warnings: [] };
   }
   const { repairMissingPluginInstallsForIds } =
@@ -183,7 +160,7 @@ async function repairRuntimePluginInstallForModelSelection(params: {
   return {
     required: true,
     changes: result.changes,
-    warnings: [...result.warnings, ...(result.notices ?? [])],
+    warnings: result.warnings,
   };
 }
 

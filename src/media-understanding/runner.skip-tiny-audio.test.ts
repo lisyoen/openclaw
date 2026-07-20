@@ -1,7 +1,5 @@
 // Tiny-audio runner tests cover minimum-size skip behavior before provider
 // transcription runs.
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MsgContext } from "../auto-reply/templating.js";
 import type { OpenClawConfig } from "../config/types.js";
@@ -111,30 +109,9 @@ describe("runCapability skips tiny audio files", () => {
         expect(result.outputs).toHaveLength(0);
         expect(result.decision.outcome).toBe("skipped");
         expect(result.decision.attachments).toHaveLength(1);
-        expect(
-          expectDefined(
-            result.decision.attachments[0],
-            "result.decision.attachments[0] test invariant",
-          ).attempts,
-        ).toHaveLength(1);
-        expect(
-          expectDefined(
-            expectDefined(
-              result.decision.attachments[0],
-              "result.decision.attachments[0] test invariant",
-            ).attempts[0],
-            'expectDefined( result.decision.attachments[0], "result.decision.attac... test invariant',
-          ).outcome,
-        ).toBe("skipped");
-        expect(
-          expectDefined(
-            expectDefined(
-              result.decision.attachments[0],
-              "result.decision.attachments[0] test invariant",
-            ).attempts[0],
-            'expectDefined( result.decision.attachments[0], "result.decision.attac... test invariant',
-          ).reason,
-        ).toContain("tooSmall");
+        expect(result.decision.attachments[0].attempts).toHaveLength(1);
+        expect(result.decision.attachments[0].attempts[0].outcome).toBe("skipped");
+        expect(result.decision.attachments[0].attempts[0].reason).toContain("tooSmall");
       },
     });
   });
@@ -183,9 +160,7 @@ describe("runCapability skips tiny audio files", () => {
 
         expect(transcribeCalled).toBe(true);
         expect(result.outputs).toHaveLength(1);
-        expect(expectDefined(result.outputs[0], "result.outputs[0] test invariant").text).toBe(
-          "hello world",
-        );
+        expect(result.outputs[0].text).toBe("hello world");
         expect(result.decision.outcome).toBe("success");
       },
     });

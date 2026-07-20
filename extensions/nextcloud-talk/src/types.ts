@@ -1,9 +1,12 @@
 // Nextcloud Talk type declarations define plugin contracts.
+import type { MessageReceipt } from "openclaw/plugin-sdk/channel-outbound";
 import type {
-  ChannelDeliveryStreamingConfig,
-  MessageReceipt,
-} from "openclaw/plugin-sdk/channel-outbound";
-import type { DmConfig, DmPolicy, GroupPolicy, SecretInput } from "../runtime-api.js";
+  BlockStreamingCoalesceConfig,
+  DmConfig,
+  DmPolicy,
+  GroupPolicy,
+  SecretInput,
+} from "../runtime-api.js";
 
 export type NextcloudTalkRoomConfig = {
   requireMention?: boolean;
@@ -67,8 +70,12 @@ export type NextcloudTalkAccountConfig = {
   dms?: Record<string, DmConfig>;
   /** Outbound text chunk size (chars). Default: 4000. */
   textChunkLimit?: number;
-  /** Delivery streaming config: chunk mode plus block streaming controls. */
-  streaming?: ChannelDeliveryStreamingConfig;
+  /** Chunking mode: "length" (default) splits by size; "newline" splits on every newline. */
+  chunkMode?: "length" | "newline";
+  /** Disable block streaming for this account. */
+  blockStreaming?: boolean;
+  /** Merge streamed block replies before sending. */
+  blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
   /** Outbound response prefix override for this channel/account. */
   responsePrefix?: string;
   /** Media upload max size in MB. */
@@ -179,7 +186,11 @@ export type NextcloudTalkWebhookServerOptions = {
   };
   readBody?: (req: import("node:http").IncomingMessage, maxBodyBytes: number) => Promise<string>;
   isBackendAllowed?: (backend: string) => boolean;
-  onWebhook: (rawBody: string) => Promise<"accepted" | "ignored">;
+  shouldProcessMessage?: (message: NextcloudTalkInboundMessage) => boolean | Promise<boolean>;
+  processMessage?: (
+    message: NextcloudTalkInboundMessage,
+  ) => void | "processed" | "duplicate" | Promise<void | "processed" | "duplicate">;
+  onMessage: (message: NextcloudTalkInboundMessage) => void | Promise<void>;
   onError?: (error: Error) => void;
   abortSignal?: AbortSignal;
 };

@@ -2,25 +2,16 @@
  * Core tool catalog and profile defaults.
  * Drives built-in profile allowlists, group expansion, and UI section metadata
  * for OpenClaw-owned tools.
- *
- * This module is bundled into the Control UI via tool-policy-shared. Keep it
- * pure data + tiny pure functions: a value import of server config/runtime
- * modules here drags the whole gateway graph into the ui build and breaks it.
  */
 import {
-  AGENTS_WAIT_TOOL_DISPLAY_SUMMARY,
-  ASK_USER_TOOL_DISPLAY_SUMMARY,
   CRON_TOOL_DISPLAY_SUMMARY,
   EXEC_TOOL_DISPLAY_SUMMARY,
   PROCESS_TOOL_DISPLAY_SUMMARY,
   SESSIONS_HISTORY_TOOL_DISPLAY_SUMMARY,
   SESSIONS_LIST_TOOL_DISPLAY_SUMMARY,
-  SESSIONS_SEARCH_TOOL_DISPLAY_SUMMARY,
   SESSIONS_SEND_TOOL_DISPLAY_SUMMARY,
   SESSIONS_SPAWN_TOOL_DISPLAY_SUMMARY,
   SESSION_STATUS_TOOL_DISPLAY_SUMMARY,
-  SPAWN_TASK_TOOL_DISPLAY_SUMMARY,
-  DISMISS_TASK_TOOL_DISPLAY_SUMMARY,
   UPDATE_PLAN_TOOL_DISPLAY_SUMMARY,
 } from "./tool-description-presets.js";
 
@@ -158,14 +149,6 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
-    id: "sessions",
-    label: "sessions",
-    description: "Session settings and groups",
-    sectionId: "sessions",
-    profiles: ["coding", "messaging"],
-    includeInOpenClawGroup: true,
-  },
-  {
     id: "sessions_list",
     label: "sessions_list",
     description: SESSIONS_LIST_TOOL_DISPLAY_SUMMARY,
@@ -177,38 +160,6 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "sessions_history",
     label: "sessions_history",
     description: SESSIONS_HISTORY_TOOL_DISPLAY_SUMMARY,
-    sectionId: "sessions",
-    profiles: ["coding", "messaging"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "sessions_search",
-    label: "sessions_search",
-    description: SESSIONS_SEARCH_TOOL_DISPLAY_SUMMARY,
-    sectionId: "sessions",
-    profiles: ["coding", "messaging"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "conversations_list",
-    label: "conversations_list",
-    description: "List exact external conversation addresses",
-    sectionId: "sessions",
-    profiles: ["coding", "messaging"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "conversations_send",
-    label: "conversations_send",
-    description: "Send to an exact external conversation",
-    sectionId: "sessions",
-    profiles: ["coding", "messaging"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "conversations_turn",
-    label: "conversations_turn",
-    description: "Send and wait for a correlated external reply",
     sectionId: "sessions",
     profiles: ["coding", "messaging"],
     includeInOpenClawGroup: true,
@@ -226,14 +177,6 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "sessions_spawn",
     description: SESSIONS_SPAWN_TOOL_DISPLAY_SUMMARY,
     sectionId: "sessions",
-    profiles: ["coding", "messaging"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "agents_wait",
-    label: "agents_wait",
-    description: AGENTS_WAIT_TOOL_DISPLAY_SUMMARY,
-    sectionId: "sessions",
     profiles: ["coding"],
     includeInOpenClawGroup: true,
   },
@@ -242,15 +185,15 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     label: "sessions_yield",
     description: "End turn to receive sub-agent results",
     sectionId: "sessions",
-    profiles: ["coding", "messaging"],
+    profiles: ["coding"],
     includeInOpenClawGroup: true,
   },
   {
     id: "subagents",
     label: "subagents",
-    description: "Background work: subagents, media gen, cron runs. list/cancel.",
+    description: "Manage sub-agents",
     sectionId: "sessions",
-    profiles: ["coding", "messaging"],
+    profiles: ["coding"],
     includeInOpenClawGroup: true,
   },
   {
@@ -262,22 +205,6 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
-    id: "spawn_task",
-    label: "spawn_task",
-    description: SPAWN_TASK_TOOL_DISPLAY_SUMMARY,
-    sectionId: "sessions",
-    profiles: ["coding"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "dismiss_task",
-    label: "dismiss_task",
-    description: DISMISS_TASK_TOOL_DISPLAY_SUMMARY,
-    sectionId: "sessions",
-    profiles: ["coding"],
-    includeInOpenClawGroup: true,
-  },
-  {
     id: "browser",
     label: "browser",
     description: "Control web browser",
@@ -286,43 +213,11 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
-    id: "screen",
-    label: "screen",
-    description: "Drive operator web UI",
-    sectionId: "ui",
-    profiles: ["coding"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "dashboard",
-    label: "dashboard",
-    description: "Read and arrange the session dashboard",
-    sectionId: "ui",
-    profiles: ["coding"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "terminal",
-    label: "terminal",
-    description: "Own visible gateway terminal",
-    sectionId: "ui",
-    profiles: ["coding"],
-    includeInOpenClawGroup: true,
-  },
-  {
     id: "canvas",
     label: "canvas",
     description: "Control node Canvas surfaces when the Canvas plugin is enabled",
     sectionId: "ui",
     profiles: [],
-  },
-  {
-    id: "show_widget",
-    label: "show_widget",
-    description: "Show an interactive widget on supported chat surfaces",
-    sectionId: "ui",
-    profiles: [],
-    includeInOpenClawGroup: true,
   },
   {
     id: "message",
@@ -351,7 +246,7 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
   {
     id: "gateway",
     label: "gateway",
-    description: "Read Gateway config and schema",
+    description: "Gateway control",
     sectionId: "automation",
     profiles: [],
     includeInOpenClawGroup: true,
@@ -360,14 +255,6 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     id: "nodes",
     label: "nodes",
     description: "Nodes + devices",
-    sectionId: "nodes",
-    profiles: [],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "computer",
-    label: "computer",
-    description: "Control a paired computer node desktop",
     sectionId: "nodes",
     profiles: [],
     includeInOpenClawGroup: true,
@@ -410,14 +297,6 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     description: UPDATE_PLAN_TOOL_DISPLAY_SUMMARY,
     sectionId: "agents",
     profiles: ["coding"],
-    includeInOpenClawGroup: true,
-  },
-  {
-    id: "ask_user",
-    label: "ask_user",
-    description: ASK_USER_TOOL_DISPLAY_SUMMARY,
-    sectionId: "agents",
-    profiles: ["coding", "messaging"],
     includeInOpenClawGroup: true,
   },
   {
@@ -543,16 +422,11 @@ export function resolveCoreToolProfilePolicy(profile?: string): ToolProfilePolic
 }
 
 /** Lists core tools grouped into UI sections. */
-export function listCoreToolSections(params?: { swarmEnabled?: boolean }): CoreToolSection[] {
-  // Callers resolve the swarm gate and pass the fact in; resolving config here
-  // would couple this ui-shared module to the server graph.
-  const swarmEnabled = params?.swarmEnabled === true;
+export function listCoreToolSections(): CoreToolSection[] {
   return CORE_TOOL_SECTION_ORDER.map((section) => ({
     id: section.id,
     label: section.label,
-    tools: CORE_TOOL_DEFINITIONS.filter(
-      (tool) => tool.sectionId === section.id && (tool.id !== "agents_wait" || swarmEnabled),
-    ).map((tool) => ({
+    tools: CORE_TOOL_DEFINITIONS.filter((tool) => tool.sectionId === section.id).map((tool) => ({
       id: tool.id,
       label: tool.label,
       description: tool.description,

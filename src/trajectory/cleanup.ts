@@ -3,18 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { resolveSessionFilePath } from "../config/sessions/paths.js";
-import { parseSqliteSessionFileMarker } from "../config/sessions/sqlite-marker.js";
-import { readFileWindowFullySync } from "../infra/file-read.js";
 import { isPathInside } from "../infra/path-guards.js";
-import { readRegularFileSync } from "../infra/regular-file.js";
 import {
-  TRAJECTORY_POINTER_FILE_MAX_BYTES,
   resolveTrajectoryFilePath,
   resolveTrajectoryPointerFilePath,
   safeTrajectorySessionFileName,
 } from "./paths.js";
 
-type RemovedTrajectoryArtifact = {
+export type RemovedTrajectoryArtifact = {
   kind: "pointer" | "runtime";
   path: string;
 };
@@ -54,12 +50,11 @@ function readTrajectoryPointerFile(
   pointerPath: string,
   sessionId: string,
 ): TrajectoryPointer | null {
+  if (!isRegularNonSymlinkFile(pointerPath)) {
+    return null;
+  }
   try {
-    const { buffer } = readRegularFileSync({
-      filePath: pointerPath,
-      maxBytes: TRAJECTORY_POINTER_FILE_MAX_BYTES,
-    });
-    const parsed: unknown = JSON.parse(buffer.toString("utf8"));
+    const parsed: unknown = JSON.parse(fs.readFileSync(pointerPath, "utf8"));
     if (!isRecord(parsed)) {
       return null;
     }
@@ -83,7 +78,7 @@ function readFirstNonEmptyLine(filePath: string): string | null {
   try {
     fd = fs.openSync(filePath, "r");
     const buffer = Buffer.alloc(64 * 1024);
-    const bytesRead = readFileWindowFullySync(fd, buffer, 0);
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
     if (bytesRead <= 0) {
       return null;
     }
@@ -191,16 +186,8 @@ export async function removeSessionTrajectoryArtifacts(params: {
   const storeDir = path.dirname(path.resolve(params.storePath));
   const restrictToStoreDir = params.restrictToStoreDir === true;
   const removed: RemovedTrajectoryArtifact[] = [];
-  const sqliteMarker = parseSqliteSessionFileMarker(sessionFile);
-  if (
-    sqliteMarker &&
-    (sqliteMarker.sessionId !== params.sessionId ||
-      path.resolve(sqliteMarker.storePath) !== path.resolve(params.storePath))
-  ) {
-    return [];
-  }
-  const pointerPath = sqliteMarker ? undefined : resolveTrajectoryPointerFilePath(sessionFile);
-  const pointer = pointerPath ? readTrajectoryPointerFile(pointerPath, params.sessionId) : null;
+  const pointerPath = resolveTrajectoryPointerFilePath(sessionFile);
+  const pointer = readTrajectoryPointerFile(pointerPath, params.sessionId);
   const defaultRuntimePath = resolveTrajectoryFilePath({
     env: {},
     sessionFile,
@@ -229,7 +216,7 @@ export async function removeSessionTrajectoryArtifacts(params: {
     }
   }
 
-  if (pointerPath && (!restrictToStoreDir || isPathWithinDir(storeDir, pointerPath))) {
+  if (!restrictToStoreDir || isPathWithinDir(storeDir, pointerPath)) {
     const deletedPointer = await removeRegularFile(pointerPath, "pointer");
     if (deletedPointer) {
       removed.push(deletedPointer);

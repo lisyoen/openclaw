@@ -14,8 +14,6 @@ type DiscordEventQueueJob = {
   reject: (error: unknown) => void;
 };
 
-type DiscordEventQueueDispatchOutcome = "completed" | "failed" | "timed-out";
-
 type DiscordEventQueueMetrics = {
   queueSize: number;
   processing: number;
@@ -111,64 +109,41 @@ export class DiscordEventQueue {
         return;
       }
       this.processing += 1;
-      const listenerPromise = Promise.resolve().then(() => job.run());
-      const runJobPromise = this.runJob(job, listenerPromise);
-      void runJobPromise.then(job.resolve, job.reject).finally(() => {
-        // Processed counts externally settled dispatches; a timed-out listener
-        // can still retain its concurrency slot until its own settlement.
-        this.processedCount += 1;
-      });
-      // A timeout settles enqueue but cannot cancel the listener. Hold its slot
-      // until actual settlement or late listeners can exceed maxConcurrency.
-      void Promise.allSettled([runJobPromise, listenerPromise]).then(
-        ([dispatchResult, listenerResult]) => {
-          if (
-            dispatchResult.status === "fulfilled" &&
-            dispatchResult.value === "timed-out" &&
-            listenerResult.status === "rejected"
-          ) {
-            console.error(
-              `[EventQueue] Listener ${job.listenerName} failed after timeout for event ${job.eventType}:`,
-              listenerResult.reason,
-            );
-          }
+      void this.runJob(job)
+        .then(job.resolve, job.reject)
+        .finally(() => {
           this.processing -= 1;
+          this.processedCount += 1;
           this.processNext();
-        },
-      );
+        });
     }
   }
 
-  private async runJob(
-    job: DiscordEventQueueJob,
-    listenerPromise: Promise<void>,
-  ): Promise<DiscordEventQueueDispatchOutcome> {
+  private async runJob(job: DiscordEventQueueJob): Promise<void> {
     const startedAt = Date.now();
     try {
-      await this.runWithTimeout(listenerPromise);
+      await this.runWithTimeout(job);
       this.logSlowListener(job, Date.now() - startedAt);
-      return "completed";
     } catch (error) {
       if (isListenerTimeoutError(error)) {
         this.timeoutCount += 1;
         console.error(
           `[EventQueue] Listener ${job.listenerName} timed out after ${this.options.listenerTimeout}ms for event ${job.eventType}`,
         );
-        return "timed-out";
+        return;
       }
       console.error(
         `[EventQueue] Listener ${job.listenerName} failed for event ${job.eventType}:`,
         error,
       );
-      return "failed";
     }
   }
 
-  private async runWithTimeout(listenerPromise: Promise<void>): Promise<void> {
+  private async runWithTimeout(job: DiscordEventQueueJob): Promise<void> {
     let timeout: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
-        listenerPromise,
+        job.run(),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(() => {
             reject(createListenerTimeoutError(this.options.listenerTimeout));

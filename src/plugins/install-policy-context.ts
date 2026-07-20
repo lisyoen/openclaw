@@ -16,7 +16,7 @@ import type {
  * Keep all payload shaping here so partner feedback lands in one place instead
  * of drifting across individual install codepaths.
  */
-type BeforeInstallHookPayloadParams = {
+export type BeforeInstallHookPayloadParams = {
   targetType: PluginInstallTargetType;
   targetName: string;
   origin?: string;

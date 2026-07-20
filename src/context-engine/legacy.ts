@@ -8,7 +8,6 @@ import type {
   AssembleResult,
   CompactResult,
   ContextEngineRuntimeContext,
-  ContextEngineSessionTarget,
   IngestResult,
 } from "./types.js";
 
@@ -71,9 +70,8 @@ export class LegacyContextEngine implements ContextEngine {
 
   async compact(params: {
     sessionId: string;
-    sessionKey: string;
-    agentId?: string;
-    sessionTarget?: ContextEngineSessionTarget;
+    sessionKey?: string;
+    sessionFile: string;
     tokenBudget?: number;
     force?: boolean;
     currentTokenCount?: number;

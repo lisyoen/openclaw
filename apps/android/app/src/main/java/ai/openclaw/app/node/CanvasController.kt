@@ -13,10 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -29,12 +27,6 @@ import kotlin.coroutines.resume
  * Owns the Android WebView canvas surface used by canvas and A2UI commands.
  */
 class CanvasController {
-  enum class PresentationState {
-    Unmounted,
-    Hidden,
-    Visible,
-  }
-
   enum class SnapshotFormat(
     val rawValue: String,
   ) {
@@ -55,9 +47,6 @@ class CanvasController {
   @Volatile private var homeCanvasStateJson: String? = null
   private val _currentUrl = MutableStateFlow<String?>(null)
   val currentUrl: StateFlow<String?> = _currentUrl.asStateFlow()
-  private val _presentationState = MutableStateFlow(PresentationState.Unmounted)
-  val presentationState: StateFlow<PresentationState> = _presentationState.asStateFlow()
-  private val hostAttachedState = MutableStateFlow(false)
 
   private val scaffoldAssetUrl = CanvasActionTrust.scaffoldAssetUrl
   private val localA2uiAssetUrl = CanvasActionTrust.localA2uiAssetUrl
@@ -78,64 +67,23 @@ class CanvasController {
   /** Attaches the active WebView and replays state that may have arrived before the view existed. */
   fun attach(webView: WebView) {
     this.webView = webView
-    hostAttachedState.value = true
     // Replay persisted state because WebView attachment can happen after gateway events arrive.
     reload()
     applyDebugStatus()
     applyHomeCanvasState()
   }
 
-  /** Releases the shell-owned host when its UI owner permanently leaves composition. */
-  fun releaseHost() {
-    webView = null
-    hostAttachedState.value = false
-    _presentationState.value = PresentationState.Unmounted
-  }
-
-  /** Invalid renderer processes cannot be reused; retain the host but require a new child. */
-  fun onRenderProcessGone(webView: WebView) {
-    if (this.webView !== webView) return
-    this.webView = null
-    // Do not replay the page that terminated its renderer into the replacement WebView.
-    url = null
-    _currentUrl.value = null
-    hostAttachedState.value = false
-    _presentationState.value = PresentationState.Hidden
-  }
-
-  fun show() {
-    _presentationState.value = PresentationState.Visible
-  }
-
-  fun hide() {
-    if (_presentationState.value != PresentationState.Unmounted) {
-      _presentationState.value = PresentationState.Hidden
+  /** Detaches only the currently attached WebView instance. */
+  fun detach(webView: WebView) {
+    if (this.webView === webView) {
+      this.webView = null
     }
-  }
-
-  /**
-   * Requests presentation and waits only for the shell host to accept it.
-   * Remote page loading remains asynchronous and must not delay invoke completion.
-   */
-  suspend fun showAndAwaitHost(): Boolean {
-    val previousState = _presentationState.value
-    show()
-    if (hostAttachedState.value) return true
-    val attached =
-      withTimeoutOrNull(hostAttachTimeoutMs) {
-        hostAttachedState.first { it }
-        true
-      } ?: hostAttachedState.value
-    if (!attached && _presentationState.value == PresentationState.Visible) {
-      // A failed foreground handoff must not leave a pending overlay for the next Activity.
-      _presentationState.value = previousState
-    }
-    return attached
   }
 
   /** Navigates the canvas to a remote URL or back to the bundled scaffold for blank/root input. */
   fun navigate(url: String) {
-    this.url = CanvasNavigationPolicy.normalize(url).ifBlank { null }
+    val trimmed = url.trim()
+    this.url = if (trimmed.isBlank() || trimmed == "/") null else trimmed
     _currentUrl.value = this.url
     reload()
   }
@@ -148,6 +96,8 @@ class CanvasController {
   }
 
   fun currentUrl(): String? = url
+
+  fun isDefaultCanvas(): Boolean = url == null
 
   fun setDebugStatusEnabled(enabled: Boolean) {
     debugStatusEnabled = enabled
@@ -255,6 +205,24 @@ class CanvasController {
       }
     }
 
+  suspend fun snapshotPngBase64(maxWidth: Int?): String =
+    withContext(Dispatchers.Main) {
+      val wv = webView ?: throw IllegalStateException("no webview")
+      val bmp = wv.captureBitmap()
+      try {
+        val scaled = bmp.scaleForMaxWidth(maxWidth)
+        try {
+          val out = ByteArrayOutputStream()
+          scaled.compress(Bitmap.CompressFormat.PNG, 100, out)
+          Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        } finally {
+          if (scaled !== bmp) scaled.recycle()
+        }
+      } finally {
+        bmp.recycle()
+      }
+    }
+
   /** Captures the WebView as PNG/JPEG base64 with optional width and quality bounds. */
   suspend fun snapshotBase64(
     format: SnapshotFormat,
@@ -296,8 +264,6 @@ class CanvasController {
     }
 
   companion object {
-    private const val hostAttachTimeoutMs = 5_000L
-
     /**
      * Parsed canvas.snapshot options used by invoke dispatch.
      */

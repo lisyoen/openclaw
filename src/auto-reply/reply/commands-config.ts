@@ -91,10 +91,10 @@ export const handleConfigCommand: CommandHandler = async (params, allowTextComma
       return missingAdminScope;
     }
     const parsedPath = parseConfigPath(configCommand.path);
-    if (!parsedPath.ok) {
+    if (!parsedPath.ok || !parsedPath.path) {
       return {
         shouldContinue: false,
-        reply: { text: `⚠️ ${parsedPath.error}` },
+        reply: { text: `⚠️ ${parsedPath.error ?? "Invalid path."}` },
       };
     }
     parsedWritePath = parsedPath.path;
@@ -138,10 +138,10 @@ export const handleConfigCommand: CommandHandler = async (params, allowTextComma
     const pathRaw = normalizeOptionalString(configCommand.path);
     if (pathRaw) {
       const parsedPath = parseConfigPath(pathRaw);
-      if (!parsedPath.ok) {
+      if (!parsedPath.ok || !parsedPath.path) {
         return {
           shouldContinue: false,
-          reply: { text: `⚠️ ${parsedPath.error}` },
+          reply: { text: `⚠️ ${parsedPath.error ?? "Invalid path."}` },
         };
       }
       const value = getConfigValueAtPath(parsedBase, parsedPath.path);
@@ -248,9 +248,7 @@ export const handleDebugCommand: CommandHandler = async (params, allowTextComman
         reply: { text: "⚙️ Debug overrides: (none)" },
       };
     }
-    const schema = loadGatewayRuntimeConfigSchema();
-    const redactedOverrides = redactConfigObject(overrides, schema.uiHints);
-    const json = JSON.stringify(redactedOverrides, null, 2);
+    const json = JSON.stringify(overrides, null, 2);
     return {
       shouldContinue: false,
       reply: {
@@ -270,10 +268,10 @@ export const handleDebugCommand: CommandHandler = async (params, allowTextComman
     if (!result.ok) {
       return {
         shouldContinue: false,
-        reply: { text: `⚠️ ${result.error}` },
+        reply: { text: `⚠️ ${result.error ?? "Invalid path."}` },
       };
     }
-    if (!result.value) {
+    if (!result.removed) {
       return {
         shouldContinue: false,
         reply: {
@@ -291,14 +289,13 @@ export const handleDebugCommand: CommandHandler = async (params, allowTextComman
     if (!result.ok) {
       return {
         shouldContinue: false,
-        reply: { text: `⚠️ ${result.error}` },
+        reply: { text: `⚠️ ${result.error ?? "Invalid override."}` },
       };
     }
-    const valueLabel = formatConfigSetValueLabel({
-      path: result.value,
-      value: debugCommand.value,
-      uiHints: loadGatewayRuntimeConfigSchema().uiHints,
-    });
+    const valueLabel =
+      typeof debugCommand.value === "string"
+        ? `"${debugCommand.value}"`
+        : JSON.stringify(debugCommand.value);
     return {
       shouldContinue: false,
       reply: {

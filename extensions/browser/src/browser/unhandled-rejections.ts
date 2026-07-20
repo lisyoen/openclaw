@@ -32,7 +32,7 @@ function readPlaywrightMethod(err: unknown): string | undefined {
 }
 
 /** Detects Playwright "no dialog is showing" races that can escape as rejections. */
-function isPlaywrightDialogRaceUnhandledRejection(reason: unknown): boolean {
+export function isPlaywrightDialogRaceUnhandledRejection(reason: unknown): boolean {
   for (const candidate of collectErrorGraphCandidates(reason, (current) => [
     current.cause,
     current.reason,

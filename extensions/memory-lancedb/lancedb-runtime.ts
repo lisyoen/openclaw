@@ -1,7 +1,7 @@
 // Memory Lancedb plugin module implements lancedb runtime behavior.
 type LanceDbModule = typeof import("@lancedb/lancedb");
 
-type LanceDbRuntimeLogger = {
+export type LanceDbRuntimeLogger = {
   info?: (message: string) => void;
   warn?: (message: string) => void;
 };
@@ -38,7 +38,7 @@ function buildUnsupportedNativePlatformMessage(params: {
   ].join(" ");
 }
 
-function createLanceDbRuntimeLoader(overrides: Partial<LanceDbRuntimeLoaderDeps> = {}): {
+export function createLanceDbRuntimeLoader(overrides: Partial<LanceDbRuntimeLoaderDeps> = {}): {
   load: (loggerInstance?: LanceDbRuntimeLogger) => Promise<LanceDbModule>;
 } {
   const deps: LanceDbRuntimeLoaderDeps = {
@@ -69,12 +69,6 @@ function createLanceDbRuntimeLoader(overrides: Partial<LanceDbRuntimeLoaderDeps>
       return await loadPromise;
     },
   };
-}
-
-if (process.env.VITEST === "true") {
-  Reflect.set(globalThis, Symbol.for("openclaw.memoryLanceDbRuntimeTestApi"), {
-    createRuntimeLoader: createLanceDbRuntimeLoader,
-  });
 }
 
 const defaultLoader = createLanceDbRuntimeLoader();

@@ -7,12 +7,10 @@
  * @module @openclaw/oc-path/find
  */
 
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import { isMap, isScalar, isSeq, type Node, type Pair } from "yaml";
 import type { MdAst } from "./ast.js";
 import type { JsoncValue } from "./jsonc/ast.js";
 import type { JsonlAst, JsonlLine } from "./jsonl/ast.js";
-import { pickJsonlLine } from "./jsonl/line.js";
 import type { OcPath } from "./oc-path.js";
 import {
   MAX_TRAVERSAL_DEPTH,
@@ -41,7 +39,7 @@ import { resolveOcPath } from "./universal.js";
 // ---------- Public types ---------------------------------------------------
 
 /** A find result: a concrete (wildcard-free) path plus its match info. */
-interface OcPathMatch {
+export interface OcPathMatch {
   readonly path: OcPath;
   readonly match: OcMatch;
 }
@@ -191,7 +189,7 @@ function dispatchSeg<T>(
   walked: readonly SlotSub[],
   onMatch: OnMatch,
 ): void {
-  const cur = expectDefined(subs[i], "dispatch index checked by walker");
+  const cur = subs[i];
 
   if (isUnionSeg(cur.value)) {
     const alts = parseUnionSeg(cur.value);
@@ -278,8 +276,8 @@ const jsoncOps: WalkOps<JsoncValue> = {
         yield { keySub: quoteSeg(e.key), child: e.value };
       }
     } else if (node.kind === "array") {
-      for (const [idx, child] of node.items.entries()) {
-        yield { keySub: String(idx), child };
+      for (let idx = 0; idx < node.items.length; idx++) {
+        yield { keySub: String(idx), child: node.items[idx] };
       }
     }
   },
@@ -296,10 +294,7 @@ const jsoncOps: WalkOps<JsoncValue> = {
       if (idx === null) {
         return null;
       }
-      return {
-        keySub: key,
-        child: expectDefined(node.items[idx], "parsed JSONC array index is in bounds"),
-      };
+      return { keySub: key, child: node.items[idx] };
     }
     return null;
   },
@@ -318,9 +313,9 @@ const jsoncOps: WalkOps<JsoncValue> = {
         }
       }
     } else if (node.kind === "array") {
-      for (const [idx, child] of node.items.entries()) {
-        if (jsoncChildMatchesPredicate(child, pred)) {
-          yield { keySub: String(idx), child };
+      for (let idx = 0; idx < node.items.length; idx++) {
+        if (jsoncChildMatchesPredicate(node.items[idx], pred)) {
+          yield { keySub: String(idx), child: node.items[idx] };
         }
       }
     }
@@ -369,7 +364,7 @@ const jsonlOps: WalkOps<JsonlAst> = {
     }
   },
   lookup(ast, key) {
-    const line = pickJsonlLine(ast, key);
+    const line = pickLine(ast, key);
     if (line === null) {
       return null;
     }
@@ -441,6 +436,37 @@ function topLevelLeafText(value: JsoncValue, key: string): string | null {
   }
   if (v.kind === "number" || v.kind === "boolean") {
     return String(v.value);
+  }
+  return null;
+}
+
+function pickLine(ast: JsonlAst, addr: string): JsonlLine | null {
+  if (addr === "$first") {
+    for (const l of ast.lines) {
+      if (l.kind === "value") {
+        return l;
+      }
+    }
+    return null;
+  }
+  if (addr === "$last") {
+    for (let i = ast.lines.length - 1; i >= 0; i--) {
+      const l = ast.lines[i];
+      if (l !== undefined && l.kind === "value") {
+        return l;
+      }
+    }
+    return null;
+  }
+  const m = /^L(\d+)$/.exec(addr);
+  if (m === null || m[1] === undefined) {
+    return null;
+  }
+  const target = Number(m[1]);
+  for (const l of ast.lines) {
+    if (l.line === target) {
+      return l;
+    }
   }
   return null;
 }
@@ -603,7 +629,7 @@ function walkMd(
     onMatch(walked);
     return;
   }
-  const cur = expectDefined(subs[i], "Markdown walk index checked above");
+  const cur = subs[i];
 
   // Frontmatter sentinel short-circuits regular dispatch.
   if (level.kind === "root" && walked.length === 0 && cur.value === "[frontmatter]") {
@@ -705,7 +731,8 @@ const mdOps: WalkOps<MdLevel> = {
       // Disambiguate duplicate slugs via `#N` ordinal so each emitted
       // path round-trips through resolveOcPath to its own item.
       const counts = blockSlugCounts(level.block.items);
-      for (const [idx, item] of level.block.items.entries()) {
+      for (let idx = 0; idx < level.block.items.length; idx++) {
+        const item = level.block.items[idx];
         const seg = (counts.get(item.slug) ?? 0) > 1 ? `#${idx}` : item.slug;
         yield { keySub: seg, child: { kind: "item", item, ast: level.ast } };
       }
@@ -726,14 +753,7 @@ const mdOps: WalkOps<MdLevel> = {
         if (n === null || n < 0 || n >= level.block.items.length) {
           return null;
         }
-        return {
-          keySub: key,
-          child: {
-            kind: "item",
-            item: expectDefined(level.block.items[n], "validated Markdown ordinal is in bounds"),
-            ast: level.ast,
-          },
-        };
+        return { keySub: key, child: { kind: "item", item: level.block.items[n], ast: level.ast } };
       }
       const target = key.toLowerCase();
       const item = level.block.items.find((it) => it.slug === target);
@@ -756,10 +776,7 @@ const mdOps: WalkOps<MdLevel> = {
     }
     // Preserve the positional token in keySub so the resolver
     // re-evaluates positionally on round-trip.
-    const item = expectDefined(
-      level.block.items[Number(concrete)],
-      "resolved Markdown position is in bounds",
-    );
+    const item = level.block.items[Number(concrete)];
     return { keySub: seg, child: { kind: "item", item, ast: level.ast } };
   },
   *predicate(level, pred) {
@@ -773,7 +790,8 @@ const mdOps: WalkOps<MdLevel> = {
     }
     if (level.kind === "block") {
       const counts = blockSlugCounts(level.block.items);
-      for (const [idx, item] of level.block.items.entries()) {
+      for (let idx = 0; idx < level.block.items.length; idx++) {
+        const item = level.block.items[idx];
         if (mdItemMatchesPredicate(item, pred)) {
           const seg = (counts.get(item.slug) ?? 0) > 1 ? `#${idx}` : item.slug;
           yield { keySub: seg, child: { kind: "item", item, ast: level.ast } };
@@ -827,4 +845,3 @@ function jsoncChildFieldText(node: JsoncValue, key: string): string | null {
   }
   return null;
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

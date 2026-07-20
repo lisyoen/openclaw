@@ -1,5 +1,4 @@
 // Browser tests cover browser request.timeout plugin behavior.
-import { expectDefined } from "@openclaw/normalization-core";
 import { MAX_TIMER_TIMEOUT_MS } from "openclaw/plugin-sdk/number-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -48,10 +47,7 @@ describe("browser.request local timeout", () => {
   it("applies timeoutMs to local browser dispatches", async () => {
     const respond = vi.fn();
 
-    await expectDefined(
-      browserHandlers["browser.request"],
-      "browser request handler",
-    )({
+    await browserHandlers["browser.request"]({
       params: {
         method: "POST",
         path: "/tabs/open",
@@ -85,10 +81,7 @@ describe("browser.request local timeout", () => {
   it("caps timeoutMs before local browser dispatches", async () => {
     const respond = vi.fn();
 
-    await expectDefined(
-      browserHandlers["browser.request"],
-      "browser request handler",
-    )({
+    await browserHandlers["browser.request"]({
       params: {
         method: "POST",
         path: "/tabs/open",

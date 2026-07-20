@@ -10,18 +10,11 @@ struct CommandCenterTab: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var defaultChatSessionEntry: OpenClawChatSessionEntry?
     @State private var recentChatSessions: [OpenClawChatSessionEntry] = []
-    var ownsNavigationStack: Bool = true
-    var usesNativeNavigationChrome: Bool = false
     var headerTitle: String = "OpenClaw"
-    var headerSidebarAction: OpenClawSidebarHeaderAction?
-    var dashboardModel: RootSidebarModel?
+    var headerLeadingAction: OpenClawSidebarHeaderAction?
     var showsHeaderMark: Bool = true
     var openChat: () -> Void
     var openSettings: () -> Void
-    var openSessions: (() -> Void)?
-    var openApprovals: (() -> Void)?
-    var openAutomations: (() -> Void)?
-    var openUsage: (() -> Void)?
 
     enum WorkRoute {
         case chat(String?)
@@ -38,254 +31,47 @@ struct CommandCenterTab: View {
         let color: Color
         let progress: Double?
         let route: WorkRoute
-        let isUnread: Bool
-        let isPinned: Bool
     }
 
     var body: some View {
-        Group {
-            if self.ownsNavigationStack {
-                NavigationStack {
-                    self.content
+        NavigationStack {
+            GeometryReader { geometry in
+                ZStack {
+                    CommandControlBackground()
+                    self.commandAmbientOverlay
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            self.header
+                            self.gatewayCard
+                            if Self.usesSplitSectionsLayout(
+                                horizontalSizeClass: self.horizontalSizeClass,
+                                containerWidth: geometry.size.width)
+                            {
+                                HStack(alignment: .top, spacing: 12) {
+                                    self.defaultChatSessionSection
+                                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                                    self.recentSessions
+                                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                                }
+                                .padding(.horizontal, OpenClawProMetric.pagePadding)
+                            } else {
+                                self.defaultChatSessionSection
+                                    .padding(.horizontal, OpenClawProMetric.pagePadding)
+                                self.recentSessions
+                                    .padding(.horizontal, OpenClawProMetric.pagePadding)
+                            }
+                        }
+                        .padding(.top, 18)
+                        .padding(.bottom, 18)
+                    }
+                    .safeAreaPadding(.bottom, OpenClawProMetric.bottomScrollInset)
                 }
-            } else {
-                self.content
             }
+            .navigationBarHidden(true)
         }
         .task(id: self.recentSessionsRefreshID) {
-            guard self.dashboardModel == nil else { return }
             await self.refreshRecentSessionsIfNeeded()
         }
-    }
-
-    private var content: some View {
-        GeometryReader { geometry in
-            ZStack {
-                CommandControlBackground()
-                self.commandAmbientOverlay
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        if !self.usesNativeNavigationChrome {
-                            self.header
-                        }
-                        self.gatewayCard
-                        self.threadTiles
-                            .padding(.horizontal, OpenClawProMetric.pagePadding)
-                        self.attentionCard
-                            .padding(.horizontal, OpenClawProMetric.pagePadding)
-                        self.usageSummaryCard
-                            .padding(.horizontal, OpenClawProMetric.pagePadding)
-                        if Self.usesSplitSectionsLayout(
-                            horizontalSizeClass: self.horizontalSizeClass,
-                            containerWidth: geometry.size.width)
-                        {
-                            HStack(alignment: .top, spacing: 12) {
-                                self.defaultChatSessionSection
-                                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                                self.recentSessions
-                                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                            }
-                            .padding(.horizontal, OpenClawProMetric.pagePadding)
-                        } else {
-                            self.defaultChatSessionSection
-                                .padding(.horizontal, OpenClawProMetric.pagePadding)
-                            self.recentSessions
-                                .padding(.horizontal, OpenClawProMetric.pagePadding)
-                        }
-                    }
-                    .padding(.top, 18)
-                    .padding(.bottom, 18)
-                }
-                .safeAreaPadding(.bottom, OpenClawProMetric.bottomScrollInset)
-            }
-        }
-        .navigationTitle(self.headerTitle)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(self.usesNativeNavigationChrome ? .visible : .hidden, for: .navigationBar)
-        .toolbar {
-            if self.usesNativeNavigationChrome {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: self.openSettings) {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
-                    }
-                    .accessibilityLabel("Gateway settings")
-                }
-            }
-            if self.usesNativeNavigationChrome, let headerSidebarAction {
-                ToolbarItem(placement: .topBarTrailing) {
-                    OpenClawSidebarRevealButton(action: headerSidebarAction)
-                }
-            }
-        }
-    }
-
-    private var threadTiles: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-            self.threadTile(
-                title: String(localized: "Sessions"),
-                value: self.overviewSessions.count.formatted())
-            self.threadTile(
-                title: String(localized: "Live"),
-                value: self.overviewLiveCount.formatted())
-            self.threadTile(
-                title: String(localized: "Unread"),
-                value: self.overviewUnreadCount.formatted())
-            self.threadTile(
-                title: String(localized: "Tokens"),
-                value: self.overviewTokenText)
-        }
-    }
-
-    private func threadTile(title: String, value: String) -> some View {
-        Button {
-            self.openSessions?()
-        } label: {
-            ProCard(padding: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: value)
-                        .font(OpenClawType.headline)
-                        .foregroundStyle(OpenClawBrand.accent)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    Text(verbatim: title)
-                        .font(OpenClawType.caption2Medium)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint(String(localized: "Opens Sessions"))
-    }
-
-    @ViewBuilder
-    private var attentionCard: some View {
-        let approvalCount = self.appModel.pendingExecApprovalCount
-        let cronCount = (self.dashboardModel?.failedCronJobCount ?? 0) +
-            (self.dashboardModel?.overdueCronJobCount ?? 0)
-        if approvalCount > 0 || cronCount > 0 {
-            CommandPanel(tint: OpenClawBrand.warn, padding: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    self.cardHeader(title: String(localized: "Attention"))
-                    if approvalCount > 0 {
-                        self.dashboardActionRow(
-                            title: String(localized: "Pending approvals"),
-                            value: approvalCount.formatted(),
-                            systemImage: "checkmark.shield",
-                            action: self.openApprovals ?? self.openSettings)
-                    }
-                    if cronCount > 0 {
-                        self.dashboardActionRow(
-                            title: String(localized: "Automation issues"),
-                            value: cronCount.formatted(),
-                            systemImage: "clock.badge.exclamationmark",
-                            action: self.openAutomations ?? {})
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var usageSummaryCard: some View {
-        if let usage = self.dashboardModel?.usage {
-            Button(action: self.openUsage ?? {}) {
-                CommandPanel(padding: 12) {
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(String(localized: "31-day usage"))
-                                .font(OpenClawType.subheadSemiBold)
-                                .foregroundStyle(.primary)
-                            Text(self.usageCostText(usage.totalCost))
-                                .font(OpenClawType.title3SemiBold)
-                                .foregroundStyle(OpenClawBrand.accent)
-                        }
-                        Spacer(minLength: 8)
-                        self.usageTrend(usage.daily ?? [])
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(String(localized: "Opens Usage"))
-        }
-    }
-
-    private func dashboardActionRow(
-        title: String,
-        value: String,
-        systemImage: String,
-        action: @escaping () -> Void) -> some View
-    {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(OpenClawType.subheadSemiBold)
-                    .foregroundStyle(OpenClawBrand.warn)
-                Text(verbatim: title)
-                    .font(OpenClawType.subheadSemiBold)
-                Spacer(minLength: 8)
-                Text(verbatim: value)
-                    .font(OpenClawType.subheadSemiBold)
-                    .foregroundStyle(OpenClawBrand.warn)
-                Image(systemName: "chevron.right")
-                    .font(OpenClawType.captionSemiBold)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func usageTrend(_ daily: [CostUsageDailyEntryLite]) -> some View {
-        let values = daily.suffix(14).map { max(0, $0.totalCost ?? 0) }
-        let maximum = values.max() ?? 0
-        return HStack(alignment: .bottom, spacing: 2) {
-            ForEach(Array(values.enumerated()), id: \.offset) { _, value in
-                Capsule()
-                    .fill(OpenClawBrand.accent.opacity(0.75))
-                    .frame(width: 3, height: maximum > 0 ? max(3, 28 * value / maximum) : 3)
-            }
-        }
-        .frame(height: 30, alignment: .bottom)
-        .accessibilityHidden(true)
-    }
-
-    private func usageCostText(_ value: Double?) -> String {
-        guard let value else { return "—" }
-        return value.formatted(.currency(code: "USD"))
-    }
-
-    private var overviewSessions: [OpenClawChatSessionEntry] {
-        if let dashboardModel {
-            return Self.visibleOverviewSessions(dashboardModel.sessions)
-        }
-        return [self.defaultChatSessionEntry].compactMap(\.self) + self.recentChatSessions
-    }
-
-    static func visibleOverviewSessions(
-        _ sessions: [OpenClawChatSessionEntry]) -> [OpenClawChatSessionEntry]
-    {
-        sessions.filter {
-            $0.archived != true && !ChatSessionSidebarModel.isHiddenInternalSession($0.key)
-        }
-    }
-
-    private var overviewLiveCount: Int {
-        self.overviewSessions.count { session in
-            session.hasActiveRun == true || session.hasActiveSubagentRun == true ||
-                session.status?.lowercased() == "running"
-        }
-    }
-
-    private var overviewUnreadCount: Int {
-        self.overviewSessions.count { $0.unread == true }
-    }
-
-    private var overviewTokenText: String {
-        let summary = RootSidebarModel.tokenUsageSummary(for: self.overviewSessions)
-        guard let total = summary.total else { return "n/a" }
-        return "\(summary.isPartial ? "~" : "")\(total.formatted(.number.notation(.compactName)))"
     }
 
     static func usesSplitSectionsLayout(
@@ -305,77 +91,89 @@ struct CommandCenterTab: View {
 
     private var header: some View {
         OpenClawAdaptiveHeaderRow(
-            title: .localized(self.headerTitle),
-            subtitle: .localized(self.gatewaySubtitle),
-            titleFont: OpenClawType.title3SemiBold,
-            subtitleFont: OpenClawType.caption,
+            title: self.headerTitle,
+            subtitle: self.gatewaySubtitle,
+            titleFont: .title3.weight(.semibold),
+            subtitleFont: .caption,
             subtitleLineLimit: 1)
         {
-            if let headerSidebarAction {
-                OpenClawSidebarHeaderLeadingSlot(action: headerSidebarAction)
+            if let headerLeadingAction {
+                OpenClawSidebarHeaderLeadingSlot(action: headerLeadingAction)
             } else if Self.shouldShowHeaderMark(
-                hasLeadingAction: self.headerSidebarAction != nil,
+                hasLeadingAction: headerLeadingAction != nil,
                 showsHeaderMark: self.showsHeaderMark)
             {
                 OpenClawProMark(size: 28, shadowRadius: 5)
             }
         } accessory: {
-            HStack(spacing: 10) {
-                Button(action: self.openSettings) {
-                    Image(systemName: "gearshape.fill")
-                        .font(OpenClawType.subheadSemiBold)
-                        .frame(
-                            width: OpenClawProMetric.compactControlSize,
-                            height: OpenClawProMetric.compactControlSize)
-                }
-                .openClawGlassButton()
-                .accessibilityLabel("Gateway settings")
-                .accessibilityHint("Opens gateway settings")
+            Button(action: self.openSettings) {
+                ProCapsule(
+                    title: self.gatewayStateText,
+                    color: self.gatewayStatusColor,
+                    icon: self.gatewayConnected ? "checkmark.circle.fill" : "wifi.slash")
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Gateway \(self.gatewayStateText)")
+            .accessibilityHint("Opens Settings / Gateway")
         }
         .padding(.horizontal, OpenClawProMetric.pagePadding)
     }
 
-    @ViewBuilder
     private var commandAmbientOverlay: some View {
-        if self.colorScheme == .light {
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(0.05),
-                    Color.clear,
-                ],
-                startPoint: .top,
-                endPoint: .bottom)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
+        Group {
+            if self.colorScheme == .light {
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.05),
+                        Color.clear,
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
         }
     }
 
     private var gatewayCard: some View {
         CommandPanel(isProminent: true, padding: 12) {
             VStack(alignment: .leading, spacing: 10) {
-                self.cardHeader(title: "Gateway")
+                self.cardHeader(
+                    title: "Gateway",
+                    value: self.gatewayStateText,
+                    color: self.gatewayStatusColor,
+                    icon: self.gatewayConnected ? "checkmark.circle.fill" : "wifi.slash")
 
                 HStack(spacing: 0) {
                     self.gatewayFact(
                         icon: "network",
                         title: "Connection",
-                        value: self.gatewayConnectionText,
+                        value: self.gatewayConnected ? "Online" : "Offline",
                         color: self.gatewayStatusColor)
                     Divider().frame(height: 38)
                     self.gatewayFact(
                         icon: "server.rack",
                         title: "Address",
                         value: self.gatewayAddressText,
-                        color: OpenClawBrand.accentForeground)
+                        color: OpenClawBrand.accent)
                     Divider().frame(height: 38)
                     self.gatewayFact(
                         icon: "person.2.fill",
                         title: "Agents",
                         value: self.gatewayAgentCountText,
-                        color: OpenClawBrand.accentHotForeground)
+                        color: OpenClawBrand.accentHot)
                 }
-                .padding(.vertical, 7)
+                .padding(.vertical, 9)
+                .background {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(self.colorScheme == .dark ? Color.black.opacity(0.16) : Color.black.opacity(0.026))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(
+                                    Color.primary.opacity(self.colorScheme == .dark ? 0.08 : 0.045),
+                                    lineWidth: 1)
+                        }
+                }
             }
         }
         .padding(.horizontal, OpenClawProMetric.pagePadding)
@@ -385,15 +183,15 @@ struct CommandCenterTab: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(OpenClawType.caption2Bold)
+                    .font(.caption2.weight(.bold))
                     .foregroundStyle(color)
                 Text(title)
-                    .font(OpenClawType.caption2Medium)
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Text(value)
-                .font(OpenClawType.captionSemiBold)
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(title == "Connection" ? color : .primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
@@ -405,10 +203,13 @@ struct CommandCenterTab: View {
     private var defaultChatSessionSection: some View {
         CommandPanel(padding: 12) {
             VStack(spacing: 10) {
-                self.cardHeader(title: "Agent session")
+                self.cardHeader(
+                    title: "Agent session",
+                    value: nil,
+                    color: OpenClawBrand.accent)
 
                 Button {
-                    self.openDefaultChatSession()
+                    self.open(.chat(nil))
                 } label: {
                     CommandSessionRow(item: self.defaultChatWorkItem)
                 }
@@ -420,9 +221,12 @@ struct CommandCenterTab: View {
     private var recentSessions: some View {
         CommandPanel(padding: 12) {
             VStack(spacing: 10) {
-                self.cardHeader(title: "Recent sessions")
+                self.cardHeader(
+                    title: "Recent sessions",
+                    value: nil,
+                    color: .secondary)
 
-                if self.recentSessionPreviewSessions.isEmpty {
+                if self.recentSessionPreviewRows.isEmpty {
                     CommandEmptyStateRow(
                         icon: self.gatewayConnected ? "bubble.left.and.text.bubble.right.fill" : "wifi.slash",
                         title: self.gatewayConnected ? "No recent sessions" : "Gateway offline",
@@ -430,46 +234,22 @@ struct CommandCenterTab: View {
                             .gatewayConnected ? "Start a chat and it will appear here." : "Connect to the gateway.")
                 } else {
                     VStack(spacing: 8) {
-                        ForEach(self.recentSessionPreviewSessions) { session in
-                            let item = Self.sessionWorkItem(
-                                for: session,
-                                currentSessionKey: self.appModel.chatSessionKey)
+                        ForEach(self.recentSessionPreviewRows) { item in
                             Button {
-                                self.open(session)
+                                self.open(item.route)
                             } label: {
                                 CommandSessionRow(item: item)
                             }
                             .buttonStyle(.plain)
-                            .commandSessionActions(
-                                session: session,
-                                categories: self.sessionCategories,
-                                isEnabled: self.sessionControlsAvailable,
-                                actions: CommandSessionActions(
-                                    rename: { self.patchSession(session, label: .some($0)) },
-                                    moveToGroup: { self.patchSession(session, category: .some($0)) },
-                                    togglePinned: { self.patchSession(session, pinned: session.pinned != true) },
-                                    toggleUnread: { self.patchSession(session, unread: session.unread != true) },
-                                    fork: { self.forkSession(session) },
-                                    toggleArchived: { self.archiveSession(session) },
-                                    delete: { self.deleteSession(session) }))
                         }
 
                         if self.hasMoreRecentSessions {
-                            if let openSessions {
-                                Button(action: openSessions) {
-                                    CommandViewMoreRow()
-                                }
-                                .buttonStyle(.plain)
-                            } else {
-                                NavigationLink {
-                                    CommandSessionsScreen(
-                                        usesNativeNavigationChrome: self.usesNativeNavigationChrome,
-                                        openChat: self.openChat)
-                                } label: {
-                                    CommandViewMoreRow()
-                                }
-                                .buttonStyle(.plain)
+                            NavigationLink {
+                                CommandSessionsScreen(openChat: self.openChat)
+                            } label: {
+                                CommandViewMoreRow()
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -477,58 +257,75 @@ struct CommandCenterTab: View {
         }
     }
 
-    private func cardHeader(title: String) -> some View {
+    private func cardHeader(
+        title: String,
+        value: String?,
+        color: Color,
+        icon: String? = nil,
+        badgeValue: String? = nil,
+        action: (() -> Void)? = nil) -> some View
+    {
         HStack(spacing: 8) {
             Text(title)
-                .font(OpenClawType.subheadSemiBold)
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
+            if let badgeValue {
+                Text(badgeValue)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(OpenClawBrand.accentHot, in: Capsule())
+            }
             Spacer(minLength: 8)
+            if let value {
+                if let action {
+                    Button(value, action: action)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(color)
+                } else {
+                    HStack(spacing: 4) {
+                        if let icon {
+                            Image(systemName: icon)
+                                .font(.caption2.weight(.bold))
+                        }
+                        Text(value)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(color)
+                }
+            }
         }
     }
 
     private var gatewayConnected: Bool {
-        self.gatewayDisplayState == .connected
+        GatewayStatusBuilder.build(appModel: self.appModel) == .connected
     }
 
-    private var gatewayDisplayState: GatewayDisplayState {
-        GatewayStatusBuilder.build(appModel: self.appModel)
-    }
-
-    private var gatewayConnectionText: String {
-        switch self.gatewayDisplayState {
-        case .connected:
-            String(localized: "Online")
-        case .connecting:
-            String(localized: "Connecting")
-        case .error:
-            String(localized: "Attention")
-        case .disconnected:
-            String(localized: "Offline")
-        }
+    private var gatewayStateText: String {
+        guard !self.gatewayConnected else { return "Healthy" }
+        let status = self.appModel.gatewayDisplayStatusText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercased = status.lowercased()
+        if lowercased.contains("approval") { return "Approval" }
+        if lowercased.contains("reconnect") { return "Reconnecting" }
+        if lowercased.contains("connect") { return "Connecting" }
+        if lowercased.contains("idle") { return "Idle" }
+        return "Offline"
     }
 
     private var gatewayStatusColor: Color {
-        switch self.gatewayDisplayState {
-        case .connected:
-            OpenClawBrand.ok
-        case .connecting:
-            OpenClawBrand.accent
-        case .error:
-            OpenClawBrand.warn
-        case .disconnected:
-            .secondary
-        }
+        self.gatewayConnected ? OpenClawBrand.ok : .secondary
     }
 
     private var gatewayAddressText: String {
         self.normalized(self.appModel.gatewayRemoteAddress)
             ?? self.normalized(self.appModel.gatewayServerName)
-            ?? String(localized: "Unknown")
+            ?? "Unknown"
     }
 
     private var gatewayAgentCountText: String {
         guard self.gatewayConnected else { return "—" }
-        return self.appModel.gatewayAgents.count.formatted()
+        return "\(self.appModel.gatewayAgents.count)"
     }
 
     private var defaultChatWorkItem: WorkItem {
@@ -542,55 +339,26 @@ struct CommandCenterTab: View {
             trailing: "chat",
             color: isOpen ? OpenClawBrand.accent : OpenClawBrand.ok,
             progress: nil,
-            route: .chat(nil),
-            isUnread: self.effectiveDefaultChatSessionEntry?.unread == true,
-            isPinned: self.effectiveDefaultChatSessionEntry?.pinned == true)
+            route: .chat(nil))
     }
 
     private var defaultChatActivityText: String {
-        let activityAt = self.effectiveDefaultChatSessionEntry?.lastActivityAt ??
-            self.effectiveDefaultChatSessionEntry?.updatedAt
-        guard let activityAt, activityAt > 0 else {
-            return String(localized: "No recent activity")
+        guard let updatedAt = defaultChatSessionEntry?.updatedAt, updatedAt > 0 else {
+            return "No recent activity"
         }
-        return Self.relativeTimeText(forMilliseconds: activityAt)
+        return Self.relativeTimeText(forMilliseconds: updatedAt)
     }
 
-    private var recentSessionPreviewSessions: [OpenClawChatSessionEntry] {
-        CommandSessionGrouping.previewSelection(
-            self.effectiveRecentChatSessions,
-            currentKey: self.appModel.chatSessionKey)
+    private var recentSessionRows: [WorkItem] {
+        self.sessionItems
+    }
+
+    private var recentSessionPreviewRows: [WorkItem] {
+        Array(self.recentSessionRows.prefix(3))
     }
 
     private var hasMoreRecentSessions: Bool {
-        self.effectiveRecentChatSessions.count > self.recentSessionPreviewSessions.count
-    }
-
-    private var sessionCategories: [String] {
-        CommandSessionGrouping.categories(
-            from: self.effectiveRecentChatSessions,
-            knownGroups: SessionGroupStore.load())
-    }
-
-    private var effectiveDefaultChatSessionEntry: OpenClawChatSessionEntry? {
-        guard let sessions = self.dashboardModel?.sessions else { return self.defaultChatSessionEntry }
-        let mainKey = ChatSessionSidebarModel.selectedSessionKey(
-            sessions: sessions,
-            currentSessionKey: "main",
-            mainSessionKey: self.appModel.defaultChatSessionKey,
-            activeAgentID: self.appModel.chatAgentId)
-        return sessions.first { $0.key == mainKey } ?? self.defaultChatSessionEntry
-    }
-
-    private var effectiveRecentChatSessions: [OpenClawChatSessionEntry] {
-        guard let dashboardModel else { return self.recentChatSessions }
-        return Self.sessionChoices(
-            dashboardModel.sessions,
-            defaultSessionKey: self.appModel.defaultChatSessionKey)
-    }
-
-    private var sessionControlsAvailable: Bool {
-        !self.appModel.isLocalChatFixtureEnabled && self.appModel.isOperatorGatewayConnected
+        self.sessionWorkItems.count > self.recentSessionPreviewRows.count
     }
 
     private var recentSessionsRefreshID: String {
@@ -601,129 +369,93 @@ struct CommandCenterTab: View {
         ].joined(separator: ":")
     }
 
-    private var sessionListMode: String {
-        self.appModel.chatViewModelIdentityID
+    private var sessionListAvailable: Bool {
+        self.appModel.isAppleReviewDemoModeEnabled || self.appModel.isOperatorGatewayConnected
     }
 
-    private func open(_ route: WorkRoute, unread: Bool = false) {
+    private var sessionListMode: String {
+        if self.appModel.isAppleReviewDemoModeEnabled { return "demo" }
+        return self.appModel.isOperatorGatewayConnected ? "operator" : "offline"
+    }
+
+    private var sessionItems: [WorkItem] {
+        self.sessionWorkItems
+    }
+
+    private var sessionWorkItems: [WorkItem] {
+        let currentSessionKey = self.appModel.chatSessionKey
+        return self.recentChatSessions
+            .filter { Self.isRecentChatSession($0.key, defaultSessionKey: self.appModel.defaultChatSessionKey) }
+            .map { session in
+                Self.sessionWorkItem(for: session, currentSessionKey: currentSessionKey)
+            }
+    }
+
+    private func open(_ route: WorkRoute) {
         switch route {
         case let .chat(sessionKey):
-            self.appModel.openChat(sessionKey: sessionKey, unread: unread)
+            self.appModel.openChat(sessionKey: sessionKey)
             self.openChat()
         case .settings:
             self.openSettings()
         }
     }
 
-    private func open(_ session: OpenClawChatSessionEntry) {
-        self.open(.chat(session.key), unread: session.unread == true)
-    }
-
-    private func openDefaultChatSession() {
-        self.open(.chat(nil), unread: self.effectiveDefaultChatSessionEntry?.unread == true)
-    }
-
-    private func patchSession(
-        _ session: OpenClawChatSessionEntry,
-        label: String?? = nil,
-        category: String?? = nil,
-        pinned: Bool? = nil,
-        archived: Bool? = nil,
-        unread: Bool? = nil)
-    {
-        self.performSessionMutation { transport in
-            try await transport.patchSession(
-                key: session.key,
-                label: label,
-                category: category,
-                pinned: pinned,
-                archived: archived,
-                unread: unread)
-        }
-    }
-
-    private func deleteSession(_ session: OpenClawChatSessionEntry) {
-        self.performSessionMutation(resetActiveSessionKey: session.key) { transport in
-            try await transport.deleteSession(key: session.key)
-        }
-    }
-
-    private func archiveSession(_ session: OpenClawChatSessionEntry) {
-        self.performSessionMutation(resetActiveSessionKey: session.key) { transport in
-            try await transport.patchSession(
-                key: session.key,
-                label: nil,
-                category: nil,
-                pinned: nil,
-                archived: true,
-                unread: nil)
-        }
-    }
-
-    private func forkSession(_ session: OpenClawChatSessionEntry) {
-        Task {
-            do {
-                let key = try await self.appModel.makeChatTransport().forkSession(parentKey: session.key)
-                if let dashboardModel {
-                    await dashboardModel.refreshSessions(appModel: self.appModel)
-                } else {
-                    await self.refreshRecentSessionsIfNeeded()
-                }
-                self.open(.chat(key))
-            } catch {}
-        }
-    }
-
-    private func performSessionMutation(
-        resetActiveSessionKey: String? = nil,
-        _ operation: @escaping (any OpenClawChatTransport) async throws -> Void)
-    {
-        Task {
-            do {
-                try await operation(self.appModel.makeChatTransport())
-                if resetActiveSessionKey == self.appModel.chatSessionKey {
-                    self.appModel.focusChatSession(nil)
-                }
-                if let dashboardModel {
-                    await dashboardModel.refreshSessions(appModel: self.appModel)
-                } else {
-                    await self.refreshRecentSessionsIfNeeded()
-                }
-            } catch {}
-        }
-    }
-
     private func refreshRecentSessionsIfNeeded() async {
         guard self.scenePhase == .active else { return }
+        guard self.sessionListAvailable else {
+            if self.defaultChatSessionEntry != nil {
+                self.defaultChatSessionEntry = nil
+            }
+            if !self.recentChatSessions.isEmpty {
+                self.recentChatSessions = []
+            }
+            return
+        }
+
         do {
-            let roster = try await self.appModel.loadChatSessionRoster(limit: Self.recentSessionsFetchLimit)
-            self.applySessions(roster.sessions)
+            let transport: any OpenClawChatTransport = self.appModel.isAppleReviewDemoModeEnabled
+                ? AppleReviewDemoChatTransport()
+                : IOSGatewayChatTransport(gateway: self.appModel.operatorSession)
+            let response = try await transport.listSessions(limit: Self.recentSessionsFetchLimit)
+            self.defaultChatSessionEntry = response.sessions.first {
+                $0.key == self.appModel.defaultChatSessionKey
+            }
+            self.recentChatSessions = Self.sessionChoices(
+                response.sessions,
+                currentSessionKey: self.appModel.chatSessionKey,
+                defaultSessionKey: self.appModel.defaultChatSessionKey)
         } catch {
-            await self.applyCachedSessions()
+            self.defaultChatSessionEntry = nil
+            self.recentChatSessions = []
         }
-    }
-
-    private func applyCachedSessions() async {
-        let sessions = await self.appModel.loadCachedChatSessions()
-        self.applySessions(sessions)
-    }
-
-    private func applySessions(_ sessions: [OpenClawChatSessionEntry]) {
-        self.defaultChatSessionEntry = sessions.first {
-            $0.key == self.appModel.defaultChatSessionKey
-        }
-        self.recentChatSessions = Self.sessionChoices(
-            sessions,
-            defaultSessionKey: self.appModel.defaultChatSessionKey)
     }
 
     private static func sessionChoices(
         _ sessions: [OpenClawChatSessionEntry],
+        currentSessionKey: String,
         defaultSessionKey: String) -> [OpenClawChatSessionEntry]
     {
-        sessions.filter {
-            self.isRecentChatSession($0.key, defaultSessionKey: defaultSessionKey)
+        let sorted = sessions.sorted { ($0.updatedAt ?? 0) > ($1.updatedAt ?? 0) }
+        var result: [OpenClawChatSessionEntry] = []
+        var included = Set<String>()
+
+        if Self.isRecentChatSession(currentSessionKey, defaultSessionKey: defaultSessionKey),
+           let current = sorted.first(where: { $0.key == currentSessionKey })
+        {
+            result.append(current)
+            included.insert(current.key)
         }
+
+        for session in sorted {
+            guard !included.contains(session.key) else { continue }
+            guard Self.isRecentChatSession(session.key, defaultSessionKey: defaultSessionKey) else { continue }
+            result.append(session)
+            included.insert(session.key)
+            if result.count >= 4 { break }
+        }
+
+        return result
     }
 
     static func sessionWorkItem(
@@ -740,16 +472,10 @@ struct CommandCenterTab: View {
             trailing: "chat",
             color: isCurrent ? OpenClawBrand.accent : OpenClawBrand.ok,
             progress: nil,
-            route: .chat(session.key),
-            isUnread: session.unread == true,
-            isPinned: session.pinned == true)
+            route: .chat(session.key))
     }
 
-    static func sessionTitle(_ session: OpenClawChatSessionEntry) -> String {
-        let label = session.label?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let label, !label.isEmpty {
-            return label
-        }
+    fileprivate static func sessionTitle(_ session: OpenClawChatSessionEntry) -> String {
         if let title = redactedSessionTitle(for: session.key) {
             return title
         }
@@ -770,13 +496,13 @@ struct CommandCenterTab: View {
         let lowercased = trimmed.lowercased()
         guard !trimmed.isEmpty else { return nil }
         if lowercased.contains(":ios-") {
-            return String(localized: "iOS chat")
+            return "iOS chat"
         }
         if lowercased.hasPrefix("telegram:") {
-            return String(localized: "Telegram chat")
+            return "Telegram chat"
         }
         if lowercased.hasPrefix("user:+") {
-            return String(localized: "Direct chat")
+            return "Direct chat"
         }
         if lowercased.hasPrefix("cron:") {
             return Self.humanizedSessionKey(String(trimmed.dropFirst("cron:".count)))
@@ -804,26 +530,19 @@ struct CommandCenterTab: View {
             .joined(separator: " ")
     }
 
-    static func sessionDetail(_ session: OpenClawChatSessionEntry) -> String {
-        let activityAt = session.lastActivityAt ?? session.updatedAt
-        if let activityAt, activityAt > 0 {
-            return self.relativeTimeText(forMilliseconds: activityAt)
+    fileprivate static func sessionDetail(_ session: OpenClawChatSessionEntry) -> String {
+        if let updatedAt = session.updatedAt, updatedAt > 0 {
+            return self.relativeTimeText(forMilliseconds: updatedAt)
         }
         return session.key
     }
 
-    static func relativeTimeText(
-        forMilliseconds milliseconds: Double,
-        relativeTo now: Date = .now) -> String
-    {
+    fileprivate static func relativeTimeText(forMilliseconds milliseconds: Double) -> String {
         let date = Date(timeIntervalSince1970: milliseconds / 1000)
-        guard now.timeIntervalSince(date) >= 60 else {
-            return String(localized: "just now")
-        }
         let formatter = RelativeDateTimeFormatter()
         formatter.dateTimeStyle = .numeric
         formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: now)
+        return formatter.localizedString(for: date, relativeTo: .now)
     }
 
     fileprivate nonisolated static func isHiddenInternalSession(_ key: String) -> Bool {
@@ -875,16 +594,10 @@ struct CommandCenterTab: View {
 
     private var gatewaySubtitle: String {
         if let server = normalized(appModel.gatewayServerName) {
-            return String(
-                format: String(localized: "%@ on %@"),
-                self.appModel.activeAgentName,
-                server)
+            return "\(self.appModel.activeAgentName) on \(server)"
         }
         if let address = normalized(appModel.gatewayRemoteAddress) {
-            return String(
-                format: String(localized: "%@ via %@"),
-                self.appModel.activeAgentName,
-                address)
+            return "\(self.appModel.activeAgentName) via \(address)"
         }
         return self.appModel.gatewayDisplayStatusText
     }
@@ -903,33 +616,14 @@ struct CommandCenterTab: View {
 struct CommandSessionsScreen: View {
     @Environment(NodeAppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
-    private enum GroupEditor: Equatable {
-        case rename(String)
-        case create
-    }
-
-    /// Group mutations need the full session store, not a recency window.
-    private static let groupMemberFetchLimit = 10000
-
     @State private var sessions: [OpenClawChatSessionEntry] = []
     @State private var isLoading = false
     @State private var loadErrorText: String?
-    @State private var showArchived = false
-    @State private var knownGroups = SessionGroupStore.load()
-    @State private var groupEditor: GroupEditor?
-    @State private var groupDraftText = ""
-    @State private var groupPendingDelete: String?
-    let headerSidebarAction: OpenClawSidebarHeaderAction?
-    let usesNativeNavigationChrome: Bool
+    let headerLeadingAction: OpenClawSidebarHeaderAction?
     let openChat: () -> Void
 
-    init(
-        headerSidebarAction: OpenClawSidebarHeaderAction? = nil,
-        usesNativeNavigationChrome: Bool = false,
-        openChat: @escaping () -> Void)
-    {
-        self.headerSidebarAction = headerSidebarAction
-        self.usesNativeNavigationChrome = usesNativeNavigationChrome
+    init(headerLeadingAction: OpenClawSidebarHeaderAction? = nil, openChat: @escaping () -> Void) {
+        self.headerLeadingAction = headerLeadingAction
         self.openChat = openChat
     }
 
@@ -938,9 +632,7 @@ struct CommandSessionsScreen: View {
             CommandControlBackground()
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    if !self.usesNativeNavigationChrome {
-                        self.header
-                    }
+                    self.header
                     self.sessionsPanel
                 }
                 .padding(.top, 16)
@@ -950,64 +642,24 @@ struct CommandSessionsScreen: View {
         }
         .navigationTitle("Sessions")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(self.usesNativeNavigationChrome ? .visible : .hidden, for: .navigationBar)
         .task(id: self.refreshID) {
             await self.refreshSessions()
-        }
-        .alert(self.groupEditorTitle, isPresented: self.groupEditorBinding) {
-            TextField("Group name", text: self.$groupDraftText)
-                .font(OpenClawType.body)
-            Button {
-                self.commitGroupEditor()
-            } label: {
-                Text(self.groupEditor == .create
-                    ? LocalizedStringKey("Create")
-                    : LocalizedStringKey("Save"))
-                    .font(OpenClawType.subheadSemiBold)
-            }
-            Button(role: .cancel) {
-                self.groupEditor = nil
-            } label: {
-                Text("Cancel")
-                    .font(OpenClawType.subheadSemiBold)
-            }
-        }
-        .alert(
-            "Delete Group?",
-            isPresented: self.groupDeleteBinding,
-            presenting: self.groupPendingDelete)
-        { group in
-            Button(role: .destructive) {
-                self.deleteGroup(group)
-            } label: {
-                Text("Delete Group")
-                    .font(OpenClawType.subheadSemiBold)
-            }
-            Button(role: .cancel) {} label: {
-                Text("Cancel")
-                    .font(OpenClawType.subheadSemiBold)
-            }
-        } message: { group in
-            Text(verbatim: String(
-                format: String(
-                    localized: "Sessions in \u{201C}%@\u{201D} move back to Ungrouped."),
-                group))
-                .font(OpenClawType.caption)
         }
     }
 
     private var header: some View {
-        OpenClawAdaptiveHeaderRow(
-            title: "Sessions",
-            subtitle: .verbatim(self.headerDetail),
-            titleFont: OpenClawType.title2,
-            subtitleFont: OpenClawType.captionMedium)
-        {
-            if let headerSidebarAction {
-                OpenClawSidebarHeaderLeadingSlot(action: headerSidebarAction)
+        HStack(alignment: .top, spacing: 12) {
+            if let headerLeadingAction {
+                OpenClawSidebarHeaderLeadingSlot(action: headerLeadingAction)
             }
-        } accessory: {
-            EmptyView()
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Sessions")
+                    .font(.system(size: 27, weight: .bold, design: .rounded))
+                Text(self.headerDetail)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, OpenClawProMetric.pagePadding)
     }
@@ -1016,22 +668,12 @@ struct CommandSessionsScreen: View {
         CommandPanel(padding: 0) {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
-                    Text(self.showArchived
-                        ? LocalizedStringKey("Archived sessions")
-                        : LocalizedStringKey("Recent sessions"))
-                        .font(OpenClawType.subheadBold)
+                    Text("Recent sessions")
+                        .font(.subheadline.weight(.bold))
                     Spacer(minLength: 8)
                     if self.isLoading {
                         ProgressView()
                             .controlSize(.small)
-                    }
-                    if self.sessionControlsAvailable {
-                        Toggle(isOn: self.$showArchived) {
-                            Text("Show Archived")
-                                .font(OpenClawType.captionMedium)
-                        }
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -1042,31 +684,28 @@ struct CommandSessionsScreen: View {
                     CommandEmptyStateRow(
                         icon: "exclamationmark.triangle.fill",
                         title: "Sessions unavailable",
-                        detail: .verbatim(loadErrorText))
+                        detail: loadErrorText)
                         .padding(.horizontal, 10)
                         .padding(.bottom, 10)
-                } else if self.visibleSessions.isEmpty {
+                } else if self.sessionRows.isEmpty {
                     CommandEmptyStateRow(
                         icon: self.appModel
                             .isCommandSessionListAvailable ? "bubble.left.and.text.bubble.right.fill" : "wifi.slash",
-                        title: .verbatim(self.emptyTitle),
-                        detail: .verbatim(self.appModel
-                            .isCommandSessionListAvailable
-                            ? self.emptyDetail
-                            : String(localized: "Connect to the gateway.")))
+                        title: self.appModel.isCommandSessionListAvailable ? "No recent sessions" : "Gateway offline",
+                        detail: self.appModel
+                            .isCommandSessionListAvailable ? "Start a chat and it will appear here." :
+                            "Connect to the gateway.")
                         .padding(.horizontal, 10)
                         .padding(.bottom, 10)
                 } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(self.sessionSections) { section in
-                            VStack(alignment: .leading, spacing: 6) {
-                                if section.showsHeader {
-                                    self.sectionHeader(section)
-                                }
-                                ForEach(section.entries) { session in
-                                    self.sessionRow(session)
-                                }
+                    VStack(spacing: 8) {
+                        ForEach(self.sessionRows) { item in
+                            Button {
+                                self.open(item)
+                            } label: {
+                                CommandSessionRow(item: item)
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -1078,318 +717,73 @@ struct CommandSessionsScreen: View {
     }
 
     private var headerDetail: String {
-        if self.isLoading, self.sessions.isEmpty {
-            return self.showArchived
-                ? String(localized: "Loading archived sessions")
-                : String(localized: "Loading recent sessions")
-        }
-        let count = self.visibleSessions.count
+        if self.isLoading, self.sessions.isEmpty { return "Loading recent sessions" }
+        let count = self.sessionRows.count
         if count == 0 {
-            return self.emptyTitle
+            return self.appModel.isCommandSessionListAvailable ? "No recent sessions" : "Gateway offline"
         }
-        return String(
-            AttributedString(localized: "^[\(count) session](inflect: true)").characters)
+        return "\(count) \(count == 1 ? "session" : "sessions")"
     }
 
-    private var visibleSessions: [OpenClawChatSessionEntry] {
+    private var sessionRows: [CommandCenterTab.WorkItem] {
         self.sessions
             .filter { CommandCenterTab.isRecentChatSession(
                 $0.key,
                 defaultSessionKey: self.appModel.defaultChatSessionKey) }
-            // Gate on the entry's own archived flag so a stale pre-toggle list can
-            // never render active sessions with archived-only actions mid-refresh.
-            .filter { self.showArchived ? $0.archived == true : $0.archived != true }
-    }
-
-    private var sessionSections: [CommandSessionSection] {
-        CommandSessionGrouping.sections(from: self.visibleSessions, knownGroups: self.knownGroups)
-    }
-
-    private var sessionCategories: [String] {
-        CommandSessionGrouping.categories(from: self.sessions, knownGroups: self.knownGroups)
-    }
-
-    private var sessionControlsAvailable: Bool {
-        !self.appModel.isLocalChatFixtureEnabled && self.appModel.isOperatorGatewayConnected
-    }
-
-    private var emptyTitle: String {
-        guard self.appModel.isCommandSessionListAvailable else {
-            return String(localized: "Gateway offline")
-        }
-        return self.showArchived
-            ? String(localized: "No archived sessions")
-            : String(localized: "No recent sessions")
-    }
-
-    private var emptyDetail: String {
-        self.showArchived
-            ? String(localized: "Archived sessions will appear here.")
-            : String(localized: "Start a chat and it will appear here.")
+            .sorted { ($0.updatedAt ?? 0) > ($1.updatedAt ?? 0) }
+            .map {
+                CommandCenterTab.sessionWorkItem(
+                    for: $0,
+                    currentSessionKey: self.appModel.chatSessionKey)
+            }
     }
 
     private var refreshID: String {
-        "\(self.appModel.commandSessionListMode):\(self.showArchived)"
+        self.appModel.commandSessionListMode
     }
 
-    @ViewBuilder
-    private func sectionHeader(_ section: CommandSessionSection) -> some View {
-        let title = Text(section.title)
-            .font(OpenClawType.captionSemiBold)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 4)
-        // Group management only applies to custom categories, never the
-        // Pinned/Ungrouped built-ins.
-        if case let .category(group) = section.id, self.sessionControlsAvailable {
-            title.contextMenu {
-                self.groupMenu(for: group)
-            }
-        } else {
-            title
-        }
-    }
-
-    @ViewBuilder
-    private func groupMenu(for group: String) -> some View {
-        Button {
-            self.groupDraftText = group
-            self.groupEditor = .rename(group)
-        } label: {
-            Label("Rename Group…", systemImage: "pencil")
-                .font(OpenClawType.subhead)
-        }
-        Button {
-            self.groupDraftText = ""
-            self.groupEditor = .create
-        } label: {
-            Label("New Group…", systemImage: "folder.badge.plus")
-                .font(OpenClawType.subhead)
-        }
-        Button(role: .destructive) {
-            self.groupPendingDelete = group
-        } label: {
-            Label("Delete Group…", systemImage: "trash")
-                .font(OpenClawType.subhead)
-        }
-    }
-
-    private var groupEditorTitle: String {
-        self.groupEditor == .create
-            ? String(localized: "New Group")
-            : String(localized: "Rename Group")
-    }
-
-    private var groupEditorBinding: Binding<Bool> {
-        Binding(
-            get: { self.groupEditor != nil },
-            set: { if !$0 { self.groupEditor = nil } })
-    }
-
-    private var groupDeleteBinding: Binding<Bool> {
-        Binding(
-            get: { self.groupPendingDelete != nil },
-            set: { if !$0 { self.groupPendingDelete = nil } })
-    }
-
-    private func commitGroupEditor() {
-        let editor = self.groupEditor
-        self.groupEditor = nil
-        let name = self.groupDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        switch editor {
-        case let .rename(group):
-            guard name != group else { return }
-            self.updateStoredGroups { SessionGroupStore.renaming($0, from: group, to: name) }
-            self.patchGroupMembers(group, category: name)
-        case .create:
-            // Header-created groups start empty: stored-list only, no patches.
-            self.updateStoredGroups { SessionGroupStore.adding($0, name) }
-        case nil:
+    private func open(_ item: CommandCenterTab.WorkItem) {
+        switch item.route {
+        case let .chat(sessionKey):
+            self.appModel.openChat(sessionKey: sessionKey)
+            self.dismiss()
+            self.openChat()
+        case .settings:
             break
         }
     }
 
-    private func deleteGroup(_ group: String) {
-        self.groupPendingDelete = nil
-        self.updateStoredGroups { SessionGroupStore.removing($0, group) }
-        self.patchGroupMembers(group, category: nil)
-    }
-
-    private func updateStoredGroups(_ transform: ([String]) -> [String]) {
-        let updated = transform(SessionGroupStore.load())
-        SessionGroupStore.save(updated)
-        self.knownGroups = updated
-    }
-
-    /// Reassigns (or clears, when `category` is nil) every member of `group`.
-    private func patchGroupMembers(_ group: String, category: String?) {
-        self.performMutation { transport in
-            // Enumerate every member, not the windowed visible list: archived
-            // members must follow a rename so restores land in the new group.
-            // The gateway defaults an absent `limit` to 100 rows, so ask for
-            // an explicitly high limit to cover the whole store.
-            let active = try await transport.listSessions(
-                limit: Self.groupMemberFetchLimit,
-                archived: false)
-            let archived = try await transport.listSessions(
-                limit: Self.groupMemberFetchLimit,
-                archived: true)
-            let members = CommandSessionGrouping.members(
-                of: group,
-                in: [active.sessions, archived.sessions])
-            // Best effort: one failed patch must not abandon the rest of the
-            // group; the first error still surfaces via performMutation.
-            var firstError: (any Error)?
-            for member in members {
-                do {
-                    try await transport.patchSession(
-                        key: member.key,
-                        label: nil,
-                        category: .some(category),
-                        pinned: nil,
-                        archived: nil,
-                        unread: nil)
-                } catch {
-                    firstError = firstError ?? error
-                }
-            }
-            if let firstError {
-                throw firstError
-            }
-        }
-    }
-
-    private func sessionRow(_ session: OpenClawChatSessionEntry) -> some View {
-        let item = CommandCenterTab.sessionWorkItem(
-            for: session,
-            currentSessionKey: self.appModel.chatSessionKey)
-        return Button {
-            self.open(session)
-        } label: {
-            CommandSessionRow(item: item)
-        }
-        .buttonStyle(.plain)
-        .commandSessionActions(
-            session: session,
-            categories: self.sessionCategories,
-            isArchived: session.archived == true,
-            isEnabled: self.sessionControlsAvailable,
-            actions: CommandSessionActions(
-                rename: { self.patchSession(session, label: .some($0)) },
-                moveToGroup: { self.patchSession(session, category: .some($0)) },
-                togglePinned: { self.patchSession(session, pinned: session.pinned != true) },
-                toggleUnread: { self.patchSession(session, unread: session.unread != true) },
-                fork: { self.forkSession(session) },
-                toggleArchived: { self.toggleArchived(session) },
-                delete: { self.deleteSession(session) }))
-    }
-
-    private func open(_ session: OpenClawChatSessionEntry) {
-        self.openSessionKey(session.key, unread: session.unread == true)
-    }
-
-    private func openSessionKey(_ key: String, unread: Bool = false) {
-        self.appModel.openChat(sessionKey: key, unread: unread)
-        self.dismiss()
-        self.openChat()
-    }
-
-    private func patchSession(
-        _ session: OpenClawChatSessionEntry,
-        label: String?? = nil,
-        category: String?? = nil,
-        pinned: Bool? = nil,
-        archived: Bool? = nil,
-        unread: Bool? = nil)
-    {
-        self.performMutation { transport in
-            try await transport.patchSession(
-                key: session.key,
-                label: label,
-                category: category,
-                pinned: pinned,
-                archived: archived,
-                unread: unread)
-        }
-    }
-
-    private func deleteSession(_ session: OpenClawChatSessionEntry) {
-        self.performMutation(resetActiveSessionKey: session.key) { transport in
-            try await transport.deleteSession(key: session.key)
-        }
-    }
-
-    private func toggleArchived(_ session: OpenClawChatSessionEntry) {
-        let archivesSession = !self.showArchived && session.archived != true
-        self.performMutation(resetActiveSessionKey: archivesSession ? session.key : nil) { transport in
-            try await transport.patchSession(
-                key: session.key,
-                label: nil,
-                category: nil,
-                pinned: nil,
-                archived: archivesSession,
-                unread: nil)
-        }
-    }
-
-    private func forkSession(_ session: OpenClawChatSessionEntry) {
-        Task {
-            do {
-                let key = try await self.appModel.makeChatTransport().forkSession(parentKey: session.key)
-                await self.refreshSessions()
-                self.openSessionKey(key)
-            } catch {
-                self.loadErrorText = error.localizedDescription
-            }
-        }
-    }
-
-    private func performMutation(
-        resetActiveSessionKey: String? = nil,
-        _ operation: @escaping (any OpenClawChatTransport) async throws -> Void)
-    {
-        Task {
-            do {
-                try await operation(self.appModel.makeChatTransport())
-                if resetActiveSessionKey == self.appModel.chatSessionKey {
-                    self.appModel.focusChatSession(nil)
-                }
-                await self.refreshSessions()
-            } catch {
-                self.loadErrorText = error.localizedDescription
-            }
-        }
-    }
-
     private func refreshSessions() async {
-        // Pick up groups stored by other surfaces (for example the per-session
-        // New Group editor) alongside the fresh session list.
-        self.knownGroups = SessionGroupStore.load()
-        let requestsArchived = self.showArchived
+        guard self.appModel.isCommandSessionListAvailable else {
+            self.sessions = []
+            self.loadErrorText = nil
+            return
+        }
+
         self.isLoading = true
         self.loadErrorText = nil
         defer { self.isLoading = false }
 
         do {
-            let roster = try await self.appModel.loadChatSessionRoster(
-                limit: CommandCenterTab.recentSessionsFetchLimit,
-                archived: requestsArchived)
-            guard requestsArchived == self.showArchived else { return }
-            self.sessions = roster.sessions
+            let transport: any OpenClawChatTransport = self.appModel.isAppleReviewDemoModeEnabled
+                ? AppleReviewDemoChatTransport()
+                : IOSGatewayChatTransport(gateway: self.appModel.operatorSession)
+            let response = try await transport.listSessions(limit: CommandCenterTab.recentSessionsFetchLimit)
+            self.sessions = response.sessions
         } catch {
-            guard requestsArchived == self.showArchived else { return }
-            self.sessions = requestsArchived ? [] : await self.appModel.loadCachedChatSessions()
-            self.loadErrorText = self.sessions.isEmpty ? "Try again after the gateway reconnects." : nil
+            self.sessions = []
+            self.loadErrorText = "Try again after the gateway reconnects."
         }
     }
 }
 
 extension NodeAppModel {
     fileprivate var isCommandSessionListAvailable: Bool {
-        self.isLocalChatFixtureEnabled || self.isOperatorGatewayConnected
+        self.isAppleReviewDemoModeEnabled || self.isOperatorGatewayConnected
     }
 
     fileprivate var commandSessionListMode: String {
-        self.chatViewModelIdentityID
+        if self.isAppleReviewDemoModeEnabled { return "demo" }
+        return self.isOperatorGatewayConnected ? "operator" : "offline"
     }
 }

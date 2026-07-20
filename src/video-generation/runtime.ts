@@ -29,7 +29,7 @@ const MODEL_CAPABILITY_LOOKUP_TIMEOUT_MS = 5_000;
 // Internal request hint for providers that perform their own final snapping.
 const SUPPORTED_DURATIONS_HINT = Symbol.for("openclaw.videoGeneration.supportedDurations");
 
-type VideoGenerationRuntimeDeps = {
+export type VideoGenerationRuntimeDeps = {
   getProvider?: typeof getVideoGenerationProvider;
   listProviders?: typeof listVideoGenerationProviders;
   getProviderEnvVars?: typeof getProviderEnvVars;

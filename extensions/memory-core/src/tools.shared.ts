@@ -1,6 +1,5 @@
 // Memory Core plugin module implements tools.shared behavior.
 import { optionalFiniteNumberSchema, stringEnum } from "openclaw/plugin-sdk/channel-actions";
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import {
   listMemoryCorpusSupplements,
   resolveMemorySearchConfig,
@@ -9,10 +8,10 @@ import {
   type AnyAgentTool,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
-import type { PluginStateLeaseRunner } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { Type } from "typebox";
-import type { MemoryCoreAcquireLocalService } from "./memory/embedding-local-service.js";
+
+type MemoryToolRuntime = typeof import("./tools.runtime.js");
 type MemorySearchManagerResult = Awaited<
   ReturnType<(typeof import("./memory/index.js"))["getMemorySearchManager"]>
 >;
@@ -21,13 +20,15 @@ type MemoryToolOptions = {
   getConfig?: () => OpenClawConfig | undefined;
   agentId?: string;
   agentSessionKey?: string;
-  sandboxed?: boolean;
   oneShotCliRun?: boolean;
-  acquireLocalService?: MemoryCoreAcquireLocalService;
-  withLease?: PluginStateLeaseRunner;
 };
 
-export const loadMemoryToolRuntime = createLazyRuntimeModule(() => import("./tools.runtime.js"));
+let memoryToolRuntimePromise: Promise<MemoryToolRuntime> | null = null;
+
+export async function loadMemoryToolRuntime(): Promise<MemoryToolRuntime> {
+  memoryToolRuntimePromise ??= import("./tools.runtime.js");
+  return await memoryToolRuntimePromise;
+}
 
 export const MemorySearchSchema = Type.Object({
   query: Type.String(),
@@ -59,39 +60,39 @@ function resolveMemoryToolContext(options: MemoryToolOptions) {
   return { cfg, agentId };
 }
 
+export async function getMemoryManagerContext(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+}): Promise<
+  | {
+      manager: NonNullable<MemorySearchManagerResult["manager"]>;
+    }
+  | {
+      error: string | undefined;
+    }
+> {
+  return await getMemoryManagerContextWithPurpose({ ...params, purpose: undefined });
+}
+
 export async function getMemoryManagerContextWithPurpose(params: {
   cfg: OpenClawConfig;
   agentId: string;
   purpose?: "default" | "status" | "cli";
-  acquireLocalService?: MemoryCoreAcquireLocalService;
-  withLease?: PluginStateLeaseRunner;
 }): Promise<
   | {
       manager: NonNullable<MemorySearchManagerResult["manager"]>;
-      debug?: NonNullable<MemorySearchManagerResult["debug"]>;
     }
   | {
       error: string | undefined;
     }
 > {
   const { getMemorySearchManager } = await loadMemoryToolRuntime();
-  const startedAt = Date.now();
-  const { manager, debug, error } = await getMemorySearchManager({
+  const { manager, error } = await getMemorySearchManager({
     cfg: params.cfg,
     agentId: params.agentId,
     purpose: params.purpose,
-    ...(params.acquireLocalService ? { acquireLocalService: params.acquireLocalService } : {}),
-    ...(params.withLease ? { withLease: params.withLease } : {}),
   });
-  return manager
-    ? {
-        manager,
-        debug: {
-          ...debug,
-          managerMs: debug?.managerMs ?? Math.max(0, Date.now() - startedAt),
-        },
-      }
-    : { error };
+  return manager ? { manager } : { error };
 }
 
 export function createMemoryTool(params: {
@@ -111,9 +112,9 @@ export function createMemoryTool(params: {
     name: params.name,
     description: params.description,
     parameters: params.parameters,
-    execute: async (toolCallId, toolParams, signal, onUpdate) => {
+    execute: async (toolCallId, toolParams) => {
       const latestCtx = resolveMemoryToolContext(params.options) ?? ctx;
-      return await params.execute(latestCtx)(toolCallId, toolParams, signal, onUpdate);
+      return await params.execute(latestCtx)(toolCallId, toolParams);
     },
   };
 }
@@ -126,25 +127,17 @@ export function buildMemorySearchUnavailableResult(
   },
 ) {
   const reason = (error ?? "memory search unavailable").trim() || "memory search unavailable";
-  const normalizedReason = normalizeLowercaseStringOrEmpty(reason);
-  const isQuotaError = /insufficient_quota|quota|429/.test(normalizedReason);
-  const isMissingNodeSqlite = /missing node:sqlite|no such built-?in module: node:sqlite/.test(
-    normalizedReason,
-  );
+  const isQuotaError = /insufficient_quota|quota|429/.test(normalizeLowercaseStringOrEmpty(reason));
   const warning =
     overrides?.warning ??
     (isQuotaError
       ? "Memory search is unavailable because the embedding provider quota is exhausted."
-      : isMissingNodeSqlite
-        ? "Memory search is unavailable because this OpenClaw Node runtime does not provide SQLite support."
-        : "Memory search is unavailable due to an embedding/provider error.");
+      : "Memory search is unavailable due to an embedding/provider error.");
   const action =
     overrides?.action ??
     (isQuotaError
       ? "Top up or switch embedding provider, then retry memory_search."
-      : isMissingNodeSqlite
-        ? "Run OpenClaw with a Node runtime that includes node:sqlite, then retry memory_search."
-        : "Check embedding provider configuration and retry memory_search.");
+      : "Check embedding provider configuration and retry memory_search.");
   return {
     results: [],
     disabled: true,
@@ -163,9 +156,7 @@ export function buildMemorySearchUnavailableResult(
 export async function searchMemoryCorpusSupplements(params: {
   query: string;
   maxResults?: number;
-  agentId?: string;
   agentSessionKey?: string;
-  sandboxed?: boolean;
   corpus?: "memory" | "wiki" | "all" | "sessions";
 }): Promise<MemoryCorpusSearchResult[]> {
   if (params.corpus === "memory" || params.corpus === "sessions") {
@@ -194,9 +185,7 @@ export async function getMemoryCorpusSupplementResult(params: {
   lookup: string;
   fromLine?: number;
   lineCount?: number;
-  agentId?: string;
   agentSessionKey?: string;
-  sandboxed?: boolean;
   corpus?: "memory" | "wiki" | "all" | "sessions";
 }) {
   if (params.corpus === "memory" || params.corpus === "sessions") {

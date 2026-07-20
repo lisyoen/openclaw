@@ -24,7 +24,7 @@ import {
 /**
  * Plans optional media-tool factory registration from config, policy, capabilities, and auth.
  */
-type OptionalMediaToolFactoryPlan = {
+export type OptionalMediaToolFactoryPlan = {
   imageGenerate: boolean;
   videoGenerate: boolean;
   musicGenerate: boolean;

@@ -6,7 +6,6 @@
  */
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveAgentModelFallbacksOverride } from "./agent-scope.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
 import type { ModelManifestNormalizationContext, ModelRef } from "./model-selection-normalize.js";
 import {
@@ -24,14 +23,9 @@ export {
   resolveHooksGmailModel,
   resolveModelRefFromString,
 } from "./model-selection-shared.js";
+export type { ModelRefStatus } from "./model-selection-shared.js";
 
-function resolveDefaultFallbackModels(cfg: OpenClawConfig, agentId?: string): string[] {
-  if (agentId) {
-    const override = resolveAgentModelFallbacksOverride(cfg, agentId);
-    if (override !== undefined) {
-      return override;
-    }
-  }
+function resolveDefaultFallbackModels(cfg: OpenClawConfig): string[] {
   return resolveAgentModelFallbackValues(cfg.agents?.defaults?.model);
 }
 
@@ -43,18 +37,16 @@ export function getModelRefStatus(
     ref: ModelRef;
     defaultProvider: string;
     defaultModel?: string;
-    agentId?: string;
   } & ModelManifestNormalizationContext,
 ): ModelRefStatus {
-  const { cfg, catalog, ref, defaultProvider, defaultModel, agentId, manifestPlugins } = params;
+  const { cfg, catalog, ref, defaultProvider, defaultModel, manifestPlugins } = params;
   return getModelRefStatusWithFallbackModels({
     cfg,
     catalog,
     ref,
     defaultProvider,
     defaultModel,
-    agentId,
-    fallbackModels: resolveDefaultFallbackModels(cfg, agentId),
+    fallbackModels: resolveDefaultFallbackModels(cfg),
     manifestPlugins,
   });
 }
@@ -67,7 +59,6 @@ export function resolveAllowedModelRef(
     raw: string;
     defaultProvider: string;
     defaultModel?: string;
-    agentId?: string;
   } & ModelManifestNormalizationContext,
 ):
   | { ref: ModelRef; key: string }
@@ -77,7 +68,6 @@ export function resolveAllowedModelRef(
   const aliasIndex = buildModelAliasIndex({
     cfg: params.cfg,
     defaultProvider: params.defaultProvider,
-    agentId: params.agentId,
     manifestPlugins: params.manifestPlugins,
   });
   return resolveAllowedModelRefFromAliasIndex({
@@ -93,7 +83,6 @@ export function resolveAllowedModelRef(
         ref,
         defaultProvider: params.defaultProvider,
         defaultModel: params.defaultModel,
-        agentId: params.agentId,
         manifestPlugins: params.manifestPlugins,
       }),
   });

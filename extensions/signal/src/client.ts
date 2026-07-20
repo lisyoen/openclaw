@@ -12,20 +12,20 @@ export type SignalRpcOptions = {
   maxResponseBytes?: number;
 };
 
-type SignalRpcError = {
+export type SignalRpcError = {
   code?: number;
   message?: string;
   data?: unknown;
 };
 
-type SignalRpcResponse<T> = {
+export type SignalRpcResponse<T> = {
   jsonrpc?: string;
   result?: T;
   error?: SignalRpcError;
   id?: string | number | null;
 };
 
-type SignalSseEvent = {
+export type SignalSseEvent = {
   event?: string;
   data?: string;
   id?: string;
@@ -68,12 +68,7 @@ function parseSignalBaseUrl(url: string): URL {
 }
 
 function resolveSignalEndpointUrl(baseUrl: string, pathname: string): URL {
-  const parsed = parseSignalBaseUrl(baseUrl);
-  const basePath = parsed.pathname.endsWith("/") ? parsed.pathname : `${parsed.pathname}/`;
-  parsed.pathname = `${basePath}${pathname.replace(/^\/+/, "")}`;
-  parsed.search = "";
-  parsed.hash = "";
-  return parsed;
+  return new URL(pathname, parseSignalBaseUrl(baseUrl));
 }
 
 function parseSignalRpcResponse<T>(text: string, status: number): SignalRpcResponse<T> {
@@ -342,7 +337,7 @@ export async function streamSignalEvents(params: {
   account?: string;
   abortSignal?: AbortSignal;
   timeoutMs?: number;
-  onEvent: (event: SignalSseEvent) => unknown;
+  onEvent: (event: SignalSseEvent) => void;
 }): Promise<void> {
   const url = resolveSignalEndpointUrl(params.baseUrl, "/api/v1/events");
   if (params.account) {
@@ -360,11 +355,11 @@ export async function streamSignalEvents(params: {
   let currentEvent: SignalSseEvent = {};
   let currentEventDataBytes = 0;
 
-  const flushEvent = async () => {
+  const flushEvent = () => {
     if (!currentEvent.data && !currentEvent.event && !currentEvent.id) {
       return;
     }
-    await params.onEvent({
+    params.onEvent({
       event: currentEvent.event,
       data: currentEvent.data,
       id: currentEvent.id,
@@ -373,18 +368,15 @@ export async function streamSignalEvents(params: {
     currentEventDataBytes = 0;
   };
 
-  const processLine = async (line: string) => {
+  const processLine = (line: string) => {
     if (line === "") {
-      await flushEvent();
+      flushEvent();
       return;
     }
     if (line.startsWith(":")) {
       return;
     }
     const [rawField, ...rest] = line.split(":");
-    if (rawField === undefined) {
-      return;
-    }
     const field = rawField.trim();
     const rawValue = rest.join(":");
     const value = rawValue.startsWith(" ") ? rawValue.slice(1) : rawValue;
@@ -402,7 +394,7 @@ export async function streamSignalEvents(params: {
     }
   };
 
-  const drainCompleteLines = async () => {
+  const drainCompleteLines = () => {
     let lineEnd = buffer.indexOf("\n");
     while (lineEnd !== -1) {
       let line = buffer.slice(0, lineEnd);
@@ -410,7 +402,7 @@ export async function streamSignalEvents(params: {
       if (line.endsWith("\r")) {
         line = line.slice(0, -1);
       }
-      await processLine(line);
+      processLine(line);
       lineEnd = buffer.indexOf("\n");
     }
     bufferedBytes = Buffer.byteLength(buffer, "utf8");
@@ -424,7 +416,7 @@ export async function streamSignalEvents(params: {
         throw new Error("Signal SSE buffer exceeded size limit");
       }
       buffer += decoder.decode(value, { stream: true });
-      await drainCompleteLines();
+      drainCompleteLines();
     }
     const tail = decoder.decode();
     if (tail) {
@@ -434,12 +426,12 @@ export async function streamSignalEvents(params: {
     if (bufferedBytes > MAX_SIGNAL_SSE_BUFFER_BYTES) {
       throw new Error("Signal SSE buffer exceeded size limit");
     }
-    await drainCompleteLines();
+    drainCompleteLines();
   } finally {
     cleanup();
   }
 
-  await flushEvent();
+  flushEvent();
 }
 
 function toLintErrorObject(value: unknown, fallbackMessage: string): Error {

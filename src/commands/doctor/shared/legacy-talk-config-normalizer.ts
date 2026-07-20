@@ -24,13 +24,10 @@ function buildLegacyRealtimeTalkCompat(
     return undefined;
   }
   const compat: Record<string, unknown> = {};
-  for (const key of ["model", "mode", "transport", "brain"] as const) {
+  for (const key of ["model", "voice", "mode", "transport", "brain"] as const) {
     if (talk[key] !== undefined) {
       compat[key] = talk[key];
     }
-  }
-  if (talk.voice !== undefined) {
-    compat.speakerVoice = talk.voice;
   }
   if (Object.keys(compat).length === 0) {
     return undefined;
@@ -42,6 +39,27 @@ function buildLegacyRealtimeTalkCompat(
     compat.providers = normalizedTalk.providers;
   }
   return normalizeTalkSection({ realtime: compat } as OpenClawConfig["talk"])?.realtime;
+}
+
+function removeDerivedRealtimeSpeakerVoice(
+  rawTalk: Record<string, unknown>,
+  normalizedTalk: NonNullable<OpenClawConfig["talk"]>,
+): void {
+  const rawRealtime = rawTalk.realtime;
+  const normalizedRealtime = normalizedTalk.realtime;
+  if (
+    !isRecord(rawRealtime) ||
+    !normalizedRealtime ||
+    rawRealtime.speakerVoice !== undefined ||
+    normalizedRealtime.speakerVoice === undefined ||
+    normalizedRealtime.speakerVoice !== normalizedRealtime.voice
+  ) {
+    return;
+  }
+
+  // Runtime clients still get speakerVoice from the deprecated voice alias, but
+  // doctor should not persist that derived value or report it as provider repair.
+  delete normalizedRealtime.speakerVoice;
 }
 
 /** Normalize legacy Talk provider/realtime fields into current talk.providers and talk.realtime. */
@@ -69,6 +87,7 @@ export function normalizeLegacyTalkConfig(cfg: OpenClawConfig, changes: string[]
       ...normalizedTalk.realtime,
     };
   }
+  removeDerivedRealtimeSpeakerVoice(rawTalk, normalizedTalk);
   if (Object.keys(normalizedTalk).length === 0 || isDeepStrictEqual(normalizedTalk, rawTalk)) {
     return cfg;
   }

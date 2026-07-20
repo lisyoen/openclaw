@@ -326,16 +326,13 @@ export function createRealtimeVoiceForcedConsultCoordinator<TContext = unknown>(
         return { kind: "pending", question, handle: pending.handle };
       }
       const stored = findMatching(question);
-      if (!stored) {
+      if (!stored || stored.cancelled) {
         return { kind: "none", question };
       }
       if (nativeCallId) {
         stored.nativeCallIds.add(nativeCallId);
       }
       rememberStoredQuestion(stored, question);
-      if (stored.cancelled) {
-        return { kind: "already_delivered", question, handle: stored.handle };
-      }
       if (stored.delivered) {
         return { kind: "already_delivered", question, handle: stored.handle };
       }
@@ -366,7 +363,7 @@ export function createRealtimeVoiceForcedConsultCoordinator<TContext = unknown>(
     },
     markCancelled(handle) {
       const stored = getStored(handle);
-      if (!stored || stored.delivered) {
+      if (!stored) {
         return;
       }
       clearTimer(stored);

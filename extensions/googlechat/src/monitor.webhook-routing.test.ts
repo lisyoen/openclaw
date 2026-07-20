@@ -1,7 +1,6 @@
 // Googlechat tests cover monitor.webhook routing plugin behavior.
 import { EventEmitter } from "node:events";
 import type { IncomingMessage } from "node:http";
-import { expectDefined } from "@openclaw/normalization-core";
 import {
   createEmptyPluginRegistry,
   setActivePluginRegistry,
@@ -11,7 +10,10 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig, PluginRuntime } from "../runtime-api.js";
 import type { ResolvedGoogleChatAccount } from "./accounts.js";
 import { verifyGoogleChatRequest } from "./auth.js";
-import { registerGoogleChatWebhookTarget } from "./monitor-routing.js";
+import {
+  handleGoogleChatWebhookRequest,
+  registerGoogleChatWebhookTarget,
+} from "./monitor-routing.js";
 
 vi.mock("./auth.js", () => ({
   verifyGoogleChatRequest: vi.fn(),
@@ -86,21 +88,13 @@ const baseAccount = (accountId: string) =>
     config: {},
   }) as ResolvedGoogleChatAccount;
 
-type WebhookRouteHandler = ReturnType<
-  typeof createEmptyPluginRegistry
->["httpRoutes"][number]["handler"];
-let webhookRouteHandler: WebhookRouteHandler | undefined;
-
 function registerTwoTargets() {
-  const registry = createEmptyPluginRegistry();
-  setActivePluginRegistry(registry);
   const sinkA = vi.fn();
   const sinkB = vi.fn();
   const logA = vi.fn();
   const logB = vi.fn();
   const core = {} as PluginRuntime;
   const config = {} as OpenClawConfig;
-  const ingress = { receive: vi.fn(async () => ({ kind: "ignored" as const })) };
 
   const unregisterA = registerGoogleChatWebhookTarget({
     account: baseAccount("A"),
@@ -110,7 +104,6 @@ function registerTwoTargets() {
     path: "/googlechat",
     statusSink: sinkA,
     mediaMaxMb: 5,
-    ingress,
   });
   const unregisterB = registerGoogleChatWebhookTarget({
     account: baseAccount("B"),
@@ -120,9 +113,7 @@ function registerTwoTargets() {
     path: "/googlechat",
     statusSink: sinkB,
     mediaMaxMb: 5,
-    ingress,
   });
-  webhookRouteHandler = expectDefined(registry.httpRoutes[0], "Google Chat webhook route").handler;
 
   return {
     logA,
@@ -138,7 +129,8 @@ function registerTwoTargets() {
 
 async function dispatchWebhookRequest(req: IncomingMessage) {
   const res = createMockServerResponse();
-  await expectDefined(webhookRouteHandler, "Google Chat webhook route handler")(req, res);
+  const handled = await handleGoogleChatWebhookRequest(req, res);
+  expect(handled).toBe(true);
   return res;
 }
 
@@ -153,8 +145,8 @@ async function expectVerifiedRoute(params: {
   expect(res.statusCode).toBe(params.expectedStatus);
   const expectedCounts =
     params.expectedSink === "A" ? [1, 0] : params.expectedSink === "B" ? [0, 1] : [0, 0];
-  expect(params.sinkA).toHaveBeenCalledTimes(expectDefined(expectedCounts[0], "sink A count"));
-  expect(params.sinkB).toHaveBeenCalledTimes(expectDefined(expectedCounts[1], "sink B count"));
+  expect(params.sinkA).toHaveBeenCalledTimes(expectedCounts[0]);
+  expect(params.sinkB).toHaveBeenCalledTimes(expectedCounts[1]);
 }
 
 function mockSecondVerifierSuccess() {
@@ -165,7 +157,6 @@ function mockSecondVerifierSuccess() {
 
 describe("Google Chat webhook routing", () => {
   afterEach(() => {
-    webhookRouteHandler = undefined;
     setActivePluginRegistry(createEmptyPluginRegistry());
   });
 
@@ -250,10 +241,7 @@ describe("Google Chat webhook routing", () => {
               user: { name: "users/12345", displayName: "Test User" },
               messagePayload: {
                 space: { name: "spaces/AAA" },
-                message: {
-                  name: "spaces/AAA/messages/add-on-1",
-                  text: "Hello from add-on",
-                },
+                message: { text: "Hello from add-on" },
               },
             },
           },

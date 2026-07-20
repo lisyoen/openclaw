@@ -1,9 +1,11 @@
 // Node HTTP proxy tests cover proxy agent creation for provider requests.
 import { describe, expect, it } from "vitest";
 import { withEnv } from "../../test-utils/env.js";
-import { createHttpProxyAgentsForTarget } from "./node-http-proxy.js";
-
-const UNSUPPORTED_PROXY_PROTOCOL_MESSAGE = "Unsupported proxy protocol.";
+import {
+  createHttpProxyAgentsForTarget,
+  resolveHttpProxyUrlForTarget,
+  UNSUPPORTED_PROXY_PROTOCOL_MESSAGE,
+} from "./node-http-proxy.js";
 
 const PROXY_ENV_KEYS = [
   "http_proxy",
@@ -27,24 +29,19 @@ function withProxyEnv<T>(
   return withEnv({ ...clearedEnv, ...env }, fn);
 }
 
-function resolveProxyFromAgents(target: string): string | undefined {
-  const agent = createHttpProxyAgentsForTarget(target)?.httpsAgent as
-    | { getProxyForUrl?: (url: string) => string }
-    | undefined;
-  return agent?.getProxyForUrl?.(target);
-}
-
 describe("node HTTP proxy resolution", () => {
   it("honors unbracketed IPv6 literals in NO_PROXY", () => {
     withProxyEnv({ HTTP_PROXY: "http://proxy.example:8080", NO_PROXY: "::1" }, () => {
-      expect(createHttpProxyAgentsForTarget("http://[::1]:11434/v1")).toBeUndefined();
+      expect(resolveHttpProxyUrlForTarget("http://[::1]:11434/v1")).toBeUndefined();
     });
   });
 
   it("honors bracketed IPv6 literals with matching NO_PROXY ports", () => {
     withProxyEnv({ HTTP_PROXY: "http://proxy.example:8080", NO_PROXY: "[::1]:11434" }, () => {
-      expect(createHttpProxyAgentsForTarget("http://[::1]:11434/v1")).toBeUndefined();
-      expect(resolveProxyFromAgents("http://[::1]:11435/v1")).toBe("http://proxy.example:8080/");
+      expect(resolveHttpProxyUrlForTarget("http://[::1]:11434/v1")).toBeUndefined();
+      expect(resolveHttpProxyUrlForTarget("http://[::1]:11435/v1")?.href).toBe(
+        "http://proxy.example:8080/",
+      );
     });
   });
 
@@ -52,7 +49,7 @@ describe("node HTTP proxy resolution", () => {
     withProxyEnv(
       { HTTPS_PROXY: "http://proxy.example:8080", NO_PROXY: "web.whatsapp.com:443" },
       () => {
-        expect(createHttpProxyAgentsForTarget("wss://web.whatsapp.com/ws")).toBeUndefined();
+        expect(resolveHttpProxyUrlForTarget("wss://web.whatsapp.com/ws")).toBeUndefined();
       },
     );
   });
@@ -63,7 +60,7 @@ describe("node HTTP proxy resolution", () => {
       () => {
         const target = new URL("wss://web.whatsapp.com/ws");
 
-        expect(createHttpProxyAgentsForTarget(target)).toBeUndefined();
+        expect(resolveHttpProxyUrlForTarget(target)).toBeUndefined();
         expect(target.href).toBe("wss://web.whatsapp.com/ws");
       },
     );
@@ -84,7 +81,7 @@ describe("node HTTP proxy resolution", () => {
 
   it("falls back to ALL_PROXY for Node agent proxy resolution", () => {
     withProxyEnv({ ALL_PROXY: "http://proxy.example:8080" }, () => {
-      expect(resolveProxyFromAgents("https://api.example.test/v1")).toBe(
+      expect(resolveHttpProxyUrlForTarget("https://api.example.test/v1")?.href).toBe(
         "http://proxy.example:8080/",
       );
     });
@@ -92,7 +89,7 @@ describe("node HTTP proxy resolution", () => {
 
   it("rejects unsupported env proxy protocols", () => {
     withProxyEnv({ HTTPS_PROXY: "socks5://proxy.example:1080" }, () => {
-      expect(() => createHttpProxyAgentsForTarget("https://api.example.test/v1")).toThrow(
+      expect(() => resolveHttpProxyUrlForTarget("https://api.example.test/v1")).toThrow(
         UNSUPPORTED_PROXY_PROTOCOL_MESSAGE,
       );
     });

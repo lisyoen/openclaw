@@ -973,4 +973,3 @@ export function createChannelApproverDmTargetResolver<
     return targets;
   };
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

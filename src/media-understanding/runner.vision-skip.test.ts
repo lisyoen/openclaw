@@ -8,7 +8,7 @@ import {
   withBundledPluginEnablementCompat,
   withBundledPluginVitestCompat,
 } from "../plugins/bundled-compat.js";
-import { resolvePluginRegistryLoadCacheKey } from "../plugins/loader.js";
+import { testing as loaderTesting } from "../plugins/loader.js";
 import { loadPluginManifestRegistry } from "../plugins/manifest-registry.js";
 import { createEmptyPluginRegistry } from "../plugins/registry.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
@@ -34,7 +34,7 @@ const baseCatalog: TestCatalogEntry[] = [
 let catalog: TestCatalogEntry[] = [...baseCatalog];
 const plantedVisionSentinel = "PLANTED_VISION_DESC_zq7x";
 
-const loadModelCatalog = vi.hoisted(() => vi.fn(async (_params: unknown) => catalog));
+const loadModelCatalog = vi.hoisted(() => vi.fn(async () => catalog));
 
 vi.mock("../agents/model-auth.js", async () => {
   const { createAvailableModelAuthMockModule } = await import("./runner.test-mocks.js");
@@ -60,12 +60,9 @@ vi.mock("../agents/model-catalog.js", async () => {
   );
   return {
     ...actual,
+    loadModelCatalog,
   };
 });
-
-vi.mock("../agents/prepared-model-catalog.js", () => ({
-  loadPreparedModelCatalog: loadModelCatalog,
-}));
 
 let buildProviderRegistry: typeof import("./runner.js").buildProviderRegistry;
 let applyMediaUnderstanding: typeof import("./apply.js").applyMediaUnderstanding;
@@ -95,7 +92,7 @@ function setCompatibleActiveMediaUnderstandingRegistry(
     pluginIds,
     env: process.env,
   });
-  const cacheKey = resolvePluginRegistryLoadCacheKey({
+  const { cacheKey } = loaderTesting.resolvePluginLoadCacheContext({
     config: compatibleConfig,
     env: process.env,
   });
@@ -122,8 +119,14 @@ function requireCapabilityOutput(result: CapabilityResult, index: number) {
 
 describe("runCapability image skip", () => {
   beforeAll(async () => {
-    vi.doMock("../agents/prepared-model-catalog.js", () => {
-      return { loadPreparedModelCatalog: loadModelCatalog };
+    vi.doMock("../agents/model-catalog.js", async () => {
+      const actual = await vi.importActual<typeof import("../agents/model-catalog.js")>(
+        "../agents/model-catalog.js",
+      );
+      return {
+        ...actual,
+        loadModelCatalog,
+      };
     });
     ({ buildProviderRegistry, resolveAutoImageModel, runCapability } = await import("./runner.js"));
     ({ applyMediaUnderstanding } = await import("./apply.js"));
@@ -146,7 +149,6 @@ describe("runCapability image skip", () => {
       const result = await runCapability({
         capability: "image",
         cfg,
-        agentId: "vision-agent",
         ctx,
         attachments: cache,
         media,
@@ -165,10 +167,6 @@ describe("runCapability image skip", () => {
       }
       expect(attempt.outcome).toBe("skipped");
       expect(attempt.reason).toBe("primary model supports vision natively");
-      expect(loadModelCatalog).toHaveBeenCalledWith(
-        expect.objectContaining({ agentId: "vision-agent" }),
-      );
-      expect(loadModelCatalog.mock.calls[0]?.[0]).not.toHaveProperty("readOnly");
     } finally {
       await cache.cleanup();
     }
@@ -1082,4 +1080,3 @@ describe("runCapability image skip", () => {
     );
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

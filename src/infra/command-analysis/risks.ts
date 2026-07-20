@@ -21,15 +21,15 @@ import {
 import { detectInterpreterInlineEvalArgv, type InterpreterInlineEvalHit } from "./inline-eval.js";
 
 /** Shared command carrier constants used by approval policy and command explanation. */
-export { SOURCE_EXECUTABLES };
+export { COMMAND_CARRIER_EXECUTABLES, resolveCarrierCommandArgv, SOURCE_EXECUTABLES };
 
 /** Command and flag pair that can carry nested command text. */
-type CommandCarrierHit = {
+export type CommandCarrierHit = {
   command: string;
   flag?: string;
 };
 
-type CarriedShellBuiltinHit = { kind: "eval" } | { kind: "source"; command: string };
+export type CarriedShellBuiltinHit = { kind: "eval" } | { kind: "source"; command: string };
 
 // Recurse through env, carriers, and shell wrappers while guarding argv cycles.
 function commandArgvKey(argv: readonly string[]): string {
@@ -303,7 +303,7 @@ export function detectCommandCarrierArgv(argv: string[]): CommandCarrierHit[] {
   return hits;
 }
 
-function detectEnvSplitStringFlag(argv: string[]): string | null {
+export function detectEnvSplitStringFlag(argv: string[]): string | null {
   if (normalizeExecutableToken(argv[0] ?? "") !== "env") {
     return null;
   }

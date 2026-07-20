@@ -6,11 +6,9 @@ import {
   ErrorCodes,
   errorShape,
   formatValidationErrors,
-  missingScopeErrorShape,
   validatePluginsSessionActionParams,
   validatePluginsSessionActionResult,
   validatePluginsUiDescriptorsParams,
-  validatePluginsUiDescriptorsResult,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -56,44 +54,13 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const descriptors = (getActivePluginRegistry()?.controlUiDescriptors ?? []).map((entry) => {
-      const descriptor: Record<string, unknown> = {
-        id: entry.descriptor.id,
+    const descriptors = (getActivePluginRegistry()?.controlUiDescriptors ?? []).map((entry) =>
+      Object.assign({}, entry.descriptor, {
         pluginId: entry.pluginId,
         pluginName: entry.pluginName,
-        surface: entry.descriptor.surface,
-        label: entry.descriptor.label,
-      };
-      if (entry.descriptor.description !== undefined) {
-        descriptor.description = entry.descriptor.description;
-      }
-      if (entry.descriptor.placement !== undefined) {
-        descriptor.placement = entry.descriptor.placement;
-      }
-      if (entry.descriptor.schema !== undefined) {
-        descriptor.schema = entry.descriptor.schema;
-      }
-      if (entry.descriptor.requiredScopes !== undefined) {
-        descriptor.requiredScopes = entry.descriptor.requiredScopes;
-      }
-      return descriptor;
-    });
-    const result = { ok: true, descriptors };
-    if (!validatePluginsUiDescriptorsResult(result)) {
-      log.warn("invalid plugins.uiDescriptors result", {
-        errors: validatePluginsUiDescriptorsResult.errors,
-      });
-      respond(
-        false,
-        undefined,
-        errorShape(
-          ErrorCodes.UNAVAILABLE,
-          `invalid plugins.uiDescriptors result: ${formatValidationErrors(validatePluginsUiDescriptorsResult.errors)}`,
-        ),
-      );
-      return;
-    }
-    respond(true, result, undefined);
+      }),
+    );
+    respond(true, { ok: true, descriptors }, undefined);
   },
   "plugins.sessionAction": async ({ params, client, respond }) => {
     if (!validatePluginsSessionActionParams(params)) {
@@ -154,7 +121,11 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
         !(scope === READ_SCOPE && scopes.includes(WRITE_SCOPE)),
     );
     if (missingScope) {
-      respond(false, undefined, missingScopeErrorShape({ missingScope, requiredScopes }));
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, `missing scope: ${missingScope}`),
+      );
       return;
     }
     try {

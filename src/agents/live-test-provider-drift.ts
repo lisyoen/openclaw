@@ -9,15 +9,13 @@ import { isCloudflareOrHtmlErrorPage } from "../shared/assistant-error-format.js
 import {
   isAuthErrorMessage,
   isBillingErrorMessage,
-  isOverloadedErrorMessage,
   isRateLimitErrorMessage,
-  isServerErrorMessage,
   isTimeoutErrorMessage,
 } from "./embedded-agent-helpers/failover-matches.js";
-import { isApiKeyRateLimitError } from "./live-auth-keys.js";
+import { isAnthropicBillingError, isApiKeyRateLimitError } from "./live-auth-keys.js";
 import { isModelNotFoundErrorMessage } from "./live-model-errors.js";
 
-type LiveProviderDriftReason =
+export type LiveProviderDriftReason =
   | "auth"
   | "billing"
   | "model-not-found"
@@ -26,13 +24,13 @@ type LiveProviderDriftReason =
   | "timeout";
 
 /** A normalized reason for skipping or soft-failing live provider drift. */
-type LiveProviderDriftDecision = {
+export type LiveProviderDriftDecision = {
   label: string;
   reason: LiveProviderDriftReason;
 };
 
 /** Classifier options that control which live-provider drift reasons are allowed. */
-type LiveProviderDriftOptions = {
+export type LiveProviderDriftOptions = {
   allowAuth?: boolean;
   allowBilling?: boolean;
   allowModelNotFound?: boolean;
@@ -43,27 +41,12 @@ type LiveProviderDriftOptions = {
 };
 
 /** Converts arbitrary thrown values into text for provider drift matchers. */
-function liveProviderErrorText(error: unknown): string {
+export function liveProviderErrorText(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-function isAnthropicBillingError(message: string): boolean {
-  const lower = normalizeLowercaseStringOrEmpty(message);
-  if (
-    lower.includes("credit balance") ||
-    lower.includes("insufficient credit") ||
-    lower.includes("payment required") ||
-    (lower.includes("billing") && lower.includes("disabled"))
-  ) {
-    return true;
-  }
-  return /["']?(?:status|code)["']?\s*[:=]\s*402\b|\bhttp\s*402\b|\berror(?:\s+code)?\s*[:=]?\s*402\b|\b(?:got|returned|received)\s+(?:a\s+)?402\b|^\s*402\spayment/i.test(
-    lower,
-  );
-}
-
 /** Returns whether an error is expected live auth/account drift. */
-function isLiveAuthDrift(error: unknown): boolean {
+export function isLiveAuthDrift(error: unknown): boolean {
   const raw = liveProviderErrorText(error);
   const message = normalizeLowercaseStringOrEmpty(raw);
   return (
@@ -74,35 +57,33 @@ function isLiveAuthDrift(error: unknown): boolean {
 }
 
 /** Returns whether an error is expected live billing/quota drift. */
-function isLiveBillingDrift(error: unknown): boolean {
+export function isLiveBillingDrift(error: unknown): boolean {
   const raw = liveProviderErrorText(error);
   return isBillingErrorMessage(raw) || isAnthropicBillingError(raw);
 }
 
 /** Returns whether an error is expected live rate-limit drift. */
-function isLiveRateLimitDrift(error: unknown): boolean {
+export function isLiveRateLimitDrift(error: unknown): boolean {
   const raw = liveProviderErrorText(error);
   return isRateLimitErrorMessage(raw) || isApiKeyRateLimitError(raw);
 }
 
 /** Returns whether an error is expected live timeout drift. */
-function isLiveTimeoutDrift(error: unknown): boolean {
+export function isLiveTimeoutDrift(error: unknown): boolean {
   return isTimeoutErrorMessage(liveProviderErrorText(error));
 }
 
 /** Returns whether an error is expected live missing-model drift. */
-function isLiveModelNotFoundDrift(error: unknown): boolean {
+export function isLiveModelNotFoundDrift(error: unknown): boolean {
   return isModelNotFoundErrorMessage(liveProviderErrorText(error));
 }
 
 /** Returns whether an error is expected upstream/provider availability drift. */
-function isLiveProviderUnavailableDrift(error: unknown): boolean {
+export function isLiveProviderUnavailableDrift(error: unknown): boolean {
   const raw = liveProviderErrorText(error);
   const htmlCandidate = raw.trim().replace(/^error:\s*/i, "");
   const msg = normalizeLowercaseStringOrEmpty(raw);
   return (
-    isOverloadedErrorMessage(raw) ||
-    isServerErrorMessage(raw) ||
     isRawHtmlProviderErrorPage(htmlCandidate) ||
     isCloudflareOrHtmlErrorPage(raw) ||
     isCloudflareOrHtmlErrorPage(htmlCandidate) ||

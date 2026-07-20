@@ -10,9 +10,10 @@ import {
   saveRemoteMedia,
 } from "openclaw/plugin-sdk/media-runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { TLON_MEDIA_FETCH_TIMEOUTS } from "../media-fetch-timeouts.js";
+import { getDefaultSsrFPolicy } from "../urbit/context.js";
 
 const MAX_IMAGES_PER_MESSAGE = 8;
+const TLON_MEDIA_DOWNLOAD_IDLE_TIMEOUT_MS = 30_000;
 
 interface ExtractedImage {
   url: string;
@@ -29,7 +30,7 @@ interface DownloadedMedia {
  * Extract image blocks from Tlon message content.
  * Returns array of image URLs found in the message.
  */
-function extractImageBlocks(content: unknown): ExtractedImage[] {
+export function extractImageBlocks(content: unknown): ExtractedImage[] {
   if (!content || !Array.isArray(content)) {
     return [];
   }
@@ -55,7 +56,10 @@ function extractImageBlocks(content: unknown): ExtractedImage[] {
  * Download a media file from URL to local storage.
  * Returns the local path where the file was saved.
  */
-async function downloadMedia(url: string, mediaDir?: string): Promise<DownloadedMedia | null> {
+export async function downloadMedia(
+  url: string,
+  mediaDir?: string,
+): Promise<DownloadedMedia | null> {
   try {
     // Validate URL is http/https before fetching
     const parsedUrl = new URL(url);
@@ -67,8 +71,8 @@ async function downloadMedia(url: string, mediaDir?: string): Promise<Downloaded
     const fetchOptions = {
       url,
       maxBytes: MAX_IMAGE_BYTES,
-      ...TLON_MEDIA_FETCH_TIMEOUTS,
-      ssrfPolicy: undefined,
+      readIdleTimeoutMs: TLON_MEDIA_DOWNLOAD_IDLE_TIMEOUT_MS,
+      ssrfPolicy: getDefaultSsrFPolicy(),
       requestInit: { method: "GET" },
     };
 

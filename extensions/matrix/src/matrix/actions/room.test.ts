@@ -16,7 +16,10 @@ function createRoomClient() {
         throw new Error(`unexpected state event ${eventType}`);
     }
   });
-  const getJoinedRoomMembers = vi.fn(async () => ["@alice:example.org", "@bot:example.org"]);
+  const getJoinedRoomMembers = vi.fn(async () => [
+    { user_id: "@alice:example.org" },
+    { user_id: "@bot:example.org" },
+  ]);
   const getUserProfile = vi.fn(async () => ({
     displayname: "Alice",
     avatar_url: "mxc://example.org/alice",
@@ -53,7 +56,7 @@ describe("matrix room actions", () => {
     });
   });
 
-  it("requires room membership when looking up member info", async () => {
+  it("resolves optional room ids when looking up member info", async () => {
     const { client, getUserProfile } = createRoomClient();
 
     const result = await getMatrixMemberInfo("@alice:example.org", {
@@ -73,17 +76,5 @@ describe("matrix room actions", () => {
       displayName: "Alice",
       roomId: "!ops:example.org",
     });
-  });
-
-  it("rejects profiles for users outside the room", async () => {
-    const { client, getUserProfile } = createRoomClient();
-
-    await expect(
-      getMatrixMemberInfo("@mallory:example.org", {
-        client,
-        roomId: "room:!ops:example.org",
-      }),
-    ).rejects.toThrow("User @mallory:example.org is not a member of room !ops:example.org");
-    expect(getUserProfile).not.toHaveBeenCalled();
   });
 });

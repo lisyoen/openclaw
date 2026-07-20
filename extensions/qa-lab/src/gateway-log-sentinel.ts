@@ -4,7 +4,7 @@ import {
   normalizeOptionalString as readNonEmptyString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 
-type GatewayLogSentinelKind =
+export type GatewayLogSentinelKind =
   | "plugin-hook-failure"
   | "plugin-contract-error"
   | "direct-reply-self-message"
@@ -13,13 +13,13 @@ type GatewayLogSentinelKind =
   | "cron-model-allowlist"
   | "live-quota-or-subscription";
 
-type GatewayLogSentinelVerdict =
+export type GatewayLogSentinelVerdict =
   | "product-bug"
   | "qa-harness-bug"
   | "fixture-bug"
   | "environment-blocked";
 
-type GatewayLogSentinelOwner =
+export type GatewayLogSentinelOwner =
   | "plugin"
   | "openclaw-routing"
   | "codex-runtime"
@@ -36,13 +36,13 @@ export type GatewayLogSentinelFinding = {
   text: string;
 };
 
-type GatewayLogSentinelScanOptions = {
+export type GatewayLogSentinelScanOptions = {
   since?: number;
   kinds?: readonly GatewayLogSentinelKind[];
   ignoreKinds?: readonly GatewayLogSentinelKind[];
 };
 
-type GatewayLogSentinelAssertOptions = GatewayLogSentinelScanOptions & {
+export type GatewayLogSentinelAssertOptions = GatewayLogSentinelScanOptions & {
   allowEnvironmentBlocked?: boolean;
 };
 
@@ -144,7 +144,7 @@ function lineNumberForOffset(logs: string, offset: number) {
   return logs.slice(0, offset).split(/\r?\n/u).length;
 }
 
-export function extractGatewayMessageText(message: Record<string, unknown>) {
+function extractMessageText(message: Record<string, unknown>) {
   const rawContent = message.content;
   if (typeof rawContent === "string") {
     return rawContent.trim();
@@ -169,13 +169,9 @@ export function extractGatewayMessageText(message: Record<string, unknown>) {
       continue;
     }
     const nestedText = readNonEmptyString(block.content);
-    const normalizedType = readNonEmptyString(block.type)?.toLowerCase().replace(/_/g, "");
     if (
       nestedText &&
-      (normalizedType === "outputtext" ||
-        normalizedType === "text" ||
-        normalizedType === "message" ||
-        normalizedType === "toolresult")
+      (block.type === "output_text" || block.type === "text" || block.type === "message")
     ) {
       parts.push(nestedText);
     }
@@ -278,7 +274,7 @@ export function createDirectReplyTranscriptSentinelScanner() {
       if (message.role !== "assistant") {
         return;
       }
-      const text = extractGatewayMessageText(message);
+      const text = extractMessageText(message);
       if (text) {
         lastAssistantText = text;
       }

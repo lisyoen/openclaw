@@ -16,13 +16,11 @@ import {
   normalizeInboundTextNewlines,
   sanitizeInboundSystemTags,
 } from "../../auto-reply/reply/inbound-text.js";
-import type { FinalizedMsgContext, MentionSource } from "../../auto-reply/templating.js";
+import type { FinalizedMsgContext } from "../../auto-reply/templating.js";
 import type { ContextVisibilityMode } from "../../config/types.base.js";
-import type { PluginHookChannelContext } from "../../plugins/hook-channel-context.types.js";
 import { shouldIncludeSupplementalContext } from "../../security/context-visibility.js";
-import type { InboundImplicitMentionKind } from "../mention-gating.js";
-import type { ChannelIngressCommandAccess } from "../message-access/runtime-types.js";
 import type {
+  AccessFacts,
   CommandFacts,
   ConversationFacts,
   InboundMediaFacts,
@@ -55,20 +53,8 @@ export type ChannelInboundSupplementalResolutionOptions = {
   suppressSelfQuoteBody?: boolean;
   suppressSelfQuoteMedia?: boolean;
 };
-type BuildChannelInboundEventAccess = {
-  commands?: Pick<ChannelIngressCommandAccess, "authorized">;
-  mentions?: {
-    canDetectMention: boolean;
-    wasMentioned: boolean;
-    hasAnyMention?: boolean;
-    explicitlyMentionedBot?: boolean;
-    mentionedUserIds?: string[];
-    mentionedSubteamIds?: string[];
-    mentionSource?: MentionSource;
-    implicitMentionKinds?: InboundImplicitMentionKind[];
-    requireMention?: boolean;
-    effectiveWasMentioned?: boolean;
-  };
+type BuildAccessFacts = Omit<AccessFacts, "commands"> & {
+  commands?: Partial<NonNullable<AccessFacts["commands"]>>;
 };
 
 export type BuildChannelInboundEventContextParams = {
@@ -85,12 +71,11 @@ export type BuildChannelInboundEventContextParams = {
   route: RouteFacts;
   reply: ReplyPlanFacts;
   message: MessageFacts;
-  access?: BuildChannelInboundEventAccess;
+  access?: BuildAccessFacts;
   command?: CommandFacts;
   commandTurn?: CommandTurnContext;
   media?: InboundMediaFacts[];
   supplemental?: ChannelInboundSupplementalFacts;
-  channelContext?: PluginHookChannelContext;
   contextVisibility?: ContextVisibilityMode;
   finalize?: FinalizeInboundContextFn;
   finalizeOptions?: FinalizeInboundContextOptions;
@@ -212,19 +197,6 @@ export function filterChannelInboundSupplementalContext(params: {
     forwarded,
     thread,
   };
-}
-
-/** Resolves whether a supplemental-context sender passes the active group policy. */
-export function resolveInboundSupplementalSenderAllowed<TAllowFrom>(params: {
-  isGroup: boolean;
-  groupPolicy: string;
-  allowFrom: readonly TAllowFrom[];
-  isSenderAllowed: (allowFrom: readonly TAllowFrom[]) => boolean;
-}): boolean {
-  if (!params.isGroup || params.groupPolicy !== "allowlist") {
-    return true;
-  }
-  return params.isSenderAllowed(params.allowFrom);
 }
 
 export function filterChannelInboundQuoteContext(
@@ -377,7 +349,17 @@ function finalizePreparedChannelInboundContext<T extends Record<string, unknown>
   };
 }
 
-function finalizeChannelInboundContextValue<T extends Record<string, unknown>>(
+/**
+ * @deprecated Public compatibility for callers that already prepared legacy
+ * prompt fields. New channel code should use `buildChannelInboundEventContext`.
+ */
+export function finalizeChannelInboundContext<T extends Record<string, unknown>>(
+  params: FinalizeChannelInboundContextAsyncParams<T>,
+): Promise<FinalizeChannelInboundContextResult<T>>;
+export function finalizeChannelInboundContext<T extends Record<string, unknown>>(
+  params: FinalizeChannelInboundContextParams<T>,
+): FinalizeChannelInboundContextResult<T>;
+export function finalizeChannelInboundContext<T extends Record<string, unknown>>(
   params: FinalizeChannelInboundContextParams<T> &
     Partial<ChannelInboundSupplementalResolutionOptions>,
 ): MaybePromise<FinalizeChannelInboundContextResult<T>> {
@@ -404,27 +386,13 @@ function finalizeChannelInboundContextValue<T extends Record<string, unknown>>(
   return isPromiseLike(prepared) ? prepared.then(finish) : finish(prepared);
 }
 
-/**
- * @deprecated Public compatibility for callers that already prepared legacy
- * prompt fields. New channel code should use `buildChannelInboundEventContext`.
- */
-export function finalizeChannelInboundContext<T extends Record<string, unknown>>(
-  params: FinalizeChannelInboundContextAsyncParams<T>,
-): Promise<FinalizeChannelInboundContextResult<T>>;
-export function finalizeChannelInboundContext<T extends Record<string, unknown>>(
-  params: FinalizeChannelInboundContextParams<T>,
-): FinalizeChannelInboundContextResult<T>;
-export function finalizeChannelInboundContext<T extends Record<string, unknown>>(
-  params: FinalizeChannelInboundContextParams<T> &
-    Partial<ChannelInboundSupplementalResolutionOptions>,
-): MaybePromise<FinalizeChannelInboundContextResult<T>> {
-  return finalizeChannelInboundContextValue(params);
-}
-
-function resolveIngressCommandAuthorized(
-  access: BuildChannelInboundEventAccess | undefined,
+function resolveAccessFactsCommandAuthorized(
+  access: BuildAccessFacts | undefined,
 ): boolean | undefined {
-  return access?.commands?.authorized;
+  const commands = access?.commands;
+  return typeof commands?.authorized === "boolean"
+    ? commands.authorized
+    : commands?.authorizers?.some((entry) => entry.allowed);
 }
 
 function normalizeUntrustedGroupPrompt(value: unknown): string | undefined {
@@ -466,7 +434,7 @@ function resolveChannelCommandContext(params: {
   command?: CommandFacts;
   commandTurn?: CommandTurnContext;
   message: MessageFacts;
-  access?: BuildChannelInboundEventAccess;
+  access?: BuildAccessFacts;
 }): CommandTurnContext | undefined {
   if (params.commandTurn) {
     return params.commandTurn;
@@ -480,7 +448,7 @@ function resolveChannelCommandContext(params: {
     authorized:
       command.kind === "normal"
         ? false
-        : (command.authorized ?? resolveIngressCommandAuthorized(params.access) === true),
+        : (command.authorized ?? resolveAccessFactsCommandAuthorized(params.access) === true),
     commandName: command.name,
     body,
   });
@@ -509,15 +477,12 @@ export function buildChannelInboundEventContext(
     InboundEventKind: params.message.inboundEventKind ?? "user_request",
     BodyForAgent: params.message.bodyForAgent ?? params.message.rawBody,
     InboundHistory: params.message.inboundHistory,
-    SourceModality: params.message.sourceModality,
     RawBody: params.message.rawBody,
     CommandBody: params.message.commandBody ?? params.message.rawBody,
     BodyForCommands: params.message.commandBody ?? params.message.rawBody,
     From: params.from,
     To: params.reply.to,
     SessionKey: params.route.dispatchSessionKey ?? params.route.routeSessionKey,
-    AgentId: params.route.agentId,
-    DmScope: params.route.dmScope,
     AccountId: params.route.accountId ?? params.accountId,
     ParentSessionKey: params.route.parentSessionKey,
     ModelParentSessionKey: params.route.modelParentSessionKey,
@@ -526,7 +491,6 @@ export function buildChannelInboundEventContext(
     ReplyToId: params.reply.replyToId,
     ReplyToIdFull: params.reply.replyToIdFull,
     ChatType: params.conversation.kind,
-    ChatId: params.conversation.id,
     ConversationLabel: params.conversation.label,
     GroupSubject: params.conversation.kind !== "direct" ? params.conversation.label : undefined,
     GroupSpace: params.conversation.spaceId,
@@ -534,29 +498,18 @@ export function buildChannelInboundEventContext(
     SenderId: params.sender.id,
     SenderUsername: params.sender.username,
     SenderTag: params.sender.tag,
-    SenderIsBot: params.sender.isBot,
     MemberRoleIds: params.sender.roles,
     Timestamp: params.timestamp,
     Provider: params.provider ?? params.channel,
     Surface: params.surface ?? params.provider ?? params.channel,
     WasMentioned: params.access?.mentions?.wasMentioned,
-    GroupRequireMention: params.access?.mentions?.requireMention,
-    ExplicitlyMentionedBot: params.access?.mentions?.explicitlyMentionedBot,
-    MentionedUserIds: params.access?.mentions?.mentionedUserIds,
-    MentionedSubteamIds: params.access?.mentions?.mentionedSubteamIds,
-    ImplicitMentionKinds: params.access?.mentions?.implicitMentionKinds,
-    MentionSource: params.access?.mentions?.mentionSource,
-    CommandAuthorized: resolveIngressCommandAuthorized(params.access) === true,
+    CommandAuthorized: resolveAccessFactsCommandAuthorized(params.access) === true,
     CommandTurn: commandTurn,
     MessageThreadId: params.reply.messageThreadId ?? params.conversation.threadId,
     NativeChannelId: params.reply.nativeChannelId ?? params.conversation.nativeChannelId,
-    ChannelContext: params.channelContext,
     OriginatingChannel: params.channel,
     OriginatingTo: params.reply.originatingTo ?? params.reply.to,
     ThreadParentId: params.reply.threadParentId ?? params.conversation.parentId,
-    // This builder is the post-admission boundary for channel events. Preserve
-    // that fact so interceptors cannot bypass sender, route, or pairing gates.
-    InboundAccessAuthorized: true,
     ...params.extra,
   };
   const finalizeParams = {
@@ -568,13 +521,13 @@ export function buildChannelInboundEventContext(
     context,
   };
   const result = params.resolveSupplementalMedia
-    ? finalizeChannelInboundContextValue({
+    ? finalizeChannelInboundContext({
         ...finalizeParams,
         resolveSupplementalMedia: true,
         suppressSelfQuoteBody: params.suppressSelfQuoteBody,
         suppressSelfQuoteMedia: params.suppressSelfQuoteMedia,
       })
-    : finalizeChannelInboundContextValue(finalizeParams);
+    : finalizeChannelInboundContext(finalizeParams);
   return isPromiseLike(result)
     ? result.then((finalized) => finalized.context as BuiltChannelInboundEventContext)
     : (result.context as BuiltChannelInboundEventContext);

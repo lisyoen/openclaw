@@ -88,16 +88,10 @@ describe("web auto-reply", () => {
               reply,
               sendMedia,
             },
-            admission: {
-              accountId: overrides?.accountId ?? "default",
-              conversation: {
-                kind: "direct",
-                id: conversationId,
-              },
-              sender: {
-                id: from,
-              },
-            },
+            from,
+            conversationId,
+            accountId: overrides?.accountId ?? "default",
+            chatType: "direct",
           }),
         );
       },

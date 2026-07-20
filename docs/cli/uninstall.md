@@ -8,26 +8,20 @@ title: "Uninstall"
 
 # `openclaw uninstall`
 
-Uninstall the Gateway service and/or local data. The CLI itself is not
-removed; uninstall it via npm/pnpm separately.
+Uninstall the gateway service + local data (CLI remains).
 
-## Options
+Options:
 
-| Flag                | Default | Description                                          |
-| ------------------- | ------- | ---------------------------------------------------- |
-| `--service`         | `false` | Remove the Gateway service.                          |
-| `--state`           | `false` | Remove state and config.                             |
-| `--workspace`       | `false` | Remove workspace directories.                        |
-| `--app`             | `false` | Remove the macOS app.                                |
-| `--all`             | `false` | Shorthand for `--service --state --workspace --app`. |
-| `--yes`             | `false` | Skip confirmation prompts.                           |
-| `--non-interactive` | `false` | Disable prompts; requires `--yes`.                   |
-| `--dry-run`         | `false` | Print planned actions without removing files.        |
+- `--service`: remove the gateway service
+- `--state`: remove state and config
+- `--workspace`: remove workspace directories
+- `--app`: remove the macOS app
+- `--all`: remove service, state, workspace, and app
+- `--yes`: skip confirmation prompts
+- `--non-interactive`: disable prompts; requires `--yes`
+- `--dry-run`: print actions without removing files
 
-With no scope flags, an interactive multiselect prompts for which components
-to remove (defaults to service, state, workspace preselected).
-
-## Examples
+Examples:
 
 ```bash
 openclaw backup create
@@ -38,12 +32,12 @@ openclaw uninstall --all --yes
 openclaw uninstall --dry-run
 ```
 
-## Notes
+Notes:
 
-- Run `openclaw backup create` first for a restorable snapshot before removing
-  state or workspaces.
-- `--state` preserves configured workspace directories unless `--workspace` is
-  also selected.
+- Run `openclaw backup create` first if you want a restorable snapshot before removing state or workspaces.
+- `--state` preserves configured workspace directories unless `--workspace` is also selected.
+- `--all` is shorthand for removing service, state, workspace, and app together.
+- `--non-interactive` requires `--yes`.
 
 ## Related
 

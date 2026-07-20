@@ -20,7 +20,6 @@ export function createGatewayMaintenanceStateForTest(params?: {
     logHealth: { error: () => {} },
     dedupe: new Map(),
     chatAbortControllers: new Map(),
-    chatQueuedTurns: new Map(),
     restartRecoveryCandidates: new Map(),
     chatRunState,
     chatRunBuffers: chatRunState.buffers,
@@ -29,7 +28,5 @@ export function createGatewayMaintenanceStateForTest(params?: {
     removeChatRun: () => undefined,
     agentRunSeq: new Map(),
     nodeSendToSession: () => {},
-    getRuntimeConfig: () => ({}),
-    runDeliveryQueueMediaGc: async () => undefined,
   };
 }

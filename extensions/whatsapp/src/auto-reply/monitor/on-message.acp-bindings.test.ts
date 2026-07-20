@@ -285,16 +285,9 @@ function createHandler(warn = vi.fn(), cfg: Record<string, unknown> = createCfg(
 
 function createMessage() {
   return createTestWebInboundMessage({
-    admission: {
-      accountId: "work",
-      conversation: {
-        kind: "direct",
-        id: "15551234567@s.whatsapp.net",
-      },
-      sender: {
-        id: "15551234567@s.whatsapp.net",
-      },
-    },
+    accountId: "work",
+    from: "15551234567@s.whatsapp.net",
+    conversationId: "15551234567@s.whatsapp.net",
     platform: {
       chatJid: "15551234567@s.whatsapp.net",
       recipientJid: "15559876543@s.whatsapp.net",
@@ -302,51 +295,30 @@ function createMessage() {
   });
 }
 
-type TestMessageOverrides = NonNullable<Parameters<typeof createTestWebInboundMessage>[0]>;
-
-function createGroupMessage(overrides: TestMessageOverrides = {}) {
-  const { admission, platform, ...message } = overrides;
+function createGroupMessage() {
   return createTestWebInboundMessage({
-    ...message,
-    admission: {
-      ...admission,
-      accountId: "work",
-      conversation: {
-        kind: "group",
-        id: "120363001234567890@g.us",
-        ...admission?.conversation,
-      },
-      senderAccess: {
-        reasonCode: "group_policy_allowed",
-        ...admission?.senderAccess,
-      },
-    },
+    accountId: "work",
+    chatType: "group",
+    from: "120363001234567890@g.us",
+    conversationId: "120363001234567890@g.us",
     platform: {
       chatJid: "120363001234567890@g.us",
       recipientJid: "15559876543@s.whatsapp.net",
-      ...platform,
     },
   });
 }
 
 function createGroupAudioMessage() {
   return createTestWebInboundMessage({
-    admission: {
-      accountId: "work",
-      conversation: {
-        kind: "group",
-        id: "120363001234567890@g.us",
-      },
-      senderAccess: {
-        reasonCode: "group_policy_allowed",
-      },
-    },
+    accountId: "work",
+    chatType: "group",
+    from: "120363001234567890@g.us",
+    conversationId: "120363001234567890@g.us",
     payload: {
-      body: "",
+      body: "<media:audio>",
       media: {
         type: "audio/ogg; codecs=opus",
         path: "/tmp/voice.ogg",
-        kind: "audio",
       },
     },
     platform: {
@@ -495,53 +467,6 @@ describe("createWebOnMessageHandler configured ACP bindings", () => {
     expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
     expect(processMessageMock).not.toHaveBeenCalled();
     expect(groupHistories.get("group-key")).toEqual([pendingEntry]);
-  });
-
-  it("does not record ordinary group routes before group admission", async () => {
-    resolveConfiguredBindingRouteMock.mockImplementationOnce(({ route }) => ({
-      bindingResolution: null,
-      route,
-    }));
-    applyGroupGatingMock.mockResolvedValueOnce({ shouldProcess: false });
-    const { handler } = createHandler(vi.fn(), { channels: { whatsapp: {} } });
-
-    await handler(createGroupMessage());
-
-    expect(applyGroupGatingMock).toHaveBeenCalledTimes(1);
-    expect(updateLastRouteInBackgroundMock).not.toHaveBeenCalled();
-    expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
-    expect(processMessageMock).not.toHaveBeenCalled();
-  });
-
-  it("does not record group routes when admission blocks dispatch", async () => {
-    const { handler } = createHandler(vi.fn(), { channels: { whatsapp: {} } });
-
-    await handler(
-      createGroupMessage({
-        admission: {
-          ingress: {
-            admission: "drop",
-            decision: "block",
-            reasonCode: "group_policy_not_allowlisted",
-          },
-          senderAccess: {
-            allowed: false,
-            decision: "block",
-            reasonCode: "group_policy_not_allowlisted",
-          },
-          activationAccess: {
-            allowed: false,
-            shouldSkip: true,
-            reasonCode: "group_policy_not_allowlisted",
-          },
-        },
-      }),
-    );
-
-    expect(applyGroupGatingMock).not.toHaveBeenCalled();
-    expect(updateLastRouteInBackgroundMock).not.toHaveBeenCalled();
-    expect(maybeBroadcastMessageMock).not.toHaveBeenCalled();
-    expect(processMessageMock).not.toHaveBeenCalled();
   });
 
   it("does not record configured ACP group routes when readiness fails", async () => {

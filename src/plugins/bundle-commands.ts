@@ -5,17 +5,10 @@ import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import {
-  parseFrontmatterBlock,
-  stripFrontmatterBlock,
-} from "../../packages/markdown-core/src/frontmatter.js";
+import { parseFrontmatterBlock } from "../../packages/markdown-core/src/frontmatter.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { formatErrorMessage } from "../infra/errors.js";
 import { readRootJsonObjectSync } from "../infra/json-files.js";
-import { readRegularFileSync } from "../infra/regular-file.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
 import { isPathInsideWithRealpath } from "../security/scan-paths.js";
-import { parseFrontmatterBool } from "../shared/frontmatter.js";
 import {
   CLAUDE_BUNDLE_MANIFEST_RELATIVE_PATH,
   mergeBundlePathLists,
@@ -28,7 +21,7 @@ import {
 } from "./config-state.js";
 import { loadPluginManifestRegistryForPluginRegistry } from "./plugin-registry-contributions.js";
 
-type ClaudeBundleCommandSpec = {
+export type ClaudeBundleCommandSpec = {
   pluginId: string;
   rawName: string;
   description: string;
@@ -36,8 +29,31 @@ type ClaudeBundleCommandSpec = {
   sourceFilePath: string;
 };
 
-const BUNDLE_COMMAND_MAX_BYTES = 1 * 1024 * 1024;
-const log = createSubsystemLogger("plugins/bundle-commands");
+function parseFrontmatterBool(value: string | undefined, fallback: boolean): boolean {
+  const normalized = normalizeOptionalLowercaseString(value);
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === "true" || normalized === "yes" || normalized === "1") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "no" || normalized === "0") {
+    return false;
+  }
+  return fallback;
+}
+
+function stripFrontmatter(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!normalized.startsWith("---")) {
+    return normalized.trim();
+  }
+  const endIndex = normalized.indexOf("\n---", 3);
+  if (endIndex === -1) {
+    return normalized.trim();
+  }
+  return normalized.slice(endIndex + 4).trim();
+}
 
 function readClaudeBundleManifest(rootDir: string): Record<string, unknown> {
   const result = readRootJsonObjectSync({
@@ -109,18 +125,15 @@ function loadBundleCommandsFromRoot(params: {
   for (const filePath of listMarkdownFilesRecursive(params.commandRoot)) {
     let raw: string;
     try {
-      raw = readRegularFileSync({ filePath, maxBytes: BUNDLE_COMMAND_MAX_BYTES }).buffer.toString(
-        "utf-8",
-      );
-    } catch (error) {
-      log.warn(`skipping unreadable bundle command file ${filePath}: ${formatErrorMessage(error)}`);
+      raw = fs.readFileSync(filePath, "utf-8");
+    } catch {
       continue;
     }
     const frontmatter = parseFrontmatterBlock(raw);
-    if (!parseFrontmatterBool(frontmatter["user-invocable"], true)) {
+    if (parseFrontmatterBool(frontmatter["disable-model-invocation"], false)) {
       continue;
     }
-    const promptTemplate = stripFrontmatterBlock(raw);
+    const promptTemplate = stripFrontmatter(raw);
     if (!promptTemplate) {
       continue;
     }

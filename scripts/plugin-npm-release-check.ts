@@ -3,18 +3,16 @@
 
 import { pathToFileURL } from "node:url";
 import {
-  assertPluginReleaseDependencyFreshness,
-  assertPluginReleaseVersionFloors,
   collectChangedExtensionIdsFromGitRange,
   collectPublishablePluginPackages,
-  parsePluginNpmReleaseArgs,
+  assertPluginReleaseVersionFloors,
+  parsePluginReleaseArgs,
   resolveChangedPublishablePluginPackages,
   resolveSelectedPublishablePluginPackages,
 } from "./lib/plugin-npm-release.ts";
 
-function runPluginNpmReleaseCheck(argv: string[]) {
-  const { selection, selectionMode, npmDistTag, baseRef, headRef } =
-    parsePluginNpmReleaseArgs(argv);
+export function runPluginNpmReleaseCheck(argv: string[]) {
+  const { selection, selectionMode, baseRef, headRef } = parsePluginReleaseArgs(argv);
   const changedExtensionIds =
     baseRef && headRef
       ? collectChangedExtensionIdsFromGitRange({
@@ -27,7 +25,6 @@ function runPluginNpmReleaseCheck(argv: string[]) {
         ? undefined
         : changedExtensionIds,
     packageNames: selection.length > 0 ? selection : undefined,
-    npmDistTag,
   });
   const selected =
     selectionMode === "all-publishable"
@@ -47,7 +44,6 @@ function runPluginNpmReleaseCheck(argv: string[]) {
   if (selectionMode !== undefined || selection.length > 0) {
     assertPluginReleaseVersionFloors(selected, "plugin-npm-release-check");
   }
-  assertPluginReleaseDependencyFreshness(selected, "plugin-npm-release-check");
 
   console.log("plugin-npm-release-check: publishable plugin metadata looks OK.");
   if (baseRef && headRef && selected.length === 0) {

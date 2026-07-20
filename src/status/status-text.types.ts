@@ -1,10 +1,8 @@
-import type { FastMode } from "@openclaw/normalization-core/string-coerce";
 // Status text types describe runtime status records used by status rendering.
 import type {
   ElevatedLevel,
   ReasoningLevel,
   ThinkLevel,
-  ThinkingCatalogEntry,
   VerboseLevel,
 } from "../auto-reply/thinking.js";
 import type { SessionEntry, SessionScope } from "../config/sessions.js";
@@ -21,15 +19,12 @@ export type BuildStatusTextParams = {
   sessionScope?: SessionScope;
   storePath?: string;
   statusChannel: string;
-  statusAccountId?: string;
   workspaceDir?: string;
   provider: string;
   model: string;
   contextTokens?: number;
-  /** Model metadata prepared by the caller; status rendering never loads a catalog. */
-  thinkingCatalog?: ThinkingCatalogEntry[];
   resolvedThinkLevel?: ThinkLevel;
-  resolvedFastMode?: FastMode;
+  resolvedFastMode?: boolean;
   resolvedHarness?: string;
   resolvedVerboseLevel: VerboseLevel;
   resolvedReasoningLevel: ReasoningLevel;
@@ -39,7 +34,6 @@ export type BuildStatusTextParams = {
   defaultGroupActivation: () => "always" | "mention";
   mediaDecisions?: MediaUnderstandingDecision[];
   taskLineOverride?: string;
-  pluginHealthLineOverride?: string;
   skipDefaultTaskLookup?: boolean;
   primaryModelLabelOverride?: string;
   modelAuthOverride?: string;

@@ -5,13 +5,10 @@
 import JSON5 from "json5";
 
 /** Parses strict JSON first, then accepts JSON5 syntax such as comments and trailing commas. */
-export function parseJsonWithJson5Fallback(
-  raw: string,
-  json5: { parse: (value: string) => unknown } = JSON5,
-): unknown {
+export function parseJsonWithJson5Fallback(raw: string): unknown {
   try {
     return JSON.parse(raw);
   } catch {
-    return json5.parse(raw);
+    return JSON5.parse(raw);
   }
 }

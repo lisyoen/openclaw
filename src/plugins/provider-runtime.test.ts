@@ -2,11 +2,11 @@
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelProviderConfig, OpenClawConfig } from "../config/types.js";
-import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import type { ProviderRuntimeModel } from "./provider-runtime-model.types.js";
 import {
   expectAugmentedCodexCatalog,
   expectCodexMissingAuthHint,
+  expectedAugmentedOpenaiCodexCatalogEntries,
 } from "./provider-runtime.test-support.js";
 import type {
   AnyAgentTool,
@@ -22,8 +22,8 @@ type IsPluginProvidersLoadInFlight =
   typeof import("./providers.runtime.js").isPluginProvidersLoadInFlight;
 type ResolveCatalogHookProviderPluginIds =
   typeof import("./providers.js").resolveCatalogHookProviderPluginIds;
-type ResolveUsageHookProviderPluginContracts =
-  typeof import("./providers.js").resolveUsageHookProviderPluginContracts;
+type ResolveExternalAuthProfileCompatFallbackPluginIds =
+  typeof import("./providers.js").resolveExternalAuthProfileCompatFallbackPluginIds;
 type ResolveExternalAuthProfileProviderPluginIds =
   typeof import("./providers.js").resolveExternalAuthProfileProviderPluginIds;
 type ResolveOwningPluginIdsForProvider =
@@ -36,9 +36,8 @@ const isPluginProvidersLoadInFlightMock = vi.fn<IsPluginProvidersLoadInFlight>((
 const resolveCatalogHookProviderPluginIdsMock = vi.fn<ResolveCatalogHookProviderPluginIds>(
   (_) => [] as string[],
 );
-const resolveUsageHookProviderPluginContractsMock = vi.fn<ResolveUsageHookProviderPluginContracts>(
-  (_) => [],
-);
+const resolveExternalAuthProfileCompatFallbackPluginIdsMock =
+  vi.fn<ResolveExternalAuthProfileCompatFallbackPluginIds>((_) => [] as string[]);
 const resolveExternalAuthProfileProviderPluginIdsMock =
   vi.fn<ResolveExternalAuthProfileProviderPluginIds>((_) => [] as string[]);
 const resolveOwningPluginIdsForProviderMock = vi.fn<ResolveOwningPluginIdsForProvider>(
@@ -70,8 +69,10 @@ let resolveProviderFollowupFallbackRoute: typeof import("./provider-runtime.js")
 let resolveProviderStreamFn: typeof import("./provider-runtime.js").resolveProviderStreamFn;
 let resolveProviderTransportTurnStateWithPlugin: typeof import("./provider-runtime.js").resolveProviderTransportTurnStateWithPlugin;
 let resolveProviderCacheTtlEligibility: typeof import("./provider-runtime.js").resolveProviderCacheTtlEligibility;
+let resolveProviderBinaryThinking: typeof import("./provider-runtime.js").resolveProviderBinaryThinking;
 let createProviderEmbeddingProvider: typeof import("./provider-runtime.js").createProviderEmbeddingProvider;
 let resolveProviderThinkingProfile: typeof import("./provider-runtime.js").resolveProviderThinkingProfile;
+let resolveProviderDefaultThinkingLevel: typeof import("./provider-runtime.js").resolveProviderDefaultThinkingLevel;
 let resolveProviderModernModelRef: typeof import("./provider-runtime.js").resolveProviderModernModelRef;
 let resolveProviderReasoningOutputModeWithPlugin: typeof import("./provider-runtime.js").resolveProviderReasoningOutputModeWithPlugin;
 let resolveProviderReplayPolicyWithPlugin: typeof import("./provider-runtime.js").resolveProviderReplayPolicyWithPlugin;
@@ -82,9 +83,9 @@ let shouldDeferProviderSyntheticProfileAuthWithPlugin: typeof import("./provider
 let sanitizeProviderReplayHistoryWithPlugin: typeof import("./provider-runtime.js").sanitizeProviderReplayHistoryWithPlugin;
 let resolveProviderUsageSnapshotWithPlugin: typeof import("./provider-runtime.js").resolveProviderUsageSnapshotWithPlugin;
 let resolveProviderUsageAuthWithPlugin: typeof import("./provider-runtime.js").resolveProviderUsageAuthWithPlugin;
+let resolveProviderXHighThinking: typeof import("./provider-runtime.js").resolveProviderXHighThinking;
 let normalizeProviderToolSchemasWithPlugin: typeof import("./provider-runtime.js").normalizeProviderToolSchemasWithPlugin;
 let inspectProviderToolSchemasWithPlugin: typeof import("./provider-runtime.js").inspectProviderToolSchemasWithPlugin;
-let listProviderUsagePluginDescriptors: typeof import("./provider-runtime.js").listProviderUsagePluginDescriptors;
 let normalizeProviderResolvedModelWithPlugin: typeof import("./provider-runtime.js").normalizeProviderResolvedModelWithPlugin;
 let prepareProviderDynamicModel: typeof import("./provider-runtime.js").prepareProviderDynamicModel;
 let prepareProviderRuntimeAuth: typeof import("./provider-runtime.js").prepareProviderRuntimeAuth;
@@ -169,6 +170,14 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
 
 function firstMockArg(mock: { mock: { calls: unknown[][] } }): unknown {
   return mock.mock.calls[0]?.[0];
+}
+
+function firstMockStringArg(mock: { mock: { calls: unknown[][] } }, label: string): string {
+  const value = firstMockArg(mock);
+  if (typeof value !== "string") {
+    throw new Error(`Expected ${label} to be a string`);
+  }
+  return value;
 }
 
 function expectRecordFields(record: Record<string, unknown>, fields: Record<string, unknown>) {
@@ -281,8 +290,8 @@ describe("provider-runtime", () => {
     vi.doMock("./providers.js", () => ({
       resolveCatalogHookProviderPluginIds: (params: unknown) =>
         resolveCatalogHookProviderPluginIdsMock(params as never),
-      resolveUsageHookProviderPluginContracts: (params: unknown) =>
-        resolveUsageHookProviderPluginContractsMock(params as never),
+      resolveExternalAuthProfileCompatFallbackPluginIds: (params: unknown) =>
+        resolveExternalAuthProfileCompatFallbackPluginIdsMock(params as never),
       resolveExternalAuthProfileProviderPluginIds: (params: unknown) =>
         resolveExternalAuthProfileProviderPluginIdsMock(params as never),
       resolveOwningPluginIdsForProvider: (params: unknown) =>
@@ -325,8 +334,10 @@ describe("provider-runtime", () => {
       resolveProviderStreamFn,
       resolveProviderTransportTurnStateWithPlugin,
       resolveProviderCacheTtlEligibility,
+      resolveProviderBinaryThinking,
       createProviderEmbeddingProvider,
       resolveProviderThinkingProfile,
+      resolveProviderDefaultThinkingLevel,
       resolveProviderModernModelRef,
       resolveProviderReasoningOutputModeWithPlugin,
       resolveProviderReplayPolicyWithPlugin,
@@ -337,9 +348,9 @@ describe("provider-runtime", () => {
       sanitizeProviderReplayHistoryWithPlugin,
       resolveProviderUsageSnapshotWithPlugin,
       resolveProviderUsageAuthWithPlugin,
+      resolveProviderXHighThinking,
       normalizeProviderToolSchemasWithPlugin,
       inspectProviderToolSchemasWithPlugin,
-      listProviderUsagePluginDescriptors,
       normalizeProviderResolvedModelWithPlugin,
       prepareProviderDynamicModel,
       prepareProviderRuntimeAuth,
@@ -365,8 +376,8 @@ describe("provider-runtime", () => {
     isPluginProvidersLoadInFlightMock.mockReturnValue(false);
     resolveCatalogHookProviderPluginIdsMock.mockReset();
     resolveCatalogHookProviderPluginIdsMock.mockReturnValue([]);
-    resolveUsageHookProviderPluginContractsMock.mockReset();
-    resolveUsageHookProviderPluginContractsMock.mockReturnValue([]);
+    resolveExternalAuthProfileCompatFallbackPluginIdsMock.mockReset();
+    resolveExternalAuthProfileCompatFallbackPluginIdsMock.mockReturnValue([]);
     resolveExternalAuthProfileProviderPluginIdsMock.mockReset();
     resolveExternalAuthProfileProviderPluginIdsMock.mockReturnValue([]);
     resolveOwningPluginIdsForProviderMock.mockReset();
@@ -390,32 +401,6 @@ describe("provider-runtime", () => {
       provider: "Open Router",
       expectedPluginId: "openrouter",
     });
-  });
-
-  it("auto-discovers only usage providers declared by their owning plugin", () => {
-    resolveUsageHookProviderPluginContractsMock.mockReturnValue([
-      { pluginId: "multi-provider", providerIds: ["declared"] },
-    ]);
-    const usageHooks = {
-      auth: [],
-      resolveUsageAuth: vi.fn(async () => ({ token: "usage-token" })),
-      fetchUsageSnapshot: vi.fn(async () => ({
-        provider: "declared",
-        displayName: "Declared",
-        windows: [],
-      })),
-    };
-    resolvePluginProvidersMock.mockReturnValue([
-      { ...usageHooks, id: "declared", label: "Declared" },
-      { ...usageHooks, id: "undeclared", label: "Undeclared" },
-    ]);
-
-    expect(listProviderUsagePluginDescriptors({ env: process.env })).toEqual([
-      { provider: "declared", displayName: "Declared" },
-    ]);
-    expect(resolvePluginProvidersMock).toHaveBeenCalledWith(
-      expect.objectContaining({ onlyPluginIds: ["multi-provider"] }),
-    );
   });
 
   it("matches providers by hook alias for runtime hook lookup", () => {
@@ -763,22 +748,32 @@ describe("provider-runtime", () => {
       auth: [],
     };
     const config = {} as OpenClawConfig;
-    const envSnapshot = captureEnv(["HOME", "OPENCLAW_HOME"]);
+    const originalHome = process.env.HOME;
+    const originalOpenClawHome = process.env.OPENCLAW_HOME;
     try {
-      setTestEnvValue("HOME", "/home/one");
-      deleteTestEnvValue("OPENCLAW_HOME");
+      process.env.HOME = "/home/one";
+      delete process.env.OPENCLAW_HOME;
       resolvePluginProvidersMock.mockReturnValueOnce([firstProvider]);
       expect(resolveProviderRuntimePlugin({ provider: DEMO_PROVIDER_ID, config })).toBe(
         firstProvider,
       );
 
-      setTestEnvValue("HOME", "/home/two");
+      process.env.HOME = "/home/two";
       resolvePluginProvidersMock.mockReturnValueOnce([secondProvider]);
       expect(resolveProviderRuntimePlugin({ provider: DEMO_PROVIDER_ID, config })).toBe(
         secondProvider,
       );
     } finally {
-      envSnapshot.restore();
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      if (originalOpenClawHome === undefined) {
+        delete process.env.OPENCLAW_HOME;
+      } else {
+        process.env.OPENCLAW_HOME = originalOpenClawHome;
+      }
     }
 
     expect(resolvePluginProvidersMock).toHaveBeenCalledTimes(2);
@@ -914,6 +909,47 @@ describe("provider-runtime", () => {
     expect(resolvePluginProvidersMock).not.toHaveBeenCalled();
   });
 
+  it("keeps the deprecated external OAuth fallback at the plugin boundary", () => {
+    const unsafePluginId = "legacy-provider\nWARN forged";
+    resolveExternalAuthProfileCompatFallbackPluginIdsMock.mockReturnValue([unsafePluginId]);
+    resolvePluginProvidersMock.mockReturnValue([
+      {
+        id: "legacy-provider",
+        pluginId: unsafePluginId,
+        label: "Legacy Provider",
+        auth: [],
+        resolveExternalOAuthProfiles: () => [
+          {
+            profileId: "legacy-provider:external",
+            credential: {
+              type: "oauth",
+              provider: "legacy-provider",
+              access: "access",
+              refresh: "refresh",
+              expires: Date.now() + 60_000,
+            },
+          },
+        ],
+      },
+    ]);
+
+    for (let i = 0; i < 2; i += 1) {
+      const [profile] = resolveExternalAuthProfilesWithPlugins({
+        env: process.env,
+        context: {
+          env: process.env,
+          store: { version: 1, profiles: {} },
+        },
+      });
+      expect(profile?.profileId).toBe("legacy-provider:external");
+    }
+
+    expect(providerRuntimeWarnMock).toHaveBeenCalledTimes(1);
+    const warning = firstMockStringArg(providerRuntimeWarnMock, "provider warning");
+    expect(warning).toContain('Provider plugin "legacy-providerWARN forged"');
+    expect(warning).not.toContain("\n");
+  });
+
   it("resolves declared external auth plugins with different provider ids", () => {
     resolveExternalAuthProfileProviderPluginIdsMock.mockReturnValue(["demo-plugin"]);
     resolvePluginProvidersMock.mockReturnValue([
@@ -972,17 +1008,11 @@ describe("provider-runtime", () => {
       ...baseConfig,
       agents: { defaults: { model: "anthropic/claude-sonnet-4-5" } },
     } as OpenClawConfig;
-    const metadataSnapshot = {
-      index: {},
-      manifestRegistry: {},
-      workspaceDir: "/tmp/snapshot-workspace",
-    } as never;
 
     expect(
       await augmentModelCatalogWithProviderPlugins({
         config: firstConfig,
         env: process.env,
-        metadataSnapshot,
         context: { config: firstConfig, env: process.env, entries: [] },
       }),
     ).toEqual([{ provider: "demo", id: "demo-model", name: "Demo Model" }]);
@@ -990,24 +1020,11 @@ describe("provider-runtime", () => {
       await augmentModelCatalogWithProviderPlugins({
         config: secondConfig,
         env: process.env,
-        metadataSnapshot,
         context: { config: secondConfig, env: process.env, entries: [] },
       }),
     ).toEqual([{ provider: "demo", id: "demo-model", name: "Demo Model" }]);
 
     expect(resolvePluginProvidersMock).toHaveBeenCalledTimes(2);
-    expect(resolveCatalogHookProviderPluginIdsMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        metadataSnapshot,
-        workspaceDir: "/tmp/snapshot-workspace",
-      }),
-    );
-    expect(resolvePluginProvidersMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        pluginMetadataSnapshot: metadataSnapshot,
-        workspaceDir: "/tmp/snapshot-workspace",
-      }),
-    );
   });
 
   it("resolves catalog hook provider loads when unrelated plugin config changes", async () => {
@@ -1091,52 +1108,6 @@ describe("provider-runtime", () => {
       modelId: MODEL.id,
       provider: DEMO_PROVIDER_ID,
     });
-  });
-
-  it("unwraps secret sentinels only after finding the provider auth hook", async () => {
-    const { mintSecretSentinel } = await import("../secrets/sentinel.js");
-    const sourceToken = "provider-source-token";
-    const sourceSentinel = mintSecretSentinel(sourceToken, { label: "provider-runtime-test" });
-    const prepareRuntimeAuth = vi.fn(async () => ({ apiKey: "runtime-token" }));
-    resolvePluginProvidersMock.mockReturnValue([
-      {
-        id: DEMO_PROVIDER_ID,
-        label: "Demo",
-        auth: [],
-        prepareRuntimeAuth,
-      },
-    ]);
-
-    await prepareProviderRuntimeAuth({
-      provider: DEMO_PROVIDER_ID,
-      context: {
-        env: process.env,
-        provider: DEMO_PROVIDER_ID,
-        modelId: MODEL.id,
-        model: MODEL,
-        apiKey: sourceSentinel,
-        authMode: "token",
-      },
-    });
-
-    expect(prepareRuntimeAuth).toHaveBeenCalledWith(
-      expect.objectContaining({ apiKey: sourceToken }),
-    );
-
-    resolvePluginProvidersMock.mockReturnValue([]);
-    await expect(
-      prepareProviderRuntimeAuth({
-        provider: "provider-without-hook",
-        context: {
-          env: process.env,
-          provider: "provider-without-hook",
-          modelId: MODEL.id,
-          model: { ...MODEL, provider: "provider-without-hook" },
-          apiKey: "oc-sent-v2.unknown.end",
-          authMode: "token",
-        },
-      }),
-    ).resolves.toBeUndefined();
   });
 
   it("returns no runtime plugin when the provider has no owning plugin", () => {
@@ -1236,10 +1207,10 @@ describe("provider-runtime", () => {
 
     expect(contribution?.stablePrefix).toContain("<persona_latch>");
     expect(contribution?.sectionOverrides?.interaction_style).toContain(
-      "Live chat: short, natural, human.",
+      "Live chat tone: short, natural, human.",
     );
     expect(contribution?.sectionOverrides?.interaction_style).not.toContain(
-      "Heartbeat = useful proactive progress",
+      "Use heartbeats to create useful proactive progress",
     );
   });
 
@@ -1255,7 +1226,7 @@ describe("provider-runtime", () => {
     });
 
     expect(contribution?.sectionOverrides?.interaction_style).toContain(
-      "Heartbeat = useful proactive progress",
+      "Use heartbeats to create useful proactive progress",
     );
   });
 
@@ -1337,7 +1308,7 @@ describe("provider-runtime", () => {
 
     expect(contribution?.stablePrefix).toContain("<persona_latch>");
     expect(contribution?.sectionOverrides?.interaction_style).toContain(
-      "Live chat: short, natural, human.",
+      "Live chat tone: short, natural, human.",
     );
   });
 
@@ -1888,9 +1859,6 @@ describe("provider-runtime", () => {
 
   it("dispatches runtime hooks for the matched provider", async () => {
     resolveCatalogHookProviderPluginIdsMock.mockReturnValue(["openai"]);
-    resolveUsageHookProviderPluginContractsMock.mockReturnValue([
-      { pluginId: "demo", providerIds: ["demo"] },
-    ]);
     resolveExternalAuthProfileProviderPluginIdsMock.mockReturnValue(["demo"]);
     const prepareDynamicModel = vi.fn(async () => undefined);
     const createStreamFn = vi.fn(() => vi.fn());
@@ -2022,6 +1990,9 @@ describe("provider-runtime", () => {
           resolveUsageAuth,
           fetchUsageSnapshot,
           isCacheTtlEligible: ({ modelId }) => modelId.startsWith("anthropic/"),
+          isBinaryThinking: () => true,
+          supportsXHighThinking: ({ modelId }) => modelId === "gpt-5.4",
+          resolveDefaultThinkingLevel: ({ reasoning }) => (reasoning ? "low" : "off"),
           isModernModelRef: ({ modelId }) => modelId.startsWith("gpt-5"),
         },
         {
@@ -2033,10 +2004,6 @@ describe("provider-runtime", () => {
         } as ProviderPlugin,
       ];
     });
-
-    expect(listProviderUsagePluginDescriptors({ env: process.env })).toEqual([
-      { provider: "demo", displayName: "Demo" },
-    ]);
 
     expect(
       runProviderDynamicModel({
@@ -2350,6 +2317,37 @@ describe("provider-runtime", () => {
       },
       {
         actual: () =>
+          resolveProviderBinaryThinking({
+            provider: DEMO_PROVIDER_ID,
+            context: createDemoProviderContext({
+              modelId: "glm-5",
+            }),
+          }),
+        expected: true,
+      },
+      {
+        actual: () =>
+          resolveProviderXHighThinking({
+            provider: DEMO_PROVIDER_ID,
+            context: createDemoProviderContext({
+              modelId: "gpt-5.4",
+            }),
+          }),
+        expected: true,
+      },
+      {
+        actual: () =>
+          resolveProviderDefaultThinkingLevel({
+            provider: DEMO_PROVIDER_ID,
+            context: createDemoProviderContext({
+              modelId: "gpt-5.4",
+              reasoning: true,
+            }),
+          }),
+        expected: "low",
+      },
+      {
+        actual: () =>
           resolveProviderModernModelRef({
             provider: DEMO_PROVIDER_ID,
             context: createDemoProviderContext({
@@ -2579,6 +2577,40 @@ describe("provider-runtime", () => {
     });
   });
 
+  it("resolves bundled catalog hooks through provider plugins", async () => {
+    resolveCatalogHookProviderPluginIdsMock.mockReturnValue(["openai"]);
+    resolvePluginProvidersMock.mockImplementation((params?: { onlyPluginIds?: string[] }) => {
+      const onlyPluginIds = params?.onlyPluginIds;
+      if (!onlyPluginIds || !onlyPluginIds.includes("openai")) {
+        return [];
+      }
+      return [createOpenAiCatalogProviderPlugin()];
+    });
+
+    await expect(
+      augmentModelCatalogWithProviderPlugins({
+        env: process.env,
+        context: {
+          env: process.env,
+          entries: [
+            { provider: "openai", id: "gpt-5.4", name: "GPT-5.2" },
+            { provider: "openai", id: "gpt-5.4-pro", name: "GPT-5.2 Pro" },
+            { provider: "openai", id: "gpt-5.4-mini", name: "GPT-5 mini" },
+            { provider: "openai", id: "gpt-5.4-nano", name: "GPT-5 nano" },
+            { provider: "openai", id: "gpt-5.4", name: "GPT-5.4" },
+          ],
+        },
+      }),
+    ).resolves.toEqual(expectedAugmentedOpenaiCodexCatalogEntries);
+
+    expectRecordFields(getLastResolvePluginProvidersParams(), {
+      onlyPluginIds: ["openai"],
+      activate: false,
+    });
+    expect(resolveCatalogHookProviderPluginIdsMock).toHaveBeenCalledTimes(1);
+    expect(resolvePluginProvidersMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not stack-overflow when provider hook resolution reenters the same plugin load", () => {
     let providerLoadInFlight = false;
     isPluginProvidersLoadInFlightMock.mockImplementation(() => providerLoadInFlight);
@@ -2682,4 +2714,3 @@ describe("provider-runtime", () => {
     expect(resolvePluginProvidersMock).toHaveBeenCalledTimes(2);
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

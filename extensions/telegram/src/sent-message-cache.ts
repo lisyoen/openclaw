@@ -11,6 +11,9 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 export const TELEGRAM_SENT_MESSAGE_CACHE_NAMESPACE = "telegram.sent-messages";
 export const TELEGRAM_SENT_MESSAGE_CACHE_MAX_ENTRIES = 10_000;
 const TELEGRAM_SENT_MESSAGES_STATE_KEY = Symbol.for("openclaw.telegramSentMessagesState");
+const TELEGRAM_SENT_MESSAGES_STORE_FOR_TEST_KEY = Symbol.for(
+  "openclaw.telegramSentMessagesStoreForTest",
+);
 
 type PersistedSentMessage = {
   scopeKey: string;
@@ -30,6 +33,18 @@ type SentMessageBucket = {
 type SentMessageState = {
   bucketsByScope: Map<string, SentMessageBucket>;
 };
+
+let sentMessageStoreForTest: SentMessagePersistentStore | undefined;
+
+function getSentMessageStoreForTest(): SentMessagePersistentStore | undefined {
+  const globalStore = globalThis as Record<PropertyKey, unknown>;
+  return (
+    sentMessageStoreForTest ??
+    (globalStore[TELEGRAM_SENT_MESSAGES_STORE_FOR_TEST_KEY] as
+      | SentMessagePersistentStore
+      | undefined)
+  );
+}
 
 function getSentMessageState(): SentMessageState {
   const globalStore = globalThis as Record<PropertyKey, unknown>;
@@ -65,10 +80,13 @@ function sentMessageEntryKey(scopeKey: string, chatId: string, messageId: string
 }
 
 function openSentMessageStore(): SentMessagePersistentStore {
-  return getTelegramRuntime().state.openSyncKeyedStore<PersistedSentMessage>({
-    namespace: TELEGRAM_SENT_MESSAGE_CACHE_NAMESPACE,
-    maxEntries: TELEGRAM_SENT_MESSAGE_CACHE_MAX_ENTRIES,
-  });
+  return (
+    getSentMessageStoreForTest() ??
+    getTelegramRuntime().state.openSyncKeyedStore<PersistedSentMessage>({
+      namespace: TELEGRAM_SENT_MESSAGE_CACHE_NAMESPACE,
+      maxEntries: TELEGRAM_SENT_MESSAGE_CACHE_MAX_ENTRIES,
+    })
+  );
 }
 
 function cleanupExpired(
@@ -87,12 +105,6 @@ function cleanupExpired(
   }
 }
 
-function cleanupExpiredSentMessages(store: SentMessageStore, now: number): void {
-  for (const [scopeKey, entry] of store) {
-    cleanupExpired(store, scopeKey, entry, now);
-  }
-}
-
 function readLegacySentMessages(filePath: string): SentMessageStore {
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
@@ -105,7 +117,7 @@ function readLegacySentMessages(filePath: string): SentMessageStore {
         if (
           typeof timestamp === "number" &&
           Number.isFinite(timestamp) &&
-          now - timestamp < TTL_MS
+          now - timestamp <= TTL_MS
         ) {
           messages.set(messageId, timestamp);
         }
@@ -161,17 +173,23 @@ function getSentMessages(cfg?: Pick<OpenClawConfig, "session">): SentMessageStor
   return getSentMessageBucket(cfg).store;
 }
 
-function persistSentMessage(
-  bucket: SentMessageBucket,
-  chatId: string,
-  messageId: string,
-  timestamp: number,
-): void {
-  openSentMessageStore().register(
-    sentMessageEntryKey(bucket.scopeKey, chatId, messageId),
-    { scopeKey: bucket.scopeKey, chatId, messageId, timestamp },
-    { ttlMs: TTL_MS },
-  );
+function persistSentMessages(bucket: SentMessageBucket): void {
+  const { store, scopeKey } = bucket;
+  const now = Date.now();
+  for (const [chatId, entry] of store) {
+    cleanupExpired(store, chatId, entry, now);
+    for (const [messageId, timestamp] of entry) {
+      const ttlMs = TTL_MS - Math.max(0, now - timestamp);
+      if (ttlMs <= 0) {
+        continue;
+      }
+      openSentMessageStore().register(
+        sentMessageEntryKey(scopeKey, chatId, messageId),
+        { scopeKey, chatId, messageId, timestamp },
+        { ttlMs },
+      );
+    }
+  }
 }
 
 export function recordSentMessage(
@@ -190,9 +208,11 @@ export function recordSentMessage(
     store.set(scopeKey, entry);
   }
   entry.set(idKey, now);
-  cleanupExpiredSentMessages(store, now);
+  if (entry.size > 100) {
+    cleanupExpired(store, scopeKey, entry, now);
+  }
   try {
-    persistSentMessage(bucket, scopeKey, idKey, now);
+    persistSentMessages(bucket);
   } catch (error) {
     logVerbose(`telegram: failed to persist sent-message cache: ${String(error)}`);
   }
@@ -214,28 +234,45 @@ export function wasSentByBot(
   return entry.has(idKey);
 }
 
+export function clearSentMessageCache(): void {
+  const state = getSentMessageState();
+  for (const bucket of state.bucketsByScope.values()) {
+    bucket.store.clear();
+  }
+  state.bucketsByScope.clear();
+  openSentMessageStore().clear();
+}
+
+export function resetSentMessageCacheForTest(): void {
+  getSentMessageState().bucketsByScope.clear();
+}
+
+export function setTelegramSentMessageStoreForTest(
+  store: SentMessagePersistentStore | undefined,
+): void {
+  sentMessageStoreForTest = store;
+  const globalStore = globalThis as Record<PropertyKey, unknown>;
+  if (store) {
+    globalStore[TELEGRAM_SENT_MESSAGES_STORE_FOR_TEST_KEY] = store;
+  } else {
+    delete globalStore[TELEGRAM_SENT_MESSAGES_STORE_FOR_TEST_KEY];
+  }
+}
+
 export function listTelegramLegacySentMessageCacheEntries(params: {
   cfg?: Pick<OpenClawConfig, "session">;
   persistedPath?: string;
-}): Array<{ key: string; value: PersistedSentMessage; ttlMs?: number; timestamp?: number }> {
+}): Array<{ key: string; value: PersistedSentMessage; ttlMs?: number }> {
   const scopeKey = resolveSentMessageScopeKey(params.cfg);
   const filePath = params.persistedPath ?? resolveSentMessageStorePath(params.cfg);
   const legacy = fs.existsSync(filePath)
     ? readLegacySentMessages(filePath)
     : createSentMessageStore();
   return [...legacy.entries()].flatMap(([chatId, messages]) =>
-    [...messages.entries()].flatMap(([messageId, timestamp]) => {
-      const ttlMs = TTL_MS - Math.max(0, Date.now() - timestamp);
-      return ttlMs > 0
-        ? [
-            {
-              key: sentMessageEntryKey(scopeKey, chatId, messageId),
-              value: { scopeKey, chatId, messageId, timestamp },
-              ttlMs,
-              timestamp,
-            },
-          ]
-        : [];
-    }),
+    [...messages.entries()].map(([messageId, timestamp]) => ({
+      key: sentMessageEntryKey(scopeKey, chatId, messageId),
+      value: { scopeKey, chatId, messageId, timestamp },
+      ttlMs: Math.max(1, TTL_MS - Math.max(0, Date.now() - timestamp)),
+    })),
   );
 }

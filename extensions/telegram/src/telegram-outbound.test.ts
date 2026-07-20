@@ -1,10 +1,9 @@
-import { chunkMarkdownTextWithMode } from "openclaw/plugin-sdk/reply-chunking";
-import { sendTextMediaPayload } from "openclaw/plugin-sdk/reply-payload";
 // Telegram tests cover telegram outbound plugin behavior.
-import { describe, expect, it, vi } from "vitest";
-import { markdownToTelegramHtml, splitTelegramHtmlChunks } from "./format.js";
+import { chunkMarkdownTextWithMode } from "openclaw/plugin-sdk/reply-chunking";
+import { describe, expect, it } from "vitest";
+import { splitTelegramHtmlChunks } from "./format.js";
 import { telegramOutbound } from "./outbound-adapter.js";
-import { clearTelegramRuntimeForTest as clearTelegramRuntime } from "./runtime.test-support.js";
+import { clearTelegramRuntime } from "./runtime.js";
 
 function markdownTable(columns: number): string {
   return [
@@ -20,40 +19,18 @@ describe("telegramPlugin outbound", () => {
   it("uses static outbound contract when Telegram runtime is uninitialized", () => {
     clearTelegramRuntime();
     const text = `${"hello\n".repeat(1200)}tail`;
-    const expected = chunkMarkdownTextWithMode(text, 4000, "length");
+    const expected = chunkMarkdownTextWithMode(`${"hello  \n".repeat(1200)}tail`, 32_768, "length");
 
-    expect(telegramOutbound.chunker?.(text, 4000)).toEqual(expected);
+    expect(telegramOutbound.chunker?.(text, 32_768)).toEqual(expected);
     expect(telegramOutbound.deliveryMode).toBe("direct");
     expect(telegramOutbound.chunkerMode).toBe("markdown");
     expect(telegramOutbound.chunkedTextFormatting).toBeUndefined();
-    expect(telegramOutbound.textChunkLimit).toBe(4000);
+    expect(telegramOutbound.textChunkLimit).toBe(32_768);
     expect(telegramOutbound.presentationCapabilities?.limits?.text?.markdownDialect).toBe(
       "markdown",
     );
-    expect(telegramOutbound.pollMaxOptions).toBe(12);
-  });
-
-  it("strips assistant-visible tool traces before outbound delivery", () => {
-    clearTelegramRuntime();
-    const text = 'Done.\n⚠️ 🛠️ `search "Pipeline" in ~/.openclaw/workspace-* (agent)` failed';
-
-    expect(telegramOutbound.sanitizeText?.({ text, payload: { text } })).toBe("Done.");
-  });
-
-  it("preserves ordinary outbound text while sanitizing", () => {
-    clearTelegramRuntime();
-    const text = "The pipeline has 3 deals.";
-
-    expect(telegramOutbound.sanitizeText?.({ text, payload: { text } })).toBe(text);
-  });
-
-  it("uses Telegram markdown markers for sanitized HTML formatting", () => {
-    clearTelegramRuntime();
-    const text = `<strong title="b>">bold</strong> <del data-note='s>'>strike</del>`;
-    const sanitized = telegramOutbound.sanitizeText?.({ text, payload: { text } });
-
-    expect(sanitized).toBe("**bold** ~~strike~~");
-    expect(markdownToTelegramHtml(sanitized ?? "")).toBe("<b>bold</b> <s>strike</s>");
+    expect(telegramOutbound.sanitizeText).toBeUndefined();
+    expect(telegramOutbound.pollMaxOptions).toBe(10);
   });
 
   it("preserves explicit HTML parse mode before chunking", () => {
@@ -66,45 +43,7 @@ describe("telegramPlugin outbound", () => {
     expect(telegramOutbound.chunker?.(text, 4000)).toEqual([text]);
   });
 
-  it("delivers bounded HTML through the shared payload path when tag overhead overflows", async () => {
-    clearTelegramRuntime();
-    const oversizedLink = `<a href="https://example.com/${"x".repeat(4_000)}">first</a>`;
-    const text = `${oversizedLink}<b>second</b>`;
-    const sendTelegram = vi.fn().mockResolvedValue({ messageId: "tg-1", chatId: "12345" });
-
-    await sendTextMediaPayload({
-      channel: "telegram",
-      ctx: {
-        cfg: {},
-        to: "12345",
-        text: "",
-        payload: { text },
-        formatting: { parseMode: "HTML" },
-        deps: { sendTelegram },
-      },
-      adapter: telegramOutbound,
-    });
-
-    expect(sendTelegram).toHaveBeenCalledTimes(1);
-    expect(sendTelegram).toHaveBeenCalledWith(
-      "12345",
-      "first<b>second</b>",
-      expect.objectContaining({ textMode: "html" }),
-    );
-  });
-
-  it("keeps astral characters whole at positive configured chunk limits", () => {
-    clearTelegramRuntime();
-
-    expect(telegramOutbound.chunker?.("A😀B", 1)).toEqual(["A", "😀", "B"]);
-    expect(telegramOutbound.chunker?.("A😀B", 1, { formatting: { parseMode: "HTML" } })).toEqual([
-      "A",
-      "😀",
-      "B",
-    ]);
-  });
-
-  it("preserves markdown tables for the configured delivery renderer", () => {
+  it("keeps markdown tables intact for rich message parsing", () => {
     clearTelegramRuntime();
     const text = ["| Name | Value |", "|------|-------|", "| A | 1 |"].join("\n");
 
@@ -115,66 +54,65 @@ describe("telegramPlugin outbound", () => {
     expect(chunks).toEqual([text]);
   });
 
-  it("keeps wide markdown tables as visible text in the HTML text path", () => {
+  it("wraps wide markdown tables before rich message parsing", () => {
     clearTelegramRuntime();
     const text = markdownTable(21);
 
-    const chunks = telegramOutbound.chunker?.(text, 4000);
+    const chunks = telegramOutbound.chunker?.(text, 32_768);
 
-    expect(chunks).toHaveLength(1);
-    expect(chunks?.[0]).toContain("| H21 |");
-    expect(chunks?.[0]).toContain("| 1 | 2 | 3 |");
+    expect(chunks).toEqual(["```\n" + text + "\n```"]);
   });
 
-  it("preserves both fenced and unfenced wide tables as visible text", () => {
+  it("wraps only wide markdown tables outside fences", () => {
     clearTelegramRuntime();
     const fencedTable = markdownTable(25);
     const outsideTable = markdownTable(21);
     const text = ["Before", "~~~", fencedTable, "~~~", "After", outsideTable].join("\n");
 
-    const chunks = telegramOutbound.chunker?.(text, 4000);
+    const chunks = telegramOutbound.chunker?.(text, 32_768);
 
-    expect(chunks).toHaveLength(1);
-    expect(chunks?.[0]).toContain("Before");
-    expect(chunks?.[0]).toContain("After");
-    expect(chunks?.[0]).toContain(fencedTable);
-    expect(chunks?.[0]).toContain(outsideTable);
+    expect(chunks).toEqual([
+      ["Before", "~~~", fencedTable, "~~~", "After", "```", outsideTable, "```"].join("\n"),
+    ]);
   });
 
-  it("chunks long markdown paragraphs by the Telegram text-message limit", () => {
+  it("chunks rich markdown by Telegram's block limit", () => {
     clearTelegramRuntime();
     const text = Array.from({ length: 900 }, (_, index) => `Paragraph ${index + 1}`).join("\n\n");
 
-    const chunks = telegramOutbound.chunker?.(text, 4000);
+    const chunks = telegramOutbound.chunker?.(text, 32_768);
 
-    expect((chunks?.length ?? 0) > 1).toBe(true);
-    expect(chunks?.every((chunk) => chunk.length <= 4000)).toBe(true);
-    expect(chunks?.join("")).toContain("Paragraph 900");
+    expect(chunks).toHaveLength(2);
+    expect(
+      chunks?.every(
+        (chunk) => chunk.split(/\n[\t ]*\n+/).filter((block) => block.trim()).length <= 500,
+      ),
+    ).toBe(true);
+    expect(chunks?.join("\n\n")).toBe(text);
   });
 
-  it("chunks long markdown headings by the Telegram text-message limit", () => {
+  it("chunks rich markdown headings by Telegram's block limit", () => {
     clearTelegramRuntime();
     const text = Array.from({ length: 600 }, (_, index) => `# Heading ${index + 1}`).join("\n");
 
-    const chunks = telegramOutbound.chunker?.(text, 4000);
+    const chunks = telegramOutbound.chunker?.(text, 32_768);
 
-    expect((chunks?.length ?? 0) > 1).toBe(true);
-    expect(chunks?.every((chunk) => chunk.length <= 4000)).toBe(true);
-    expect(chunks?.join("")).toContain("Heading 600");
+    expect(chunks).toHaveLength(2);
+    expect(chunks?.at(0)?.match(/^# /gm)).toHaveLength(500);
+    expect(chunks?.at(1)?.match(/^# /gm)).toHaveLength(100);
+    expect(chunks?.join("\n")).toBe(text);
   });
 
-  it("chunks long markdown lists by the Telegram text-message limit", () => {
+  it("keeps long rich markdown lists intact", () => {
     clearTelegramRuntime();
     const text = Array.from({ length: 600 }, (_, index) => `- Item ${index + 1}`).join("\n");
 
-    const chunks = telegramOutbound.chunker?.(text, 4000);
+    const chunks = telegramOutbound.chunker?.(text, 32_768);
 
-    expect((chunks?.length ?? 0) > 1).toBe(true);
-    expect(chunks?.every((chunk) => chunk.length <= 4000)).toBe(true);
-    expect(chunks?.join("")).toContain("Item 600");
+    expect(chunks).toEqual([text]);
   });
 
-  it("chunks tall markdown tables by the Telegram text-message limit", () => {
+  it("keeps tall rich markdown tables intact", () => {
     clearTelegramRuntime();
     const text = [
       "| Name | Value |",
@@ -182,10 +120,8 @@ describe("telegramPlugin outbound", () => {
       ...Array.from({ length: 600 }, (_, index) => `| Row ${index + 1} | ${index + 1} |`),
     ].join("\n");
 
-    const chunks = telegramOutbound.chunker?.(text, 4000);
+    const chunks = telegramOutbound.chunker?.(text, 32_768);
 
-    expect((chunks?.length ?? 0) > 1).toBe(true);
-    expect(chunks?.every((chunk) => chunk.length <= 4000)).toBe(true);
-    expect(chunks?.join("")).toContain("Row 600");
+    expect(chunks).toEqual([text]);
   });
 });

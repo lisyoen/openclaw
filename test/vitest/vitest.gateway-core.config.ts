@@ -24,8 +24,6 @@ export function createGatewayCoreVitestConfig(env?: Record<string, string | unde
     dir: "src/gateway",
     env,
     exclude: nonCoreGatewayTestExclude,
-    // Gateway child projects share one include file; preserve this project's ownership.
-    intersectIncludeFile: true,
     name: "gateway-core",
   });
 }

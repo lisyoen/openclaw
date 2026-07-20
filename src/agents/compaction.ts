@@ -2,9 +2,9 @@
  * Summarization and fallback helpers for transcript compaction.
  */
 import type { AgentCompactionIdentifierPolicy } from "../config/types.agent-defaults.js";
-import { isAbortError } from "../infra/abort-signal.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { retryAsync } from "../infra/retry.js";
+import { isAbortError } from "../infra/unhandled-rejections.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   buildOversizedFallbackPlanWithWorker,
@@ -13,11 +13,14 @@ import {
 } from "./compaction-planning-worker.js";
 import {
   BASE_CHUNK_RATIO,
+  chunkMessagesByMaxTokens,
   computeAdaptiveChunkRatio,
   estimateMessagesTokens,
   isOversizedForSummary,
   MIN_CHUNK_RATIO,
+  pruneHistoryForContextShare,
   SAFETY_MARGIN,
+  splitMessagesByTokenShare,
   SUMMARIZATION_OVERHEAD_TOKENS,
 } from "./compaction-planning.js";
 import { DEFAULT_CONTEXT_TOKENS } from "./defaults.js";
@@ -28,11 +31,14 @@ import { generateSummary as agentGenerateSummary } from "./sessions/index.js";
 
 export {
   BASE_CHUNK_RATIO,
+  chunkMessagesByMaxTokens,
   computeAdaptiveChunkRatio,
   estimateMessagesTokens,
   isOversizedForSummary,
   MIN_CHUNK_RATIO,
+  pruneHistoryForContextShare,
   SAFETY_MARGIN,
+  splitMessagesByTokenShare,
   SUMMARIZATION_OVERHEAD_TOKENS,
 };
 
@@ -40,14 +46,7 @@ const log = createSubsystemLogger("compaction");
 
 type PartialSummaryError = Error & { partialSummary?: string };
 
-type CompactionSummaryResult =
-  | { kind: "summary"; text: string }
-  | { kind: "generic-fallback"; text: string };
-
 const DEFAULT_SUMMARY_FALLBACK = "No prior history.";
-const MAX_CONSECUTIVE_GENERIC_FALLBACKS = 2;
-const CIRCUIT_OPEN_ERROR =
-  "Compaction staged summarization stopped after repeated generic fallbacks";
 const MERGE_SUMMARIES_INSTRUCTIONS = [
   "Merge these partial summaries into a single cohesive summary.",
   "",
@@ -65,6 +64,22 @@ const MERGE_SUMMARIES_INSTRUCTIONS = [
 const IDENTIFIER_PRESERVATION_INSTRUCTIONS =
   "Preserve all opaque identifiers exactly as written (no shortening or reconstruction), " +
   "including UUIDs, hashes, IDs, hostnames, IPs, ports, URLs, and file names.";
+
+const HANDOFF_INSTRUCTIONS = [
+  "Generate a concise recovery briefing for a new LLM taking over this session.",
+  "The previous model hit a quota limit and you are providing the context for a smooth handoff.",
+  "",
+  "LEADER HIERARCHY REINFORCEMENT:",
+  "- Explicitly state that the new model is the LEADER (Orchestrator).",
+  "- Identify any active autonomous units (like AutoClaw) as SUBORDINATES.",
+  "- Instruct the new model to NOT perform the subordinate's task, but to supervise and provide strategic commands.",
+  "",
+  "MUST CAPTURE:",
+  "- Current high-level goal and project path.",
+  "- Status of the latest tool executions (especially AutoClaw/Subagents).",
+  "- Critical files currently being modified.",
+  "- Pending items and next intended steps.",
+].join("\n");
 
 /** Optional instruction policy for preserving identifiers during compaction. */
 export type CompactionSummarizationInstructions = {
@@ -111,7 +126,7 @@ function resolveIdentifierPreservationInstructions(
 }
 
 /** Combines identifier-preservation and caller-provided compaction instructions. */
-function buildCompactionSummarizationInstructions(
+export function buildCompactionSummarizationInstructions(
   customInstructions?: string,
   instructions?: CompactionSummarizationInstructions,
 ): string | undefined {
@@ -176,31 +191,13 @@ async function summarizeChunks(params: {
           maxDelayMs: 5000,
           jitter: 0.2,
           label: "compaction/generateSummary",
-          shouldRetry: (err) => {
-            // Stop retrying when the caller explicitly cancelled.
-            if (params.signal.aborted) {
-              return false;
-            }
-            // Preserve existing non-retry policy for real network/transport
-            // timeouts (e.g. "fetch failed", ETIMEDOUT) that are not AbortErrors.
-            if (!isAbortError(err) && isTimeoutError(err)) {
-              return false;
-            }
-            // Provider-side AbortErrors with signal not yet aborted are
-            // transient disconnects — retrying is correct.
-            return true;
-          },
+          shouldRetry: (err) => !isAbortError(err) && !isTimeoutError(err),
         },
       );
       hasGeneratedChunk = true;
     } catch (err) {
-      // Propagate only when the caller explicitly cancelled. Provider-side
-      // AbortErrors (signal not aborted) fall through to partial/fallback paths.
-      if (params.signal.aborted) {
-        throw err;
-      }
-      // Real non-abort transport timeouts still propagate immediately.
-      if (!isAbortError(err) && isTimeoutError(err)) {
+      // Abort and timeout errors always propagate immediately.
+      if (isAbortError(err) || isTimeoutError(err)) {
         throw err;
       }
       // No chunk has succeeded yet — rethrow so summarizeWithFallback
@@ -265,7 +262,7 @@ function generateSummary(
  * Summarize with progressive fallback for handling oversized messages.
  * If full summarization fails, tries partial summarization excluding oversized messages.
  */
-async function summarizeWithFallbackResult(params: {
+export async function summarizeWithFallback(params: {
   messages: AgentMessage[];
   model: NonNullable<ExtensionContext["model"]>;
   apiKey: string;
@@ -277,24 +274,18 @@ async function summarizeWithFallbackResult(params: {
   customInstructions?: string;
   summarizationInstructions?: CompactionSummarizationInstructions;
   previousSummary?: string;
-}): Promise<CompactionSummaryResult> {
+}): Promise<string> {
   const { messages, contextWindow } = params;
 
   if (messages.length === 0) {
-    return {
-      kind: "summary",
-      text: params.previousSummary ?? DEFAULT_SUMMARY_FALLBACK,
-    };
+    return params.previousSummary ?? DEFAULT_SUMMARY_FALLBACK;
   }
 
   // Try full summarization first
   let partialSummaryFallback: string | undefined;
   try {
-    return { kind: "summary", text: await summarizeChunks(params) };
+    return await summarizeChunks(params);
   } catch (fullError) {
-    if (params.signal.aborted) {
-      throw fullError;
-    }
     log.warn(`Full summarization failed: ${formatErrorMessage(fullError)}`);
     partialSummaryFallback = (fullError as PartialSummaryError).partialSummary;
   }
@@ -315,11 +306,8 @@ async function summarizeWithFallbackResult(params: {
         messages: smallMessages,
       });
       const notes = oversizedNotes.length > 0 ? `\n\n${oversizedNotes.join("\n")}` : "";
-      return { kind: "summary", text: partialSummary + notes };
+      return partialSummary + notes;
     } catch (partialError) {
-      if (params.signal.aborted) {
-        throw partialError;
-      }
       log.warn(`Partial summarization also failed: ${formatErrorMessage(partialError)}`);
       // Prefer the oversized retry's partial summary over the full attempt's,
       // since it covers the non-oversized transcript. Append oversized notes
@@ -334,45 +322,12 @@ async function summarizeWithFallbackResult(params: {
 
   // Final fallback: use best available partial summary, otherwise generic note
   if (partialSummaryFallback) {
-    return { kind: "summary", text: partialSummaryFallback };
+    return partialSummaryFallback;
   }
-  return {
-    kind: "generic-fallback",
-    text:
-      `Context contained ${messages.length} messages (${oversizedNotes.length} oversized). ` +
-      `Summary unavailable due to size limits.`,
-  };
-}
-
-async function summarizeWithFallback(
-  params: Parameters<typeof summarizeWithFallbackResult>[0],
-): Promise<string> {
-  return (await summarizeWithFallbackResult(params)).text;
-}
-
-/** Extracts a compact timestamp range from a chunk of messages for merge metadata. */
-function extractChunkTimeRange(chunk: AgentMessage[]): string {
-  let earliest: number | undefined;
-  let latest: number | undefined;
-  for (const message of chunk) {
-    const timestamp = message.timestamp;
-    if (
-      typeof timestamp !== "number" ||
-      timestamp <= 0 ||
-      !Number.isFinite(new Date(timestamp).getTime())
-    ) {
-      continue;
-    }
-    earliest = earliest === undefined ? timestamp : Math.min(earliest, timestamp);
-    latest = latest === undefined ? timestamp : Math.max(latest, timestamp);
-  }
-  if (earliest === undefined || latest === undefined) {
-    return "";
-  }
-  const format = (timestamp: number) =>
-    new Date(timestamp).toISOString().replace("T", " ").slice(0, 16);
-  const range = earliest === latest ? format(earliest) : `${format(earliest)} — ${format(latest)}`;
-  return ` [${range} UTC]`;
+  return (
+    `Context contained ${messages.length} messages (${oversizedNotes.length} oversized). ` +
+    `Summary unavailable due to size limits.`
+  );
 }
 
 /** Summarizes history in multiple stages when a single pass would be too large. */
@@ -390,13 +345,10 @@ export async function summarizeInStages(params: {
   previousSummary?: string;
   parts?: number;
   minMessagesForSplit?: number;
-}): Promise<CompactionSummaryResult> {
+}): Promise<string> {
   const { messages } = params;
   if (messages.length === 0) {
-    return {
-      kind: "summary",
-      text: params.previousSummary ?? DEFAULT_SUMMARY_FALLBACK,
-    };
+    return params.previousSummary ?? DEFAULT_SUMMARY_FALLBACK;
   }
 
   const plan = await buildStageSplitPlanWithWorker({
@@ -408,91 +360,70 @@ export async function summarizeInStages(params: {
   });
 
   if (plan.mode === "single") {
-    return summarizeWithFallbackResult(params);
+    return summarizeWithFallback(params);
   }
 
   const partialSummaries: string[] = [];
-  let consecutiveGenericFallbacks = 0;
-  // Caller-owned leading context lives in the oldest split. Only losing that
-  // split requires restoration; later fallback placeholders remain in the merge.
-  let oldestChunkDegraded = false;
-  for (const [index, chunk] of plan.chunks.entries()) {
-    const result = await summarizeWithFallbackResult({
-      ...params,
-      messages: chunk,
-      previousSummary: undefined,
-    });
-    consecutiveGenericFallbacks =
-      result.kind === "generic-fallback" ? consecutiveGenericFallbacks + 1 : 0;
-    if (index === 0) {
-      oldestChunkDegraded = result.kind === "generic-fallback";
-    }
-
-    // Keep one placeholder to mark the missing split, but stop before repeated
-    // placeholders trigger more split requests or a doomed merge request.
-    if (consecutiveGenericFallbacks >= MAX_CONSECUTIVE_GENERIC_FALLBACKS) {
-      log.warn("compaction staged summarization stopped after repeated generic fallbacks", {
-        attemptedSplits: index + 1,
-        consecutiveGenericFallbacks,
-        totalSplits: plan.chunks.length,
-      });
-      // The remaining chunks were never attempted. Abort the whole compaction
-      // so the caller keeps the source transcript instead of committing a gap.
-      throw new Error(CIRCUIT_OPEN_ERROR);
-    }
-    partialSummaries.push(result.text);
+  for (const chunk of plan.chunks) {
+    partialSummaries.push(
+      await summarizeWithFallback({
+        ...params,
+        messages: chunk,
+        previousSummary: undefined,
+      }),
+    );
   }
 
   if (partialSummaries.length === 1) {
-    const summary = partialSummaries.at(0);
-    if (summary === undefined) {
-      throw new Error("Compaction summary plan produced no summary");
-    }
-    return {
-      kind: oldestChunkDegraded ? "generic-fallback" : "summary",
-      text: summary,
-    };
+    return partialSummaries[0];
   }
 
-  // Capture once so timestamps are strictly monotonic across
-  // all synthetic messages regardless of how long the map iteration takes.
-  const now = Date.now();
-  const summaryMessages: AgentMessage[] = partialSummaries.map((summary, index) => {
-    // serializeConversation preserves content but not timestamps, so chronology
-    // must be explicit in the text consumed by the merge model.
-    const chunk = plan.chunks.at(index);
-    if (!chunk) {
-      throw new Error(`Compaction summary plan is missing chunk ${index}`);
-    }
-    const timeRange = extractChunkTimeRange(chunk);
-    const label =
-      index === 0
-        ? `[Chunk 1 — oldest messages${timeRange}]`
-        : index === partialSummaries.length - 1
-          ? `[Chunk ${partialSummaries.length} — most recent messages${timeRange}]`
-          : `[Chunk ${index + 1}/${partialSummaries.length}${timeRange}]`;
-    return {
-      role: "user",
-      content: `${label}\n${summary}`,
-      // Ascending timestamps preserve chronological order for any code
-      // path that reads the AgentMessage timestamp field directly.
-      timestamp: now - (partialSummaries.length - 1 - index),
-    };
-  });
+  const summaryMessages: AgentMessage[] = partialSummaries.map((summary) => ({
+    role: "user",
+    content: summary,
+    timestamp: Date.now(),
+  }));
 
   const custom = params.customInstructions?.trim();
   const mergeInstructions = custom
     ? `${MERGE_SUMMARIES_INSTRUCTIONS}\n\n${custom}`
     : MERGE_SUMMARIES_INSTRUCTIONS;
 
-  const mergedResult = await summarizeWithFallbackResult({
+  return summarizeWithFallback({
     ...params,
     messages: summaryMessages,
     customInstructions: mergeInstructions,
   });
-  return oldestChunkDegraded && mergedResult.kind === "summary"
-    ? { kind: "generic-fallback", text: mergedResult.text }
-    : mergedResult;
+}
+
+/**
+ * Generates a concise handoff summary for model transitions, enforcing a 4000 token limit.
+ */
+export async function summarizeForHandoff(params: {
+  messages: AgentMessage[];
+  model: NonNullable<ExtensionContext["model"]>;
+  apiKey: string;
+  headers?: Record<string, string>;
+  signal: AbortSignal;
+  maxChunkTokens: number;
+  contextWindow: number;
+  customInstructions?: string;
+  summarizationInstructions?: CompactionSummarizationInstructions;
+}): Promise<string> {
+  const custom = params.customInstructions?.trim();
+  const handoffInstructions = custom
+    ? `${HANDOFF_INSTRUCTIONS}\n\n${custom}`
+    : HANDOFF_INSTRUCTIONS;
+
+  // Use a hard cap of 4000 tokens for the handoff summary as per plan
+  const handoffMaxTokens = 4000;
+
+  return summarizeWithFallback({
+    ...params,
+    reserveTokens: SUMMARIZATION_OVERHEAD_TOKENS,
+    maxChunkTokens: Math.min(params.maxChunkTokens, handoffMaxTokens),
+    customInstructions: handoffInstructions,
+  });
 }
 
 /** Resolves a positive context-window token count from model metadata. */
@@ -500,11 +431,4 @@ export function resolveContextWindowTokens(model?: ExtensionContext["model"]): n
   const effective =
     (model as { contextTokens?: number } | undefined)?.contextTokens ?? model?.contextWindow;
   return Math.max(1, Math.floor(effective ?? DEFAULT_CONTEXT_TOKENS));
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.compactionTestApi")] = {
-    buildCompactionSummarizationInstructions,
-    summarizeWithFallback,
-  };
 }

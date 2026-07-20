@@ -6,32 +6,64 @@ read_when:
   - Working on security features or audit responses
 ---
 
-**Version:** 1.0-draft | **Framework:** [MITRE ATLAS](https://atlas.mitre.org/) (Adversarial Threat Landscape for AI Systems) + data flow diagrams
+## MITRE ATLAS framework
 
-This threat model documents adversarial threats to the OpenClaw AI agent platform and ClawHub skill marketplace. It is a living document maintained by the OpenClaw community. See [Contributing to the threat model](/security/CONTRIBUTING-THREAT-MODEL) for how to report new threats, propose attack chains, or suggest mitigations.
+**Version:** 1.0-draft
+**Last Updated:** 2026-02-04
+**Methodology:** MITRE ATLAS + Data Flow Diagrams
+**Framework:** [MITRE ATLAS](https://atlas.mitre.org/) (Adversarial Threat Landscape for AI Systems)
 
-**Key ATLAS resources:** [Techniques](https://atlas.mitre.org/techniques/) | [Tactics](https://atlas.mitre.org/tactics/) | [Case studies](https://atlas.mitre.org/studies/) | [ATLAS GitHub](https://github.com/mitre-atlas/atlas-data) | [Contributing to ATLAS](https://atlas.mitre.org/resources/contribute)
+### Framework attribution
+
+This threat model is built on [MITRE ATLAS](https://atlas.mitre.org/), the industry-standard framework for documenting adversarial threats to AI/ML systems. ATLAS is maintained by [MITRE](https://www.mitre.org/) in collaboration with the AI security community.
+
+**Key ATLAS Resources:**
+
+- [ATLAS Techniques](https://atlas.mitre.org/techniques/)
+- [ATLAS Tactics](https://atlas.mitre.org/tactics/)
+- [ATLAS Case Studies](https://atlas.mitre.org/studies/)
+- [ATLAS GitHub](https://github.com/mitre-atlas/atlas-data)
+- [Contributing to ATLAS](https://atlas.mitre.org/resources/contribute)
+
+### Contributing to This Threat Model
+
+This is a living document maintained by the OpenClaw community. See [CONTRIBUTING-THREAT-MODEL.md](/security/CONTRIBUTING-THREAT-MODEL) for guidelines on contributing:
+
+- Reporting new threats
+- Updating existing threats
+- Proposing attack chains
+- Suggesting mitigations
 
 ---
 
-## 1. Scope
+## 1. Introduction
+
+### 1.1 Purpose
+
+This threat model documents adversarial threats to the OpenClaw AI agent platform and ClawHub skill marketplace, using the MITRE ATLAS framework designed specifically for AI/ML systems.
+
+### 1.2 Scope
 
 | Component              | Included | Notes                                            |
 | ---------------------- | -------- | ------------------------------------------------ |
-| OpenClaw agent runtime | Yes      | Core agent execution, tool calls, sessions       |
+| OpenClaw Agent Runtime | Yes      | Core agent execution, tool calls, sessions       |
 | Gateway                | Yes      | Authentication, routing, channel integration     |
-| Channel integrations   | Yes      | WhatsApp, Telegram, Discord, Signal, Slack, etc. |
-| ClawHub marketplace    | Yes      | Skill publishing, moderation, distribution       |
-| MCP servers            | Yes      | External tool providers                          |
-| User devices           | Partial  | Mobile apps, desktop clients                     |
+| Channel Integrations   | Yes      | WhatsApp, Telegram, Discord, Signal, Slack, etc. |
+| ClawHub Marketplace    | Yes      | Skill publishing, moderation, distribution       |
+| MCP Servers            | Yes      | External tool providers                          |
+| User Devices           | Partial  | Mobile apps, desktop clients                     |
 
-Out-of-scope reports and false-positive patterns (public internet exposure, prompt-injection-only chains without a boundary bypass, mutually untrusted operators sharing one gateway host, and others) are enumerated in [`SECURITY.md`](https://github.com/openclaw/openclaw/blob/main/SECURITY.md); that file is the current source of truth for vulnerability-report scope, not this page.
+### 1.3 Out of Scope
 
-## 2. System architecture
+Nothing is explicitly out of scope for this threat model.
 
-### 2.1 Trust boundaries
+---
 
-```text
+## 2. System Architecture
+
+### 2.1 Trust Boundaries
+
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    UNTRUSTED ZONE                                │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
@@ -45,9 +77,9 @@ Out-of-scope reports and false-positive patterns (public internet exposure, prom
 │                 TRUST BOUNDARY 1: Channel Access                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                      GATEWAY                              │   │
-│  │  • Device pairing (1h DM pairing / 5m node pairing TTL)   │   │
-│  │  • AllowFrom / allowlist validation                       │   │
-│  │  • Token / password / Tailscale auth                      │   │
+│  │  • Device Pairing (1h DM / 5m node grace period)           │   │
+│  │  • AllowFrom / AllowList validation                       │   │
+│  │  • Token/Password/Tailscale auth                          │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -67,7 +99,7 @@ Out-of-scope reports and false-positive patterns (public internet exposure, prom
 │                 TRUST BOUNDARY 3: Tool Execution                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                  EXECUTION SANDBOX                        │   │
-│  │  • Docker sandbox (default) or host (exec approvals)      │   │
+│  │  • Docker sandbox OR Host (exec-approvals)                │   │
 │  │  • Node remote execution                                  │   │
 │  │  • SSRF protection (DNS pinning + IP blocking)            │   │
 │  └──────────────────────────────────────────────────────────┘   │
@@ -78,7 +110,7 @@ Out-of-scope reports and false-positive patterns (public internet exposure, prom
 │                 TRUST BOUNDARY 4: External Content               │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │              FETCHED URLs / EMAILS / WEBHOOKS             │   │
-│  │  • External content wrapping (random-boundary XML tags)   │   │
+│  │  • External content wrapping (XML tags)                   │   │
 │  │  • Security notice injection                              │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
@@ -89,359 +121,378 @@ Out-of-scope reports and false-positive patterns (public internet exposure, prom
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │                      CLAWHUB                              │   │
 │  │  • Skill publishing (semver, SKILL.md required)           │   │
-│  │  • Static pattern + AST-adjacent moderation scanning      │   │
-│  │  • LLM-based agentic risk review + VirusTotal scanning    │   │
-│  │  • GitHub account age verification (14 days)              │   │
+│  │  • Pattern-based moderation flags                         │   │
+│  │  • VirusTotal scanning (coming soon)                      │   │
+│  │  • GitHub account age verification                        │   │
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 Data flows
+### 2.2 Data Flows
 
-| Flow | Source  | Destination | Data                 | Protection           |
-| ---- | ------- | ----------- | -------------------- | -------------------- |
-| F1   | Channel | Gateway     | User messages        | TLS, AllowFrom       |
-| F2   | Gateway | Agent       | Routed messages      | Session isolation    |
-| F3   | Agent   | Tools       | Tool invocations     | Policy enforcement   |
-| F4   | Agent   | External    | `web_fetch` requests | SSRF blocking        |
-| F5   | ClawHub | Agent       | Skill code           | Moderation, scanning |
-| F6   | Agent   | Channel     | Responses            | Output filtering     |
+| Flow | Source  | Destination | Data               | Protection           |
+| ---- | ------- | ----------- | ------------------ | -------------------- |
+| F1   | Channel | Gateway     | User messages      | TLS, AllowFrom       |
+| F2   | Gateway | Agent       | Routed messages    | Session isolation    |
+| F3   | Agent   | Tools       | Tool invocations   | Policy enforcement   |
+| F4   | Agent   | External    | web_fetch requests | SSRF blocking        |
+| F5   | ClawHub | Agent       | Skill code         | Moderation, scanning |
+| F6   | Agent   | Channel     | Responses          | Output filtering     |
 
 ---
 
-## 3. Threat analysis by ATLAS tactic
+## 3. Threat Analysis by ATLAS Tactic
 
 ### 3.1 Reconnaissance (AML.TA0002)
 
-#### T-RECON-001: Agent endpoint discovery
+#### T-RECON-001: Agent Endpoint Discovery
 
 | Attribute               | Value                                                                |
 | ----------------------- | -------------------------------------------------------------------- |
 | **ATLAS ID**            | AML.T0006 - Active Scanning                                          |
 | **Description**         | Attacker scans for exposed OpenClaw gateway endpoints                |
-| **Attack vector**       | Network scanning, Shodan queries, DNS enumeration                    |
-| **Affected components** | Gateway, exposed API endpoints                                       |
-| **Current mitigations** | Tailscale auth option, bind to loopback by default                   |
-| **Residual risk**       | Medium - public gateways discoverable                                |
+| **Attack Vector**       | Network scanning, shodan queries, DNS enumeration                    |
+| **Affected Components** | Gateway, exposed API endpoints                                       |
+| **Current Mitigations** | Tailscale auth option, bind to loopback by default                   |
+| **Residual Risk**       | Medium - Public gateways discoverable                                |
 | **Recommendations**     | Document secure deployment, add rate limiting on discovery endpoints |
 
-#### T-RECON-002: Channel integration probing
+#### T-RECON-002: Channel Integration Probing
 
 | Attribute               | Value                                                              |
 | ----------------------- | ------------------------------------------------------------------ |
 | **ATLAS ID**            | AML.T0006 - Active Scanning                                        |
 | **Description**         | Attacker probes messaging channels to identify AI-managed accounts |
-| **Attack vector**       | Sending test messages, observing response patterns                 |
-| **Affected components** | All channel integrations                                           |
-| **Current mitigations** | None specific                                                      |
-| **Residual risk**       | Low - limited value from discovery alone                           |
+| **Attack Vector**       | Sending test messages, observing response patterns                 |
+| **Affected Components** | All channel integrations                                           |
+| **Current Mitigations** | None specific                                                      |
+| **Residual Risk**       | Low - Limited value from discovery alone                           |
 | **Recommendations**     | Consider response timing randomization                             |
 
 ---
 
-### 3.2 Initial access (AML.TA0004)
+### 3.2 Initial Access (AML.TA0004)
 
-#### T-ACCESS-001: Pairing code interception
+#### T-ACCESS-001: Pairing Code Interception
 
-| Attribute               | Value                                                                                                 |
-| ----------------------- | ----------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0040 - AI Model Inference API Access                                                             |
-| **Description**         | Attacker intercepts a pairing code during the pairing window (1h DM/generic pairing, 5m node pairing) |
-| **Attack vector**       | Shoulder surfing, network sniffing, social engineering                                                |
-| **Affected components** | Device pairing system                                                                                 |
-| **Current mitigations** | 1h TTL (DM/generic pairing), 5m TTL (node pairing); codes sent via the existing channel               |
-| **Residual risk**       | Medium - pairing window exploitable                                                                   |
-| **Recommendations**     | Reduce pairing window, add a confirmation step                                                        |
+| Attribute               | Value                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0040 - AI Model Inference API Access                                                                     |
+| **Description**         | Attacker intercepts pairing code during pairing grace period (1h for DM channel pairing, 5m for node pairing) |
+| **Attack Vector**       | Shoulder surfing, network sniffing, social engineering                                                        |
+| **Affected Components** | Device pairing system                                                                                         |
+| **Current Mitigations** | 1h expiry (DM pairing) / 5m expiry (node pairing), codes sent via existing channel                            |
+| **Residual Risk**       | Medium - Grace period exploitable                                                                             |
+| **Recommendations**     | Reduce grace period, add confirmation step                                                                    |
 
-#### T-ACCESS-002: AllowFrom spoofing
+#### T-ACCESS-002: AllowFrom Spoofing
 
 | Attribute               | Value                                                                          |
 | ----------------------- | ------------------------------------------------------------------------------ |
 | **ATLAS ID**            | AML.T0040 - AI Model Inference API Access                                      |
-| **Description**         | Attacker spoofs an allowed sender identity on a channel                        |
-| **Attack vector**       | Channel-dependent - phone number spoofing, username impersonation              |
-| **Affected components** | Per-channel AllowFrom validation                                               |
-| **Current mitigations** | Channel-specific identity verification                                         |
-| **Residual risk**       | Medium - some channels remain vulnerable to spoofing                           |
+| **Description**         | Attacker spoofs allowed sender identity in channel                             |
+| **Attack Vector**       | Depends on channel - phone number spoofing, username impersonation             |
+| **Affected Components** | AllowFrom validation per channel                                               |
+| **Current Mitigations** | Channel-specific identity verification                                         |
+| **Residual Risk**       | Medium - Some channels vulnerable to spoofing                                  |
 | **Recommendations**     | Document channel-specific risks, add cryptographic verification where possible |
 
-#### T-ACCESS-003: Token theft
+#### T-ACCESS-003: Token Theft
 
-| Attribute               | Value                                                              |
-| ----------------------- | ------------------------------------------------------------------ |
-| **ATLAS ID**            | AML.T0040 - AI Model Inference API Access                          |
-| **Description**         | Attacker steals authentication tokens from config/credential files |
-| **Attack vector**       | Malware, unauthorized device access, config backup exposure        |
-| **Affected components** | Channel/provider credential storage, config storage                |
-| **Current mitigations** | File permissions                                                   |
-| **Residual risk**       | High - tokens stored in plaintext on disk                          |
-| **Recommendations**     | Implement token encryption at rest, add token rotation             |
+| Attribute               | Value                                                       |
+| ----------------------- | ----------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0040 - AI Model Inference API Access                   |
+| **Description**         | Attacker steals authentication tokens from config files     |
+| **Attack Vector**       | Malware, unauthorized device access, config backup exposure |
+| **Affected Components** | ~/.openclaw/credentials/, config storage                    |
+| **Current Mitigations** | File permissions                                            |
+| **Residual Risk**       | High - Tokens stored in plaintext                           |
+| **Recommendations**     | Implement token encryption at rest, add token rotation      |
 
 ---
 
 ### 3.3 Execution (AML.TA0005)
 
-#### T-EXEC-001: Direct prompt injection
+#### T-EXEC-001: Direct Prompt Injection
 
-| Attribute               | Value                                                                                                                                        |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0051.000 - LLM Prompt Injection: Direct                                                                                                 |
-| **Description**         | Attacker sends crafted prompts to manipulate agent behavior                                                                                  |
-| **Attack vector**       | Channel messages containing adversarial instructions                                                                                         |
-| **Affected components** | Agent LLM, all input surfaces                                                                                                                |
-| **Current mitigations** | Pattern detection, external content wrapping; treated as out-of-scope for vulnerability reports absent a boundary bypass (see `SECURITY.md`) |
-| **Residual risk**       | Critical - detection only, no blocking; sophisticated attacks bypass                                                                         |
-| **Recommendations**     | Output validation and user confirmation for sensitive actions, layered on top of existing detection                                          |
+| Attribute               | Value                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0051.000 - LLM Prompt Injection: Direct                                              |
+| **Description**         | Attacker sends crafted prompts to manipulate agent behavior                               |
+| **Attack Vector**       | Channel messages containing adversarial instructions                                      |
+| **Affected Components** | Agent LLM, all input surfaces                                                             |
+| **Current Mitigations** | Pattern detection, external content wrapping                                              |
+| **Residual Risk**       | Critical - Detection only, no blocking; sophisticated attacks bypass                      |
+| **Recommendations**     | Implement multi-layer defense, output validation, user confirmation for sensitive actions |
 
-#### T-EXEC-002: Indirect prompt injection
+#### T-EXEC-002: Indirect Prompt Injection
 
-| Attribute               | Value                                                                                                                 |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0051.001 - LLM Prompt Injection: Indirect                                                                        |
-| **Description**         | Attacker embeds malicious instructions in fetched content                                                             |
-| **Attack vector**       | Malicious URLs, poisoned emails, compromised webhooks                                                                 |
-| **Affected components** | `web_fetch`, email ingestion, external data sources                                                                   |
-| **Current mitigations** | Content wrapping with random-boundary XML-style markers, homoglyph/special-token normalization, and a security notice |
-| **Residual risk**       | High - LLM may still ignore wrapper instructions                                                                      |
-| **Recommendations**     | Separate execution contexts for wrapped content                                                                       |
+| Attribute               | Value                                                       |
+| ----------------------- | ----------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0051.001 - LLM Prompt Injection: Indirect              |
+| **Description**         | Attacker embeds malicious instructions in fetched content   |
+| **Attack Vector**       | Malicious URLs, poisoned emails, compromised webhooks       |
+| **Affected Components** | web_fetch, email ingestion, external data sources           |
+| **Current Mitigations** | Content wrapping with XML tags and security notice          |
+| **Residual Risk**       | High - LLM may ignore wrapper instructions                  |
+| **Recommendations**     | Implement content sanitization, separate execution contexts |
 
-#### T-EXEC-003: Tool argument injection
+#### T-EXEC-003: Tool Argument Injection
 
 | Attribute               | Value                                                        |
 | ----------------------- | ------------------------------------------------------------ |
 | **ATLAS ID**            | AML.T0051.000 - LLM Prompt Injection: Direct                 |
 | **Description**         | Attacker manipulates tool arguments through prompt injection |
-| **Attack vector**       | Crafted prompts that influence tool parameter values         |
-| **Affected components** | All tool invocations                                         |
-| **Current mitigations** | Exec approvals for dangerous commands                        |
-| **Residual risk**       | High - relies on user judgment                               |
-| **Recommendations**     | Argument validation, parameterized tool calls                |
+| **Attack Vector**       | Crafted prompts that influence tool parameter values         |
+| **Affected Components** | All tool invocations                                         |
+| **Current Mitigations** | Exec approvals for dangerous commands                        |
+| **Residual Risk**       | High - Relies on user judgment                               |
+| **Recommendations**     | Implement argument validation, parameterized tool calls      |
 
-#### T-EXEC-004: Exec approval bypass
+#### T-EXEC-004: Exec Approval Bypass
 
-| Attribute               | Value                                                                                                                                                                             |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0043 - Craft Adversarial Data                                                                                                                                                |
-| **Description**         | Attacker crafts commands that bypass the approval allowlist                                                                                                                       |
-| **Attack vector**       | Command obfuscation, alias exploitation, path manipulation                                                                                                                        |
-| **Affected components** | `src/infra/exec-approvals*.ts`, command allowlist                                                                                                                                 |
-| **Current mitigations** | Allowlist + ask mode, plus command normalization (dispatch-wrapper unwrapping, inline-eval detection, shell-chain analysis)                                                       |
-| **Residual risk**       | High - normalization narrows but does not eliminate obfuscation bypass; parity-only findings between exec paths are treated as hardening, not vulnerabilities (see `SECURITY.md`) |
-| **Recommendations**     | Continue expanding command-normalization coverage against new obfuscation techniques                                                                                              |
+| Attribute               | Value                                                      |
+| ----------------------- | ---------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0043 - Craft Adversarial Data                         |
+| **Description**         | Attacker crafts commands that bypass approval allowlist    |
+| **Attack Vector**       | Command obfuscation, alias exploitation, path manipulation |
+| **Affected Components** | exec-approvals.ts, command allowlist                       |
+| **Current Mitigations** | Allowlist + ask mode                                       |
+| **Residual Risk**       | High - No command sanitization                             |
+| **Recommendations**     | Implement command normalization, expand blocklist          |
 
 ---
 
 ### 3.4 Persistence (AML.TA0006)
 
-#### T-PERSIST-001: Malicious skill installation
+#### T-PERSIST-001: Malicious Skill Installation
 
-| Attribute               | Value                                                                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0010.001 - Supply Chain Compromise: AI Software                                                                      |
-| **Description**         | Attacker publishes a malicious skill to ClawHub                                                                           |
-| **Attack vector**       | Create account, publish skill with hidden malicious code                                                                  |
-| **Affected components** | ClawHub, skill loading, agent execution                                                                                   |
-| **Current mitigations** | GitHub account age verification, static pattern/AST-adjacent scanning, LLM-based agentic risk review, VirusTotal scanning |
-| **Residual risk**       | High - detection layers exist but skills still run with agent privileges and no execution sandboxing                      |
-| **Recommendations**     | Skill execution sandboxing, expanded community review                                                                     |
+| Attribute               | Value                                                                    |
+| ----------------------- | ------------------------------------------------------------------------ |
+| **ATLAS ID**            | AML.T0010.001 - Supply Chain Compromise: AI Software                     |
+| **Description**         | Attacker publishes malicious skill to ClawHub                            |
+| **Attack Vector**       | Create account, publish skill with hidden malicious code                 |
+| **Affected Components** | ClawHub, skill loading, agent execution                                  |
+| **Current Mitigations** | GitHub account age verification, pattern-based moderation flags          |
+| **Residual Risk**       | Critical - No sandboxing, limited review                                 |
+| **Recommendations**     | VirusTotal integration (in progress), skill sandboxing, community review |
 
-#### T-PERSIST-002: Skill update poisoning
+#### T-PERSIST-002: Skill Update Poisoning
 
-| Attribute               | Value                                                                   |
-| ----------------------- | ----------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0010.001 - Supply Chain Compromise: AI Software                    |
-| **Description**         | Attacker compromises a popular skill and pushes a malicious update      |
-| **Attack vector**       | Account compromise, social engineering of skill owner                   |
-| **Affected components** | ClawHub versioning, auto-update flows                                   |
-| **Current mitigations** | Version fingerprinting, moderation/scanning re-run on new versions      |
-| **Residual risk**       | High - auto-updates may pull malicious versions before review completes |
-| **Recommendations**     | Update signing, rollback capability, version pinning                    |
+| Attribute               | Value                                                          |
+| ----------------------- | -------------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0010.001 - Supply Chain Compromise: AI Software           |
+| **Description**         | Attacker compromises popular skill and pushes malicious update |
+| **Attack Vector**       | Account compromise, social engineering of skill owner          |
+| **Affected Components** | ClawHub versioning, auto-update flows                          |
+| **Current Mitigations** | Version fingerprinting                                         |
+| **Residual Risk**       | High - Auto-updates may pull malicious versions                |
+| **Recommendations**     | Implement update signing, rollback capability, version pinning |
 
-#### T-PERSIST-003: Agent configuration tampering
+#### T-PERSIST-003: Agent Configuration Tampering
 
 | Attribute               | Value                                                           |
 | ----------------------- | --------------------------------------------------------------- |
 | **ATLAS ID**            | AML.T0010.002 - Supply Chain Compromise: Data                   |
 | **Description**         | Attacker modifies agent configuration to persist access         |
-| **Attack vector**       | Config file modification, settings injection                    |
-| **Affected components** | Agent config, tool policies                                     |
-| **Current mitigations** | File permissions                                                |
-| **Residual risk**       | Medium - requires local access                                  |
+| **Attack Vector**       | Config file modification, settings injection                    |
+| **Affected Components** | Agent config, tool policies                                     |
+| **Current Mitigations** | File permissions                                                |
+| **Residual Risk**       | Medium - Requires local access                                  |
 | **Recommendations**     | Config integrity verification, audit logging for config changes |
 
 ---
 
-### 3.5 Defense evasion (AML.TA0007)
+### 3.5 Defense Evasion (AML.TA0007)
 
-#### T-EVADE-001: Moderation pattern bypass
+#### T-EVADE-001: Moderation Pattern Bypass
 
-| Attribute               | Value                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0043 - Craft Adversarial Data                                                    |
-| **Description**         | Attacker crafts skill content to evade ClawHub moderation checks                      |
-| **Attack vector**       | Unicode homoglyphs, encoding tricks, dynamic loading                                  |
-| **Affected components** | ClawHub moderation/scanning pipeline                                                  |
-| **Current mitigations** | Static pattern rules, AST-adjacent code scanning, LLM agentic-risk review, VirusTotal |
-| **Residual risk**       | Medium - novel obfuscation can still slip past layered heuristics                     |
-| **Recommendations**     | Continue expanding the pattern/behavioral corpus as new evasions are found            |
+| Attribute               | Value                                                                  |
+| ----------------------- | ---------------------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0043 - Craft Adversarial Data                                     |
+| **Description**         | Attacker crafts skill content to evade moderation patterns             |
+| **Attack Vector**       | Unicode homoglyphs, encoding tricks, dynamic loading                   |
+| **Affected Components** | ClawHub moderation.ts                                                  |
+| **Current Mitigations** | Pattern-based FLAG_RULES                                               |
+| **Residual Risk**       | High - Simple regex easily bypassed                                    |
+| **Recommendations**     | Add behavioral analysis (VirusTotal Code Insight), AST-based detection |
 
-#### T-EVADE-002: Content wrapper escape
+#### T-EVADE-002: Content Wrapper Escape
 
-| Attribute               | Value                                                                                                         |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0043 - Craft Adversarial Data                                                                            |
-| **Description**         | Attacker crafts content that escapes the external-content wrapper context                                     |
-| **Attack vector**       | Tag manipulation, context confusion, instruction override                                                     |
-| **Affected components** | External content wrapping                                                                                     |
-| **Current mitigations** | Random-boundary XML-style markers + security notice, plus homoglyph/whitespace-variant marker-spoof detection |
-| **Residual risk**       | Medium - novel escapes discovered regularly                                                                   |
-| **Recommendations**     | Output-side validation in addition to input-side wrapping                                                     |
+| Attribute               | Value                                                     |
+| ----------------------- | --------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0043 - Craft Adversarial Data                        |
+| **Description**         | Attacker crafts content that escapes XML wrapper context  |
+| **Attack Vector**       | Tag manipulation, context confusion, instruction override |
+| **Affected Components** | External content wrapping                                 |
+| **Current Mitigations** | XML tags + security notice                                |
+| **Residual Risk**       | Medium - Novel escapes discovered regularly               |
+| **Recommendations**     | Multiple wrapper layers, output-side validation           |
 
 ---
 
 ### 3.6 Discovery (AML.TA0008)
 
-#### T-DISC-001: Tool enumeration
+#### T-DISC-001: Tool Enumeration
 
 | Attribute               | Value                                                 |
 | ----------------------- | ----------------------------------------------------- |
 | **ATLAS ID**            | AML.T0040 - AI Model Inference API Access             |
 | **Description**         | Attacker enumerates available tools through prompting |
-| **Attack vector**       | "What tools do you have?" style queries               |
-| **Affected components** | Agent tool registry                                   |
-| **Current mitigations** | None specific                                         |
-| **Residual risk**       | Low - tools are generally documented                  |
+| **Attack Vector**       | "What tools do you have?" style queries               |
+| **Affected Components** | Agent tool registry                                   |
+| **Current Mitigations** | None specific                                         |
+| **Residual Risk**       | Low - Tools generally documented                      |
 | **Recommendations**     | Consider tool visibility controls                     |
 
-#### T-DISC-002: Session data extraction
+#### T-DISC-002: Session Data Extraction
 
-| Attribute               | Value                                                   |
-| ----------------------- | ------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0040 - AI Model Inference API Access               |
-| **Description**         | Attacker extracts sensitive data from session context   |
-| **Attack vector**       | "What did we discuss?" queries, context probing         |
-| **Affected components** | Session transcripts, context window                     |
-| **Current mitigations** | Session isolation per sender (`agent:channel:peer` key) |
-| **Residual risk**       | Medium - within-session data is accessible by design    |
-| **Recommendations**     | Sensitive-data redaction in context                     |
+| Attribute               | Value                                                 |
+| ----------------------- | ----------------------------------------------------- |
+| **ATLAS ID**            | AML.T0040 - AI Model Inference API Access             |
+| **Description**         | Attacker extracts sensitive data from session context |
+| **Attack Vector**       | "What did we discuss?" queries, context probing       |
+| **Affected Components** | Session transcripts, context window                   |
+| **Current Mitigations** | Session isolation per sender                          |
+| **Residual Risk**       | Medium - Within-session data accessible               |
+| **Recommendations**     | Implement sensitive data redaction in context         |
 
 ---
 
-### 3.7 Collection and exfiltration (AML.TA0009, AML.TA0010)
+### 3.7 Collection & Exfiltration (AML.TA0009, AML.TA0010)
 
-#### T-EXFIL-001: Data theft via web_fetch
+#### T-EXFIL-001: Data Theft via web_fetch
 
-| Attribute               | Value                                                                            |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0009 - Collection                                                           |
-| **Description**         | Attacker exfiltrates data by instructing the agent to send it to an external URL |
-| **Attack vector**       | Prompt injection causing the agent to POST data to an attacker server            |
-| **Affected components** | `web_fetch` tool                                                                 |
-| **Current mitigations** | SSRF blocking for internal/private networks (DNS pinning + IP blocking)          |
-| **Residual risk**       | High - arbitrary external URLs remain permitted                                  |
-| **Recommendations**     | URL allowlisting, data-classification awareness                                  |
+| Attribute               | Value                                                                  |
+| ----------------------- | ---------------------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0009 - Collection                                                 |
+| **Description**         | Attacker exfiltrates data by instructing agent to send to external URL |
+| **Attack Vector**       | Prompt injection causing agent to POST data to attacker server         |
+| **Affected Components** | web_fetch tool                                                         |
+| **Current Mitigations** | SSRF blocking for internal networks                                    |
+| **Residual Risk**       | High - External URLs permitted                                         |
+| **Recommendations**     | Implement URL allowlisting, data classification awareness              |
 
-#### T-EXFIL-002: Unauthorized message sending
+#### T-EXFIL-002: Unauthorized Message Sending
 
-| Attribute               | Value                                                                |
-| ----------------------- | -------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0009 - Collection                                               |
-| **Description**         | Attacker causes the agent to send messages containing sensitive data |
-| **Attack vector**       | Prompt injection causing the agent to message the attacker           |
-| **Affected components** | Message tool, channel integrations                                   |
-| **Current mitigations** | Outbound messaging gating                                            |
-| **Residual risk**       | Medium - gating may be bypassed                                      |
-| **Recommendations**     | Explicit confirmation for new recipients                             |
+| Attribute               | Value                                                            |
+| ----------------------- | ---------------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0009 - Collection                                           |
+| **Description**         | Attacker causes agent to send messages containing sensitive data |
+| **Attack Vector**       | Prompt injection causing agent to message attacker               |
+| **Affected Components** | Message tool, channel integrations                               |
+| **Current Mitigations** | Outbound messaging gating                                        |
+| **Residual Risk**       | Medium - Gating may be bypassed                                  |
+| **Recommendations**     | Require explicit confirmation for new recipients                 |
 
-#### T-EXFIL-003: Credential harvesting
+#### T-EXFIL-003: Credential Harvesting
 
-| Attribute               | Value                                                                                                                                                   |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0009 - Collection                                                                                                                                  |
-| **Description**         | Malicious skill harvests credentials from the agent context                                                                                             |
-| **Attack vector**       | Skill code reads environment variables, config files                                                                                                    |
-| **Affected components** | Skill execution environment                                                                                                                             |
-| **Current mitigations** | ClawHub credential-pattern scanning (hardcoded secrets, credential env access paired with network sends); no execution sandboxing for skills at runtime |
-| **Residual risk**       | Critical - skills run with agent privileges                                                                                                             |
-| **Recommendations**     | Skill execution sandboxing, credential isolation                                                                                                        |
+| Attribute               | Value                                                   |
+| ----------------------- | ------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0009 - Collection                                  |
+| **Description**         | Malicious skill harvests credentials from agent context |
+| **Attack Vector**       | Skill code reads environment variables, config files    |
+| **Affected Components** | Skill execution environment                             |
+| **Current Mitigations** | None specific to skills                                 |
+| **Residual Risk**       | Critical - Skills run with agent privileges             |
+| **Recommendations**     | Skill sandboxing, credential isolation                  |
 
 ---
 
 ### 3.8 Impact (AML.TA0011)
 
-#### T-IMPACT-001: Unauthorized command execution
+#### T-IMPACT-001: Unauthorized Command Execution
 
-| Attribute               | Value                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0031 - Erode AI Model Integrity                                                                 |
-| **Description**         | Attacker executes arbitrary commands on the user system                                              |
-| **Attack vector**       | Prompt injection combined with exec approval bypass                                                  |
-| **Affected components** | Bash tool, command execution                                                                         |
-| **Current mitigations** | Exec approvals, Docker sandbox option (default runtime backend)                                      |
-| **Residual risk**       | Critical - host execution possible when sandbox is disabled                                          |
-| **Recommendations**     | Improve approval UX; sandbox-off deployments remain a deliberate operator choice, documented as such |
+| Attribute               | Value                                               |
+| ----------------------- | --------------------------------------------------- |
+| **ATLAS ID**            | AML.T0031 - Erode AI Model Integrity                |
+| **Description**         | Attacker executes arbitrary commands on user system |
+| **Attack Vector**       | Prompt injection combined with exec approval bypass |
+| **Affected Components** | Bash tool, command execution                        |
+| **Current Mitigations** | Exec approvals, Docker sandbox option               |
+| **Residual Risk**       | Critical - Host execution without sandbox           |
+| **Recommendations**     | Default to sandbox, improve approval UX             |
 
-#### T-IMPACT-002: Resource exhaustion (DoS)
+#### T-IMPACT-002: Resource Exhaustion (DoS)
 
 | Attribute               | Value                                              |
 | ----------------------- | -------------------------------------------------- |
 | **ATLAS ID**            | AML.T0031 - Erode AI Model Integrity               |
 | **Description**         | Attacker exhausts API credits or compute resources |
-| **Attack vector**       | Automated message flooding, expensive tool calls   |
-| **Affected components** | Gateway, agent sessions, API provider              |
-| **Current mitigations** | None                                               |
-| **Residual risk**       | High - no per-sender rate limiting                 |
-| **Recommendations**     | Per-sender rate limits, cost budgets               |
+| **Attack Vector**       | Automated message flooding, expensive tool calls   |
+| **Affected Components** | Gateway, agent sessions, API provider              |
+| **Current Mitigations** | None                                               |
+| **Residual Risk**       | High - No rate limiting                            |
+| **Recommendations**     | Implement per-sender rate limits, cost budgets     |
 
-#### T-IMPACT-003: Reputation damage
+#### T-IMPACT-003: Reputation Damage
 
-| Attribute               | Value                                                       |
-| ----------------------- | ----------------------------------------------------------- |
-| **ATLAS ID**            | AML.T0031 - Erode AI Model Integrity                        |
-| **Description**         | Attacker causes the agent to send harmful/offensive content |
-| **Attack vector**       | Prompt injection causing inappropriate responses            |
-| **Affected components** | Output generation, channel messaging                        |
-| **Current mitigations** | LLM provider content policies                               |
-| **Residual risk**       | Medium - provider filters are imperfect                     |
-| **Recommendations**     | Output filtering layer, user controls                       |
-
----
-
-## 4. ClawHub supply chain analysis
-
-### 4.1 Current security controls
-
-| Control                        | Implementation                                                                        | Effectiveness                                                       |
-| ------------------------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| GitHub account age             | `requireGitHubAccountAge()` (14-day minimum)                                          | Medium - raises the bar for new attackers                           |
-| Path sanitization              | `sanitizePath()`                                                                      | High - prevents path traversal                                      |
-| File type validation           | `isTextFile()`                                                                        | Medium - only text files scanned, but still exploitable             |
-| Size limits                    | 50MB total bundle (`MAX_PUBLISH_TOTAL_BYTES`)                                         | High - prevents resource exhaustion                                 |
-| Required SKILL.md              | Mandatory readme on publish                                                           | Low security value - informational only                             |
-| Static + AST-adjacent scanning | Pattern engine covering exec, exfiltration, credential-harvest, obfuscation, and more | Medium-High - covers many known abuse patterns, still pattern-based |
-| LLM-based agentic risk review  | Security-prompt-driven verdict on publish                                             | Medium-High - catches behavior static patterns miss                 |
-| VirusTotal scanning            | Wired to skill and package-release publish/rescan flows, gated on operator API key    | High when enabled - static engine detection                         |
-| Moderation status              | `moderationStatus` field                                                              | Medium - manual review possible                                     |
-
-### 4.2 Moderation limitations
-
-ClawHub's static scanning inspects skill code content directly (not just slug/metadata/frontmatter), covering dangerous exec calls, dynamic code execution, credential harvesting, exfiltration patterns, obfuscated payloads, and more. Known gaps:
-
-- Pattern-based detection can still be bypassed by sufficiently novel obfuscation.
-- LLM-based review and VirusTotal scanning depend on operator-side API keys/config being enabled.
-- No runtime execution sandbox isolates a skill from the agent's own privileges once installed.
-
-### 4.3 Badges
-
-Skills and packages carry moderator-assigned badges: `highlighted`, `official`, `deprecated`, `redactionApproved` (skills only). Community reporting (`skillReports`) and audit logging (`auditLogs`) back moderation workflows.
+| Attribute               | Value                                                   |
+| ----------------------- | ------------------------------------------------------- |
+| **ATLAS ID**            | AML.T0031 - Erode AI Model Integrity                    |
+| **Description**         | Attacker causes agent to send harmful/offensive content |
+| **Attack Vector**       | Prompt injection causing inappropriate responses        |
+| **Affected Components** | Output generation, channel messaging                    |
+| **Current Mitigations** | LLM provider content policies                           |
+| **Residual Risk**       | Medium - Provider filters imperfect                     |
+| **Recommendations**     | Output filtering layer, user controls                   |
 
 ---
 
-## 5. Risk matrix
+## 4. ClawHub Supply Chain Analysis
 
-### 5.1 Likelihood vs impact
+### 4.1 Current Security Controls
 
-| Threat ID     | Likelihood | Impact   | Risk level   | Priority |
+| Control              | Implementation              | Effectiveness                                        |
+| -------------------- | --------------------------- | ---------------------------------------------------- |
+| GitHub Account Age   | `requireGitHubAccountAge()` | Medium - Raises bar for new attackers                |
+| Path Sanitization    | `sanitizePath()`            | High - Prevents path traversal                       |
+| File Type Validation | `isTextFile()`              | Medium - Only text files, but can still be malicious |
+| Size Limits          | 50MB total bundle           | High - Prevents resource exhaustion                  |
+| Required SKILL.md    | Mandatory readme            | Low security value - Informational only              |
+| Pattern Moderation   | FLAG_RULES in moderation.ts | Low - Easily bypassed                                |
+| Moderation Status    | `moderationStatus` field    | Medium - Manual review possible                      |
+
+### 4.2 Moderation Flag Patterns
+
+Current patterns in `moderation.ts`:
+
+```javascript
+// Known-bad identifiers
+/(keepcold131\/ClawdAuthenticatorTool|ClawdAuthenticatorTool)/i
+
+// Suspicious keywords
+/(malware|stealer|phish|phishing|keylogger)/i
+/(api[-_ ]?key|token|password|private key|secret)/i
+/(wallet|seed phrase|mnemonic|crypto)/i
+/(discord\.gg|webhook|hooks\.slack)/i
+/(curl[^\n]+\|\s*(sh|bash))/i
+/(bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd)/i
+```
+
+**Limitations:**
+
+- Only checks slug, displayName, summary, frontmatter, metadata, file paths
+- Does not analyze actual skill code content
+- Simple regex easily bypassed with obfuscation
+- No behavioral analysis
+
+### 4.3 Planned Improvements
+
+| Improvement            | Status                                | Impact                                                                |
+| ---------------------- | ------------------------------------- | --------------------------------------------------------------------- |
+| VirusTotal Integration | In Progress                           | High - Code Insight behavioral analysis                               |
+| Community Reporting    | Partial (`skillReports` table exists) | Medium                                                                |
+| Audit Logging          | Partial (`auditLogs` table exists)    | Medium                                                                |
+| Badge System           | Implemented                           | Medium - `highlighted`, `official`, `deprecated`, `redactionApproved` |
+
+---
+
+## 5. Risk Matrix
+
+### 5.1 Likelihood vs Impact
+
+| Threat ID     | Likelihood | Impact   | Risk Level   | Priority |
 | ------------- | ---------- | -------- | ------------ | -------- |
 | T-EXEC-001    | High       | Critical | **Critical** | P0       |
 | T-PERSIST-001 | High       | Critical | **Critical** | P0       |
@@ -457,48 +508,49 @@ Skills and packages carry moderator-assigned badges: `highlighted`, `official`, 
 | T-ACCESS-002  | Low        | High     | **Medium**   | P2       |
 | T-PERSIST-002 | Low        | High     | **Medium**   | P2       |
 
-### 5.2 Critical path attack chains
+### 5.2 Critical Path Attack Chains
 
-**Chain 1: Skill-based data theft**
+**Attack Chain 1: Skill-Based Data Theft**
 
-```text
+```
 T-PERSIST-001 → T-EVADE-001 → T-EXFIL-003
 (Publish malicious skill) → (Evade moderation) → (Harvest credentials)
 ```
 
-**Chain 2: Prompt injection to RCE**
+**Attack Chain 2: Prompt Injection to RCE**
 
-```text
+```
 T-EXEC-001 → T-EXEC-004 → T-IMPACT-001
 (Inject prompt) → (Bypass exec approval) → (Execute commands)
 ```
 
-**Chain 3: Indirect injection via fetched content**
+**Attack Chain 3: Indirect Injection via Fetched Content**
 
-```text
+```
 T-EXEC-002 → T-EXFIL-001 → External exfiltration
 (Poison URL content) → (Agent fetches & follows instructions) → (Data sent to attacker)
 ```
 
 ---
 
-## 6. Recommendations summary
+## 6. Recommendations Summary
 
 ### 6.1 Immediate (P0)
 
 | ID    | Recommendation                              | Addresses                  |
 | ----- | ------------------------------------------- | -------------------------- |
-| R-002 | Implement skill execution sandboxing        | T-PERSIST-001, T-EXFIL-003 |
+| R-001 | Complete VirusTotal integration             | T-PERSIST-001, T-EVADE-001 |
+| R-002 | Implement skill sandboxing                  | T-PERSIST-001, T-EXFIL-003 |
 | R-003 | Add output validation for sensitive actions | T-EXEC-001, T-EXEC-002     |
 
 ### 6.2 Short-term (P1)
 
-| ID    | Recommendation                                                        | Addresses    |
-| ----- | --------------------------------------------------------------------- | ------------ |
-| R-004 | Implement per-sender rate limiting                                    | T-IMPACT-002 |
-| R-005 | Add token encryption at rest                                          | T-ACCESS-003 |
-| R-006 | Improve exec approval UX and continue expanding command normalization | T-EXEC-004   |
-| R-007 | Implement URL allowlisting for `web_fetch`                            | T-EXFIL-001  |
+| ID    | Recommendation                           | Addresses    |
+| ----- | ---------------------------------------- | ------------ |
+| R-004 | Implement rate limiting                  | T-IMPACT-002 |
+| R-005 | Add token encryption at rest             | T-ACCESS-003 |
+| R-006 | Improve exec approval UX and validation  | T-EXEC-004   |
+| R-007 | Implement URL allowlisting for web_fetch | T-EXFIL-001  |
 
 ### 6.3 Medium-term (P2)
 
@@ -512,9 +564,9 @@ T-EXEC-002 → T-EXFIL-001 → External exfiltration
 
 ## 7. Appendices
 
-### 7.1 ATLAS technique mapping
+### 7.1 ATLAS Technique Mapping
 
-| ATLAS ID      | Technique name                 | OpenClaw threats                                                 |
+| ATLAS ID      | Technique Name                 | OpenClaw Threats                                                 |
 | ------------- | ------------------------------ | ---------------------------------------------------------------- |
 | AML.T0006     | Active Scanning                | T-RECON-001, T-RECON-002                                         |
 | AML.T0009     | Collection                     | T-EXFIL-001, T-EXFIL-002, T-EXFIL-003                            |
@@ -526,16 +578,16 @@ T-EXEC-002 → T-EXFIL-001 → External exfiltration
 | AML.T0051.000 | LLM Prompt Injection: Direct   | T-EXEC-001, T-EXEC-003                                           |
 | AML.T0051.001 | LLM Prompt Injection: Indirect | T-EXEC-002                                                       |
 
-### 7.2 Key security files
+### 7.2 Key Security Files
 
-| Path                                | Purpose                        | Risk level   |
-| ----------------------------------- | ------------------------------ | ------------ |
-| `src/infra/exec-approvals.ts`       | Command approval logic         | **Critical** |
-| `src/gateway/auth.ts`               | Gateway authentication         | **Critical** |
-| `src/infra/net/ssrf.ts`             | SSRF protection                | **Critical** |
-| `src/security/external-content.ts`  | Prompt injection mitigation    | **Critical** |
-| `src/agents/sandbox/tool-policy.ts` | Sandbox tool allow/deny policy | **Critical** |
-| `src/routing/resolve-route.ts`      | Session isolation / routing    | **Medium**   |
+| Path                                | Purpose                     | Risk Level   |
+| ----------------------------------- | --------------------------- | ------------ |
+| `src/infra/exec-approvals.ts`       | Command approval logic      | **Critical** |
+| `src/gateway/auth.ts`               | Gateway authentication      | **Critical** |
+| `src/infra/net/ssrf.ts`             | SSRF protection             | **Critical** |
+| `src/security/external-content.ts`  | Prompt injection mitigation | **Critical** |
+| `src/agents/sandbox/tool-policy.ts` | Tool policy enforcement     | **Critical** |
+| `src/routing/resolve-route.ts`      | Session isolation           | **Medium**   |
 
 ### 7.3 Glossary
 
@@ -545,17 +597,15 @@ T-EXEC-002 → T-EXFIL-001 → External exfiltration
 | **ClawHub**          | OpenClaw's skill marketplace                              |
 | **Gateway**          | OpenClaw's message routing and authentication layer       |
 | **MCP**              | Model Context Protocol - tool provider interface          |
-| **Prompt injection** | Attack where malicious instructions are embedded in input |
+| **Prompt Injection** | Attack where malicious instructions are embedded in input |
 | **Skill**            | Downloadable extension for OpenClaw agents                |
 | **SSRF**             | Server-Side Request Forgery                               |
 
 ---
 
-_This threat model is a living document. Report security issues to `security@openclaw.ai` or see the [Trust page](https://trust.openclaw.ai)._
+_This threat model is a living document. Report security issues to security@openclaw.ai_
 
 ## Related
 
-- [Contributing to the threat model](/security/CONTRIBUTING-THREAT-MODEL)
-- [Incident response](/security/incident-response)
-- [Network proxy](/security/network-proxy)
 - [Formal verification](/security/formal-verification)
+- [Contributing to the threat model](/security/CONTRIBUTING-THREAT-MODEL)

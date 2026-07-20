@@ -1,5 +1,5 @@
 /** Platform-specific silence windows for talk/voice turn segmentation. */
-const TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM = {
+export const TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM = {
   macos: 700,
   android: 700,
   ios: 900,

@@ -13,7 +13,6 @@ describe("device-pair pairing command auth", () => {
       isInternalGatewayCaller: false,
       isMissingPairingPrivilege: true,
       isMissingSetupHandoffPrivilege: true,
-      canIssueFullAccessSetup: false,
       approvalCallerScopes: undefined,
     });
   });
@@ -29,7 +28,6 @@ describe("device-pair pairing command auth", () => {
       isInternalGatewayCaller: false,
       isMissingPairingPrivilege: false,
       isMissingSetupHandoffPrivilege: false,
-      canIssueFullAccessSetup: true,
       approvalCallerScopes: ["operator.pairing"],
     });
   });
@@ -44,7 +42,6 @@ describe("device-pair pairing command auth", () => {
       isInternalGatewayCaller: true,
       isMissingPairingPrivilege: true,
       isMissingSetupHandoffPrivilege: true,
-      canIssueFullAccessSetup: false,
       approvalCallerScopes: [],
     });
   });
@@ -59,7 +56,6 @@ describe("device-pair pairing command auth", () => {
       isInternalGatewayCaller: true,
       isMissingPairingPrivilege: false,
       isMissingSetupHandoffPrivilege: true,
-      canIssueFullAccessSetup: false,
       approvalCallerScopes: ["operator.write", "operator.pairing"],
     });
     expect(
@@ -71,7 +67,6 @@ describe("device-pair pairing command auth", () => {
       isInternalGatewayCaller: true,
       isMissingPairingPrivilege: false,
       isMissingSetupHandoffPrivilege: false,
-      canIssueFullAccessSetup: false,
       approvalCallerScopes: ["operator.write", "operator.pairing", "operator.talk.secrets"],
     });
     expect(
@@ -83,7 +78,6 @@ describe("device-pair pairing command auth", () => {
       isInternalGatewayCaller: true,
       isMissingPairingPrivilege: false,
       isMissingSetupHandoffPrivilege: false,
-      canIssueFullAccessSetup: true,
       approvalCallerScopes: ["operator.admin"],
     });
   });
@@ -99,7 +93,6 @@ describe("device-pair pairing command auth", () => {
       isInternalGatewayCaller: true,
       isMissingPairingPrivilege: false,
       isMissingSetupHandoffPrivilege: true,
-      canIssueFullAccessSetup: false,
       approvalCallerScopes: ["operator.write", "operator.pairing"],
     });
   });

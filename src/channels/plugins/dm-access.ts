@@ -93,49 +93,34 @@ function readPath(entry: DmAccessRecord | null | undefined, path: readonly strin
 }
 
 function deletePath(entry: DmAccessRecord, path: readonly string[]): boolean {
-  const [head, tail] = path;
-  if (head === undefined) {
-    return false;
-  }
   if (path.length === 1) {
-    if (entry[head] === undefined) {
+    if (entry[path[0]] === undefined) {
       return false;
     }
-    delete entry[head];
+    delete entry[path[0]];
     return true;
   }
-  if (tail === undefined) {
+  const parent = asObjectRecord(entry[path[0]]);
+  if (!parent || parent[path[1]] === undefined) {
     return false;
   }
-  const parent = asObjectRecord(entry[head]);
-  if (!parent || parent[tail] === undefined) {
-    return false;
-  }
-  delete parent[tail];
+  delete parent[path[1]];
   if (Object.keys(parent).length === 0) {
-    delete entry[head];
+    delete entry[path[0]];
   } else {
-    entry[head] = parent;
+    entry[path[0]] = parent;
   }
   return true;
 }
 
 function writePath(entry: DmAccessRecord, path: readonly string[], value: unknown): void {
-  const [head, tail] = path;
-  if (head === undefined) {
-    return;
-  }
   if (path.length === 1) {
-    entry[head] = value;
+    entry[path[0]] = value;
     return;
   }
-  if (tail === undefined) {
-    return;
-  }
-  const existingParent = asObjectRecord(entry[head]);
-  const parent = existingParent ? { ...existingParent } : {};
-  parent[tail] = value;
-  entry[head] = parent;
+  const parent = asObjectRecord(entry[path[0]]) ? { ...(entry[path[0]] as DmAccessRecord) } : {};
+  parent[path[1]] = value;
+  entry[path[0]] = parent;
 }
 
 function allowFromListsMatch(left: unknown, right: unknown): boolean {

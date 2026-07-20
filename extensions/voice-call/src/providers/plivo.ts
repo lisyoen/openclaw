@@ -26,7 +26,7 @@ import { reconstructWebhookUrl, verifyPlivoWebhook } from "../webhook-security.j
 import type { VoiceCallProvider } from "./base.js";
 import { guardedJsonApiRequest } from "./shared/guarded-json-api.js";
 
-interface PlivoProviderOptions {
+export interface PlivoProviderOptions {
   /** Override public URL origin for signature verification */
   publicUrl?: string;
   /** Skip webhook signature verification (development only) */
@@ -37,7 +37,7 @@ interface PlivoProviderOptions {
   webhookSecurity?: WebhookSecurityConfig;
 }
 
-type PendingSpeak = { text: string; locale?: string; listenAfterPlayback?: boolean };
+type PendingSpeak = { text: string; locale?: string };
 type PendingListen = { language?: string };
 
 function createPlivoRequestDedupeKey(ctx: WebhookContext): string {
@@ -158,18 +158,8 @@ export class PlivoProvider implements VoiceCallProvider {
         this.pendingSpeakByCallId.delete(callId);
       }
 
-      const actionUrl =
-        pending?.listenAfterPlayback && callId
-          ? this.buildActionUrl(ctx, { flow: "getinput", callId })
-          : null;
       const xml = pending
-        ? actionUrl
-          ? PlivoProvider.xmlSpeakAndListen({
-              text: pending.text,
-              language: pending.locale,
-              actionUrl,
-            })
-          : PlivoProvider.xmlSpeak(pending.text, pending.locale)
+        ? PlivoProvider.xmlSpeak(pending.text, pending.locale)
         : PlivoProvider.xmlKeepAlive();
       return {
         events: [],
@@ -425,7 +415,6 @@ export class PlivoProvider implements VoiceCallProvider {
     this.pendingSpeakByCallId.set(input.callId, {
       text: input.text,
       locale: input.locale,
-      listenAfterPlayback: input.listenAfterPlayback,
     });
 
     await this.transferCallLeg({
@@ -526,22 +515,7 @@ export class PlivoProvider implements VoiceCallProvider {
     const language = params.language || "en-US";
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <GetInput inputType="speech" method="POST" action="${escapeXml(params.actionUrl)}" language="${escapeXml(language)}" executionTimeout="30" speechEndTimeout="2" redirect="false">
-  </GetInput>
-  <Wait length="300" />
-</Response>`;
-  }
-
-  private static xmlSpeakAndListen(params: {
-    text: string;
-    actionUrl: string;
-    language?: string;
-  }): string {
-    const language = params.language || "en-US";
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <GetInput inputType="speech" method="POST" action="${escapeXml(params.actionUrl)}" language="${escapeXml(language)}" executionTimeout="30" speechEndTimeout="2" redirect="false">
-    <Speak language="${escapeXml(language)}">${escapeXml(params.text)}</Speak>
+  <GetInput inputType="speech" method="POST" action="${escapeXml(params.actionUrl)}" language="${escapeXml(language)}" executionTimeout="30" speechEndTimeout="1" redirect="false">
   </GetInput>
   <Wait length="300" />
 </Response>`;

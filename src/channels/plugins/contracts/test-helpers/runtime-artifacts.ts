@@ -6,8 +6,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { listBundledChannelPluginMetadata } from "../../../../plugins/bundled-channel-runtime.js";
-import { resolvePluginRuntimeModulePath } from "../../../../plugins/runtime/runtime-plugin-boundary.js";
+import { resolveBundledChannelWorkspacePath } from "../../../../plugins/bundled-channel-runtime.js";
+import {
+  resolvePluginRuntimeModulePath,
+  resolvePluginRuntimeRecord,
+} from "../../../../plugins/runtime/runtime-plugin-boundary.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../../", import.meta.url));
 
@@ -16,11 +19,10 @@ function resolveBundledChannelWorkspaceArtifactPath(
   entryBaseName: string,
 ): string | null {
   const normalizedEntryBaseName = entryBaseName.replace(/\.(?:[cm]?js|ts)$/u, "");
-  const pluginRoot = listBundledChannelPluginMetadata({
+  const pluginRoot = resolveBundledChannelWorkspacePath({
     rootDir: REPO_ROOT,
-    includeChannelConfigs: false,
-    includeSyntheticChannelConfigs: false,
-  }).find((metadata) => metadata.manifest.id === pluginId)?.rootDir;
+    pluginId,
+  });
   if (!pluginRoot) {
     return null;
   }
@@ -33,21 +35,20 @@ function resolveBundledChannelWorkspaceArtifactPath(
   return null;
 }
 
-function resolveBundledChannelContractArtifactUrl(pluginId: string, entryBaseName: string): string {
+export function resolveBundledChannelContractArtifactUrl(
+  pluginId: string,
+  entryBaseName: string,
+): string {
   const normalizedEntryBaseName = entryBaseName.replace(/\.(?:[cm]?js|ts)$/u, "");
-  const metadata = listBundledChannelPluginMetadata({
-    rootDir: REPO_ROOT,
-    includeChannelConfigs: false,
-    includeSyntheticChannelConfigs: false,
-  }).find((entry) => entry.manifest.id === pluginId);
-  if (!metadata) {
+  const record = resolvePluginRuntimeRecord(pluginId, () => {
+    throw new Error(`missing bundled channel plugin '${pluginId}'`);
+  });
+  if (!record) {
     throw new Error(`missing bundled channel plugin '${pluginId}'`);
   }
   const modulePath =
-    resolvePluginRuntimeModulePath(
-      { rootDir: metadata.rootDir, source: metadata.source.built },
-      normalizedEntryBaseName,
-    ) ?? resolveBundledChannelWorkspaceArtifactPath(pluginId, entryBaseName);
+    resolvePluginRuntimeModulePath(record, normalizedEntryBaseName) ??
+    resolveBundledChannelWorkspaceArtifactPath(pluginId, entryBaseName);
   if (!modulePath) {
     throw new Error(`missing ${entryBaseName} for bundled channel plugin '${pluginId}'`);
   }

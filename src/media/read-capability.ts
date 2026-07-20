@@ -62,7 +62,7 @@ function isAgentScopedHostMediaReadAllowed(
 }
 
 /** Creates a host reader bound to the agent workspace and configured local-file safety checks. */
-function createAgentScopedHostMediaReadFile(
+export function createAgentScopedHostMediaReadFile(
   params: {
     cfg: OpenClawConfig;
     agentId?: string;

@@ -167,8 +167,6 @@ export async function waitForLocalOAuthCallback(params: {
   hostname?: string;
   /** Progress callback invoked after the server begins listening. */
   onProgress?: (message: string) => void;
-  /** Stops and closes the callback listener when the owning login is cancelled. */
-  signal?: AbortSignal;
   /**
    * IdP hosts allowed to receive CORS echo on loopback callback preflights.
    */
@@ -261,7 +259,6 @@ export async function waitForLocalOAuthCallback(params: {
       if (timeout) {
         clearTimeout(timeout);
       }
-      params.signal?.removeEventListener("abort", onAbort);
       try {
         server.close();
       } catch {
@@ -273,13 +270,6 @@ export async function waitForLocalOAuthCallback(params: {
         resolve(result);
       }
     };
-
-    const onAbort = () => finish(new Error("OAuth callback cancelled"));
-    params.signal?.addEventListener("abort", onAbort, { once: true });
-    if (params.signal?.aborted) {
-      onAbort();
-      return;
-    }
 
     server.once("error", (err) => {
       finish(err instanceof Error ? err : new Error("OAuth callback server error"));

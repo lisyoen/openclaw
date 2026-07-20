@@ -1,5 +1,4 @@
 // Session conversation fallback tests cover bundled plugin fallback for conversation sessions.
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/io.js";
 import { resetPluginRuntimeStateForTest } from "../../plugins/runtime.js";
@@ -55,8 +54,7 @@ function enableBundledFallback(
 
 function enableThreadedFallback() {
   enableBundledFallback("mock-threaded", ({ rawId }) => {
-    const [rawConversationId, threadId] = rawId.split(":topic:");
-    const conversationId = expectDefined(rawConversationId, "conversation id");
+    const [conversationId, threadId] = rawId.split(":topic:");
     return {
       id: conversationId,
       threadId,

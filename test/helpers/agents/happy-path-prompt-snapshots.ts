@@ -12,7 +12,7 @@ import {
   buildInboundMetaSystemPrompt,
   buildInboundUserContextPrefix,
 } from "../../../src/auto-reply/reply/inbound-meta.js";
-import { buildReplyPromptEnvelope } from "../../../src/auto-reply/reply/prompt-prelude.js";
+import { buildReplyPromptBodies } from "../../../src/auto-reply/reply/prompt-prelude.js";
 import type { TemplateContext } from "../../../src/auto-reply/templating.js";
 import { SILENT_REPLY_TOKEN } from "../../../src/auto-reply/tokens.js";
 import { normalizeChatType } from "../../../src/channels/chat-type.js";
@@ -23,14 +23,7 @@ import type {
 } from "../../../src/plugin-sdk/agent-harness-runtime.js";
 import { normalizeAgentRuntimeTools } from "../../../src/plugin-sdk/agent-harness-runtime.js";
 import { createOpenClawCodingTools } from "../../../src/plugin-sdk/agent-harness.js";
-import type { PluginRegistry } from "../../../src/plugins/registry.js";
-import {
-  getActivePluginRegistry,
-  resetPluginRuntimeStateForTest,
-  setActivePluginRegistry,
-} from "../../../src/plugins/runtime.js";
 import { resolveRelativeBundledPluginPublicModuleId } from "../../../src/test-utils/bundled-plugin-public-surface.js";
-import { createTestRegistry } from "../../../src/test-utils/channel-plugins.js";
 import {
   CODEX_MODEL_PROMPT_FIXTURE_DIR,
   CODEX_RUNTIME_HAPPY_PATH_PROMPT_SNAPSHOT_DIR,
@@ -38,7 +31,7 @@ import {
 
 // Builds Codex happy-path prompt snapshot fixtures for agent prompt regression tests.
 
-export { CODEX_RUNTIME_HAPPY_PATH_PROMPT_SNAPSHOT_DIR };
+export { CODEX_MODEL_PROMPT_FIXTURE_DIR, CODEX_RUNTIME_HAPPY_PATH_PROMPT_SNAPSHOT_DIR };
 
 const WORKSPACE_DIR = "/tmp/openclaw-happy-path/workspace";
 const AGENT_DIR = "/tmp/openclaw-happy-path/agent";
@@ -67,7 +60,6 @@ const HAPPY_PATH_TOOL_NAMES = new Set([
   "agents_list",
   "sessions_list",
   "sessions_history",
-  "sessions_search",
   "sessions_send",
   "sessions_spawn",
   "sessions_yield",
@@ -77,26 +69,11 @@ const HAPPY_PATH_TOOL_NAMES = new Set([
   "web_fetch",
 ]);
 
-type CodexDynamicToolFunctionSpec = {
-  type?: "function";
+type CodexDynamicToolSpec = {
   name: string;
   description?: string;
   inputSchema?: unknown;
 };
-
-type CodexDynamicToolNamespaceSpec = {
-  type: "namespace";
-  name: string;
-  tools: CodexDynamicToolFunctionSpec[];
-};
-
-type CodexDynamicToolSpec = CodexDynamicToolFunctionSpec | CodexDynamicToolNamespaceSpec;
-
-function flattenCodexDynamicToolSpecs(
-  specs: readonly CodexDynamicToolSpec[],
-): CodexDynamicToolFunctionSpec[] {
-  return specs.flatMap((spec) => (spec.type === "namespace" ? spec.tools : [spec]));
-}
 
 type CodexPromptSnapshotApi = {
   resolveCodexPromptSnapshotAppServerOptions: (pluginConfig?: unknown) => unknown;
@@ -115,10 +92,7 @@ type CodexPromptSnapshotApi = {
     developerInstructions: string;
     threadStartParams: Record<string, unknown>;
     threadResumeParams: Record<string, unknown>;
-    turnStartParams: Record<string, unknown> & {
-      input?: unknown;
-      collaborationMode?: { settings?: { developer_instructions?: string } };
-    };
+    turnStartParams: Record<string, unknown>;
   };
   createCodexDynamicToolSpecsForPromptSnapshot: (params: {
     tools: AnyAgentTool[];
@@ -156,81 +130,6 @@ const CODEX_TEST_API_MODULE_ID = resolveRelativeBundledPluginPublicModuleId({
 /** Load the Codex public test API without hardcoding plugin-private paths. */
 async function loadCodexPromptSnapshotApi(): Promise<CodexPromptSnapshotApi> {
   return (await import(CODEX_TEST_API_MODULE_ID)) as CodexPromptSnapshotApi;
-}
-
-type ScenarioChannelPluginFixture = {
-  pluginId: string;
-  plugin: unknown;
-};
-
-const scenarioChannelPluginFixtures = new Map<string, Promise<ScenarioChannelPluginFixture>>();
-
-/**
- * Tool construction resolves the scenario's channel plugin for message-tool
- * schema data. Without a loaded channel registry that lookup falls back to the
- * bundled-channel jiti loader, which re-transpiles the core source graph and
- * stalls snapshot generation by minutes. Import the entry-declared channel
- * plugin surface through the ambient (tsx/vitest) module graph instead so the
- * already-evaluated core modules are reused.
- */
-function scenarioChannelPluginFixture(pluginId: string): Promise<ScenarioChannelPluginFixture> {
-  const cached = scenarioChannelPluginFixtures.get(pluginId);
-  if (cached) {
-    return cached;
-  }
-  const loading = loadScenarioChannelPluginFixture(pluginId);
-  scenarioChannelPluginFixtures.set(pluginId, loading);
-  return loading;
-}
-
-async function loadScenarioChannelPluginFixture(
-  pluginId: string,
-): Promise<ScenarioChannelPluginFixture> {
-  const moduleId = resolveRelativeBundledPluginPublicModuleId({
-    fromModuleUrl: import.meta.url,
-    pluginId,
-    artifactBasename: "channel-plugin-api.js",
-  });
-  const moduleNamespace = (await import(moduleId)) as Record<string, unknown>;
-  // Bundled channel entries (extensions/<id>/index.ts) declare their channel
-  // plugin export from channel-plugin-api.js as `<id>Plugin`; the setup-only
-  // sibling export shares the channel id, so name selection stays exact.
-  const exportName = `${pluginId}Plugin`;
-  const plugin = moduleNamespace[exportName];
-  if (!plugin || typeof plugin !== "object") {
-    throw new Error(
-      `missing channel plugin export "${exportName}" in ${moduleId}; align the snapshot helper with the ${pluginId} plugin entry`,
-    );
-  }
-  return { pluginId, plugin };
-}
-
-/**
- * Pins exactly the scenario channel while its tools are built. Cross-channel
- * action discovery walks every loaded channel plugin, so registering more than
- * the scenario channel would change the generated message-tool schema bytes.
- */
-function withScenarioChannelRegistry<T>(fixture: ScenarioChannelPluginFixture, build: () => T): T {
-  const previousRegistry: PluginRegistry | null = getActivePluginRegistry();
-  setActivePluginRegistry(
-    createTestRegistry([
-      {
-        pluginId: fixture.pluginId,
-        plugin: fixture.plugin,
-        source: "prompt-snapshot-fixture",
-        origin: "bundled",
-      },
-    ]),
-  );
-  try {
-    return build();
-  } finally {
-    if (previousRegistry) {
-      setActivePluginRegistry(previousRegistry);
-    } else {
-      resetPluginRuntimeStateForTest();
-    }
-  }
 }
 
 const CODEX_WORKSPACE_BOOTSTRAP_CONTEXT_FILES = [
@@ -335,7 +234,25 @@ const baseConfig: OpenClawConfig = {
   agents: {
     defaults: {
       heartbeat: {
+        enabled: true,
         every: "30m",
+      },
+    },
+  },
+  tools: {
+    profiles: {
+      coding: {
+        allow: [
+          "message",
+          "heartbeat_respond",
+          "sessions_spawn",
+          "sessions_list",
+          "sessions_yield",
+          "cron",
+          "memory_search",
+          "memory_get",
+          "session_status",
+        ],
       },
     },
   },
@@ -405,16 +322,11 @@ function textStats(value: string): { chars: number; roughTokens: number } {
 
 function createPrompt(ctx: TemplateContext, body: string): string {
   const inboundUserContext = buildInboundUserContextPrefix(ctx);
-  const promptBody = [inboundUserContext, body].filter(Boolean).join("\n\n");
-  return buildReplyPromptEnvelope({
+  return buildReplyPromptBodies({
     ctx,
     sessionCtx: ctx,
-    baseBody: promptBody,
-    hasUserBody: true,
-    inboundUserContext: "",
-    isBareSessionReset: false,
-    startupAction: "new",
-    prefixedBody: promptBody,
+    effectiveBaseBody: [inboundUserContext, body].filter(Boolean).join("\n\n"),
+    prefixedBody: [inboundUserContext, body].filter(Boolean).join("\n\n"),
   }).prefixedCommandBody;
 }
 
@@ -424,7 +336,7 @@ function createExtraSystemPrompt(params: {
   intro?: string;
 }): string {
   return [
-    buildInboundMetaSystemPrompt(params.ctx, {}),
+    buildInboundMetaSystemPrompt(params.ctx),
     params.chatContext,
     params.intro,
     params.ctx.GroupSystemPrompt,
@@ -528,11 +440,6 @@ function createDynamicTools(params: {
     modelId: MODEL_ID,
     modelApi: "responses",
     model: happyPathModel,
-    // No provider runtime plugin owns tool-schema hooks for the `codex`
-    // harness provider, so a runtime plugin load can only rediscover that
-    // through the jiti source loader (minutes of core re-transpilation).
-    // Registry-only resolution keeps the same no-op outcome instantly.
-    allowProviderRuntimePluginLoad: false,
   });
   return params.codexApi.createCodexDynamicToolSpecsForPromptSnapshot({
     tools: normalized.filter((tool) => HAPPY_PATH_TOOL_NAMES.has(tool.name)),
@@ -540,20 +447,7 @@ function createDynamicTools(params: {
   });
 }
 
-async function createScenarioDynamicTools(params: {
-  codexApi: CodexPromptSnapshotApi;
-  ctx: TemplateContext;
-  trigger: "user" | "heartbeat";
-}): Promise<CodexDynamicToolSpec[]> {
-  const provider = params.ctx.Provider;
-  if (!provider) {
-    throw new Error("prompt snapshot scenarios must set ctx.Provider for channel tool fixtures");
-  }
-  const fixture = await scenarioChannelPluginFixture(provider);
-  return withScenarioChannelRegistry(fixture, () => createDynamicTools(params));
-}
-
-async function createScenarios(codexApi: CodexPromptSnapshotApi): Promise<PromptScenario[]> {
+function createScenarios(codexApi: CodexPromptSnapshotApi): PromptScenario[] {
   const telegramDirectCtx: TemplateContext = {
     Provider: "telegram",
     Surface: "telegram",
@@ -606,21 +500,17 @@ async function createScenarios(codexApi: CodexPromptSnapshotApi): Promise<Prompt
     Body: resolveHeartbeatPromptForResponseTool(),
     BodyStripped: resolveHeartbeatPromptForResponseTool(),
   };
-  const telegramDirectTools = await createScenarioDynamicTools({
+  const telegramDirectTools = createDynamicTools({
     codexApi,
     ctx: telegramDirectCtx,
     trigger: "user",
   });
-  const discordGroupTools = await createScenarioDynamicTools({
+  const discordGroupTools = createDynamicTools({
     codexApi,
     ctx: discordGroupCtx,
     trigger: "user",
   });
-  const heartbeatTools = await createScenarioDynamicTools({
-    codexApi,
-    ctx: heartbeatCtx,
-    trigger: "heartbeat",
-  });
+  const heartbeatTools = createDynamicTools({ codexApi, ctx: heartbeatCtx, trigger: "heartbeat" });
 
   return [
     {
@@ -668,7 +558,11 @@ async function createScenarios(codexApi: CodexPromptSnapshotApi): Promise<Prompt
           silentToken: SILENT_REPLY_TOKEN,
         }),
         intro: buildGroupIntro({
+          cfg: baseConfig,
+          sessionCtx: discordGroupCtx,
           defaultActivation: "mention",
+          silentToken: SILENT_REPLY_TOKEN,
+          silentReplyPolicy: "allow",
         }),
       }),
       dynamicTools: discordGroupTools,
@@ -702,8 +596,10 @@ function selectedThreadStartParams(value: Record<string, unknown>): Record<strin
     ...value,
     developerInstructions: "<see Reconstructed Model-Bound Prompt Layers>",
     dynamicTools: Array.isArray(value.dynamicTools)
-      ? flattenCodexDynamicToolSpecs(value.dynamicTools as CodexDynamicToolSpec[]).map(
-          (tool) => tool.name,
+      ? value.dynamicTools.map((tool) =>
+          tool && typeof tool === "object" && "name" in tool
+            ? (tool as { name?: unknown }).name
+            : tool,
         )
       : value.dynamicTools,
   };
@@ -907,8 +803,7 @@ function renderScenarioSnapshot(
     heartbeatCollaborationInstructions:
       scenario.trigger === "heartbeat" ? CODEX_HEARTBEAT_COLLABORATION_INSTRUCTIONS : undefined,
   });
-  const dynamicToolFunctions = flattenCodexDynamicToolSpecs(scenario.dynamicTools);
-  const criticalToolSpecs = dynamicToolFunctions.filter((tool) =>
+  const criticalToolSpecs = scenario.dynamicTools.filter((tool) =>
     ["message", "heartbeat_respond"].includes(tool.name),
   );
   const dynamicToolsJson = stableJson(scenario.dynamicTools);
@@ -968,7 +863,7 @@ function renderScenarioSnapshot(
     ...renderModelBoundPromptLayers({ scenario, codexSnapshot, dynamicToolsJson }),
     "## Dynamic Tool Names",
     "",
-    markdownFence("json", stableJson(dynamicToolFunctions.map((tool) => tool.name))),
+    markdownFence("json", stableJson(scenario.dynamicTools.map((tool) => tool.name))),
     "",
     "## Critical Visible-Reply Tool Specs",
     "",
@@ -1031,7 +926,7 @@ function renderReadme(scenarios: PromptScenario[]): string {
 /** Build all Codex happy-path prompt snapshot files without writing them. */
 export async function createHappyPathPromptSnapshotFiles(): Promise<PromptSnapshotFile[]> {
   const codexApi = await loadCodexPromptSnapshotApi();
-  const scenarios = await createScenarios(codexApi);
+  const scenarios = createScenarios(codexApi);
   const files = [
     {
       path: path.join(CODEX_RUNTIME_HAPPY_PATH_PROMPT_SNAPSHOT_DIR, "README.md"),

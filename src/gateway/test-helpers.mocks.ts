@@ -2,19 +2,50 @@
 // Centralizes Vitest mock wiring for agent, channel, plugin, and runtime seams.
 import path from "node:path";
 import { vi } from "vitest";
-import { getTestPluginRegistry } from "./test-helpers.plugin-registry.js";
+import {
+  getTestPluginRegistry,
+  resetTestPluginRegistry,
+  setTestPluginRegistry,
+} from "./test-helpers.plugin-registry.js";
 import {
   agentCommand,
   cronIsolatedRun,
+  dispatchInboundMessageMock,
   embeddedRunMock,
   type GetReplyFromConfigFn,
+  getReplyFromConfig,
   getGatewayTestHoistedState,
+  mockGetReplyFromConfigOnce,
   agentDiscoveryMock,
+  runBtwSideQuestion,
+  sendWhatsAppMock,
   sessionStoreSaveDelayMs,
+  setTestConfigRoot,
+  testIsNixMode,
+  testState,
   testTailnetIPv4,
   testTailscaleWhois,
   type RunBtwSideQuestionFn,
 } from "./test-helpers.runtime-state.js";
+
+export { getTestPluginRegistry, resetTestPluginRegistry, setTestPluginRegistry };
+export {
+  agentCommand,
+  cronIsolatedRun,
+  dispatchInboundMessageMock,
+  embeddedRunMock,
+  getReplyFromConfig,
+  mockGetReplyFromConfigOnce,
+  agentDiscoveryMock,
+  runBtwSideQuestion,
+  sendWhatsAppMock,
+  sessionStoreSaveDelayMs,
+  setTestConfigRoot,
+  testIsNixMode,
+  testState,
+  testTailnetIPv4,
+  testTailscaleWhois,
+};
 
 const gatewayTestHoisted = getGatewayTestHoistedState();
 
@@ -27,21 +58,9 @@ function createEmbeddedRunMockExports() {
       embeddedRunMock.abortCalls.push(sessionId);
       return embeddedRunMock.activeIds.has(sessionId);
     },
-    waitForEmbeddedAgentRunEnd: async (sessionId: string, timeoutMs?: number | null) => {
-      if (timeoutMs === null) {
-        embeddedRunMock.endWaitCalls.push(sessionId);
-        return await new Promise<boolean>((resolve) => {
-          embeddedRunMock.endWaiters.set(sessionId, resolve);
-        });
-      }
+    waitForEmbeddedAgentRunEnd: async (sessionId: string) => {
       embeddedRunMock.waitCalls.push(sessionId);
-      const ended = embeddedRunMock.waitResults.get(sessionId) ?? true;
-      if (ended) {
-        embeddedRunMock.endWaiters.get(sessionId)?.(true);
-      } else if (embeddedRunMock.resolveEndBeforeTimeoutIds.delete(sessionId)) {
-        embeddedRunMock.endWaiters.get(sessionId)?.(true);
-      }
-      return ended;
+      return embeddedRunMock.waitResults.get(sessionId) ?? true;
     },
   };
 }
@@ -80,13 +99,10 @@ vi.mock("../agents/agent-model-discovery.js", async () => {
   const actual = await vi.importActual<typeof import("../agents/agent-model-discovery.js")>(
     "../agents/agent-model-discovery.js",
   );
-  const modelSessions = await vi.importActual<typeof import("../agents/sessions/index.js")>(
-    "../agents/sessions/index.js",
-  );
 
   const createActualRegistry = (...args: Parameters<typeof actual.discoverModels>) => {
     const modelsFile = path.join(args[1], "models.json");
-    const Registry = modelSessions.ModelRegistry as unknown as {
+    const Registry = actual.ModelRegistry as unknown as {
       create?: (
         authStorage: unknown,
         modelsFile: string,
@@ -251,7 +267,6 @@ vi.mock("../commands/status.js", () => ({
 }));
 vi.mock("../commands/agent.js", () => ({
   agentCommand,
-  agentCommandFromGatewayIngress: agentCommand,
   agentCommandFromIngress: agentCommand,
 }));
 vi.mock("../agents/btw.js", () => ({
@@ -312,5 +327,14 @@ vi.mock("../plugins/loader.js", async () => {
     loadOpenClawPlugins: () => getTestPluginRegistry(),
   };
 });
+vi.mock("../plugins/runtime/runtime-web-channel-plugin.js", () => ({
+  sendWebChannelMessage: (...args: unknown[]) =>
+    (gatewayTestHoisted.sendWhatsAppMock as (...args: unknown[]) => unknown)(...args),
+}));
+vi.mock("/src/plugins/runtime/runtime-web-channel-plugin.js", () => ({
+  sendWebChannelMessage: (...args: unknown[]) =>
+    (gatewayTestHoisted.sendWhatsAppMock as (...args: unknown[]) => unknown)(...args),
+}));
+
 process.env.OPENCLAW_SKIP_CHANNELS = "1";
 process.env.OPENCLAW_SKIP_CRON = "1";

@@ -117,76 +117,74 @@ export function hasMismatchedCaseSensitiveDeliveryProof(
   return Boolean(threadId && storedThreadId && storedThreadId !== threadId);
 }
 
-type SessionEntryCandidate = {
-  entry: SessionEntry;
-  sessionKey: string;
-};
-
-export function resolveSessionEntryCandidates(params: {
-  entries: readonly SessionEntryCandidate[];
+export function resolveSessionStoreEntry(params: {
+  store: Record<string, SessionEntry>;
   sessionKey: string;
 }): {
   normalizedKey: string;
-  existing: SessionEntryCandidate | undefined;
+  existing: SessionEntry | undefined;
   legacyKeys: string[];
 } {
   const trimmedKey = params.sessionKey.trim();
   const normalizedKey = normalizeStoreSessionKey(trimmedKey);
   const foldedLegacyKeys = foldedSessionKeyAliasCandidates(normalizedKey);
-  const entries = new Map(params.entries.map((candidate) => [candidate.sessionKey, candidate]));
   const legacyKeySet = new Set<string>();
-  const trimmedCandidate = entries.get(trimmedKey);
   if (
     trimmedKey !== normalizedKey &&
-    trimmedCandidate &&
-    !hasMismatchedCaseSensitiveDeliveryProof(trimmedCandidate.entry, normalizedKey)
+    Object.hasOwn(params.store, trimmedKey) &&
+    !hasMismatchedCaseSensitiveDeliveryProof(params.store[trimmedKey], normalizedKey)
   ) {
     legacyKeySet.add(trimmedKey);
   }
   // Matrix folded aliases need proof they still deliver to this room. Otherwise a
   // genuinely case-distinct sibling that merely folds to the same lowercase could
   // be deleted or returned as this room's existing session.
-  let foldedLegacyEntry: SessionEntryCandidate | undefined;
+  let foldedLegacyEntry: SessionEntry | undefined;
   let foldedLegacyUpdatedAt = 0;
   for (const foldedLegacyKey of foldedLegacyKeys) {
-    const candidate = entries.get(foldedLegacyKey);
-    if (!candidate || !isConfirmedLowercasedLegacyAlias(candidate.entry, normalizedKey)) {
+    if (
+      !Object.hasOwn(params.store, foldedLegacyKey) ||
+      !isConfirmedLowercasedLegacyAlias(params.store[foldedLegacyKey], normalizedKey)
+    ) {
       continue;
     }
     legacyKeySet.add(foldedLegacyKey);
-    const updatedAt = candidate.entry.updatedAt ?? 0;
+    const entry = params.store[foldedLegacyKey];
+    const updatedAt = entry?.updatedAt ?? 0;
     if (!foldedLegacyEntry || updatedAt > foldedLegacyUpdatedAt) {
-      foldedLegacyEntry = candidate;
+      foldedLegacyEntry = entry;
       foldedLegacyUpdatedAt = updatedAt;
     }
   }
   // An exact (opaque-preserving-normalized) entry always wins over any folded
   // legacy alias, regardless of freshness (openclaw#75670). Only when no exact
   // entry exists do we fall back to a confirmed legacy alias.
-  const exactEntry = entries.get(normalizedKey);
-  const usableExactEntry = hasMismatchedCaseSensitiveDeliveryProof(exactEntry?.entry, normalizedKey)
+  const exactEntry = Object.hasOwn(params.store, normalizedKey)
+    ? params.store[normalizedKey]
+    : undefined;
+  const usableExactEntry = hasMismatchedCaseSensitiveDeliveryProof(exactEntry, normalizedKey)
     ? undefined
     : exactEntry;
   const exactKeyWins = requiresFoldedSessionKeyAliasProof(normalizedKey);
   const fallbackLegacyEntry =
     legacyKeySet.size > 0 &&
-    !hasMismatchedCaseSensitiveDeliveryProof(trimmedCandidate?.entry, normalizedKey)
-      ? trimmedCandidate
+    !hasMismatchedCaseSensitiveDeliveryProof(params.store[trimmedKey], normalizedKey)
+      ? params.store[trimmedKey]
       : undefined;
   let existing = exactKeyWins
     ? (usableExactEntry ?? foldedLegacyEntry ?? fallbackLegacyEntry)
     : undefined;
-  let existingUpdatedAt = existing?.entry.updatedAt ?? 0;
+  let existingUpdatedAt = existing?.updatedAt ?? 0;
   if (!exactKeyWins) {
     for (const candidate of [usableExactEntry, foldedLegacyEntry, fallbackLegacyEntry]) {
-      const candidateUpdatedAt = candidate?.entry.updatedAt ?? 0;
+      const candidateUpdatedAt = candidate?.updatedAt ?? 0;
       if (candidate && (!existing || candidateUpdatedAt > existingUpdatedAt)) {
         existing = candidate;
         existingUpdatedAt = candidateUpdatedAt;
       }
     }
   }
-  for (const [candidateKey, candidate] of entries) {
+  for (const [candidateKey, candidateEntry] of Object.entries(params.store)) {
     if (candidateKey === normalizedKey) {
       continue;
     }
@@ -196,13 +194,13 @@ export function resolveSessionEntryCandidates(params: {
     if (normalizeStoreSessionKey(candidateKey) !== normalizedKey) {
       continue;
     }
-    if (hasMismatchedCaseSensitiveDeliveryProof(candidate.entry, normalizedKey)) {
+    if (hasMismatchedCaseSensitiveDeliveryProof(candidateEntry, normalizedKey)) {
       continue;
     }
     legacyKeySet.add(candidateKey);
-    const candidateUpdatedAt = candidate.entry.updatedAt ?? 0;
+    const candidateUpdatedAt = candidateEntry?.updatedAt ?? 0;
     if (!existing || candidateUpdatedAt > existingUpdatedAt) {
-      existing = candidate;
+      existing = candidateEntry;
       existingUpdatedAt = candidateUpdatedAt;
     }
   }
@@ -210,24 +208,5 @@ export function resolveSessionEntryCandidates(params: {
     normalizedKey,
     existing,
     legacyKeys: [...legacyKeySet],
-  };
-}
-
-export function resolveSessionStoreEntry(params: {
-  store: Record<string, SessionEntry>;
-  sessionKey: string;
-}): {
-  normalizedKey: string;
-  existing: SessionEntry | undefined;
-  legacyKeys: string[];
-} {
-  const resolved = resolveSessionEntryCandidates({
-    entries: Object.entries(params.store).map(([sessionKey, entry]) => ({ entry, sessionKey })),
-    sessionKey: params.sessionKey,
-  });
-  return {
-    normalizedKey: resolved.normalizedKey,
-    existing: resolved.existing?.entry,
-    legacyKeys: resolved.legacyKeys,
   };
 }

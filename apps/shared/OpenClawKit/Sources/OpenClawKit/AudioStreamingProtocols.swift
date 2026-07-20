@@ -1,4 +1,4 @@
-#if Talk && canImport(ElevenLabsKit)
+#if Talk
 import Foundation
 
 @MainActor

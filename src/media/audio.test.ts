@@ -1,6 +1,10 @@
 // Audio media tests cover audio type normalization and extension mapping.
 import { describe, expect, it } from "vitest";
-import { isVoiceCompatibleAudio } from "./audio.js";
+import {
+  isVoiceCompatibleAudio,
+  VOICE_MESSAGE_AUDIO_EXTENSIONS,
+  VOICE_MESSAGE_MIME_TYPES,
+} from "./audio.js";
 
 describe("isVoiceCompatibleAudio", () => {
   function expectVoiceCompatibilityCase(
@@ -25,15 +29,7 @@ describe("isVoiceCompatibleAudio", () => {
     {
       name: "returns true for supported MIME types",
       cases: [
-        ...[
-          "audio/ogg",
-          "audio/opus",
-          "audio/mpeg",
-          "audio/mp3",
-          "audio/mp4",
-          "audio/x-m4a",
-          "audio/m4a",
-        ].map((contentType) => ({
+        ...Array.from(VOICE_MESSAGE_MIME_TYPES, (contentType) => ({
           opts: { contentType, fileName: null },
           expected: true,
         })),
@@ -43,7 +39,7 @@ describe("isVoiceCompatibleAudio", () => {
     },
     {
       name: "returns true for supported extensions",
-      cases: [".oga", ".ogg", ".opus", ".mp3", ".m4a"].map((ext) => ({
+      cases: Array.from(VOICE_MESSAGE_AUDIO_EXTENSIONS, (ext) => ({
         opts: { fileName: `voice${ext}` },
         expected: true,
       })),

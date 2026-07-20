@@ -5,10 +5,10 @@ import { clearRuntimeAuthProfileStoreSnapshots } from "../agents/auth-profiles.j
 import { clearSessionStoreCacheForTest } from "../config/sessions.js";
 import { resetSystemEventsForTest } from "../infra/system-events.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
-import type { PluginRegistry } from "../plugins/registry.js";
+import type { PluginProviderRegistration } from "../plugins/registry.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../plugins/runtime.js";
 import type { ProviderPlugin } from "../plugins/types.js";
-import { resetSkillsRefreshForTest } from "../skills/runtime/refresh.test-support.js";
+import { resetSkillsRefreshForTest } from "../skills/runtime/refresh.js";
 import {
   clearSessionAuthProfileOverrideMock,
   compactEmbeddedAgentSessionMock,
@@ -21,8 +21,6 @@ import {
   runPreparedReplyMock,
   runReplyAgentMock,
 } from "./reply.directive.directive-behavior.e2e-mocks.js";
-
-type PluginProviderRegistration = PluginRegistry["providers"][number];
 
 const DEFAULT_TEST_MODEL_CATALOG: Array<{
   id: string;
@@ -67,17 +65,8 @@ function createThinkingPolicyProvider(
     id: providerId,
     label: providerId,
     auth: [],
-    resolveThinkingProfile: ({ modelId }) => ({
-      levels: [
-        { id: "off" },
-        { id: "low" },
-        { id: "medium" },
-        { id: "high" },
-        ...(xhighModelIds.includes(normalizeLowercaseStringOrEmpty(modelId))
-          ? [{ id: "xhigh" as const }]
-          : []),
-      ],
-    }),
+    supportsXHighThinking: ({ modelId }) =>
+      xhighModelIds.includes(normalizeLowercaseStringOrEmpty(modelId)),
   };
 }
 

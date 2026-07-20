@@ -1,7 +1,6 @@
 // Slack tests cover channel migration plugin behavior.
-import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
-import { migrateSlackChannelConfig } from "./channel-migration.js";
+import { migrateSlackChannelConfig, migrateSlackChannelsInPlace } from "./channel-migration.js";
 
 function createSlackGlobalChannelConfig(channels: Record<string, Record<string, unknown>>) {
   return {
@@ -63,9 +62,7 @@ describe("migrateSlackChannelConfig", () => {
 
     expect(result.migrated).toBe(true);
     expect(result.scopes).toEqual(["account"]);
-    expect(
-      expectDefined(cfg.channels.slack.accounts.primary, "primary Slack account").channels,
-    ).toEqual({
+    expect(cfg.channels.slack.accounts.primary.channels).toEqual({
       C999: { requireMention: true },
     });
   });
@@ -83,9 +80,7 @@ describe("migrateSlackChannelConfig", () => {
     });
 
     expect(result.migrated).toBe(true);
-    expect(
-      expectDefined(cfg.channels.slack.accounts.Primary, "Primary Slack account").channels,
-    ).toEqual({
+    expect(cfg.channels.slack.accounts.Primary.channels).toEqual({
       C999: {},
     });
   });
@@ -108,6 +103,17 @@ describe("migrateSlackChannelConfig", () => {
     expect(cfg.channels.slack.channels).toEqual({
       C123: { requireMention: true },
       C999: { requireMention: false },
+    });
+  });
+
+  it("no-ops when old and new channel ids are the same", () => {
+    const channels = {
+      C123: { requireMention: true },
+    };
+    const result = migrateSlackChannelsInPlace(channels, "C123", "C123");
+    expect(result).toEqual({ migrated: false, skippedExisting: false });
+    expect(channels).toEqual({
+      C123: { requireMention: true },
     });
   });
 });

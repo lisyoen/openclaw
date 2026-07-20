@@ -12,11 +12,11 @@ Adds web search provider support.
 ## Distribution
 
 - Package: `@openclaw/exa-plugin`
-- Install route: npm; ClawHub: `clawhub:@openclaw/exa-plugin`
+- Install route: included in OpenClaw
 
 ## Surface
 
-contracts: `webSearchProviders`
+contracts: webSearchProviders
 
 ## Related docs
 

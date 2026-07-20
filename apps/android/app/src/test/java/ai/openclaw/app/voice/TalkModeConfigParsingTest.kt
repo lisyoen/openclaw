@@ -19,7 +19,6 @@ class TalkModeConfigParsingTest {
           {
             "talk": {
               "interruptOnSpeech": true,
-              "speechLocale": "de_DE",
               "silenceTimeoutMs": 1800
             },
             "session": {
@@ -32,43 +31,8 @@ class TalkModeConfigParsingTest {
     val parsed = TalkModeGatewayConfigParser.parse(config)
 
     assertEquals("voice-main", parsed.mainSessionKey)
-    assertEquals("de-DE", parsed.speechLocale)
     assertEquals(true, parsed.interruptOnSpeech)
     assertEquals(1800L, parsed.silenceTimeoutMs)
-  }
-
-  @Test
-  fun derivesRealtimeLanguageFromConfiguredLocale() {
-    assertEquals("de", realtimeTranscriptionLanguage("de-DE"))
-    assertEquals(null, realtimeTranscriptionLanguage("fil-PH"))
-  }
-
-  @Test
-  fun resolvesRealtimeLanguageFromConfigThenWatchThenPhone() {
-    assertEquals(
-      "de",
-      resolveRealtimeTranscriptionLanguageHint(
-        configuredLocaleTag = "de-DE",
-        requestedLanguage = "en",
-        deviceLocaleTag = "fr-FR",
-      ),
-    )
-    assertEquals(
-      "en",
-      resolveRealtimeTranscriptionLanguageHint(
-        configuredLocaleTag = null,
-        requestedLanguage = "en",
-        deviceLocaleTag = "fr-FR",
-      ),
-    )
-    assertEquals(
-      "fr",
-      resolveRealtimeTranscriptionLanguageHint(
-        configuredLocaleTag = null,
-        requestedLanguage = null,
-        deviceLocaleTag = "fr-FR",
-      ),
-    )
   }
 
   @Test

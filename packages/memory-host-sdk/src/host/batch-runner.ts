@@ -1,7 +1,7 @@
 // Memory Host SDK module implements batch runner behavior.
 import { resolveSafeTimeoutDelayMs } from "../../../gateway-client/src/timeouts.js";
 import { splitBatchRequestsByLimits } from "./batch-utils.js";
-import { runMemoryHostTasksWithConcurrency } from "./internal.js";
+import { runWithConcurrency } from "./internal.js";
 
 // Shared runner for splitting and executing remote embedding batch groups.
 
@@ -117,7 +117,7 @@ export async function runEmbeddingBatchGroups<TRequest>(params: {
     timeoutMs: params.timeoutMs,
   });
 
-  await runMemoryHostTasksWithConcurrency(tasks, params.concurrency);
+  await runWithConcurrency(tasks, params.concurrency);
   return byCustomId;
 }
 

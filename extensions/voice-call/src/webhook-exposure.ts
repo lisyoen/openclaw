@@ -28,7 +28,7 @@ export function providerRequiresPublicWebhook(providerName: string | undefined):
 }
 
 /** Return true for localhost, private, or otherwise provider-unreachable hosts. */
-function isLocalOnlyWebhookHost(hostname: string): boolean {
+export function isLocalOnlyWebhookHost(hostname: string): boolean {
   return isBlockedHostnameOrIp(hostname);
 }
 

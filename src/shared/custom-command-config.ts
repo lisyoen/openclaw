@@ -2,20 +2,20 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 
 /** Raw custom slash-command entry from config. */
-type CustomCommandInput = {
+export type CustomCommandInput = {
   command?: string | null;
   description?: string | null;
 };
 
 /** Validation issue for one configured custom command. */
-type CustomCommandIssue = {
+export type CustomCommandIssue = {
   index: number;
   field: "command" | "description";
   message: string;
 };
 
 /** Command validation policy for one command family. */
-type CustomCommandConfig = {
+export type CustomCommandConfig = {
   label: string;
   pattern: RegExp;
   patternDescription: string;

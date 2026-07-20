@@ -34,25 +34,28 @@ export function resolveNpmInstallRecordSpec(params: {
   return resolvedSpec;
 }
 
-/** Replaces a plugin install record with the authoritative completed install. */
+/** Records or updates a plugin install record in OpenClaw config. */
 export function recordPluginInstall(
   cfg: OpenClawConfig,
   update: PluginInstallUpdate,
 ): OpenClawConfig {
   const { pluginId, ...record } = update;
-  const nextRecord = {
-    ...record,
-    installedAt: record.installedAt ?? new Date().toISOString(),
+  const installs = {
+    ...cfg.plugins?.installs,
+    [pluginId]: {
+      ...cfg.plugins?.installs?.[pluginId],
+      ...record,
+      installedAt: record.installedAt ?? new Date().toISOString(),
+    },
   };
 
   return {
     ...cfg,
     plugins: {
-      // cfg.plugins may be absent on first install; spreading undefined is {}.
       ...cfg.plugins,
       installs: {
-        ...cfg.plugins?.installs,
-        [pluginId]: nextRecord,
+        ...installs,
+        [pluginId]: installs[pluginId],
       },
     },
   };

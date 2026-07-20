@@ -16,8 +16,8 @@ OpenClaw LINE channel plugin for LINE Bot API chats.
 
 ## Surface
 
-channels: `line`
+channels: line
 
 ## Related docs
 
-- [LINE](/channels/line)
+- [line](/channels/line)

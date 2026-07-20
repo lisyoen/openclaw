@@ -189,7 +189,6 @@ async function fetchSearxngResults(params: {
   timeoutSeconds: number;
   count: number;
   endpointMode: SearxngEndpointMode;
-  signal?: AbortSignal;
 }): Promise<SearxngResult[]> {
   const url = buildSearxngSearchUrl({
     baseUrl: params.baseUrl,
@@ -206,7 +205,6 @@ async function fetchSearxngResults(params: {
     {
       url,
       timeoutSeconds: params.timeoutSeconds,
-      signal: params.signal,
       init: {
         method: "GET",
         headers: {
@@ -224,7 +222,7 @@ async function fetchSearxngResults(params: {
 
       const body = await readResponseText(response, { maxBytes: MAX_RESPONSE_BYTES });
       if (body.truncated) {
-        throw new Error(`SearXNG response incomplete after ${body.bytesRead} bytes.`);
+        throw new Error("SearXNG response too large.");
       }
       return parseSearxngResponseText(body.text, params.count);
     },
@@ -240,9 +238,7 @@ export async function runSearxngSearch(params: {
   baseUrl?: string;
   timeoutSeconds?: number;
   cacheTtlMinutes?: number;
-  signal?: AbortSignal;
 }): Promise<Record<string, unknown>> {
-  params.signal?.throwIfAborted();
   const count = resolveSearchCount(params.count, DEFAULT_SEARCH_COUNT);
   const categories = params.categories ?? resolveSearxngCategories(params.config);
   const language = params.language ?? resolveSearxngLanguage(params.config);
@@ -256,7 +252,6 @@ export async function runSearxngSearch(params: {
     );
   }
   const endpointMode = await validateSearxngBaseUrl(baseUrl);
-  params.signal?.throwIfAborted();
 
   const cacheKey = normalizeCacheKey(
     JSON.stringify({
@@ -282,9 +277,7 @@ export async function runSearxngSearch(params: {
     timeoutSeconds,
     count,
     endpointMode,
-    signal: params.signal,
   });
-  params.signal?.throwIfAborted();
   if (results.length === 0 && shouldRetryEmptyCategorySearchWithGeneral(categories)) {
     results = await fetchSearxngResults({
       baseUrl,
@@ -294,9 +287,7 @@ export async function runSearxngSearch(params: {
       timeoutSeconds,
       count,
       endpointMode,
-      signal: params.signal,
     });
-    params.signal?.throwIfAborted();
   }
 
   const payload = {

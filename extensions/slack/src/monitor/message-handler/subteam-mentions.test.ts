@@ -1,7 +1,11 @@
 // Slack tests cover subteam mentions plugin behavior.
 import type { WebClient } from "@slack/web-api";
-import { describe, expect, it, vi } from "vitest";
-import { isSlackSubteamMentionForBot } from "./subteam-mentions.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clearSlackSubteamMentionCacheForTest,
+  extractSlackSubteamMentionIds,
+  isSlackSubteamMentionForBot,
+} from "./subteam-mentions.js";
 
 function createClient(users: string[]) {
   return {
@@ -16,6 +20,16 @@ function createClient(users: string[]) {
 }
 
 describe("Slack subteam mentions", () => {
+  beforeEach(() => {
+    clearSlackSubteamMentionCacheForTest();
+  });
+
+  it("extracts unique user-group ids from Slack mention tokens", () => {
+    expect(
+      extractSlackSubteamMentionIds("<!subteam^S123|eng> <!subteam^s456> <!subteam^S123>"),
+    ).toEqual(["S123", "S456"]);
+  });
+
   it("matches when the bot user is a member of a mentioned user group", async () => {
     const client = createClient(["U_OTHER", "U_BOT"]);
 

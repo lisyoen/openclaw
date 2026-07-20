@@ -34,9 +34,8 @@ import { fetchZaiUsage } from "openclaw/plugin-sdk/provider-usage";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { detectZaiEndpoint, type ZaiEndpointId } from "./detect.js";
 import { zaiMediaUnderstandingProvider } from "./media-understanding-provider.js";
-import { buildZaiModelDefinition, resolveZaiBaseUrl } from "./model-definitions.js";
+import { buildZaiModelDefinition } from "./model-definitions.js";
 import { applyZaiConfig, applyZaiProviderConfig, resolveZaiModelId } from "./onboard.js";
-import { isGlm52ModelId, resolveThinkingProfile } from "./provider-policy-api.js";
 
 const PROVIDER_ID = "zai";
 const GLM5_TEMPLATE_MODEL_ID = "glm-4.7";
@@ -105,8 +104,7 @@ function resolveGlm5ForwardCompatModel(
     ...template,
     id: def.id,
     name: def.name,
-    // Native models must never fall through to the OpenAI SDK's default host.
-    baseUrl: ctx.providerConfig?.baseUrl ?? template?.baseUrl ?? resolveZaiBaseUrl(),
+    baseUrl: ctx.providerConfig?.baseUrl ?? template?.baseUrl,
     api: "openai-completions",
     provider: PROVIDER_ID,
     reasoning: def.reasoning,
@@ -129,31 +127,11 @@ function isDisabledThinkingLevel(thinkingLevel: ProviderWrapStreamFnContext["thi
   return thinkingLevel === "off";
 }
 
-function mapThinkingLevelToZaiReasoningEffort(
-  thinkingLevel: ProviderWrapStreamFnContext["thinkingLevel"],
-): "high" | "max" | undefined {
-  switch (thinkingLevel) {
-    case "low":
-    case "medium":
-    case "high":
-    case "adaptive":
-      return "high";
-    case "xhigh":
-    case "max":
-      return "max";
-    default:
-      return undefined;
-  }
-}
-
 function wrapZaiStreamFn(ctx: ProviderWrapStreamFnContext) {
   let streamFn = createToolStreamWrapper(ctx.streamFn, ctx.extraParams?.tool_stream !== false);
   const preserveThinking = shouldPreserveZaiThinking(ctx.extraParams);
-  const reasoningEffort = isGlm52ModelId(ctx.modelId)
-    ? mapThinkingLevelToZaiReasoningEffort(ctx.thinkingLevel)
-    : undefined;
 
-  if (!isDisabledThinkingLevel(ctx.thinkingLevel) && !preserveThinking && !reasoningEffort) {
+  if (!isDisabledThinkingLevel(ctx.thinkingLevel) && !preserveThinking) {
     return streamFn;
   }
 
@@ -165,10 +143,6 @@ function wrapZaiStreamFn(ctx: ProviderWrapStreamFnContext) {
     if (isDisabledThinkingLevel(ctx.thinkingLevel)) {
       payload.thinking = { type: "disabled" };
       return;
-    }
-
-    if (reasoningEffort) {
-      payload.reasoning_effort = reasoningEffort;
     }
 
     if (preserveThinking) {
@@ -391,7 +365,13 @@ export default definePluginEntry({
       }),
       prepareExtraParams: (ctx) => defaultToolStreamExtraParams(ctx.extraParams),
       wrapStreamFn: (ctx) => wrapZaiStreamFn(ctx),
-      resolveThinkingProfile,
+      resolveThinkingProfile: () => ({
+        levels: [
+          { id: "off", label: "off" },
+          { id: "low", label: "on" },
+        ],
+        defaultLevel: "off",
+      }),
       isModernModelRef: ({ modelId }) => {
         const lower = normalizeLowercaseStringOrEmpty(modelId);
         return (

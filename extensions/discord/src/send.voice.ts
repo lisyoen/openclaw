@@ -15,7 +15,6 @@ import { loadWebMediaRaw } from "openclaw/plugin-sdk/web-media";
 import { resolveDiscordAccount } from "./accounts.js";
 import type { RequestClient } from "./internal/discord.js";
 import { parseAndResolveChannelRecipient } from "./recipient-resolution.js";
-import type { DiscordReplyReference } from "./reply-reference.js";
 import { createDiscordSendResult } from "./send.receipt.js";
 import { buildDiscordSendError, createDiscordClient, resolveChannelId } from "./send.shared.js";
 import type { DiscordSendResult } from "./send.types.js";
@@ -31,7 +30,7 @@ type VoiceMessageOpts = {
   accountId?: string;
   verbose?: boolean;
   rest?: RequestClient;
-  reply?: DiscordReplyReference;
+  replyTo?: string;
   retry?: RetryConfig;
   silent?: boolean;
 };
@@ -39,13 +38,11 @@ type VoiceMessageOpts = {
 function toDiscordSendResult(
   result: { id?: string | null; channel_id?: string | null },
   fallbackChannelId: string,
-  reply?: DiscordReplyReference,
 ): DiscordSendResult {
   return createDiscordSendResult({
     result,
     fallbackChannelId,
     kind: "voice",
-    reply,
   });
 }
 
@@ -113,7 +110,7 @@ export async function sendVoiceMessageDiscord(
       channelId,
       audioBuffer,
       metadata,
-      opts.reply?.messageId,
+      opts.replyTo,
       request,
       opts.silent,
       token,
@@ -125,7 +122,7 @@ export async function sendVoiceMessageDiscord(
       direction: "outbound",
     });
 
-    return toDiscordSendResult(result, channelId, opts.reply);
+    return toDiscordSendResult(result, channelId);
   } catch (err) {
     if (channelId && rest && token) {
       throw await buildDiscordSendError(err, {

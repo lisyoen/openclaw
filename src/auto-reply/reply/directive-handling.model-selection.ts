@@ -56,7 +56,6 @@ export function resolveModelSelectionFromDirective(params: {
   allowedModelKeys: Set<string>;
   allowedModelCatalog: Array<{ provider: string; id?: string; name?: string }>;
   provider: string;
-  agentId?: string;
 }): {
   modelSelection?: ModelDirectiveSelection;
   profileOverride?: string;
@@ -93,8 +92,6 @@ export function resolveModelSelectionFromDirective(params: {
         defaultModel: params.defaultModel,
         aliasIndex: params.aliasIndex,
         allowedModelKeys: params.allowedModelKeys,
-        cfg: params.cfg,
-        agentId: params.agentId,
         rawRuntime: params.directives.rawModelRuntime,
       })
     : null;
@@ -150,8 +147,6 @@ export function resolveModelSelectionFromDirective(params: {
       defaultModel: params.defaultModel,
       aliasIndex: params.aliasIndex,
       allowedModelKeys: params.allowedModelKeys,
-      cfg: params.cfg,
-      agentId: params.agentId,
       rawRuntime: params.directives.rawModelRuntime,
     });
 

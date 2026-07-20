@@ -22,6 +22,7 @@ export {
 } from "./thread-bindings.config.js";
 
 export {
+  isRecentlyUnboundThreadWebhookMessage,
   resolveThreadBindingIdleTimeoutMs,
   resolveThreadBindingInactivityExpiresAt,
   resolveThreadBindingMaxAgeExpiresAt,

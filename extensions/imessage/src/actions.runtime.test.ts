@@ -1,11 +1,13 @@
 // Imessage tests cover actions plugin behavior.
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const spawnMock = vi.hoisted(() => vi.fn());
 const createIMessageRpcClientMock = vi.hoisted(() => vi.fn());
-const runIMessageCliJsonCommandMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./cli-output.js", () => ({
-  runIMessageCliJsonCommand: runIMessageCliJsonCommandMock,
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: spawnMock,
 }));
 
 vi.mock("./client.js", () => ({
@@ -18,8 +20,26 @@ const { imessageActionsRuntime, findChatGuidForTest, normalizeDirectChatIdentifi
 afterEach(() => {
   vi.restoreAllMocks();
   createIMessageRpcClientMock.mockReset();
-  runIMessageCliJsonCommandMock.mockReset();
+  spawnMock.mockReset();
 });
+
+function mockSpawnJsonResponse(payload: Record<string, unknown> = { success: true }) {
+  spawnMock.mockImplementationOnce(() => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter & { setEncoding: (encoding: string) => void };
+      stderr: EventEmitter & { setEncoding: (encoding: string) => void };
+      kill: (signal: string) => void;
+    };
+    child.stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    child.stderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+    child.kill = vi.fn();
+    queueMicrotask(() => {
+      child.stdout.emit("data", `${JSON.stringify(payload)}\n`);
+      child.emit("close", 0);
+    });
+    return child;
+  });
+}
 
 function mockRpcChatList(chats: Array<Record<string, unknown>>) {
   const request = vi.fn().mockResolvedValue({ chats });
@@ -30,7 +50,7 @@ function mockRpcChatList(chats: Array<Record<string, unknown>>) {
 
 describe("imessage actions runtime", () => {
   it("passes the configured Messages db path to private API bridge commands", async () => {
-    runIMessageCliJsonCommandMock.mockResolvedValue({ success: true });
+    mockSpawnJsonResponse();
 
     await imessageActionsRuntime.sendReaction({
       chatGuid: "iMessage;+;chat0000",
@@ -43,11 +63,9 @@ describe("imessage actions runtime", () => {
       },
     });
 
-    expect(runIMessageCliJsonCommandMock).toHaveBeenCalledWith({
-      cliPath: "imsg",
-      dbPath: "/tmp/messages.db",
-      timeoutMs: undefined,
-      args: [
+    expect(spawnMock).toHaveBeenCalledWith(
+      "imsg",
+      [
         "tapback",
         "--chat",
         "iMessage;+;chat0000",
@@ -57,25 +75,12 @@ describe("imessage actions runtime", () => {
         "like",
         "--part",
         "0",
+        "--db",
+        "/tmp/messages.db",
+        "--json",
       ],
-    });
-  });
-
-  it("preserves canonical CLI wrapper errors", async () => {
-    const wrapperError = new Error("imsg failed");
-    runIMessageCliJsonCommandMock.mockRejectedValue(wrapperError);
-
-    await expect(
-      imessageActionsRuntime.sendReaction({
-        chatGuid: "iMessage;+;chat0000",
-        messageId: "message-guid",
-        reaction: "like",
-        options: {
-          cliPath: "imsg",
-          chatGuid: "iMessage;+;chat0000",
-        },
-      }),
-    ).rejects.toBe(wrapperError);
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
   });
 
   it("drops cached chats.list entries when the current clock is not a valid date timestamp", async () => {
@@ -255,9 +260,6 @@ describe("normalizeDirectChatIdentifier", () => {
   });
   it("leaves group identifiers (iMessage;+;chat...) unchanged", () => {
     expect(normalizeDirectChatIdentifierForTest("iMessage;+;chat0000")).toBe("iMessage;+;chat0000");
-    expect(normalizeDirectChatIdentifierForTest("iMessage;+;Some@example.com")).toBe(
-      "iMessage;+;Some@example.com",
-    );
   });
   it("leaves bare values unchanged", () => {
     expect(normalizeDirectChatIdentifierForTest("+12069106512")).toBe("+12069106512");

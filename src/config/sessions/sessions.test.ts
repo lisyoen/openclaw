@@ -2,14 +2,13 @@
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { upsertAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import * as jsonFiles from "../../infra/json-files.js";
 import { createSuiteTempRootTracker, withTempDirSync } from "../../test-helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config.js";
 import type { SessionConfig } from "../types.base.js";
-import { resolveSessionLifecycleTimestamps, resolveSessionWorkStartError } from "./lifecycle.js";
+import { resolveSessionLifecycleTimestamps } from "./lifecycle.js";
 import {
   resolveSessionFilePath,
   resolveSessionFilePathOptions,
@@ -17,32 +16,18 @@ import {
   validateSessionId,
 } from "./paths.js";
 import { evaluateSessionFreshness, resolveSessionResetPolicy } from "./reset.js";
-import { mergeRestartRecoveryTerminalRunIds } from "./restart-recovery-state.js";
-import { loadSessionEntry } from "./session-accessor.js";
 import { resolveAndPersistSessionFile } from "./session-file.js";
-import { formatSqliteSessionFileMarker } from "./sqlite-marker.js";
 import { readSessionStoreCache, writeSessionStoreCache } from "./store-cache.js";
 import {
   clearSessionStoreCacheForTest,
   loadSessionStore,
-  saveSessionStore,
   updateSessionStore,
-  patchSessionEntryWithKey,
+  updateSessionStoreEntry,
 } from "./store.js";
 import { useTempSessionsFixture } from "./test-helpers.js";
-import { mergeSessionEntry, type SessionEntry } from "./types.js";
+import { mergeSessionEntry, mergeSessionEntryWithPolicy, type SessionEntry } from "./types.js";
 
 type WriteTextAtomicCall = Parameters<typeof jsonFiles.writeTextAtomic>;
-
-it("merges bounded restart tombstones without evicting fresh-only ids", () => {
-  const existing = Array.from({ length: 64 }, (_, index) => `run-${index}`);
-
-  expect(mergeRestartRecoveryTerminalRunIds(existing, [...existing.slice(1), "run-new"])).toEqual([
-    ...existing.slice(1),
-    "run-new",
-  ]);
-  expect(mergeRestartRecoveryTerminalRunIds(existing, ["run-0"])).toEqual(existing);
-});
 
 function requireWriteTextAtomicCall(
   spy: { mock: { calls: WriteTextAtomicCall[] } },
@@ -152,16 +137,16 @@ describe("resolveSessionResetPolicy", () => {
         resetType: "group",
       });
 
-      expect(groupPolicy.mode).toBe("none");
+      expect(groupPolicy.mode).toBe("daily");
     });
   });
 
-  it("defaults to no automatic reset", () => {
+  it("defaults to daily resets at 4am local time", () => {
     const policy = resolveSessionResetPolicy({
       resetType: "direct",
     });
 
-    expect(policy.mode).toBe("none");
+    expect(policy.mode).toBe("daily");
     expect(policy.atHour).toBe(4);
   });
 
@@ -303,34 +288,16 @@ describe("session lifecycle timestamps", () => {
         "utf8",
       );
 
-      const realReadSync = fs.readSync.bind(fs);
-      let shortReadCalls = 0;
-      const readSpy = vi.spyOn(fs, "readSync").mockImplementation(((
-        fd: number,
-        buffer: NodeJS.ArrayBufferView,
-        offset: number,
-        length: number,
-        position: fs.ReadPosition | null,
-      ) => {
-        shortReadCalls += 1;
-        return realReadSync(fd, buffer, offset, Math.min(length, 16), position);
-      }) as typeof fs.readSync);
+      const timestamps = resolveSessionLifecycleTimestamps({
+        storePath,
+        entry: {
+          sessionId: "legacy-session",
+          sessionFile,
+          updatedAt: Date.parse("2026-04-25T08:00:00.000Z"),
+        },
+      });
 
-      try {
-        const timestamps = resolveSessionLifecycleTimestamps({
-          storePath,
-          entry: {
-            sessionId: "legacy-session",
-            sessionFile,
-            updatedAt: Date.parse("2026-04-25T08:00:00.000Z"),
-          },
-        });
-
-        expect(timestamps.sessionStartedAt).toBe(Date.parse(headerTimestamp));
-        expect(shortReadCalls).toBeGreaterThan(1);
-      } finally {
-        readSpy.mockRestore();
-      }
+      expect(timestamps.sessionStartedAt).toBe(Date.parse(headerTimestamp));
     } finally {
       await fsPromises.rm(dir, { recursive: true, force: true });
     }
@@ -370,22 +337,6 @@ describe("session lifecycle timestamps", () => {
     } finally {
       await fsPromises.rm(dir, { recursive: true, force: true });
     }
-  });
-});
-
-describe("session work admission", () => {
-  it("fails closed while trusted session initialization is pending", () => {
-    expect(
-      resolveSessionWorkStartError("agent:main:pending", {
-        sessionId: "pending-session",
-        initializationPending: true,
-      }),
-    ).toContain("still initializing");
-    expect(
-      resolveSessionWorkStartError("agent:main:pending", {
-        sessionId: "pending-session",
-      }),
-    ).toBeUndefined();
   });
 });
 
@@ -475,19 +426,7 @@ describe("session store writer queue", () => {
           channel: "discord",
           to: [],
         },
-        restartRecoveryBeforeAgentReplyState: "maybe",
-        restartRecoveryDeliveryMediaUrls: "not-an-array",
-        restartRecoveryDisableMessageTool: "yes",
-        restartRecoverySuppressTextDelivery: "yes",
         restartRecoveryDeliveryRunId: 123,
-        restartRecoveryDeliverySourceRunId: 123,
-        restartRecoveryRequesterAccountId: 123,
-        restartRecoveryRequesterSenderId: {},
-        restartRecoverySameChannelThreadRequired: "yes",
-        restartRecoverySourceIngress: "web",
-        restartRecoverySourceReplyDeliveryMode: "sometimes",
-        restartRecoveryTerminalDeliveryEvidence: [{ runId: 123, payloads: "bad" }],
-        restartRecoveryTerminalRunIds: [123, "", {}],
       },
       "agent:main:good-pending": {
         sessionId: "s-good-pending",
@@ -511,46 +450,7 @@ describe("session store writer queue", () => {
           accountId: "Main",
           threadId: "reply-1",
         },
-        restartRecoveryBeforeAgentReplyState: "admitted",
-        restartRecoveryDeliveryMediaUrls: [" /tmp/proof.png ", "", "/tmp/proof.png"],
-        restartRecoveryDisableMessageTool: true,
-        restartRecoverySuppressTextDelivery: true,
         restartRecoveryDeliveryRunId: "run-1",
-        restartRecoveryDeliverySourceRunId: "source-run-1",
-        restartRecoveryRequesterAccountId: " work ",
-        restartRecoveryRequesterSenderId: " sender-1 ",
-        restartRecoverySameChannelThreadRequired: true,
-        restartRecoverySourceIngress: "channel",
-        restartRecoverySourceReplyDeliveryMode: "message_tool_only",
-        restartRecoveryTerminalDeliveryEvidence: [
-          {
-            runId: " terminal-1 ",
-            captured: true,
-            payloads: [{ visible: false }, { visible: true, mediaUrls: [" /tmp/proof.png "] }],
-            deliveryStatus: {
-              status: "partial_failed",
-              payloadOutcomes: [{ index: 1, status: "failed", sentBeforeError: false }],
-            },
-            messagingToolSentTargets: [
-              {
-                provider: " Discord ",
-                to: " channel:123 ",
-                threadId: 42,
-                mediaUrls: [" /tmp/proof.png "],
-                visible: true,
-              },
-              {
-                provider: " Discord ",
-                to: " channel:empty ",
-                visible: false,
-              },
-            ],
-            messagingToolSentTargetsTruncated: true,
-            messagingToolAggregateEvidenceUnaccounted: true,
-            restartUnsafeSideEffectsDetected: true,
-          },
-        ],
-        restartRecoveryTerminalRunIds: [" terminal-1 ", "terminal-2", "terminal-1", null],
       },
     } as unknown as Record<string, SessionEntry>);
 
@@ -571,19 +471,7 @@ describe("session store writer queue", () => {
     expect(bad?.pendingFinalDeliveryContext).toBeUndefined();
     expect(bad?.pendingFinalDeliveryIntentId).toBeUndefined();
     expect(bad?.restartRecoveryDeliveryContext).toBeUndefined();
-    expect(bad?.restartRecoveryBeforeAgentReplyState).toBeUndefined();
-    expect(bad?.restartRecoveryDeliveryMediaUrls).toBeUndefined();
-    expect(bad?.restartRecoveryDisableMessageTool).toBeUndefined();
-    expect(bad?.restartRecoverySuppressTextDelivery).toBeUndefined();
     expect(bad?.restartRecoveryDeliveryRunId).toBeUndefined();
-    expect(bad?.restartRecoveryDeliverySourceRunId).toBeUndefined();
-    expect(bad?.restartRecoveryRequesterAccountId).toBeUndefined();
-    expect(bad?.restartRecoveryRequesterSenderId).toBeUndefined();
-    expect(bad?.restartRecoverySameChannelThreadRequired).toBeUndefined();
-    expect(bad?.restartRecoverySourceIngress).toBeUndefined();
-    expect(bad?.restartRecoverySourceReplyDeliveryMode).toBeUndefined();
-    expect(bad?.restartRecoveryTerminalDeliveryEvidence).toBeUndefined();
-    expect(bad?.restartRecoveryTerminalRunIds).toBeUndefined();
 
     expect(good).toMatchObject({
       pendingFinalDelivery: true,
@@ -605,46 +493,7 @@ describe("session store writer queue", () => {
         accountId: "main",
         threadId: "reply-1",
       },
-      restartRecoveryBeforeAgentReplyState: "admitted",
-      restartRecoveryDeliveryMediaUrls: ["/tmp/proof.png"],
-      restartRecoveryDisableMessageTool: true,
-      restartRecoverySuppressTextDelivery: true,
       restartRecoveryDeliveryRunId: "run-1",
-      restartRecoveryDeliverySourceRunId: "source-run-1",
-      restartRecoveryRequesterAccountId: "work",
-      restartRecoveryRequesterSenderId: "sender-1",
-      restartRecoverySameChannelThreadRequired: true,
-      restartRecoverySourceIngress: "channel",
-      restartRecoverySourceReplyDeliveryMode: "message_tool_only",
-      restartRecoveryTerminalDeliveryEvidence: [
-        {
-          runId: "terminal-1",
-          captured: true,
-          payloads: [{ visible: false }, { visible: true, mediaUrls: ["/tmp/proof.png"] }],
-          deliveryStatus: {
-            status: "partial_failed",
-            payloadOutcomes: [{ index: 1, status: "failed", sentBeforeError: false }],
-          },
-          messagingToolSentTargets: [
-            {
-              provider: "Discord",
-              to: "channel:123",
-              threadId: "42",
-              mediaUrls: ["/tmp/proof.png"],
-              visible: true,
-            },
-            {
-              provider: "Discord",
-              to: "channel:empty",
-              visible: false,
-            },
-          ],
-          messagingToolSentTargetsTruncated: true,
-          messagingToolAggregateEvidenceUnaccounted: true,
-          restartUnsafeSideEffectsDetected: true,
-        },
-      ],
-      restartRecoveryTerminalRunIds: ["terminal-2", "terminal-1"],
     });
   });
 
@@ -764,7 +613,7 @@ describe("session store writer queue", () => {
     await updateSessionStore(
       storePath,
       async (store) => {
-        expectDefined(store[key], "store[key] test invariant").displayName = "saved once";
+        store[key].displayName = "saved once";
       },
       { skipMaintenance: true },
     );
@@ -827,13 +676,13 @@ describe("session store writer queue", () => {
       await updateSessionStore(
         storePath,
         async (store) => {
-          expectDefined(store[key], "store[key] test invariant").displayName = "saved once";
+          store[key].displayName = "saved once";
         },
         { skipMaintenance: true },
       );
       writeSpy.mockClear();
 
-      await patchSessionEntryWithKey({
+      await updateSessionStoreEntry({
         storePath,
         sessionKey: key,
         update: async (entry) => ({ displayName: entry.displayName, updatedAt: entry.updatedAt }),
@@ -895,8 +744,7 @@ describe("session store writer queue", () => {
     writeSessionStoreCache({
       storePath,
       store,
-      ctimeNs: 1n,
-      mtimeNs: 1n,
+      mtimeMs: 1,
       sizeBytes: serialized.length,
       serialized,
       cloneSerialized: serialized,
@@ -906,43 +754,11 @@ describe("session store writer queue", () => {
 
     const cached = readSessionStoreCache({
       storePath,
-      ctimeNs: 1n,
-      mtimeNs: 1n,
+      mtimeMs: 1,
       sizeBytes: serialized.length,
     });
 
     expect(cached?.[key]?.sessionId).toBe("s-serialized-cache");
-  });
-
-  it("invalidates session store cache when ctime nanoseconds change inside the same millisecond", () => {
-    const key = "agent:main:ctime-ns-cache";
-    const storePath = "/tmp/openclaw-ctime-ns-cache-test.json";
-    const store = {
-      [key]: {
-        sessionId: "s-ctime-ns-cache",
-        updatedAt: Date.now(),
-      },
-    } satisfies Record<string, SessionEntry>;
-    const serialized = JSON.stringify(store);
-    writeSessionStoreCache({
-      storePath,
-      store,
-      ctimeNs: 1_000_000n,
-      mtimeNs: 1_000_000n,
-      sizeBytes: serialized.length,
-      serialized,
-      cloneSerialized: serialized,
-      takeOwnership: true,
-    });
-
-    const cached = readSessionStoreCache({
-      storePath,
-      ctimeNs: 1_000_001n,
-      mtimeNs: 1_000_000n,
-      sizeBytes: serialized.length,
-    });
-
-    expect(cached).toBeNull();
   });
 
   it("returns an owned parsed store for fresh skip-cache loads without cloning again", async () => {
@@ -961,15 +777,12 @@ describe("session store writer queue", () => {
     const parseSpy = vi.spyOn(JSON, "parse");
     try {
       const loaded = loadSessionStore(storePath, { skipCache: true, clone: false });
-      expectDefined(loaded[key], "loaded[key] test invariant").sessionId = "mutated-owned-store";
+      loaded[key].sessionId = "mutated-owned-store";
 
       expect(parseSpy).toHaveBeenCalledTimes(1);
-      expect(
-        expectDefined(
-          loadSessionStore(storePath, { skipCache: true, clone: false })[key],
-          "loadSessionStore(storePath, { skipCache: true, clone: false })[key] test invariant",
-        ).sessionId,
-      ).toBe("s-owned-skip-cache");
+      expect(loadSessionStore(storePath, { skipCache: true, clone: false })[key].sessionId).toBe(
+        "s-owned-skip-cache",
+      );
     } finally {
       parseSpy.mockRestore();
     }
@@ -999,38 +812,6 @@ describe("session store writer queue", () => {
     expect(writeOptions?.mode).toBe(0o600);
     expect(writeOptions?.beforeRename).toBeTypeOf("function");
     writeSpy.mockRestore();
-  });
-
-  it("uses a durable index write before disk-budget eviction deletes transcripts", async () => {
-    const oldKey = "agent:main:subagent:old-worker";
-    const activeKey = "agent:main:main";
-    const now = Date.now();
-    const store: Record<string, SessionEntry> = {
-      [oldKey]: { sessionId: "old", updatedAt: now - 1_000 },
-      [activeKey]: { sessionId: "active", updatedAt: now },
-    };
-    const { dir, storePath } = await makeTmpStore(store);
-    await fsPromises.writeFile(path.join(dir, "old.jsonl"), "t".repeat(10 * 1024), "utf-8");
-    await fsPromises.writeFile(path.join(dir, "active.jsonl"), "a".repeat(64), "utf-8");
-
-    const writeSpy = vi.spyOn(jsonFiles, "writeTextAtomic");
-    try {
-      await saveSessionStore(storePath, store, {
-        activeSessionKey: activeKey,
-        maintenanceOverride: { mode: "enforce", maxDiskBytes: 100, highWaterBytes: 100 },
-      });
-
-      expect(writeSpy).toHaveBeenCalledTimes(1);
-      const [writtenPath, , writeOptions] = requireWriteTextAtomicCall(writeSpy);
-      expect(writtenPath).toBe(storePath);
-      expect(writeOptions?.durable).toBe(true);
-      expect(store[oldKey]).toBeUndefined();
-      await expect(fsPromises.access(path.join(dir, "old.jsonl"))).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    } finally {
-      writeSpy.mockRestore();
-    }
   });
 
   it("can persist a known single entry without touching hydrated prompts from other sessions", async () => {
@@ -1171,6 +952,36 @@ describe("session store writer queue", () => {
     expect(merged.sessionFile).toBe("/tmp/openclaw/sessions/custom-transcript.jsonl");
   });
 
+  it("caps future updatedAt values at the session merge boundary", () => {
+    const now = 1_000;
+    const merged = mergeSessionEntryWithPolicy(
+      {
+        sessionId: "sess-future",
+        updatedAt: now + 10_000,
+      },
+      {
+        updatedAt: now + 20_000,
+      },
+      { now },
+    );
+
+    expect(merged.updatedAt).toBe(now);
+  });
+
+  it("caps future updatedAt values while preserving activity", () => {
+    const now = 1_000;
+    const merged = mergeSessionEntryWithPolicy(
+      {
+        sessionId: "sess-preserve-future",
+        updatedAt: now + 10_000,
+      },
+      {},
+      { now, policy: "preserve-activity" },
+    );
+
+    expect(merged.updatedAt).toBe(now);
+  });
+
   it("normalizes orphan modelProvider fields at store write boundary", async () => {
     const key = "agent:main:orphan-provider";
     const { storePath } = await makeTmpStore({
@@ -1182,7 +993,7 @@ describe("session store writer queue", () => {
     });
 
     await updateSessionStore(storePath, async (store) => {
-      const entry = expectDefined(store[key], "store[key] test invariant");
+      const entry = store[key];
       entry.updatedAt = Date.now();
     });
 
@@ -1253,14 +1064,15 @@ describe("session store writer queue", () => {
     });
 
     expect(result?.acp).toBeUndefined();
-    expect(loadSessionEntry({ storePath, sessionKey: key })?.acp).toBeUndefined();
+    const store = loadSessionStore(storePath);
+    expect(store[key]?.acp).toBeUndefined();
   });
 });
 
 describe("resolveAndPersistSessionFile", () => {
   const fixture = useTempSessionsFixture("session-file-test-");
 
-  it("persists SQLite transcript markers for sessions without sessionFile", async () => {
+  it("persists fallback topic transcript paths for sessions without sessionFile", async () => {
     const sessionId = "topic-session-id";
     const sessionKey = "agent:main:telegram:group:123:topic:456";
     const store = {
@@ -1271,11 +1083,11 @@ describe("resolveAndPersistSessionFile", () => {
     };
     fs.writeFileSync(fixture.storePath(), JSON.stringify(store), "utf-8");
     const sessionStore = loadSessionStore(fixture.storePath(), { skipCache: true });
-    const expectedSessionFile = formatSqliteSessionFileMarker({
-      agentId: "main",
+    const fallbackSessionFile = resolveSessionTranscriptPathInDir(
       sessionId,
-      storePath: fixture.storePath(),
-    });
+      fixture.sessionsDir(),
+      456,
+    );
 
     const result = await resolveAndPersistSessionFile({
       sessionId,
@@ -1283,14 +1095,13 @@ describe("resolveAndPersistSessionFile", () => {
       sessionStore,
       storePath: fixture.storePath(),
       sessionEntry: sessionStore[sessionKey],
-      agentId: "main",
+      fallbackSessionFile,
     });
 
-    expect(result.sessionFile).toBe(expectedSessionFile);
+    expect(result.sessionFile).toBe(fallbackSessionFile);
 
-    expect(loadSessionEntry({ storePath: fixture.storePath(), sessionKey })?.sessionFile).toBe(
-      expectedSessionFile,
-    );
+    const saved = loadSessionStore(fixture.storePath(), { skipCache: true });
+    expect(saved[sessionKey]?.sessionFile).toBe(fallbackSessionFile);
   });
 
   it("creates and persists entry when session is not yet present", async () => {
@@ -1298,28 +1109,23 @@ describe("resolveAndPersistSessionFile", () => {
     const sessionKey = "agent:main:telegram:group:123";
     fs.writeFileSync(fixture.storePath(), JSON.stringify({}), "utf-8");
     const sessionStore = loadSessionStore(fixture.storePath(), { skipCache: true });
-    const expectedSessionFile = formatSqliteSessionFileMarker({
-      agentId: "main",
-      sessionId,
-      storePath: fixture.storePath(),
-    });
+    const fallbackSessionFile = resolveSessionTranscriptPathInDir(sessionId, fixture.sessionsDir());
 
     const result = await resolveAndPersistSessionFile({
       sessionId,
       sessionKey,
       sessionStore,
       storePath: fixture.storePath(),
-      agentId: "main",
+      fallbackSessionFile,
     });
 
-    expect(result.sessionFile).toBe(expectedSessionFile);
+    expect(result.sessionFile).toBe(fallbackSessionFile);
     expect(result.sessionEntry.sessionId).toBe(sessionId);
-    expect(loadSessionEntry({ storePath: fixture.storePath(), sessionKey })?.sessionFile).toBe(
-      expectedSessionFile,
-    );
+    const saved = loadSessionStore(fixture.storePath(), { skipCache: true });
+    expect(saved[sessionKey]?.sessionFile).toBe(fallbackSessionFile);
   });
 
-  it("rotates to a new SQLite transcript marker when sessionId changes on the same session key", async () => {
+  it("rotates to a new transcript path when sessionId changes on the same session key", async () => {
     const previousSessionId = "old-session-id";
     const nextSessionId = "new-session-id";
     const sessionKey = "agent:main:telegram:group:123";
@@ -1327,11 +1133,10 @@ describe("resolveAndPersistSessionFile", () => {
       previousSessionId,
       fixture.sessionsDir(),
     );
-    const expectedNextSessionFile = formatSqliteSessionFileMarker({
-      agentId: "main",
-      sessionId: nextSessionId,
-      storePath: fixture.storePath(),
-    });
+    const expectedNextSessionFile = resolveSessionTranscriptPathInDir(
+      nextSessionId,
+      fixture.sessionsDir(),
+    );
     const store = {
       [sessionKey]: {
         sessionId: previousSessionId,
@@ -1348,16 +1153,14 @@ describe("resolveAndPersistSessionFile", () => {
       sessionStore,
       storePath: fixture.storePath(),
       sessionEntry: sessionStore[sessionKey],
-      agentId: "main",
+      sessionsDir: fixture.sessionsDir(),
     });
 
     expect(result.sessionFile).toBe(expectedNextSessionFile);
     expect(result.sessionFile).not.toBe(previousSessionFile);
     expect(result.sessionEntry.sessionFile).toBe(expectedNextSessionFile);
 
-    expect(loadSessionEntry({ storePath: fixture.storePath(), sessionKey })?.sessionFile).toBe(
-      expectedNextSessionFile,
-    );
+    const saved = loadSessionStore(fixture.storePath(), { skipCache: true });
+    expect(saved[sessionKey]?.sessionFile).toBe(expectedNextSessionFile);
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -13,7 +13,6 @@ import {
 } from "../act-policy.js";
 import type { BrowserActRequest, BrowserFormField } from "../client-actions.types.js";
 import { normalizeBrowserFormField } from "../form-fields.js";
-import { resolveTargetIdFromTabs } from "../target-id.js";
 import {
   type ActKind,
   isActKind,
@@ -21,12 +20,11 @@ import {
   parseClickModifiers,
 } from "./agent.act.shared.js";
 import {
-  readRouteFiniteNumber,
   readRouteInteger,
   readRouteNonNegativeInteger,
   readRouteTimerTimeoutMs,
 } from "./route-numeric.js";
-import { toBoolean, toStringArray, toStringOrEmpty } from "./utils.js";
+import { toBoolean, toNumber, toStringArray, toStringOrEmpty } from "./utils.js";
 
 function normalizeActKind(raw: unknown): ActKind {
   const kind = toStringOrEmpty(raw);
@@ -47,28 +45,19 @@ function countBatchActions(actions: BrowserActRequest[]): number {
   return count;
 }
 
-/** Keep nested action overrides inside the route-selected tab. */
-export function canonicalizeActTargetIds(
-  action: BrowserActRequest,
-  tab: { targetId: string; suggestedTargetId?: string; tabId?: string; label?: string },
-  tabs = [tab],
-  batched = false,
+/** Validate that nested batch actions cannot drift to a different target tab. */
+export function validateBatchTargetIds(
+  actions: BrowserActRequest[],
+  targetId: string,
 ): string | null {
-  if (action.targetId) {
-    const resolved = resolveTargetIdFromTabs(action.targetId, batched ? tabs : [tab]);
-    if (!resolved.ok || resolved.targetId !== tab.targetId) {
-      return batched
-        ? "batched action targetId must match request targetId"
-        : "action targetId must match request targetId";
+  for (const action of actions) {
+    if (action.targetId && action.targetId !== targetId) {
+      return "batched action targetId must match request targetId";
     }
-    // The Playwright executor treats action.targetId as an exact override.
-    action.targetId = tab.targetId;
-  }
-  if (action.kind === "batch") {
-    for (const subAction of action.actions) {
-      const error = canonicalizeActTargetIds(subAction, tab, tabs, true);
-      if (error) {
-        return error;
+    if (action.kind === "batch") {
+      const nestedError = validateBatchTargetIds(action.actions, targetId);
+      if (nestedError) {
+        return nestedError;
       }
     }
   }
@@ -175,8 +164,8 @@ export function normalizeActRequest(
       };
     }
     case "clickCoords": {
-      const x = readRouteFiniteNumber(body.x, "x");
-      const y = readRouteFiniteNumber(body.y, "y");
+      const x = toNumber(body.x);
+      const y = toNumber(body.y);
       if (x === undefined || y === undefined || x < 0 || y < 0) {
         throw new Error("clickCoords requires non-negative x and y");
       }

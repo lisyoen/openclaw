@@ -124,7 +124,6 @@ export async function collectTypeScriptFilesFromRoots(sourceRoots, options = {})
  */
 export async function collectFileViolations(params) {
   const files = await collectTypeScriptFilesFromRoots(params.sourceRoots, {
-    includeTests: params.includeTests,
     extraTestSuffixes: params.extraTestSuffixes,
   });
 

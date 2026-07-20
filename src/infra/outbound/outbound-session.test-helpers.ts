@@ -1,4 +1,3 @@
-import { expectDefined } from "@openclaw/normalization-core";
 // Test helpers build minimal plugin registries for outbound session-route
 // scenarios without importing real channel implementations.
 import {
@@ -92,13 +91,10 @@ function parseForumTargetForTest(raw: string): {
     .replace(/^group:/i, "");
   const prefixedTopic = /^([^:]+):topic:(\d+)$/i.exec(trimmed);
   if (prefixedTopic) {
-    const chatId = expectDefined(prefixedTopic[1], "prefixed topic capture group 1");
+    const chatId = prefixedTopic[1];
     return {
       chatId,
-      messageThreadId: Number.parseInt(
-        expectDefined(prefixedTopic[2], "prefixed topic capture group 2"),
-        10,
-      ),
+      messageThreadId: Number.parseInt(prefixedTopic[2], 10),
       chatType: chatId.startsWith("-") ? "group" : "direct",
     };
   }
@@ -117,7 +113,7 @@ function parseForumThreadIdForTest(threadId?: string | number | null): number | 
   if (!topicMatch) {
     return undefined;
   }
-  return Number.parseInt(expectDefined(topicMatch[1], "topic match capture group 1"), 10);
+  return Number.parseInt(topicMatch[1], 10);
 }
 
 function buildForumGroupPeerIdForTest(chatId: string, messageThreadId?: number): string {
@@ -402,9 +398,7 @@ function resolveLocalChatOutboundSessionRouteForTest(params: ChannelOutboundSess
     return null;
   }
   const match = /^(chat_guid|chat_identifier|chat_id):(.+)$/i.exec(stripped);
-  const rawId = match
-    ? expectDefined(match[2], "outbound session.test helpers regex capture 2").trim()
-    : stripped.trim();
+  const rawId = match ? match[2].trim() : stripped.trim();
   if (!rawId) {
     return null;
   }

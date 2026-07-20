@@ -4,19 +4,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
-import { materializeSessionArchiveForRead } from "../config/sessions/archive-compression.js";
 import {
   formatSessionArchiveTimestamp,
   parseSessionArchiveTimestamp,
   type SessionArchiveReason,
 } from "../config/sessions/artifacts.js";
-import { extractGeneratedTranscriptSessionId } from "../config/sessions/generated-transcript-session-id.js";
 import {
   resolveSessionFilePath,
   resolveSessionTranscriptPath,
   resolveSessionTranscriptPathInDir,
 } from "../config/sessions/paths.js";
-import { readFileWindowFully } from "../infra/file-read.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { emitSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 
@@ -109,6 +106,34 @@ function classifySessionTranscriptCandidate(
   return transcriptSessionId === sessionId ? "current" : "stale";
 }
 
+function extractGeneratedTranscriptSessionId(sessionFile?: string): string | undefined {
+  const trimmed = sessionFile?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const base = path.basename(trimmed);
+  if (!base.endsWith(".jsonl")) {
+    return undefined;
+  }
+  const withoutExt = base.slice(0, -".jsonl".length);
+  const topicIndex = withoutExt.indexOf("-topic-");
+  if (topicIndex > 0) {
+    const topicSessionId = withoutExt.slice(0, topicIndex);
+    return looksLikeGeneratedSessionId(topicSessionId) ? topicSessionId : undefined;
+  }
+  const forkMatch = withoutExt.match(
+    /^(\d{4}-\d{2}-\d{2}T[\w-]+(?:Z|[+-]\d{2}(?:-\d{2})?)?)_(.+)$/,
+  );
+  if (forkMatch?.[2]) {
+    return looksLikeGeneratedSessionId(forkMatch[2]) ? forkMatch[2] : undefined;
+  }
+  return looksLikeGeneratedSessionId(withoutExt) ? withoutExt : undefined;
+}
+
+function looksLikeGeneratedSessionId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function canonicalizePathForComparison(filePath: string): string {
   const resolved = path.resolve(filePath);
   try {
@@ -180,16 +205,7 @@ async function resetArchiveHeaderMatchesSessionId(
   sessionId: string,
   archivePath: string,
 ): Promise<boolean> {
-  // Compressed archives must be probed through the materialized JSONL cache:
-  // a raw prefix read of zstd bytes never matches a session header, which
-  // would silently drop every compressed archive from fallback history.
-  let probePath: string;
-  try {
-    probePath = materializeSessionArchiveForRead(archivePath);
-  } catch {
-    return false;
-  }
-  const stat = await fs.promises.stat(probePath).catch(() => null);
+  const stat = await fs.promises.stat(archivePath).catch(() => null);
   if (!stat?.isFile()) {
     return false;
   }
@@ -202,13 +218,13 @@ async function resetArchiveHeaderMatchesSessionId(
   }
 
   let matches = false;
-  const handle = await fs.promises.open(probePath, "r").catch(() => null);
+  const handle = await fs.promises.open(archivePath, "r").catch(() => null);
   if (!handle) {
     return false;
   }
   try {
     const buffer = Buffer.alloc(64 * 1024);
-    const bytesRead = await readFileWindowFully(handle, buffer, 0);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     const lines = buffer.toString("utf-8", 0, bytesRead).split(/\r?\n/);
     for (const line of lines) {
       const trimmed = line.trim();
@@ -363,7 +379,7 @@ export async function resolveSessionTranscriptResetArchiveCandidatesAsync(
   return uniqueStrings(archives.map((archive) => archive.archivePath));
 }
 
-function archiveFileOnDisk(filePath: string, reason: ArchiveFileReason): string {
+export function archiveFileOnDisk(filePath: string, reason: ArchiveFileReason): string {
   const ts = formatSessionArchiveTimestamp();
   const archived = `${filePath}.${reason}.${ts}`;
   fs.renameSync(filePath, archived);
@@ -378,31 +394,6 @@ function archiveFileOnDisk(filePath: string, reason: ArchiveFileReason): string 
   // remaining gap, which is why `.jsonl.reset.<iso>` / `.jsonl.deleted.<iso>`
   // files only surfaced in the index after a full reindex.
   emitSessionTranscriptUpdate({ sessionFile: archived });
-  return archived;
-}
-
-export function archiveSessionTranscriptPaths(opts: {
-  paths: Iterable<string>;
-  reason: ArchiveFileReason;
-  onArchiveError?: (err: unknown, sourcePath: string) => void;
-}): ArchivedSessionTranscript[] {
-  const archived: ArchivedSessionTranscript[] = [];
-  const paths = uniqueStrings(
-    Array.from(opts.paths, (candidate) => canonicalizePathForComparison(candidate)),
-  );
-  for (const sourcePath of paths) {
-    if (!fs.existsSync(sourcePath)) {
-      continue;
-    }
-    try {
-      archived.push({
-        sourcePath,
-        archivedPath: archiveFileOnDisk(sourcePath, opts.reason),
-      });
-    } catch (err) {
-      opts.onArchiveError?.(err, sourcePath);
-    }
-  }
   return archived;
 }
 
@@ -439,7 +430,7 @@ export function archiveSessionTranscriptsDetailed(opts: {
    */
   onArchiveError?: (err: unknown, sourcePath: string) => void;
 }): ArchivedSessionTranscript[] {
-  const candidatePaths: string[] = [];
+  const archived: ArchivedSessionTranscript[] = [];
   const storeDir =
     opts.restrictToStoreDir && opts.storePath
       ? canonicalizePathForComparison(path.dirname(opts.storePath))
@@ -457,13 +448,19 @@ export function archiveSessionTranscriptsDetailed(opts: {
         continue;
       }
     }
-    candidatePaths.push(candidatePath);
+    if (!fs.existsSync(candidatePath)) {
+      continue;
+    }
+    try {
+      archived.push({
+        sourcePath: candidatePath,
+        archivedPath: archiveFileOnDisk(candidatePath, opts.reason),
+      });
+    } catch (err) {
+      opts.onArchiveError?.(err, candidatePath);
+    }
   }
-  return archiveSessionTranscriptPaths({
-    paths: candidatePaths,
-    reason: opts.reason,
-    onArchiveError: opts.onArchiveError,
-  });
+  return archived;
 }
 
 export function resolveStableSessionEndTranscript(params: {
@@ -505,26 +502,17 @@ export function resolveStableSessionEndTranscript(params: {
   return {};
 }
 
-type SessionArchiveCleanupRule = {
-  reason: ArchiveFileReason;
-  olderThanMs: number;
-};
-
-// Store maintenance runs this on every session-store save. All retention rules
-// share one directory listing: a listing per reason would multiply READDIR
-// load on the per-save hot path, which is expensive on networked filesystems.
 export async function cleanupArchivedSessionTranscripts(opts: {
   directories: string[];
-  rules: SessionArchiveCleanupRule[];
+  olderThanMs: number;
+  reason?: ArchiveFileReason;
   nowMs?: number;
 }): Promise<{ removed: number; scanned: number }> {
-  const rules = opts.rules.filter(
-    (rule) => Number.isFinite(rule.olderThanMs) && rule.olderThanMs >= 0,
-  );
-  if (rules.length === 0) {
+  if (!Number.isFinite(opts.olderThanMs) || opts.olderThanMs < 0) {
     return { removed: 0, scanned: 0 };
   }
   const now = opts.nowMs ?? Date.now();
+  const reason: ArchiveFileReason = opts.reason ?? "deleted";
   const directories = uniqueStrings(opts.directories.map((dir) => path.resolve(dir)));
   let removed = 0;
   let scanned = 0;
@@ -532,24 +520,21 @@ export async function cleanupArchivedSessionTranscripts(opts: {
   for (const dir of directories) {
     const entries = await fs.promises.readdir(dir).catch(() => []);
     for (const entry of entries) {
-      for (const rule of rules) {
-        const timestamp = parseSessionArchiveTimestamp(entry, rule.reason);
-        if (timestamp == null) {
-          continue;
-        }
-        scanned += 1;
-        if (now - timestamp > rule.olderThanMs) {
-          const fullPath = path.join(dir, entry);
-          const stat = await fs.promises.stat(fullPath).catch(() => null);
-          if (stat?.isFile()) {
-            await fs.promises.rm(fullPath).catch(() => undefined);
-            removed += 1;
-          }
-        }
-        // An archive name carries exactly one `.{reason}.{timestamp}` suffix,
-        // so the first matching rule owns the entry.
-        break;
+      const timestamp = parseSessionArchiveTimestamp(entry, reason);
+      if (timestamp == null) {
+        continue;
       }
+      scanned += 1;
+      if (now - timestamp <= opts.olderThanMs) {
+        continue;
+      }
+      const fullPath = path.join(dir, entry);
+      const stat = await fs.promises.stat(fullPath).catch(() => null);
+      if (!stat?.isFile()) {
+        continue;
+      }
+      await fs.promises.rm(fullPath).catch(() => undefined);
+      removed += 1;
     }
   }
 

@@ -1,15 +1,14 @@
 // JSON-only task command helpers.
 // These paths avoid maintenance reconciliation so short-lived JSON CLI processes stay read-only and exit cleanly.
 
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { RuntimeEnv } from "../runtime.js";
 import { writeRuntimeJson } from "../runtime.js";
 import { listTaskRecords } from "../tasks/runtime-internal.js";
 import { listTaskFlowAuditFindings } from "../tasks/task-flow-registry.audit.js";
-import { listTaskAuditFindings } from "../tasks/task-registry.audit.js";
+import { listTaskFlowRecords } from "../tasks/task-flow-runtime-internal.js";
+import { listTaskAuditFindings, summarizeTaskAuditFindings } from "../tasks/task-registry.audit.js";
 import type { TaskRecord } from "../tasks/task-registry.types.js";
 import {
-  buildTaskSystemAuditJsonPayload,
   buildTaskSystemAuditFindings,
   type TaskSystemAuditCode,
   type TaskSystemAuditSeverity,
@@ -21,13 +20,13 @@ function listTaskJsonRecords(): TaskRecord[] {
   return listTaskRecords();
 }
 
-type TasksListJsonArgs = {
+export type TasksListJsonArgs = {
   json?: boolean;
   runtime?: string;
   status?: string;
 };
 
-type TasksAuditJsonArgs = {
+export type TasksAuditJsonArgs = {
   json?: boolean;
   severity?: string;
   code?: string;
@@ -39,8 +38,9 @@ function toSystemAuditFindings(params: {
   codeFilter?: TaskSystemAuditCode;
 }) {
   const tasks = listTaskJsonRecords();
+  const flows = listTaskFlowRecords();
   const taskFindings = listTaskAuditFindings({ tasks });
-  const flowFindings = listTaskFlowAuditFindings();
+  const flowFindings = listTaskFlowAuditFindings({ flows });
   const result = buildTaskSystemAuditFindings({
     taskFindings,
     flowFindings,
@@ -51,8 +51,8 @@ function toSystemAuditFindings(params: {
 }
 
 function buildTasksListJsonPayload(opts: TasksListJsonArgs) {
-  const runtimeFilter = normalizeOptionalString(opts.runtime);
-  const statusFilter = normalizeOptionalString(opts.status);
+  const runtimeFilter = opts.runtime?.trim();
+  const statusFilter = opts.status?.trim();
   const tasks = listTaskJsonRecords().filter((task) => {
     if (runtimeFilter && task.runtime !== runtimeFilter) {
       return false;
@@ -71,19 +71,36 @@ function buildTasksListJsonPayload(opts: TasksListJsonArgs) {
 }
 
 function buildTasksAuditJsonPayload(opts: TasksAuditJsonArgs) {
-  const severityFilter = normalizeOptionalString(opts.severity) as
-    | TaskSystemAuditSeverity
-    | undefined;
-  const codeFilter = normalizeOptionalString(opts.code) as TaskSystemAuditCode | undefined;
-  const result = toSystemAuditFindings({
+  const severityFilter = opts.severity?.trim() as TaskSystemAuditSeverity | undefined;
+  const codeFilter = opts.code?.trim() as TaskSystemAuditCode | undefined;
+  const { allFindings, filteredFindings, taskFindings, summary } = toSystemAuditFindings({
     severityFilter,
     codeFilter,
   });
-  return buildTaskSystemAuditJsonPayload(result, {
-    severityFilter,
-    codeFilter,
-    limit: opts.limit,
-  });
+  const limit = typeof opts.limit === "number" && opts.limit > 0 ? opts.limit : undefined;
+  const displayed = limit ? filteredFindings.slice(0, limit) : filteredFindings;
+  // Preserve the legacy task-only summary while adding combined task-flow counts.
+  const legacySummary = summarizeTaskAuditFindings(taskFindings);
+  return {
+    count: allFindings.length,
+    filteredCount: filteredFindings.length,
+    displayed: displayed.length,
+    filters: {
+      severity: severityFilter ?? null,
+      code: codeFilter ?? null,
+      limit: limit ?? null,
+    },
+    summary: {
+      ...legacySummary,
+      taskFlows: summary.taskFlows,
+      combined: {
+        total: summary.total,
+        errors: summary.errors,
+        warnings: summary.warnings,
+      },
+    },
+    findings: displayed,
+  };
 }
 
 /** Writes task list JSON without triggering task maintenance. */

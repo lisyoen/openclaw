@@ -2,7 +2,6 @@ export type VitestHostInfo = {
   cpuCount?: number;
   loadAverage1m?: number;
   totalMemoryBytes?: number;
-  freeMemoryBytes?: number;
 };
 
 export type LocalVitestScheduling = {
@@ -26,6 +25,10 @@ export function resolveLocalVitestScheduling(
   system?: VitestHostInfo,
   pool?: "forks" | "threads",
 ): LocalVitestScheduling;
+export function shouldUseLargeLocalFullSuiteProfile(
+  env?: Record<string, string | undefined>,
+  system?: VitestHostInfo,
+): boolean;
 export function resolveLocalFullSuiteProfile(
   env?: Record<string, string | undefined>,
   system?: VitestHostInfo,

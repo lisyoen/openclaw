@@ -8,14 +8,16 @@ import {
 } from "./plugin-registry.js";
 
 /** Parameters for listing manifest contribution ids from a registry snapshot. */
-type ListManifestContributionIdsParams = LoadPluginRegistryParams & {
+export type ListManifestContributionIdsParams = LoadPluginRegistryParams & {
   contribution: PluginRegistryContributionKey;
   index?: PluginRegistrySnapshot;
   includeDisabled?: boolean;
 };
 
 /** Lists ids contributed by plugin manifests for one contribution kind. */
-function listManifestContributionIds(params: ListManifestContributionIdsParams): readonly string[] {
+export function listManifestContributionIds(
+  params: ListManifestContributionIdsParams,
+): readonly string[] {
   const env = params.env ?? process.env;
   const index =
     params.index ??
@@ -43,5 +45,15 @@ export function listManifestChannelContributionIds(
   return listManifestContributionIds({
     ...params,
     contribution: "channels",
+  });
+}
+
+/** Lists provider ids contributed by plugin manifests. */
+export function listManifestProviderContributionIds(
+  params: Omit<ListManifestContributionIdsParams, "contribution"> = {},
+): readonly string[] {
+  return listManifestContributionIds({
+    ...params,
+    contribution: "providers",
   });
 }

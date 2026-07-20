@@ -15,11 +15,12 @@ const mocks = vi.hoisted(() => ({
   readMiniMaxCliCredentialsCached: vi.fn<(options?: unknown) => OAuthCredential | null>(() => null),
 }));
 
-let readExternalCliBootstrapCredential: typeof import("./auth-profiles/external-cli-sync.js").readExternalCliBootstrapCredential;
+let readManagedExternalCliCredential: typeof import("./auth-profiles/external-cli-sync.js").readManagedExternalCliCredential;
 let resolveExternalCliAuthProfiles: typeof import("./auth-profiles/external-cli-sync.js").resolveExternalCliAuthProfiles;
-let hasUsableOAuthCredential: typeof import("./auth-profiles/oauth-shared.js").hasUsableOAuthCredential;
-let shouldBootstrapFromExternalCliCredential: typeof import("./auth-profiles/oauth-shared.js").shouldBootstrapFromExternalCliCredential;
-let shouldReplaceStoredOAuthCredential: typeof import("./auth-profiles/oauth-shared.js").shouldReplaceStoredOAuthCredential;
+let hasUsableOAuthCredential: typeof import("./auth-profiles/external-cli-sync.js").hasUsableOAuthCredential;
+let isSafeToUseExternalCliCredential: typeof import("./auth-profiles/external-cli-sync.js").isSafeToUseExternalCliCredential;
+let shouldBootstrapFromExternalCliCredential: typeof import("./auth-profiles/external-cli-sync.js").shouldBootstrapFromExternalCliCredential;
+let shouldReplaceStoredOAuthCredential: typeof import("./auth-profiles/external-cli-sync.js").shouldReplaceStoredOAuthCredential;
 let CLAUDE_CLI_PROFILE_ID: typeof import("./auth-profiles/constants.js").CLAUDE_CLI_PROFILE_ID;
 let OPENAI_CODEX_DEFAULT_PROFILE_ID: typeof import("./auth-profiles/constants.js").OPENAI_CODEX_DEFAULT_PROFILE_ID;
 let MINIMAX_CLI_PROFILE_ID: typeof import("./auth-profiles/constants.js").MINIMAX_CLI_PROFILE_ID;
@@ -117,13 +118,14 @@ describe("external cli oauth resolution", () => {
     mocks.readClaudeCliCredentialsCached.mockReset().mockReturnValue(null);
     mocks.readCodexCliCredentialsCached.mockReset().mockReturnValue(null);
     mocks.readMiniMaxCliCredentialsCached.mockReset().mockReturnValue(null);
-    ({ readExternalCliBootstrapCredential, resolveExternalCliAuthProfiles } =
-      await import("./auth-profiles/external-cli-sync.js"));
     ({
       hasUsableOAuthCredential,
+      isSafeToUseExternalCliCredential,
+      readManagedExternalCliCredential,
+      resolveExternalCliAuthProfiles,
       shouldBootstrapFromExternalCliCredential,
       shouldReplaceStoredOAuthCredential,
-    } = await import("./auth-profiles/oauth-shared.js"));
+    } = await import("./auth-profiles/external-cli-sync.js"));
     ({ CLAUDE_CLI_PROFILE_ID, OPENAI_CODEX_DEFAULT_PROFILE_ID, MINIMAX_CLI_PROFILE_ID } =
       await import("./auth-profiles/constants.js"));
   });
@@ -263,6 +265,29 @@ describe("external cli oauth resolution", () => {
         }),
       ).toBe(true);
     });
+
+    it("refuses external oauth usage across different known identities", () => {
+      const imported = makeOAuthCredential({
+        provider: "openai",
+        access: "fresh-cli-access",
+        refresh: "fresh-cli-refresh",
+        expires: Date.now() + 5 * 24 * 60 * 60_000,
+        accountId: "acct-external",
+      });
+
+      expect(
+        isSafeToUseExternalCliCredential(
+          makeOAuthCredential({
+            provider: "openai",
+            access: "expired-local-access",
+            refresh: "expired-local-refresh",
+            expires: Date.now() - 60_000,
+            accountId: "acct-local",
+          }),
+          imported,
+        ),
+      ).toBe(false);
+    });
   });
 
   it("does not use codex as a runtime bootstrap source anymore", () => {
@@ -274,8 +299,7 @@ describe("external cli oauth resolution", () => {
       }),
     );
 
-    const credential = readExternalCliBootstrapCredential({
-      store: makeStore(),
+    const credential = readManagedExternalCliCredential({
       profileId: OPENAI_CODEX_DEFAULT_PROFILE_ID,
       credential: makeOAuthCredential({ provider: "openai" }),
     });
@@ -307,77 +331,6 @@ describe("external cli oauth resolution", () => {
         accountId: "acct-codex",
       },
     );
-  });
-
-  it("does not add Codex CLI as a sibling to a named managed OpenAI profile", () => {
-    mocks.readCodexCliCredentialsCached.mockReturnValue(
-      makeOAuthCredential({
-        provider: "openai",
-        access: "codex-cli-access",
-        refresh: "codex-cli-refresh",
-        expires: Date.now() + 5 * 24 * 60 * 60_000,
-        accountId: "acct-codex",
-      }),
-    );
-
-    const profiles = resolveExternalCliAuthProfiles(
-      makeStore(
-        "openai:user@example.com",
-        makeOAuthCredential({
-          provider: "openai",
-          access: "managed-access",
-          refresh: "managed-refresh",
-          expires: Date.now() - 5_000,
-          accountId: "acct-codex",
-        }),
-      ),
-      {
-        providerIds: ["openai"],
-      },
-    );
-
-    expect(profiles).toStrictEqual([]);
-    expect(mocks.readCodexCliCredentialsCached).not.toHaveBeenCalled();
-  });
-
-  it("does not fill an empty default slot beside a named managed OpenAI profile", () => {
-    mocks.readCodexCliCredentialsCached.mockReturnValue(
-      makeOAuthCredential({
-        provider: "openai",
-        access: "codex-cli-access",
-        refresh: "codex-cli-refresh",
-        accountId: "acct-codex",
-      }),
-    );
-
-    const profiles = resolveExternalCliAuthProfiles(
-      {
-        version: 1,
-        profiles: {
-          [OPENAI_CODEX_DEFAULT_PROFILE_ID]: {
-            type: "oauth",
-            provider: "openai",
-            access: "",
-            refresh: "",
-            expires: 0,
-          },
-          "openai:user@example.com": makeOAuthCredential({
-            provider: "openai",
-            access: "managed-access",
-            refresh: "managed-refresh",
-            expires: Date.now() - 5_000,
-            accountId: "acct-codex",
-          }),
-        },
-      },
-      {
-        providerIds: ["openai"],
-        profileIds: [OPENAI_CODEX_DEFAULT_PROFILE_ID],
-      },
-    );
-
-    expect(profiles).toStrictEqual([]);
-    expect(mocks.readCodexCliCredentialsCached).not.toHaveBeenCalled();
   });
 
   it("keeps any existing default codex oauth over Codex CLI bootstrap credentials", () => {
@@ -412,8 +365,7 @@ describe("external cli oauth resolution", () => {
       makeOAuthCredential({ provider: "openai" }),
     );
 
-    const credential = readExternalCliBootstrapCredential({
-      store: makeStore(),
+    const credential = readManagedExternalCliCredential({
       profileId: OPENAI_CODEX_DEFAULT_PROFILE_ID,
       credential: makeOAuthCredential({ provider: "anthropic" }),
     });
@@ -513,9 +465,6 @@ describe("external cli oauth resolution", () => {
         access: "usable-local-access",
         refresh: "usable-local-refresh",
         expires: Date.now() + 10 * 60_000,
-        // Identity-complete steady state; profiles missing the email get one
-        // bounded backfill read (external-cli-sync.email-backfill.test.ts).
-        email: "stored@example.com",
       }),
     );
 
@@ -587,22 +536,6 @@ describe("external cli oauth resolution", () => {
     });
 
     expect(profiles).toStrictEqual([]);
-  });
-
-  it("ignores Claude CLI apiKeyHelper credentials for OAuth profile sync", () => {
-    mocks.readClaudeCliCredentialsCached.mockReturnValue({
-      type: "api_key_helper",
-      provider: "anthropic",
-      helperHash: "helper-hash",
-    });
-
-    const profiles = resolveExternalCliAuthProfiles(makeStore(), {
-      providerIds: ["claude-cli"],
-      allowKeychainPrompt: false,
-    });
-
-    expect(profiles).toStrictEqual([]);
-    expectReaderPolicyCall(mocks.readClaudeCliCredentialsCached);
   });
 
   it("resolves fresher minimax external oauth profiles as runtime overlays", () => {

@@ -23,7 +23,7 @@ enum GatewayStatusBuilder {
         gatewayStatusText: String) -> GatewayDisplayState
     {
         if gatewayServerName != nil { return .connected }
-        if lastGatewayProblem != nil { return .error }
+        if let lastGatewayProblem, lastGatewayProblem.pauseReconnect { return .error }
 
         let text = gatewayStatusText.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.localizedCaseInsensitiveContains("connecting") ||

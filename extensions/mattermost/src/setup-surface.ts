@@ -1,13 +1,11 @@
 // Mattermost plugin module implements setup surface behavior.
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   applySetupAccountConfigPatch,
-  baseUrlTextInput,
   createStandardChannelSetupStatus,
-  defineTokenCredential,
   formatDocsLink,
   createSetupTranslator,
-  setSetupChannelEnabled,
   type ChannelSetupWizard,
 } from "openclaw/plugin-sdk/setup";
 import {
@@ -76,35 +74,40 @@ export const mattermostSetupWizard: ChannelSetupWizard = {
       }),
   },
   credentials: [
-    defineTokenCredential({
+    {
       inputKey: "botToken",
-      configKey: "botToken",
       providerHint: channel,
       credentialLabel: t("wizard.mattermost.botToken"),
       preferredEnvVar: "MATTERMOST_BOT_TOKEN",
       envPrompt: t("wizard.mattermost.envPrompt"),
       keepPrompt: t("wizard.mattermost.botTokenKeep"),
       inputPrompt: t("wizard.mattermost.botTokenInput"),
-      resolveAccount: ({ cfg, accountId }) => resolveMattermostAccountWithSecrets(cfg, accountId),
-      accountConfigured: isMattermostConfigured,
-      patchAccount: ({ cfg, accountId, patch }) =>
+      inspect: ({ cfg, accountId }) => {
+        const resolvedAccount = resolveMattermostAccountWithSecrets(cfg, accountId);
+        return {
+          accountConfigured: isMattermostConfigured(resolvedAccount),
+          hasConfiguredValue: hasConfiguredSecretInput(resolvedAccount.config.botToken),
+        };
+      },
+      applySet: async ({ cfg, accountId, value }) =>
         applyMattermostSetupConfigPatch({
           cfg,
           accountId,
-          patch,
+          patch: { botToken: value },
         }),
-      set: {},
-    }),
+    },
   ],
   textInputs: [
-    baseUrlTextInput({
+    {
       inputKey: "httpUrl",
-      configKey: "baseUrl",
       message: t("wizard.mattermost.baseUrlPrompt"),
       confirmCurrentValue: false,
-      resolveAccount: ({ cfg, accountId }) => resolveMattermostAccountWithSecrets(cfg, accountId),
-      currentValue: (account) => account.baseUrl ?? process.env.MATTERMOST_URL?.trim(),
-      includeInitialValue: true,
+      currentValue: ({ cfg, accountId }) =>
+        resolveMattermostAccountWithSecrets(cfg, accountId).baseUrl ??
+        process.env.MATTERMOST_URL?.trim(),
+      initialValue: ({ cfg, accountId }) =>
+        resolveMattermostAccountWithSecrets(cfg, accountId).baseUrl ??
+        process.env.MATTERMOST_URL?.trim(),
       shouldPrompt: ({ cfg, accountId, credentialValues, currentValue }) => {
         const resolvedAccount = resolveMattermostAccountWithSecrets(cfg, accountId);
         const tokenConfigured =
@@ -112,18 +115,27 @@ export const mattermostSetupWizard: ChannelSetupWizard = {
           hasConfiguredSecretInput(resolvedAccount.config.botToken);
         return Boolean(credentialValues.botToken) || !tokenConfigured || !currentValue;
       },
-      validate: (value) =>
+      validate: ({ value }) =>
         normalizeMattermostBaseUrl(value)
           ? undefined
           : "Mattermost base URL must include a valid base URL.",
-      normalize: (value) => normalizeMattermostBaseUrl(value) ?? value.trim(),
-      patchAccount: ({ cfg, accountId, patch }) =>
+      normalizeValue: ({ value }) => normalizeMattermostBaseUrl(value) ?? value.trim(),
+      applySet: async ({ cfg, accountId, value }) =>
         applyMattermostSetupConfigPatch({
           cfg,
           accountId,
-          patch,
+          patch: { baseUrl: value },
         }),
-    }),
+    },
   ],
-  disable: (cfg) => setSetupChannelEnabled(cfg, channel, false),
+  disable: (cfg: OpenClawConfig) => ({
+    ...cfg,
+    channels: {
+      ...cfg.channels,
+      mattermost: {
+        ...cfg.channels?.mattermost,
+        enabled: false,
+      },
+    },
+  }),
 };

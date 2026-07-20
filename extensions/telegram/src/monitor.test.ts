@@ -1,9 +1,9 @@
 // Telegram tests cover monitor plugin behavior.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-type MonitorTelegramOpts = import("./monitor.types.js").MonitorTelegramOpts;
+type MonitorTelegramOpts = import("./monitor.js").MonitorTelegramOpts;
 let monitorTelegramProvider: typeof import("./monitor.js").monitorTelegramProvider;
-let resetTelegramPollingLeasesForTests: typeof import("./runtime.test-support.js").resetTelegramPollingLeasesForTest;
+let resetTelegramPollingLeasesForTests: typeof import("./polling-lease.js").resetTelegramPollingLeasesForTests;
 
 type MockCtx = {
   message: {
@@ -390,10 +390,7 @@ describe("monitorTelegramProvider (grammY)", () => {
 
   beforeAll(async () => {
     ({ monitorTelegramProvider } = await import("./monitor.js"));
-    ({ resetTelegramPollingLeasesForTest: resetTelegramPollingLeasesForTests } =
-      await import("./runtime.test-support.js"));
-    resetTelegramPollingLeasesForTests();
-    await monitorWithAutoAbort();
+    ({ resetTelegramPollingLeasesForTests } = await import("./polling-lease.js"));
   });
 
   beforeEach(() => {
@@ -978,6 +975,33 @@ describe("monitorTelegramProvider (grammY)", () => {
     await monitor;
 
     expect(stop.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expectRecoverableRetryState(2);
+    vi.useRealTimers();
+  });
+
+  it("uses configured Telegram polling stall threshold", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const abort = new AbortController();
+    const firstCycle = mockRunOnceWithStalledPollingRunner();
+    const secondCycle = mockRunOnceAndAbort(abort);
+
+    const monitor = monitorTelegramProvider(
+      withLegacyPolling({
+        token: "tok",
+        abortSignal: abort.signal,
+        config: {
+          agents: { defaults: { maxConcurrent: 2 } },
+          channels: { telegram: { pollingStallThresholdMs: 30_000 } },
+        },
+      }),
+    );
+    await firstCycle.waitForRunStart();
+
+    vi.advanceTimersByTime(60_000);
+    await secondCycle.waitForRunStart();
+    await monitor;
+
+    expect(firstCycle.stop.mock.calls.length).toBeGreaterThanOrEqual(1);
     expectRecoverableRetryState(2);
     vi.useRealTimers();
   });

@@ -1,5 +1,6 @@
 // Voice Call plugin module implements cli behavior.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { format } from "node:util";
 import type { Command } from "commander";
@@ -21,7 +22,6 @@ import { validateProviderConfig, type VoiceCallConfig } from "./config.js";
 import { getCallHistoryFromStore } from "./manager/store.js";
 import { setVoiceCallStateRuntime, type VoiceCallStateRuntime } from "./runtime-state.js";
 import type { VoiceCallRuntime } from "./runtime.js";
-import { resolveDefaultVoiceCallStoreDir } from "./store-path.js";
 import { resolveUserPath } from "./utils.js";
 import { resolveWebhookExposureStatus } from "./webhook-exposure.js";
 import {
@@ -64,6 +64,22 @@ const VOICE_CALL_GATEWAY_DEFAULT_TIMEOUT_MS = 5000;
 const VOICE_CALL_GATEWAY_OPERATION_TIMEOUT_MS = 30000;
 const VOICE_CALL_GATEWAY_TRANSCRIPT_BUFFER_MS = 10000;
 const VOICE_CALL_GATEWAY_POLL_INTERVAL_MS = 1000;
+
+const voiceCallCliDeps = {
+  callGatewayFromCli,
+};
+
+export const testing = {
+  setCallGatewayFromCliForTests(next?: typeof callGatewayFromCli): void {
+    voiceCallCliDeps.callGatewayFromCli = next ?? callGatewayFromCli;
+  },
+  isGatewayUnavailableForLocalFallback,
+  parseVoiceCallIntOption,
+  resolveGatewayContinueTimeoutMs,
+  resolveGatewayOperationTimeoutMs,
+  readGatewayPollTimeoutMs,
+  resolveVoiceCallDeadlineMs,
+};
 
 function writeStdoutLine(...values: unknown[]): void {
   process.stdout.write(`${format(...values)}\n`);
@@ -109,7 +125,7 @@ async function callVoiceCallGateway(
       typeof opts?.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
         ? Math.max(1, Math.ceil(opts.timeoutMs))
         : VOICE_CALL_GATEWAY_DEFAULT_TIMEOUT_MS;
-    const payload = await callGatewayFromCli(
+    const payload = await voiceCallCliDeps.callGatewayFromCli(
       method,
       { json: true, timeout: String(timeoutMs) },
       params,
@@ -193,17 +209,11 @@ async function pollVoiceCallContinueGateway(params: {
 }): Promise<unknown> {
   const deadlineMs = resolveVoiceCallDeadlineMs(params.timeoutMs);
 
-  for (;;) {
-    // Sleep already clamps to remaining budget; the gateway RPC must too.
-    // Otherwise the final poll can overrun the continue deadline by a full RPC timeout.
-    const remainingMs = deadlineMs - Date.now();
-    if (remainingMs <= 0) {
-      break;
-    }
+  while (Date.now() <= deadlineMs) {
     const gateway = await callVoiceCallGateway(
       "voicecall.continue.result",
       { operationId: params.operationId },
-      { timeoutMs: Math.min(VOICE_CALL_GATEWAY_DEFAULT_TIMEOUT_MS, remainingMs) },
+      { timeoutMs: VOICE_CALL_GATEWAY_DEFAULT_TIMEOUT_MS },
     );
     if (!gateway.ok) {
       throw new Error(
@@ -219,11 +229,9 @@ async function pollVoiceCallContinueGateway(params: {
     if (result.status === "failed") {
       throw new Error(result.error);
     }
-    const sleepMs = Math.min(VOICE_CALL_GATEWAY_POLL_INTERVAL_MS, deadlineMs - Date.now());
-    if (sleepMs <= 0) {
-      break;
-    }
-    await sleep(sleepMs);
+    await sleep(
+      Math.min(VOICE_CALL_GATEWAY_POLL_INTERVAL_MS, Math.max(1, deadlineMs - Date.now())),
+    );
   }
 
   throw new Error("voicecall continue timed out waiting for gateway operation");
@@ -238,9 +246,17 @@ function resolveMode(input: string): "off" | "serve" | "funnel" {
 }
 
 function resolveDefaultStorePath(config: VoiceCallConfig): string {
-  const base = config.store?.trim()
-    ? resolveUserPath(config.store)
-    : resolveDefaultVoiceCallStoreDir();
+  const preferred = path.join(os.homedir(), ".openclaw", "voice-calls");
+  const resolvedPreferred = resolveUserPath(preferred);
+  const existing =
+    [resolvedPreferred].find((dir) => {
+      try {
+        return fs.existsSync(path.join(dir, "calls.jsonl")) || fs.existsSync(dir);
+      } catch {
+        return false;
+      }
+    }) ?? resolvedPreferred;
+  const base = config.store?.trim() ? resolveUserPath(config.store) : existing;
   return path.join(base, "calls.jsonl");
 }
 
@@ -717,7 +733,7 @@ export function registerVoiceCallCli(params: {
       }
       const rt = await ensureRuntime();
       if (options.callId) {
-        const call = await rt.manager.getCallFromMemoryOrStore(options.callId);
+        const call = rt.manager.getCall(options.callId);
         writeStdoutJson(call ?? { found: false });
         return;
       }
@@ -910,4 +926,4 @@ export function registerVoiceCallCli(params: {
       },
     );
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+export { testing as __testing };

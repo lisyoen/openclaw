@@ -3,20 +3,6 @@ import OpenClawKit
 import Photos
 import UIKit
 
-enum PhotoLibraryAccess {
-    static func authorizationStatus() -> PHAuthorizationStatus {
-        PHPhotoLibrary.authorizationStatus(for: .readWrite)
-    }
-
-    static func canRead(_ status: PHAuthorizationStatus) -> Bool {
-        status == .authorized || status == .limited
-    }
-
-    static func requestReadWrite() async -> PHAuthorizationStatus {
-        await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-    }
-}
-
 final class PhotoLibraryService: PhotosServicing {
     // The gateway WebSocket has a max payload size; returning large base64 blobs
     // can cause the gateway to close the connection. Keep photo payloads small
@@ -29,7 +15,7 @@ final class PhotoLibraryService: PhotosServicing {
 
     func latest(params: OpenClawPhotosLatestParams) async throws -> OpenClawPhotosLatestPayload {
         let status = await Self.ensureAuthorization()
-        guard PhotoLibraryAccess.canRead(status) else {
+        guard status == .authorized || status == .limited else {
             throw NSError(domain: "Photos", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "PHOTOS_PERMISSION_REQUIRED: grant Photos permission",
             ])
@@ -48,10 +34,7 @@ final class PhotoLibraryService: PhotosServicing {
         let formatter = ISO8601DateFormatter()
 
         assets.enumerateObjects { asset, _, stop in
-            if results.count >= limit {
-                stop.pointee = true
-                return
-            }
+            if results.count >= limit { stop.pointee = true; return }
             if let payload = try? Self.renderAsset(
                 asset,
                 maxWidth: maxWidth,
@@ -73,7 +56,7 @@ final class PhotoLibraryService: PhotosServicing {
 
     private static func ensureAuthorization() async -> PHAuthorizationStatus {
         // Don’t prompt during node.invoke; prompts block the invoke and lead to timeouts.
-        PhotoLibraryAccess.authorizationStatus()
+        PHPhotoLibrary.authorizationStatus(for: .readWrite)
     }
 
     private static func renderAsset(

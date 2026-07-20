@@ -14,16 +14,6 @@ describe("markdownToIRWithMeta tableMode block", () => {
       {
         headers: ["Name", "Age"],
         rows: [["Alice", "30"]],
-        headerCells: [
-          { text: "Name", styles: [], links: [] },
-          { text: "Age", styles: [], links: [] },
-        ],
-        rowCells: [
-          [
-            { text: "Alice", styles: [], links: [] },
-            { text: "30", styles: [], links: [] },
-          ],
-        ],
         placeholderOffset: ir.text.indexOf("After"),
       },
     ]);

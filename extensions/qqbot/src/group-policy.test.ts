@@ -1,7 +1,3 @@
-import {
-  buildChannelGroupsScopeTree,
-  resolveScopeKeyCaseInsensitive,
-} from "openclaw/plugin-sdk/channel-policy";
 // Qqbot tests cover shared group tool policy behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { describe, expect, it } from "vitest";
@@ -9,20 +5,19 @@ import { qqbotPlugin } from "./channel.js";
 import { resolveQQBotGroupToolPolicy } from "./group-policy.js";
 
 describe("qqbot group tool policy", () => {
-  it("prefers an exact group key over a case-insensitive match", () => {
+  it("resolves canonical per-group tools config", () => {
     const cfg = {
       channels: {
         qqbot: {
           groups: {
-            g1: { tools: { allow: ["case-insensitive"] } },
-            G1: { tools: { deny: ["exact"] } },
+            G1: { tools: { deny: ["*"] } },
           },
         },
       },
     } as OpenClawConfig;
 
     expect(resolveQQBotGroupToolPolicy({ cfg, groupId: "G1" })).toStrictEqual({
-      deny: ["exact"],
+      deny: ["*"],
     });
   });
 
@@ -51,7 +46,7 @@ describe("qqbot group tool policy", () => {
     ).toStrictEqual({ deny: ["*"] });
   });
 
-  it("uses a case-insensitive group key when no exact key exists", () => {
+  it("matches mixed-case group ids after session-key normalization", () => {
     const cfg = {
       channels: {
         qqbot: {
@@ -74,24 +69,6 @@ describe("qqbot group tool policy", () => {
         senderId: "alice",
       }),
     ).toStrictEqual({ deny: ["*"] });
-  });
-
-  it("keeps wildcard defaults out of case-insensitive scope matching", () => {
-    const cfg = {
-      channels: {
-        qqbot: {
-          groups: {
-            "*": { tools: { deny: ["default"] } },
-          },
-        },
-      },
-    } as OpenClawConfig;
-    const tree = buildChannelGroupsScopeTree(cfg, "qqbot");
-
-    expect(resolveScopeKeyCaseInsensitive(tree, "*")).toBeUndefined();
-    expect(resolveQQBotGroupToolPolicy({ cfg, groupId: "*" })).toStrictEqual({
-      deny: ["default"],
-    });
   });
 
   it("registers the resolver on the channel plugin", () => {

@@ -45,9 +45,9 @@ Designed to be called from workflow engines (for example, Lobster via
         "enabled": true,
         "config": {
           "defaultProvider": "openai",
-          "defaultModel": "gpt-5.6-sol",
+          "defaultModel": "gpt-5.5",
           "defaultAuthProfileId": "main",
-          "allowedModels": ["openai/gpt-5.6-sol"],
+          "allowedModels": ["openai/gpt-5.5"],
           "maxTokens": 800,
           "timeoutMs": 30000
         }

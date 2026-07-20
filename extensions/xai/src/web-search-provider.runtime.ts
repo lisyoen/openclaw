@@ -45,7 +45,12 @@ const X_SEARCH_MODEL_OPTIONS = [
   {
     value: XAI_DEFAULT_X_SEARCH_MODEL,
     label: XAI_DEFAULT_X_SEARCH_MODEL,
-    hint: "default · reasoning disabled",
+    hint: "default · fast, no reasoning",
+  },
+  {
+    value: "grok-4-1-fast",
+    label: "grok-4-1-fast",
+    hint: "fast with reasoning",
   },
 ] as const;
 
@@ -179,7 +184,7 @@ function resolveXaiToolSearchConfig(ctx: {
 function resolveXaiWebSearchCredential(searchConfig?: Record<string, unknown>): string | undefined {
   return resolveWebSearchProviderCredential({
     credentialValue: getScopedCredentialValue(searchConfig, "grok"),
-    path: "plugins.entries.xai.config.webSearch.apiKey",
+    path: "tools.web.search.grok.apiKey",
     envVars: ["XAI_API_KEY"],
   });
 }
@@ -189,7 +194,7 @@ function resolveConfiguredXaiWebSearchCredential(
 ): string | undefined {
   return resolveWebSearchProviderCredential({
     credentialValue: getScopedCredentialValue(searchConfig, "grok"),
-    path: "plugins.entries.xai.config.webSearch.apiKey",
+    path: "tools.web.search.grok.apiKey",
     envVars: [],
   });
 }

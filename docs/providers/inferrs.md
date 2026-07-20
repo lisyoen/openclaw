@@ -7,18 +7,18 @@ read_when:
 title: "Inferrs"
 ---
 
-[inferrs](https://github.com/ericcurtin/inferrs) serves local models behind an OpenAI-compatible `/v1` API. OpenClaw talks to it through the generic `openai-completions` adapter.
+[inferrs](https://github.com/ericcurtin/inferrs) can serve local models behind an OpenAI-compatible `/v1` API. OpenClaw works with `inferrs` through the generic `openai-completions` path.
 
-| Property           | Value                                                                |
-| ------------------ | -------------------------------------------------------------------- |
-| Provider id        | `inferrs` (custom; configure under `models.providers.inferrs`)       |
-| Plugin             | none — not a bundled OpenClaw provider plugin                        |
-| Auth env var       | none required; any value works if your inferrs server has no auth    |
-| API                | OpenAI-compatible (`openai-completions`)                             |
-| Suggested base URL | `http://127.0.0.1:8080/v1` (or wherever your inferrs server listens) |
+| Property           | Value                                                              |
+| ------------------ | ------------------------------------------------------------------ |
+| Provider id        | `inferrs` (custom; configure under `models.providers.inferrs`)     |
+| Plugin             | none — `inferrs` is not a bundled OpenClaw provider plugin         |
+| Auth env var       | Optional. Any value works if your inferrs server has no auth       |
+| API                | OpenAI-compatible (`openai-completions`)                           |
+| Suggested base URL | `http://127.0.0.1:8080/v1` (or wherever your inferrs server lives) |
 
 <Note>
-  `inferrs` is a custom self-hosted OpenAI-compatible backend, not a dedicated OpenClaw provider plugin: you configure it under `models.providers.inferrs` instead of picking an onboarding auth choice. For a bundled plugin with auto-discovery, see [SGLang](/providers/sglang) or [vLLM](/providers/vllm).
+  `inferrs` is currently best treated as a custom self-hosted OpenAI-compatible backend, not a dedicated OpenClaw provider plugin. You configure it through `models.providers.inferrs` rather than an onboarding choice flag. If you need a true bundled plugin with auto-discovery, see [SGLang](/providers/sglang) or [vLLM](/providers/vllm).
 </Note>
 
 ## Getting started
@@ -39,13 +39,13 @@ title: "Inferrs"
     ```
   </Step>
   <Step title="Add an OpenClaw provider entry">
-    Add an explicit provider entry and point your default model at it. See the config example below.
+    Add an explicit provider entry and point your default model at it. See the full config example below.
   </Step>
 </Steps>
 
 ## Full config example
 
-Gemma 4 on a local `inferrs` server:
+This example uses Gemma 4 on a local `inferrs` server.
 
 ```json5
 {
@@ -88,7 +88,8 @@ Gemma 4 on a local `inferrs` server:
 
 ## On-demand startup
 
-OpenClaw can start `inferrs` itself only when an `inferrs/...` model is selected. Add `localService` to the same provider entry:
+Inferrs can also be started by OpenClaw only when an `inferrs/...` model is
+selected. Add `localService` to the same provider entry:
 
 ```json5
 {
@@ -135,28 +136,44 @@ OpenClaw can start `inferrs` itself only when an `inferrs/...` model is selected
 }
 ```
 
-`command` must be an absolute path. Run `which inferrs` on the Gateway host and use that path. Full field reference: [Local model services](/gateway/local-model-services).
+`command` must be absolute. Use `which inferrs` on the Gateway host and put that
+path in config. For the full field reference, see
+[Local model services](/gateway/local-model-services).
 
 ## Advanced configuration
 
 <AccordionGroup>
   <Accordion title="Why requiresStringContent matters">
-    Some `inferrs` Chat Completions routes accept only string `messages[].content`, not structured content-part arrays.
+    Some `inferrs` Chat Completions routes accept only string
+    `messages[].content`, not structured content-part arrays.
 
     <Warning>
-    If OpenClaw runs fail with:
+    If OpenClaw runs fail with an error like:
 
     ```text
     messages[1].content: invalid type: sequence, expected a string
     ```
 
-    set `compat.requiresStringContent: true` in the model entry. OpenClaw then flattens pure text content parts into plain strings before sending the request.
+    set `compat.requiresStringContent: true` in your model entry.
     </Warning>
+
+    ```json5
+    compat: {
+      requiresStringContent: true
+    }
+    ```
+
+    OpenClaw will flatten pure text content parts into plain strings before sending
+    the request.
 
   </Accordion>
 
   <Accordion title="Gemma and tool-schema caveat">
-    Some `inferrs` + Gemma combinations accept small direct `/v1/chat/completions` requests but fail on full OpenClaw agent-runtime turns. Try disabling the tool schema surface first:
+    Some current `inferrs` + Gemma combinations accept small direct
+    `/v1/chat/completions` requests but still fail on full OpenClaw agent-runtime
+    turns.
+
+    If that happens, try this first:
 
     ```json5
     compat: {
@@ -165,12 +182,17 @@ OpenClaw can start `inferrs` itself only when an `inferrs/...` model is selected
     }
     ```
 
-    That reduces prompt pressure on stricter local backends. If tiny direct requests still work but normal OpenClaw agent turns keep crashing inside `inferrs`, treat it as an upstream model/server limitation rather than an OpenClaw transport issue.
+    That disables OpenClaw's tool schema surface for the model and can reduce prompt
+    pressure on stricter local backends.
+
+    If tiny direct requests still work but normal OpenClaw agent turns continue to
+    crash inside `inferrs`, the remaining issue is usually upstream model/server
+    behavior rather than OpenClaw's transport layer.
 
   </Accordion>
 
   <Accordion title="Manual smoke test">
-    Test both layers once configured:
+    Once configured, test both layers:
 
     ```bash
     curl http://127.0.0.1:8080/v1/chat/completions \
@@ -185,12 +207,20 @@ OpenClaw can start `inferrs` itself only when an `inferrs/...` model is selected
       --json
     ```
 
-    If the first command works but the second fails, see Troubleshooting below.
+    If the first command works but the second fails, check the troubleshooting section below.
 
   </Accordion>
 
   <Accordion title="Proxy-style behavior">
-    Because `inferrs` uses the generic `openai-completions` adapter (not `openai-responses`), native-OpenAI-only request shaping never applies: no `service_tier`, no Responses `store`, no prompt-cache hints, and no OpenAI reasoning-compat payload shaping get sent.
+    `inferrs` is treated as a proxy-style OpenAI-compatible `/v1` backend, not a
+    native OpenAI endpoint.
+
+    - Native OpenAI-only request shaping does not apply here
+    - No `service_tier`, no Responses `store`, no prompt-cache hints, and no
+      OpenAI reasoning-compat payload shaping
+    - Hidden OpenClaw attribution headers (`originator`, `version`, `User-Agent`)
+      are not injected on custom `inferrs` base URLs
+
   </Accordion>
 </AccordionGroup>
 
@@ -198,19 +228,25 @@ OpenClaw can start `inferrs` itself only when an `inferrs/...` model is selected
 
 <AccordionGroup>
   <Accordion title="curl /v1/models fails">
-    `inferrs` is not running, not reachable, or not bound to the host/port you configured. Confirm the server is started and listening on that address.
+    `inferrs` is not running, not reachable, or not bound to the expected
+    host/port. Make sure the server is started and listening on the address you
+    configured.
   </Accordion>
 
   <Accordion title="messages[].content expected a string">
-    Set `compat.requiresStringContent: true` in the model entry (see above).
+    Set `compat.requiresStringContent: true` in the model entry. See the
+    `requiresStringContent` section above for details.
   </Accordion>
 
   <Accordion title="Direct /v1/chat/completions calls pass but openclaw infer model run fails">
-    Set `compat.supportsTools: false` to disable the tool schema surface (see the Gemma caveat above).
+    Try setting `compat.supportsTools: false` to disable the tool schema surface.
+    See the Gemma tool-schema caveat above.
   </Accordion>
 
   <Accordion title="inferrs still crashes on larger agent turns">
-    If schema errors are gone but `inferrs` still crashes on larger agent turns, treat it as an upstream `inferrs` or model limitation. Reduce prompt pressure or switch backend/model.
+    If OpenClaw no longer gets schema errors but `inferrs` still crashes on larger
+    agent turns, treat it as an upstream `inferrs` or model limitation. Reduce
+    prompt pressure or switch to a different local backend or model.
   </Accordion>
 </AccordionGroup>
 

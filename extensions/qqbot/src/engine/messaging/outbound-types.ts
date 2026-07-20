@@ -2,17 +2,7 @@
 import type { MessageReceipt } from "openclaw/plugin-sdk/channel-outbound";
 import type { GatewayAccount } from "../types.js";
 
-export type OutboundMediaAccessContext = {
-  mediaAccess?: {
-    localRoots?: readonly string[];
-    workspaceDir?: string;
-    readFile?: (filePath: string) => Promise<Buffer>;
-  };
-  mediaLocalRoots?: readonly string[];
-  mediaReadFile?: (filePath: string) => Promise<Buffer>;
-};
-
-export interface OutboundContext extends OutboundMediaAccessContext {
+export interface OutboundContext {
   to: string;
   text: string;
   accountId?: string | null;
@@ -49,7 +39,7 @@ export interface OutboundResult {
 }
 
 /** Normalized target information for media sends. */
-export interface MediaTargetContext extends OutboundMediaAccessContext {
+export interface MediaTargetContext {
   targetType: "c2c" | "group" | "channel" | "dm";
   targetId: string;
   account: GatewayAccount;

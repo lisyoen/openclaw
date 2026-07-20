@@ -1,23 +1,21 @@
 // Doctor checks and repairs for exec safeBins profiles and trusted binary directories.
+import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { sanitizeForLog } from "../../../../packages/terminal-core/src/ansi.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { resolveCommandResolutionFromArgv } from "../../../infra/exec-command-resolution.js";
 import {
-  normalizeConfiguredSafeBins,
-  normalizeConfiguredTrustedSafeBinDirs,
-} from "../../../infra/exec-safe-bin-config.js";
-import {
   listInterpreterLikeSafeBins,
   resolveMergedSafeBinProfileFixtures,
 } from "../../../infra/exec-safe-bin-runtime-policy.js";
+import { listRiskyConfiguredSafeBins } from "../../../infra/exec-safe-bin-semantics.js";
 import {
-  listRiskyConfiguredSafeBins,
-  normalizeSafeBinName,
-} from "../../../infra/exec-safe-bin-semantics.js";
-import { getTrustedSafeBinDirs, isTrustedSafeBinPath } from "../../../infra/exec-safe-bin-trust.js";
+  getTrustedSafeBinDirs,
+  isTrustedSafeBinPath,
+  normalizeTrustedSafeBinDirs,
+} from "../../../infra/exec-safe-bin-trust.js";
 import { asObjectRecord } from "./object.js";
 
-type ExecSafeBinCoverageHit = {
+export type ExecSafeBinCoverageHit = {
   /** Config scope that owns the safeBins entry. */
   scopePath: string;
   /** Normalized binary name from safeBins. */
@@ -38,7 +36,7 @@ type ExecSafeBinScopeRef = {
   trustedSafeBinDirs: ReadonlySet<string>;
 };
 
-type ExecSafeBinTrustedDirHintHit = {
+export type ExecSafeBinTrustedDirHintHit = {
   /** Config scope that owns the safeBins entry. */
   scopePath: string;
   /** Binary name configured in safeBins. */
@@ -46,6 +44,28 @@ type ExecSafeBinTrustedDirHintHit = {
   /** Resolved executable path outside trusted safe-bin directories. */
   resolvedPath: string;
 };
+
+function normalizeConfiguredSafeBins(entries: unknown): string[] {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      entries
+        .map((entry) => normalizeOptionalLowercaseString(entry) ?? "")
+        .filter((entry) => entry.length > 0),
+    ),
+  ).toSorted();
+}
+
+function normalizeConfiguredTrustedSafeBinDirs(entries: unknown): string[] {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return normalizeTrustedSafeBinDirs(
+    entries.filter((entry): entry is string => typeof entry === "string"),
+  );
+}
 
 function collectExecSafeBinScopes(cfg: OpenClawConfig): ExecSafeBinScopeRef[] {
   const scopes: ExecSafeBinScopeRef[] = [];
@@ -106,13 +126,8 @@ export function scanExecSafeBinCoverage(cfg: OpenClawConfig): ExecSafeBinCoverag
   const hits: ExecSafeBinCoverageHit[] = [];
   for (const scope of collectExecSafeBinScopes(cfg)) {
     const interpreterBins = new Set(listInterpreterLikeSafeBins(scope.safeBins));
-    const riskyHits = listRiskyConfiguredSafeBins(scope.safeBins);
-    const riskyBins = new Set(riskyHits.map((hit) => hit.bin));
     for (const bin of scope.safeBins) {
       if (scope.mergedProfiles[bin]) {
-        continue;
-      }
-      if (riskyBins.has(normalizeSafeBinName(bin))) {
         continue;
       }
       hits.push({
@@ -122,7 +137,7 @@ export function scanExecSafeBinCoverage(cfg: OpenClawConfig): ExecSafeBinCoverag
         isInterpreter: interpreterBins.has(bin),
       });
     }
-    for (const hit of riskyHits) {
+    for (const hit of listRiskyConfiguredSafeBins(scope.safeBins)) {
       hits.push({
         scopePath: scope.scopePath,
         bin: hit.bin,
@@ -213,11 +228,9 @@ export function collectExecSafeBinCoverageWarnings(params: {
       );
     }
   }
-  if (customHits.length > 0) {
-    lines.push(
-      `- Run "${params.doctorFixCommand}" to scaffold missing custom safeBinProfiles entries.`,
-    );
-  }
+  lines.push(
+    `- Run "${params.doctorFixCommand}" to scaffold missing custom safeBinProfiles entries.`,
+  );
   return lines;
 }
 
@@ -255,14 +268,10 @@ export function maybeRepairExecSafeBinProfiles(cfg: OpenClawConfig): {
 
   for (const scope of collectExecSafeBinScopes(next)) {
     const interpreterBins = new Set(listInterpreterLikeSafeBins(scope.safeBins));
-    const riskyHits = listRiskyConfiguredSafeBins(scope.safeBins);
-    const riskyBins = new Set(riskyHits.map((hit) => hit.bin));
-    for (const hit of riskyHits) {
+    for (const hit of listRiskyConfiguredSafeBins(scope.safeBins)) {
       warnings.push(`- ${scope.scopePath}.safeBins includes '${hit.bin}': ${hit.warning}`);
     }
-    const missingBins = scope.safeBins.filter(
-      (bin) => !scope.mergedProfiles[bin] && !riskyBins.has(normalizeSafeBinName(bin)),
-    );
+    const missingBins = scope.safeBins.filter((bin) => !scope.mergedProfiles[bin]);
     if (missingBins.length === 0) {
       continue;
     }

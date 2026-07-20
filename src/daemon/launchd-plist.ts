@@ -5,13 +5,12 @@ import type { GatewayServiceEnvironmentValueSource } from "./service-types.js";
 // launchd defaults to a 10s spawn throttle. Keep that default explicitly so
 // crash loops back off instead of respawning every second while still allowing
 // explicit kickstart restarts to take effect.
-const LAUNCH_AGENT_THROTTLE_INTERVAL_SECONDS = 10;
+export const LAUNCH_AGENT_THROTTLE_INTERVAL_SECONDS = 10;
 export const LAUNCH_AGENT_EXIT_TIMEOUT_SECONDS = 20;
 // launchd stores plist integer values in decimal; 0o077 renders as 63 (owner-only files).
-const LAUNCH_AGENT_UMASK_DECIMAL = 0o077;
-const LAUNCH_AGENT_PROCESS_TYPE = "Interactive";
-const LAUNCH_AGENT_STDIN_PATH = "/dev/null";
-export const LAUNCH_AGENT_ENV_WRAPPER_SHELL = "/bin/sh";
+export const LAUNCH_AGENT_UMASK_DECIMAL = 0o077;
+export const LAUNCH_AGENT_PROCESS_TYPE = "Interactive";
+export const LAUNCH_AGENT_STDIN_PATH = "/dev/null";
 
 const plistEscape = (value: string): string =>
   value
@@ -69,11 +68,12 @@ function resolveSiblingGeneratedEnvFilePath(
   return `${envFilePath.slice(0, serviceEnvDirEnd)}/${label}.env`;
 }
 
-function isExpectedGeneratedEnvWrapperPair(
-  wrapperPath: string | undefined,
-  envFilePath: string | undefined,
+function isGeneratedEnvWrapperArgs(
+  programArguments: string[],
   options?: ReadLaunchAgentProgramArgumentsOptions,
 ): boolean {
+  const wrapperPath = programArguments[0];
+  const envFilePath = programArguments[1];
   if (!wrapperPath || !envFilePath) {
     return false;
   }
@@ -102,34 +102,14 @@ function isExpectedGeneratedEnvWrapperPair(
   );
 }
 
-function resolveGeneratedEnvWrapperLayout(
-  programArguments: string[],
-  options?: ReadLaunchAgentProgramArgumentsOptions,
-): { envFilePath: string; commandStartIndex: number } | null {
-  if (programArguments[0] === LAUNCH_AGENT_ENV_WRAPPER_SHELL) {
-    const wrapperPath = programArguments[1];
-    const envFilePath = programArguments[2];
-    if (isExpectedGeneratedEnvWrapperPair(wrapperPath, envFilePath, options) && envFilePath) {
-      return { envFilePath, commandStartIndex: 3 };
-    }
-  }
-  const wrapperPath = programArguments[0];
-  const envFilePath = programArguments[1];
-  if (isExpectedGeneratedEnvWrapperPair(wrapperPath, envFilePath, options) && envFilePath) {
-    return { envFilePath, commandStartIndex: 2 };
-  }
-  return null;
-}
-
 async function readLaunchAgentEnvironmentFile(
   programArguments: string[],
   options?: ReadLaunchAgentProgramArgumentsOptions,
 ): Promise<Record<string, string>> {
-  const layout = resolveGeneratedEnvWrapperLayout(programArguments, options);
-  if (!layout) {
+  const envFilePath = programArguments[1];
+  if (!isGeneratedEnvWrapperArgs(programArguments, options) || !envFilePath) {
     return {};
   }
-  const envFilePath = layout.envFilePath;
   let content = "";
   const candidateEnvFilePaths = Array.from(
     new Set(
@@ -177,11 +157,10 @@ function unwrapGeneratedEnvWrapperArgs(
   programArguments: string[],
   options?: ReadLaunchAgentProgramArgumentsOptions,
 ): string[] {
-  const layout = resolveGeneratedEnvWrapperLayout(programArguments, options);
-  if (!layout) {
+  if (!isGeneratedEnvWrapperArgs(programArguments, options)) {
     return programArguments;
   }
-  return programArguments.slice(layout.commandStartIndex);
+  return programArguments.slice(2);
 }
 
 const renderEnvDict = (env: Record<string, string | undefined> | undefined): string => {
@@ -236,44 +215,24 @@ export async function readLaunchAgentProgramArgumentsFromFile(
     if (!programMatch) {
       return null;
     }
-    const programArgumentsXml = programMatch.at(1);
-    if (programArgumentsXml === undefined) {
-      return null;
-    }
-    const args: string[] = [];
-    for (const match of programArgumentsXml.matchAll(/<string>([\s\S]*?)<\/string>/gi)) {
-      const rawArgument = match.at(1);
-      if (rawArgument === undefined) {
-        return null;
-      }
-      args.push(plistUnescape(rawArgument).trim());
-    }
+    const args = Array.from(programMatch[1].matchAll(/<string>([\s\S]*?)<\/string>/gi)).map(
+      (match) => plistUnescape(match[1] ?? "").trim(),
+    );
     const workingDirMatch = plist.match(
       /<key>WorkingDirectory<\/key>\s*<string>([\s\S]*?)<\/string>/i,
     );
-    const workingDirectoryXml = workingDirMatch?.at(1);
-    const workingDirectory =
-      workingDirectoryXml === undefined ? "" : plistUnescape(workingDirectoryXml).trim();
+    const workingDirectory = workingDirMatch ? plistUnescape(workingDirMatch[1] ?? "").trim() : "";
     const envMatch = plist.match(/<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/i);
     const inlineEnvironment: Record<string, string> = {};
     if (envMatch) {
-      const environmentXml = envMatch.at(1);
-      if (environmentXml === undefined) {
-        return null;
-      }
-      for (const pair of environmentXml.matchAll(
+      for (const pair of envMatch[1].matchAll(
         /<key>([\s\S]*?)<\/key>\s*<string>([\s\S]*?)<\/string>/gi,
       )) {
-        const rawKey = pair.at(1);
-        const rawValue = pair.at(2);
-        if (rawKey === undefined || rawValue === undefined) {
-          return null;
-        }
-        const key = plistUnescape(rawKey).trim();
+        const key = plistUnescape(pair[1] ?? "").trim();
         if (!key) {
           continue;
         }
-        const value = plistUnescape(rawValue).trim();
+        const value = plistUnescape(pair[2] ?? "").trim();
         inlineEnvironment[key] = value;
       }
     }

@@ -15,7 +15,7 @@ type QaCronRunsPage = {
   entries?: QaCronRunLogEntry[];
 };
 
-function resolveCronRunPollIntervalMs(intervalMs: number | undefined): number {
+export function resolveCronRunPollIntervalMs(intervalMs: number | undefined): number {
   return resolveTimerTimeoutMs(intervalMs ?? 1_000, 1_000, 0);
 }
 

@@ -1,7 +1,11 @@
 // Cloudflare Ai Gateway tests cover stream wrappers plugin behavior.
 import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { wrapCloudflareAiGatewayProviderStream } from "./stream-wrappers.js";
+import {
+  testing,
+  createCloudflareAiGatewayAnthropicThinkingPrefillWrapper,
+  wrapCloudflareAiGatewayProviderStream,
+} from "./stream-wrappers.js";
 
 const { warnMock } = vi.hoisted(() => ({
   warnMock: vi.fn(),
@@ -29,13 +33,9 @@ function createPayloadBaseStream(payload: Record<string, unknown>): StreamFn {
 }
 
 function runWrapper(payload: Record<string, unknown>): Record<string, unknown> {
-  const wrapper = wrapCloudflareAiGatewayProviderStream({
-    model: { api: "anthropic-messages" },
-    streamFn: createPayloadBaseStream(payload),
-  } as never);
-  if (!wrapper) {
-    throw new Error("expected Cloudflare AI Gateway stream wrapper");
-  }
+  const wrapper = createCloudflareAiGatewayAnthropicThinkingPrefillWrapper(
+    createPayloadBaseStream(payload),
+  );
   void wrapper(
     { provider: "cloudflare-ai-gateway", api: "anthropic-messages" } as never,
     {} as never,
@@ -44,7 +44,7 @@ function runWrapper(payload: Record<string, unknown>): Record<string, unknown> {
   return payload;
 }
 
-describe("wrapCloudflareAiGatewayProviderStream", () => {
+describe("createCloudflareAiGatewayAnthropicThinkingPrefillWrapper", () => {
   beforeEach(() => {
     warnMock.mockClear();
   });
@@ -156,12 +156,6 @@ describe("wrapCloudflareAiGatewayProviderStream", () => {
   });
 
   it("treats missing model API as the plugin's default Anthropic Messages route", () => {
-    const baseStreamFn = createPayloadBaseStream({ messages: [] });
-    const wrapped = wrapCloudflareAiGatewayProviderStream({
-      model: {},
-      streamFn: baseStreamFn,
-    } as never);
-
-    expect(wrapped).not.toBe(baseStreamFn);
+    expect(testing.shouldPatchAnthropicMessagesPayload({} as never)).toBe(true);
   });
 });

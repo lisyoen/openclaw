@@ -439,8 +439,9 @@ export async function collectSecurityWarnings(
 /** Emits security warnings plus the deep audit follow-up command. */
 export async function noteSecurityWarnings(cfg: OpenClawConfig) {
   const warnings = await collectSecurityWarnings(cfg);
-  if (warnings.length > 0) {
-    warnings.push(`- Run: ${formatCliCommand("openclaw security audit --deep")}`);
-    note(warnings.join("\n"), "Security");
-  }
+  const auditHint = `- Run: ${formatCliCommand("openclaw security audit --deep")}`;
+
+  const lines = warnings.length > 0 ? warnings : ["- No channel security warnings detected."];
+  lines.push(auditHint);
+  note(lines.join("\n"), "Security");
 }

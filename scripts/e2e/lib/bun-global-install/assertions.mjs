@@ -1,14 +1,10 @@
 // Assertions for Bun global install E2E validation.
 import { spawn } from "node:child_process";
-import fs from "node:fs";
 
 const DEFAULT_TIMEOUT_KILL_GRACE_MS = 30_000;
-const PARENT_TERMINATION_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 const usage = () => {
-  console.error(
-    "Usage: assertions.mjs <run-with-timeout|assert-image-providers|assert-release-versions> [...]",
-  );
+  console.error("Usage: assertions.mjs <run-with-timeout|assert-image-providers> [...]");
   process.exit(2);
 };
 
@@ -39,42 +35,6 @@ const signalChild = (child, signal) => {
   }
 };
 
-const processGroupAlive = (child) => {
-  if (process.platform === "win32" || !child.pid) {
-    return false;
-  }
-  try {
-    process.kill(-child.pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
-};
-
-const waitForProcessGroupExit = async (child, timeout) => {
-  const deadlineAt = Date.now() + timeout;
-  while (Date.now() < deadlineAt) {
-    if (!processGroupAlive(child)) {
-      return true;
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 25);
-    });
-  }
-  return !processGroupAlive(child);
-};
-
-const resolveSignalExitCode = (signal) => {
-  switch (signal) {
-    case "SIGINT":
-      return 130;
-    case "SIGHUP":
-      return 129;
-    default:
-      return 143;
-  }
-};
-
 const runWithTimeout = async (timeout, command, commandArgs) => {
   const killGrace = parsePositiveNumber(
     process.env.OPENCLAW_BUN_GLOBAL_SMOKE_TIMEOUT_KILL_GRACE_MS ??
@@ -87,14 +47,7 @@ const runWithTimeout = async (timeout, command, commandArgs) => {
     stdio: ["ignore", "pipe", "pipe"],
   });
   let timedOut = false;
-  let parentSignal = null;
   let killTimer;
-  let killDeadlineAt = 0;
-  const scheduleForceKill = () => {
-    killDeadlineAt = Date.now() + killGrace;
-    killTimer ??= setTimeout(() => signalChild(child, "SIGKILL"), killGrace);
-    killTimer.unref();
-  };
 
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -104,28 +57,10 @@ const runWithTimeout = async (timeout, command, commandArgs) => {
   const timeoutTimer = setTimeout(() => {
     timedOut = true;
     signalChild(child, "SIGTERM");
-    scheduleForceKill();
+    killTimer = setTimeout(() => signalChild(child, "SIGKILL"), killGrace);
+    killTimer.unref();
   }, timeout);
   timeoutTimer.unref();
-
-  const parentSignalHandlers = new Map(
-    PARENT_TERMINATION_SIGNALS.map((signal) => [
-      signal,
-      () => {
-        parentSignal ??= signal;
-        signalChild(child, signal);
-        scheduleForceKill();
-      },
-    ]),
-  );
-  for (const [signal, handler] of parentSignalHandlers) {
-    process.on(signal, handler);
-  }
-  const cleanupParentSignalHandlers = () => {
-    for (const [signal, handler] of parentSignalHandlers) {
-      process.off(signal, handler);
-    }
-  };
 
   let spawnError;
   child.on("error", (error) => {
@@ -136,26 +71,11 @@ const runWithTimeout = async (timeout, command, commandArgs) => {
   });
 
   clearTimeout(timeoutTimer);
-  cleanupParentSignalHandlers();
-  if (timedOut || parentSignal) {
-    const remainingGraceMs = Math.max(0, killDeadlineAt - Date.now());
-    if (remainingGraceMs > 0) {
-      await waitForProcessGroupExit(child, remainingGraceMs);
-    }
-    if (processGroupAlive(child)) {
-      signalChild(child, "SIGKILL");
-      await waitForProcessGroupExit(child, 100);
-    }
-    clearTimeout(killTimer);
-  }
-  if (parentSignal) {
-    process.exit(resolveSignalExitCode(parentSignal));
-  }
+  clearTimeout(killTimer);
   if (timedOut) {
     console.error(`command timed out after ${timeout}ms: ${command}`);
     process.exit(1);
   }
-  clearTimeout(killTimer);
   if (result.error) {
     console.error(`command failed: ${command}: ${result.error.message}`);
     process.exit(1);
@@ -204,30 +124,6 @@ if (mode === "assert-image-providers") {
     }
   }
   console.log(`bun-global-install-smoke: image providers OK (${parsed.length} providers)`);
-  process.exit(0);
-}
-
-if (mode === "assert-release-versions") {
-  const [rootManifestPath, aiManifestPath] = args;
-  if (!rootManifestPath || !aiManifestPath) {
-    usage();
-  }
-  const rootManifest = JSON.parse(fs.readFileSync(rootManifestPath, "utf8"));
-  const aiManifest = JSON.parse(fs.readFileSync(aiManifestPath, "utf8"));
-  const rootVersion = rootManifest.version;
-  const aiVersion = aiManifest.version;
-  const rootAiVersion = rootManifest.dependencies?.["@openclaw/ai"];
-  if (
-    typeof rootVersion !== "string" ||
-    typeof aiVersion !== "string" ||
-    rootVersion !== aiVersion ||
-    rootAiVersion !== aiVersion
-  ) {
-    throw new Error(
-      `candidate version mismatch: openclaw=${String(rootVersion)}, dependency=${String(rootAiVersion)}, @openclaw/ai=${String(aiVersion)}`,
-    );
-  }
-  process.stdout.write(aiVersion);
   process.exit(0);
 }
 

@@ -2,7 +2,7 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { ReplyToMode } from "../../config/types.js";
 import { hasReplyPayloadContent } from "../../interactive/payload.js";
-import { copyReplyPayloadMetadata, setReplyPayloadMetadata } from "../reply-payload.js";
+import { copyReplyPayloadMetadata } from "../reply-payload.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload, ReplyThreadingPolicy } from "../types.js";
 import { extractReplyToTag } from "./reply-tags.js";
@@ -32,11 +32,6 @@ function resolveReplyThreadingForPayload(params: {
   currentMessageId?: string;
   replyThreading?: ReplyThreadingPolicy;
 }): ReplyPayload {
-  const payload = normalizeOptionalString(params.payload.replyToId)
-    ? setReplyPayloadMetadata(copyReplyPayloadMetadata(params.payload, { ...params.payload }), {
-        replyToIdExplicit: true,
-      })
-    : params.payload;
   const implicitReplyToId = normalizeOptionalString(params.implicitReplyToId);
   const currentMessageId = normalizeOptionalString(params.currentMessageId);
   const allowImplicitReplyToCurrentMessage = resolveImplicitCurrentMessageReplyAllowance(
@@ -45,13 +40,13 @@ function resolveReplyThreadingForPayload(params: {
   );
 
   let resolved: ReplyPayload =
-    payload.replyToId ||
-    payload.replyToCurrent === false ||
+    params.payload.replyToId ||
+    params.payload.replyToCurrent === false ||
     !implicitReplyToId ||
     !allowImplicitReplyToCurrentMessage
-      ? payload
-      : copyReplyPayloadMetadata(payload, {
-          ...payload,
+      ? params.payload
+      : copyReplyPayloadMetadata(params.payload, {
+          ...params.payload,
           replyToId: implicitReplyToId,
         });
 
@@ -90,9 +85,7 @@ export function applyReplyTagsToPayload(
 
 /** True when a payload has visible or playable content for delivery. */
 export function isRenderablePayload(payload: ReplyPayload): boolean {
-  return hasReplyPayloadContent(payload, {
-    extraContent: payload.audioAsVoice || payload.location != null,
-  });
+  return hasReplyPayloadContent(payload, { extraContent: payload.audioAsVoice });
 }
 
 /** True when a payload should stay internal as reasoning-only output. */
@@ -100,17 +93,16 @@ export function shouldSuppressReasoningPayload(payload: ReplyPayload): boolean {
   return payload.isReasoning === true;
 }
 
-type ReplyThreadingParams = {
+/** Applies threading policy and filters empty payloads before channel delivery. */
+export function applyReplyThreading(params: {
   payloads: ReplyPayload[];
   replyToMode: ReplyToMode;
   replyToChannel?: OriginatingChannelType;
   currentMessageId?: string;
   replyThreading?: ReplyThreadingPolicy;
-};
-
-/** Resolves reply targets and filters empty payloads before channel delivery. */
-export function resolveReplyThreadingPayloads(params: ReplyThreadingParams): ReplyPayload[] {
-  const { payloads, replyToMode, currentMessageId, replyThreading } = params;
+}): ReplyPayload[] {
+  const { payloads, replyToMode, replyToChannel, currentMessageId, replyThreading } = params;
+  const applyReplyToMode = createReplyToModeFilterForChannel(replyToMode, replyToChannel);
   const implicitReplyToId = normalizeOptionalString(currentMessageId);
   return payloads
     .map((payload) =>
@@ -122,14 +114,6 @@ export function resolveReplyThreadingPayloads(params: ReplyThreadingParams): Rep
         replyThreading,
       }),
     )
-    .filter(isRenderablePayload);
-}
-
-/** Applies threading policy and filters empty payloads before channel delivery. */
-export function applyReplyThreading(params: ReplyThreadingParams): ReplyPayload[] {
-  const applyReplyToMode = createReplyToModeFilterForChannel(
-    params.replyToMode,
-    params.replyToChannel,
-  );
-  return resolveReplyThreadingPayloads(params).map(applyReplyToMode);
+    .filter(isRenderablePayload)
+    .map(applyReplyToMode);
 }

@@ -19,11 +19,3 @@ export class MissingAgentHarnessError extends Error {
 export function isMissingAgentHarnessError(err: unknown): err is MissingAgentHarnessError {
   return err instanceof MissingAgentHarnessError;
 }
-
-/** A harness lost ownership of the session generation before the attempt could start. */
-export class AgentHarnessSessionSupersededError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "AgentHarnessSessionSupersededError";
-  }
-}

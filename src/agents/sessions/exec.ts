@@ -2,11 +2,8 @@
  * Shared command execution utilities for extensions and custom tools.
  */
 
-import { StringDecoder } from "node:string_decoder";
-import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import { releaseChildProcessOutputAfterExit } from "../../process/child-process.js";
-import { spawnCommand } from "../../process/exec.js";
-import { killProcessTree } from "../../process/kill-tree.js";
+import { spawn } from "node:child_process";
+import { waitForChildProcess } from "../utils/child-process.js";
 
 const DEFAULT_OUTPUT_LIMIT_CHARS = 16 * 1024 * 1024;
 const FORCE_KILL_GRACE_MS = 5000;
@@ -43,10 +40,6 @@ type OutputCapture = {
   truncatedChars: number;
 };
 
-function decodeCapturedOutput(decoder: StringDecoder, chunk: Buffer | string): string {
-  return Buffer.isBuffer(chunk) ? decoder.write(chunk) : `${decoder.end()}${chunk}`;
-}
-
 function clampMaxOutputChars(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return DEFAULT_OUTPUT_LIMIT_CHARS;
@@ -69,12 +62,9 @@ function appendCapturedOutput(
       truncatedChars: current.truncatedChars,
     };
   }
-  const nextText = truncateTail
-    ? sliceUtf16Safe(combined, overflowChars)
-    : sliceUtf16Safe(combined, 0, maxOutputChars);
   return {
-    text: nextText,
-    truncatedChars: current.truncatedChars + combined.length - nextText.length,
+    text: truncateTail ? combined.slice(overflowChars) : combined.slice(0, maxOutputChars),
+    truncatedChars: current.truncatedChars + overflowChars,
   };
 }
 
@@ -89,19 +79,14 @@ export async function execCommand(
   options?: ExecOptions,
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const proc = spawnCommand([command, ...args], {
-      buffer: false,
+    const proc = spawn(command, args, {
       cwd,
-      detached: process.platform !== "win32",
-      reject: false,
+      shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const releaseOutput = releaseChildProcessOutputAfterExit(proc);
 
     let stdout: OutputCapture = { text: "", truncatedChars: 0 };
     let stderr: OutputCapture = { text: "", truncatedChars: 0 };
-    const stdoutDecoder = new StringDecoder("utf8");
-    const stderrDecoder = new StringDecoder("utf8");
     let killed = false;
     let timeoutId: NodeJS.Timeout | undefined;
     let forceKillTimer: NodeJS.Timeout | undefined;
@@ -129,16 +114,6 @@ export async function execCommand(
       if (options?.signal) {
         options.signal.removeEventListener("abort", killProcess);
       }
-      const stdoutBeforeFlush = stdout.truncatedChars;
-      stdout = appendCapturedOutput(stdout, stdoutDecoder.end(), maxOutputChars, truncateOutput);
-      if (!truncateOutput && stdout.truncatedChars > stdoutBeforeFlush && !outputLimitExceeded) {
-        outputLimitExceeded = "stdout";
-      }
-      const stderrBeforeFlush = stderr.truncatedChars;
-      stderr = appendCapturedOutput(stderr, stderrDecoder.end(), maxOutputChars, truncateOutput);
-      if (!truncateOutput && stderr.truncatedChars > stderrBeforeFlush && !outputLimitExceeded) {
-        outputLimitExceeded = "stderr";
-      }
       if (outputLimitExceeded) {
         stderr = appendCapturedOutput(
           stderr,
@@ -161,20 +136,13 @@ export async function execCommand(
     const killProcess = () => {
       if (!killed) {
         killed = true;
-        if (proc.pid) {
-          killProcessTree(proc.pid, {
-            detached: process.platform !== "win32",
-            graceMs: FORCE_KILL_GRACE_MS,
-          });
-        } else {
-          proc.kill("SIGTERM");
-          forceKillTimer = setTimeout(() => {
-            if (!settled) {
-              proc.kill("SIGKILL");
-            }
-          }, FORCE_KILL_GRACE_MS);
-          forceKillTimer.unref?.();
-        }
+        proc.kill("SIGTERM");
+        forceKillTimer = setTimeout(() => {
+          if (!settled) {
+            proc.kill("SIGKILL");
+          }
+        }, FORCE_KILL_GRACE_MS);
+        forceKillTimer.unref?.();
       }
     };
 
@@ -194,19 +162,9 @@ export async function execCommand(
       }, options.timeout);
     }
 
-    // Output pipes may fail independently; process termination remains authoritative.
-    const ignoreOutputStreamError = () => {};
-    proc.stdout?.on("error", ignoreOutputStreamError);
-    proc.stderr?.on("error", ignoreOutputStreamError);
-
     proc.stdout?.on("data", (data) => {
       const before = stdout.truncatedChars;
-      stdout = appendCapturedOutput(
-        stdout,
-        decodeCapturedOutput(stdoutDecoder, data),
-        maxOutputChars,
-        truncateOutput,
-      );
+      stdout = appendCapturedOutput(stdout, data, maxOutputChars, truncateOutput);
       if (stdout.truncatedChars > before) {
         markOutputLimitExceeded("stdout");
       }
@@ -214,24 +172,20 @@ export async function execCommand(
 
     proc.stderr?.on("data", (data) => {
       const before = stderr.truncatedChars;
-      stderr = appendCapturedOutput(
-        stderr,
-        decodeCapturedOutput(stderrDecoder, data),
-        maxOutputChars,
-        truncateOutput,
-      );
+      stderr = appendCapturedOutput(stderr, data, maxOutputChars, truncateOutput);
       if (stderr.truncatedChars > before) {
         markOutputLimitExceeded("stderr");
       }
     });
 
-    void proc
-      .then((result) => {
-        finish(result.exitCode ?? (result.failed ? 1 : 0));
+    // Wait for process termination without hanging on inherited stdio handles
+    // held open by detached descendants.
+    waitForChildProcess(proc)
+      .then((code) => {
+        finish(code ?? 0);
       })
       .catch(() => {
         finish(1);
-      })
-      .finally(releaseOutput);
+      });
   });
 }

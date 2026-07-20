@@ -6,9 +6,9 @@ import {
   setRuntimeConfigSnapshot,
 } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import {
-  deleteSessionEntry,
-  getSessionEntry,
-  upsertSessionEntry,
+  clearSessionStoreCacheForTest,
+  loadSessionStore,
+  updateSessionStore,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -55,6 +55,7 @@ describe("Telegram direct session recreation after delete", () => {
 
   afterEach(() => {
     clearRuntimeConfigSnapshot();
+    clearSessionStoreCacheForTest();
   });
 
   afterAll(async () => {
@@ -79,17 +80,25 @@ describe("Telegram direct session recreation after delete", () => {
       },
     };
     setRuntimeConfigSnapshot(cfg as never);
-    await upsertSessionEntry({
+    await fs.writeFile(
       storePath,
-      sessionKey: TELEGRAM_DIRECT_KEY,
-      entry: {
-        sessionId: "old-session",
-        updatedAt: 1_700_000_000_000,
-        chatType: "direct",
-        channel: "telegram",
-      },
+      JSON.stringify(
+        {
+          [TELEGRAM_DIRECT_KEY]: {
+            sessionId: "old-session",
+            updatedAt: 1_700_000_000_000,
+            chatType: "direct",
+            channel: "telegram",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    await updateSessionStore(storePath, (store) => {
+      delete store[TELEGRAM_DIRECT_KEY];
     });
-    await deleteSessionEntry({ storePath, sessionKey: TELEGRAM_DIRECT_KEY });
 
     const context = await buildTelegramMessageContextForTest({
       cfg,
@@ -111,9 +120,9 @@ describe("Telegram direct session recreation after delete", () => {
       onRecordError: context.turn.record.onRecordError,
     });
 
-    const entry = getSessionEntry({ storePath, sessionKey: TELEGRAM_DIRECT_KEY });
+    const store = loadSessionStore(storePath, { skipCache: true });
     expect(context?.ctxPayload?.SessionKey).toBe(TELEGRAM_DIRECT_KEY);
-    expect(entry).toEqual(
+    expect(store[TELEGRAM_DIRECT_KEY]).toEqual(
       expect.objectContaining({
         lastChannel: "telegram",
         lastTo: "telegram:7463849194",

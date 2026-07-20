@@ -37,7 +37,6 @@ export type InspectedSlackAccount = {
   signingSecretStatus?: SlackCredentialStatus;
   userTokenStatus: SlackCredentialStatus;
   configured: boolean;
-  identity?: "user";
   config: SlackAccountConfig;
 } & SlackAccountSurfaceFields;
 
@@ -80,9 +79,7 @@ export function inspectSlackAccount(params: {
   const enabled = params.cfg.channels?.slack?.enabled !== false && merged.enabled !== false;
   const allowEnv = accountId === DEFAULT_ACCOUNT_ID;
   const mode = merged.mode ?? "socket";
-  const identity = merged.identity ?? "bot";
   const isHttpMode = mode === "http";
-  const isRelayMode = mode === "relay";
 
   const configBot = inspectSlackToken(merged.botToken);
   const configApp = inspectSlackToken(merged.appToken);
@@ -92,10 +89,9 @@ export function inspectSlackAccount(params: {
   const envBot = allowEnv
     ? normalizeSecretInputString(params.envBotToken ?? process.env.SLACK_BOT_TOKEN)
     : undefined;
-  const envApp =
-    allowEnv && !isRelayMode
-      ? normalizeSecretInputString(params.envAppToken ?? process.env.SLACK_APP_TOKEN)
-      : undefined;
+  const envApp = allowEnv
+    ? normalizeSecretInputString(params.envAppToken ?? process.env.SLACK_APP_TOKEN)
+    : undefined;
   const envUser = allowEnv
     ? normalizeSecretInputString(params.envUserToken ?? process.env.SLACK_USER_TOKEN)
     : undefined;
@@ -104,11 +100,6 @@ export function inspectSlackAccount(params: {
   const appToken = configApp.token ?? envApp;
   const signingSecret = configSigningSecret.token;
   const userToken = configUser.token ?? envUser;
-  const relayConfigured =
-    isRelayMode &&
-    Boolean(normalizeOptionalString(merged.relay?.url)) &&
-    hasConfiguredSecretInput(merged.relay?.authToken) &&
-    Boolean(normalizeOptionalString(merged.relay?.gatewayId));
   const botTokenSource: SlackTokenSource = configBot.token
     ? "config"
     : configBot.status === "configured_unavailable"
@@ -139,7 +130,6 @@ export function inspectSlackAccount(params: {
   return {
     accountId,
     enabled,
-    ...(identity === "user" ? { identity } : {}),
     name: normalizeOptionalString(merged.name),
     mode,
     botToken,
@@ -180,19 +170,11 @@ export function inspectSlackAccount(params: {
         : envUser
           ? "available"
           : "missing",
-    configured: (() => {
-      const identityTokenConfigured =
-        identity === "user"
-          ? configUser.status !== "missing" || Boolean(envUser)
-          : configBot.status !== "missing" || Boolean(envBot);
-      if (isHttpMode) {
-        return identityTokenConfigured && configSigningSecret.status !== "missing";
-      }
-      if (isRelayMode) {
-        return identityTokenConfigured && relayConfigured;
-      }
-      return identityTokenConfigured && (configApp.status !== "missing" || Boolean(envApp));
-    })(),
+    configured: isHttpMode
+      ? (configBot.status !== "missing" || Boolean(envBot)) &&
+        configSigningSecret.status !== "missing"
+      : (configBot.status !== "missing" || Boolean(envBot)) &&
+        (configApp.status !== "missing" || Boolean(envApp)),
     config: merged,
     groupPolicy: merged.groupPolicy,
     textChunkLimit: merged.textChunkLimit,

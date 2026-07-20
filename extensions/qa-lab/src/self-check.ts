@@ -2,10 +2,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { createQaArtifactRunId } from "./artifact-run-id.js";
+import { renderQaMarkdownReport } from "openclaw/plugin-sdk/qa-runtime";
 import type { QaBusState } from "./bus-state.js";
 import { createQaTransportAdapter, type QaTransportId } from "./qa-transport-registry.js";
-import { renderQaMarkdownReport } from "./report.js";
 import { runQaScenario, type QaScenarioResult } from "./scenario.js";
 import { createQaSelfCheckScenario } from "./self-check-scenario.js";
 
@@ -16,19 +15,12 @@ export type QaSelfCheckResult = {
   scenarioResult: QaScenarioResult;
 };
 
-export function isQaSelfCheckSuccessful(result: QaSelfCheckResult): boolean {
-  return (
-    result.scenarioResult.status === "pass" &&
-    result.checks.every((check) => check.status === "pass")
-  );
-}
-
 export function resolveQaSelfCheckOutputPath(params?: { outputPath?: string; repoRoot?: string }) {
   if (params?.outputPath) {
     return params.outputPath;
   }
   const repoRoot = path.resolve(params?.repoRoot ?? process.cwd());
-  return path.join(repoRoot, ".artifacts", "qa-e2e", `self-check-${createQaArtifactRunId()}.md`);
+  return path.join(repoRoot, ".artifacts", "qa-e2e", "self-check.md");
 }
 
 export async function runQaSelfCheckAgainstState(params: {
@@ -41,13 +33,10 @@ export async function runQaSelfCheckAgainstState(params: {
   waitTimeoutMs?: number;
 }): Promise<QaSelfCheckResult> {
   const startedAt = new Date();
-  const transportFactoryResult = await createQaTransportAdapter({
-    channelId: params.transportId ?? "qa-channel",
-    driver: params.transportId ?? "qa-channel",
-    outputDir: path.dirname(resolveQaSelfCheckOutputPath(params)),
+  const transport = createQaTransportAdapter({
+    id: params.transportId ?? "qa-channel",
     state: params.state,
   });
-  const transport = transportFactoryResult.adapter;
   params.state.reset();
   const scenarioResult = await runQaScenario(
     createQaSelfCheckScenario({ waitTimeoutMs: params.waitTimeoutMs }),
@@ -107,7 +96,6 @@ export async function runQaSelfCheckAgainstState(params: {
   });
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, report, "utf8");
-  await transportFactoryResult.cleanupWithoutGateway();
 
   return {
     outputPath,

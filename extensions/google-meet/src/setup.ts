@@ -2,18 +2,20 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  addMeetingSetupCheck,
-  createMeetingSetupStatus,
-  type MeetingSetupCheck,
-  type MeetingSetupStatus,
-} from "openclaw/plugin-sdk/meeting-runtime";
 import { isBlockedHostnameOrIp } from "openclaw/plugin-sdk/ssrf-runtime";
 import { asRecord, normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { GoogleMeetConfig, GoogleMeetMode, GoogleMeetTransport } from "./config.js";
 
-type SetupCheck = MeetingSetupCheck;
-type GoogleMeetSetupStatus = MeetingSetupStatus;
+type SetupCheck = {
+  id: string;
+  ok: boolean;
+  message: string;
+};
+
+type GoogleMeetSetupStatus = {
+  ok: boolean;
+  checks: SetupCheck[];
+};
 
 function resolveUserPath(input: string): string {
   if (input === "~") {
@@ -32,10 +34,6 @@ function isProviderUnreachableWebhookUrl(webhookUrl: string): boolean {
   } catch {
     return false;
   }
-}
-
-function resolveVoiceCallSetupValue(configured: unknown, fallback: unknown): string | undefined {
-  return normalizeOptionalString(configured) ?? normalizeOptionalString(fallback);
 }
 
 function getVoiceCallWebhookExposureCheck(voiceCallConfig: Record<string, unknown>): SetupCheck {
@@ -242,19 +240,14 @@ export function getGoogleMeetSetupStatus(
 
     const provider = normalizeOptionalString(voiceCallConfig.provider) ?? "twilio";
     if (provider === "twilio") {
-      const accountSid = resolveVoiceCallSetupValue(
-        voiceCallTwilioConfig.accountSid,
-        env.TWILIO_ACCOUNT_SID,
+      const accountSid = normalizeOptionalString(voiceCallTwilioConfig.accountSid);
+      const authToken = normalizeOptionalString(voiceCallTwilioConfig.authToken);
+      const fromNumber = normalizeOptionalString(voiceCallConfig.fromNumber);
+      const twilioReady = Boolean(
+        (accountSid || env.TWILIO_ACCOUNT_SID) &&
+        (authToken || env.TWILIO_AUTH_TOKEN) &&
+        (fromNumber || env.TWILIO_FROM_NUMBER),
       );
-      const authToken = resolveVoiceCallSetupValue(
-        voiceCallTwilioConfig.authToken,
-        env.TWILIO_AUTH_TOKEN,
-      );
-      const fromNumber = resolveVoiceCallSetupValue(
-        voiceCallConfig.fromNumber,
-        env.TWILIO_FROM_NUMBER,
-      );
-      const twilioReady = Boolean(accountSid && authToken && fromNumber);
       checks.push({
         id: "twilio-voice-call-credentials",
         ok: twilioReady,
@@ -266,12 +259,19 @@ export function getGoogleMeetSetupStatus(
     }
   }
 
-  return createMeetingSetupStatus(checks);
+  return {
+    ok: checks.every((check) => check.ok),
+    checks,
+  };
 }
 
 export function addGoogleMeetSetupCheck(
   status: GoogleMeetSetupStatus,
   check: SetupCheck,
 ): GoogleMeetSetupStatus {
-  return addMeetingSetupCheck(status, check);
+  const checks = [...status.checks, check];
+  return {
+    ok: checks.every((item) => item.ok),
+    checks,
+  };
 }

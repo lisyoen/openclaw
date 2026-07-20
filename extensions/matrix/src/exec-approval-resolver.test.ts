@@ -16,27 +16,18 @@ describe("resolveMatrixApproval", () => {
   });
 
   it("submits exec approval resolutions through the shared gateway resolver", async () => {
-    const result = {
-      applied: false,
-      approval: { status: "denied", decision: "deny" },
-    };
-    approvalRuntimeHoisted.resolveApprovalOverGatewaySpy.mockResolvedValue(result);
     const { resolveMatrixApproval } = await import("./exec-approval-resolver.js");
 
-    await expect(
-      resolveMatrixApproval({
-        cfg: {} as never,
-        approvalId: "req-123",
-        approvalKind: "exec",
-        decision: "allow-once",
-        senderId: "@owner:example.org",
-      }),
-    ).resolves.toBe(result);
+    await resolveMatrixApproval({
+      cfg: {} as never,
+      approvalId: "req-123",
+      decision: "allow-once",
+      senderId: "@owner:example.org",
+    });
 
     expect(approvalRuntimeHoisted.resolveApprovalOverGatewaySpy).toHaveBeenCalledWith({
       cfg: {} as never,
       approvalId: "req-123",
-      approvalKind: "exec",
       decision: "allow-once",
       senderId: "@owner:example.org",
       gatewayUrl: undefined,
@@ -50,7 +41,6 @@ describe("resolveMatrixApproval", () => {
     await resolveMatrixApproval({
       cfg: {} as never,
       approvalId: "plugin:req-123",
-      approvalKind: "plugin",
       decision: "deny",
       senderId: "@owner:example.org",
     });
@@ -58,7 +48,6 @@ describe("resolveMatrixApproval", () => {
     expect(approvalRuntimeHoisted.resolveApprovalOverGatewaySpy).toHaveBeenCalledWith({
       cfg: {} as never,
       approvalId: "plugin:req-123",
-      approvalKind: "plugin",
       decision: "deny",
       senderId: "@owner:example.org",
       gatewayUrl: undefined,

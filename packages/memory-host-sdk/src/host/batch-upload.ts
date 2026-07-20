@@ -6,10 +6,7 @@ import {
 } from "./batch-utils.js";
 import { hashText } from "./hash.js";
 import { withRemoteHttpResponse } from "./remote-http.js";
-import {
-  readMemoryHostResponseTextSnippet,
-  readResponseJsonWithLimit,
-} from "./response-snippet.js";
+import { readResponseJsonWithLimit, readResponseTextSnippet } from "./response-snippet.js";
 
 // Uploads provider batch JSONL payloads through the shared remote HTTP guard.
 
@@ -19,7 +16,6 @@ export async function uploadBatchJsonlFile(params: {
   requests: unknown[];
   errorPrefix: string;
   maxResponseBytes?: number;
-  signal?: AbortSignal;
 }): Promise<string> {
   const baseUrl = normalizeBatchBaseUrl(params.client);
   const jsonl = params.requests.map((request) => JSON.stringify(request)).join("\n");
@@ -35,7 +31,6 @@ export async function uploadBatchJsonlFile(params: {
     url: `${baseUrl}/files`,
     ssrfPolicy: params.client.ssrfPolicy,
     fetchImpl: params.client.fetchImpl,
-    signal: params.signal,
     init: {
       method: "POST",
       headers: buildBatchHeaders(params.client, { json: false }),
@@ -43,13 +38,12 @@ export async function uploadBatchJsonlFile(params: {
     },
     onResponse: async (fileRes) => {
       if (!fileRes.ok) {
-        const text = await readMemoryHostResponseTextSnippet(fileRes, { signal: params.signal });
+        const text = await readResponseTextSnippet(fileRes);
         throw new Error(`${params.errorPrefix}: ${fileRes.status} ${text}`);
       }
       return (await readResponseJsonWithLimit(fileRes, {
         errorPrefix: params.errorPrefix,
         maxBytes: params.maxResponseBytes,
-        signal: params.signal,
       })) as { id?: string };
     },
   });

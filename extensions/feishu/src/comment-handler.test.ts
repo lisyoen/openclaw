@@ -1,4 +1,5 @@
 // Feishu tests cover comment handler plugin behavior.
+import type { PreparedInboundReply } from "openclaw/plugin-sdk/channel-inbound";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClawdbotConfig, PluginRuntime } from "../runtime-api.js";
 import { handleFeishuCommentEvent } from "./comment-handler.js";
@@ -9,7 +10,6 @@ const createFeishuCommentReplyDispatcherMock = vi.hoisted(() => vi.fn());
 const maybeCreateDynamicAgentMock = vi.hoisted(() => vi.fn());
 const createFeishuClientMock = vi.hoisted(() => vi.fn(() => ({ request: vi.fn() })));
 const deliverCommentThreadTextMock = vi.hoisted(() => vi.fn());
-const dispatchInboundMessageMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./monitor.comment.js", () => ({
   resolveDriveCommentEventTurn: resolveDriveCommentEventTurnMock,
@@ -29,11 +29,6 @@ vi.mock("./client.js", () => ({
 
 vi.mock("./drive.js", () => ({
   deliverCommentThreadText: deliverCommentThreadTextMock,
-}));
-
-vi.mock("openclaw/plugin-sdk/reply-runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("openclaw/plugin-sdk/reply-runtime")>()),
-  dispatchInboundMessage: dispatchInboundMessageMock,
 }));
 
 async function raceWithNextMacrotask<T>(promise: Promise<T>): Promise<T | "pending"> {
@@ -88,30 +83,50 @@ function createTestRuntime(overrides?: {
   readAllowFromStore?: () => Promise<unknown[]>;
   upsertPairingRequest?: () => Promise<{ code: string; created: boolean }>;
   resolveAgentRoute?: () => ReturnType<typeof buildResolvedRoute>;
+  dispatchReplyFromConfig?: PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"];
+  withReplyDispatcher?: PluginRuntime["channel"]["reply"]["withReplyDispatcher"];
 }) {
-  const recordInboundSession = vi.fn(async (_params: unknown) => {});
-  type CommentTurnPlan = Parameters<PluginRuntime["channel"]["inbound"]["dispatch"]>[0];
-  const dispatchPlanForTest = vi.fn(async (turn: CommentTurnPlan) => {
-    const storePath = "/tmp/feishu-session-store.json";
-    await recordInboundSession({
-      storePath,
-      sessionKey: turn.ctxPayload.SessionKey ?? turn.route.sessionKey,
+  const finalizeInboundContext = vi.fn((ctx: Record<string, unknown>) => ctx);
+  const dispatchReplyFromConfig =
+    overrides?.dispatchReplyFromConfig ??
+    vi.fn(async () => ({
+      queuedFinal: true,
+      counts: { tool: 0, block: 0, final: 1 },
+    }));
+  const withReplyDispatcher =
+    overrides?.withReplyDispatcher ??
+    vi.fn(
+      async ({
+        run,
+        onSettled,
+      }: {
+        run: () => Promise<unknown>;
+        onSettled?: () => Promise<void> | void;
+      }) => {
+        try {
+          return await run();
+        } finally {
+          await onSettled?.();
+        }
+      },
+    );
+  const recordInboundSession = vi.fn(async () => {});
+  const dispatchPreparedForTest = vi.fn(async (turn: PreparedInboundReply<unknown>) => {
+    await turn.recordInboundSession({
+      storePath: turn.storePath,
+      sessionKey: turn.ctxPayload.SessionKey ?? turn.routeSessionKey,
       ctx: turn.ctxPayload,
       groupResolution: turn.record?.groupResolution,
       createIfMissing: turn.record?.createIfMissing,
       updateLastRoute: turn.record?.updateLastRoute,
       onRecordError: turn.record?.onRecordError ?? (() => undefined),
     });
-    const dispatchResult = await dispatchInboundMessageMock({
-      ctx: turn.ctxPayload,
-      cfg: turn.cfg,
-      replyOptions: turn.replyOptions,
-    });
+    const dispatchResult = await turn.runDispatch();
     return {
       admission: { kind: "dispatch" as const },
       dispatched: true,
       ctxPayload: turn.ctxPayload,
-      routeSessionKey: turn.route.sessionKey,
+      routeSessionKey: turn.routeSessionKey,
       dispatchResult,
     };
   });
@@ -136,11 +151,9 @@ function createTestRuntime(overrides?: {
         resolveAgentRoute: vi.fn(overrides?.resolveAgentRoute ?? (() => buildResolvedRoute())),
       },
       reply: {
-        settleReplyDispatcher: vi.fn(async ({ dispatcher, onSettled }) => {
-          dispatcher.markComplete();
-          await dispatcher.waitForIdle();
-          await onSettled?.();
-        }),
+        finalizeInboundContext,
+        dispatchReplyFromConfig,
+        withReplyDispatcher,
       },
       session: {
         resolveStorePath: vi.fn(() => "/tmp/feishu-session-store.json"),
@@ -160,10 +173,10 @@ function createTestRuntime(overrides?: {
             canStartAgentTurn: true,
           };
           const turn = await params.adapter.resolveTurn(input, eventClass, {});
-          if (!("route" in turn) || !("delivery" in turn)) {
-            throw new Error("expected assembled Feishu comment turn plan");
+          if (!("runDispatch" in turn)) {
+            throw new Error("feishu comment test runtime only supports prepared turns");
           }
-          return await dispatchPlanForTest(turn);
+          return await dispatchPreparedForTest(turn as PreparedInboundReply<unknown>);
         }) as unknown as PluginRuntime["channel"]["inbound"]["run"],
       },
       pairing: {
@@ -193,10 +206,6 @@ describe("handleFeishuCommentEvent", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    dispatchInboundMessageMock.mockResolvedValue({
-      queuedFinal: true,
-      counts: { tool: 0, block: 0, final: 1 },
-    });
     currentRuntimeConfig = buildConfig();
     maybeCreateDynamicAgentMock.mockImplementation(async ({ cfg }) => ({
       created: false,
@@ -230,42 +239,45 @@ describe("handleFeishuCommentEvent", () => {
     setFeishuRuntime(runtime);
 
     createFeishuCommentReplyDispatcherMock.mockReturnValue({
-      dispatcherOptions: {},
-      delivery: { deliver: vi.fn(async () => undefined) },
+      dispatcher: {
+        markComplete: vi.fn(),
+        waitForIdle: vi.fn(async () => {}),
+      },
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+      markRunComplete: vi.fn(),
       startTypingReaction: vi.fn(async () => {}),
       cleanupTypingReaction: vi.fn(async () => {}),
     });
   });
 
   it("records a comment-thread inbound context with a routable Feishu origin", async () => {
-    const abortController = new AbortController();
     await handleFeishuCommentEvent({
       cfg: buildConfig(),
       accountId: "default",
       event: { event_id: "evt_1" },
       botOpenId: "ou_bot",
-      abortSignal: abortController.signal,
       runtime: {
         log: vi.fn(),
         error: vi.fn(),
       } as never,
     });
 
-    expect(resolveDriveCommentEventTurnMock).toHaveBeenCalledWith(
-      expect.objectContaining({ abortSignal: abortController.signal }),
-    );
-
     const runtime = (await import("./runtime.js")).getFeishuRuntime();
+    const finalizeInboundContext = runtime.channel.reply.finalizeInboundContext as ReturnType<
+      typeof vi.fn
+    >;
     const recordInboundSession = runtime.channel.session.recordInboundSession as ReturnType<
       typeof vi.fn
     >;
+    const dispatchReplyFromConfig = runtime.channel.reply.dispatchReplyFromConfig as ReturnType<
+      typeof vi.fn
+    >;
 
-    expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(1);
-    const finalizedContext = (
-      mockCallArg(dispatchInboundMessageMock, "dispatchInboundMessage") as {
-        ctx?: Record<string, unknown>;
-      }
-    ).ctx;
+    expect(finalizeInboundContext).toHaveBeenCalledTimes(1);
+    const finalizedContext = mockCallArg(finalizeInboundContext, "finalizeInboundContext") as
+      | Record<string, unknown>
+      | undefined;
     expect({
       from: finalizedContext?.From,
       to: finalizedContext?.To,
@@ -288,6 +300,7 @@ describe("handleFeishuCommentEvent", () => {
       | { sessionKey?: string }
       | undefined;
     expect(recordArgs?.sessionKey).toBe("agent:main:feishu:direct:comment-doc:docx:doc_token_1");
+    expect(dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
   });
 
   it("allows comment senders matched by user_id allowlist entries", async () => {
@@ -313,7 +326,10 @@ describe("handleFeishuCommentEvent", () => {
       } as never,
     });
 
-    expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(1);
+    const dispatchReplyFromConfig = runtime.channel.reply.dispatchReplyFromConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
     expect(deliverCommentThreadTextMock).not.toHaveBeenCalled();
   });
 
@@ -354,7 +370,10 @@ describe("handleFeishuCommentEvent", () => {
       | undefined;
     expect(dynamicAgentArgs?.senderOpenId).toBe("ou_sender");
     expect(dynamicAgentArgs?.accountId).toBe("default");
-    expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(1);
+    const dispatchReplyFromConfig = runtime.channel.reply.dispatchReplyFromConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
   });
 
   it("drops a comment denied by refreshed dynamic-agent policy", async () => {
@@ -385,9 +404,12 @@ describe("handleFeishuCommentEvent", () => {
       } as never,
     });
 
+    const dispatchReplyFromConfig = runtime.channel.reply.dispatchReplyFromConfig as ReturnType<
+      typeof vi.fn
+    >;
     expect(maybeCreateDynamicAgentMock).not.toHaveBeenCalled();
     expect(deliverCommentThreadTextMock).not.toHaveBeenCalled();
-    expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+    expect(dispatchReplyFromConfig).not.toHaveBeenCalled();
   });
 
   it("issues a pairing challenge before dynamic comment-agent creation", async () => {
@@ -418,9 +440,12 @@ describe("handleFeishuCommentEvent", () => {
       } as never,
     });
 
+    const dispatchReplyFromConfig = runtime.channel.reply.dispatchReplyFromConfig as ReturnType<
+      typeof vi.fn
+    >;
     expect(maybeCreateDynamicAgentMock).not.toHaveBeenCalled();
     expect(deliverCommentThreadTextMock).toHaveBeenCalledTimes(1);
-    expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+    expect(dispatchReplyFromConfig).not.toHaveBeenCalled();
   });
 
   it("issues a pairing challenge in the comment thread when dmPolicy=pairing", async () => {
@@ -475,7 +500,10 @@ describe("handleFeishuCommentEvent", () => {
       ].join("\n"),
       is_whole_comment: false,
     });
-    expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+    const dispatchReplyFromConfig = runtime.channel.reply.dispatchReplyFromConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(dispatchReplyFromConfig).not.toHaveBeenCalled();
   });
 
   it("passes whole-comment metadata to the comment reply dispatcher", async () => {
@@ -531,13 +559,22 @@ describe("handleFeishuCommentEvent", () => {
   });
 
   it("always finalizes comment typing cleanup even when dispatch fails", async () => {
-    dispatchInboundMessageMock.mockRejectedValueOnce(new Error("dispatch failed"));
-    const runtime = createTestRuntime();
+    const dispatchReplyFromConfig = vi.fn(async () => {
+      throw new Error("dispatch failed");
+    });
+    const runtime = createTestRuntime({ dispatchReplyFromConfig });
     setFeishuRuntime(runtime);
+    const markRunComplete = vi.fn();
+    const markDispatchIdle = vi.fn();
     const cleanupTypingReaction = vi.fn(async () => {});
     createFeishuCommentReplyDispatcherMock.mockReturnValue({
-      dispatcherOptions: {},
-      delivery: { deliver: vi.fn(async () => undefined) },
+      dispatcher: {
+        markComplete: vi.fn(),
+        waitForIdle: vi.fn(async () => {}),
+      },
+      replyOptions: {},
+      markDispatchIdle,
+      markRunComplete,
       startTypingReaction: vi.fn(async () => {}),
       cleanupTypingReaction,
     });
@@ -555,6 +592,8 @@ describe("handleFeishuCommentEvent", () => {
       }),
     ).rejects.toThrow("dispatch failed");
 
+    expect(markRunComplete).toHaveBeenCalledTimes(1);
+    expect(markDispatchIdle).toHaveBeenCalledTimes(1);
     expect(cleanupTypingReaction).toHaveBeenCalledTimes(1);
   });
 
@@ -567,8 +606,13 @@ describe("handleFeishuCommentEvent", () => {
         }),
     );
     createFeishuCommentReplyDispatcherMock.mockReturnValue({
-      dispatcherOptions: {},
-      delivery: { deliver: vi.fn(async () => undefined) },
+      dispatcher: {
+        markComplete: vi.fn(),
+        waitForIdle: vi.fn(async () => {}),
+      },
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+      markRunComplete: vi.fn(),
       startTypingReaction: vi.fn(async () => {}),
       cleanupTypingReaction,
     });
@@ -596,8 +640,13 @@ describe("handleFeishuCommentEvent", () => {
   it("does not start comment typing reaction before dispatch begins", async () => {
     const startTypingReaction = vi.fn(async () => {});
     createFeishuCommentReplyDispatcherMock.mockReturnValue({
-      dispatcherOptions: {},
-      delivery: { deliver: vi.fn(async () => undefined) },
+      dispatcher: {
+        markComplete: vi.fn(),
+        waitForIdle: vi.fn(async () => {}),
+      },
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+      markRunComplete: vi.fn(),
       startTypingReaction,
       cleanupTypingReaction: vi.fn(async () => {}),
     });
@@ -614,6 +663,10 @@ describe("handleFeishuCommentEvent", () => {
     });
 
     expect(startTypingReaction).not.toHaveBeenCalled();
-    expect(dispatchInboundMessageMock).toHaveBeenCalledTimes(1);
+    const runtime = (await import("./runtime.js")).getFeishuRuntime();
+    const dispatchReplyFromConfig = runtime.channel.reply.dispatchReplyFromConfig as ReturnType<
+      typeof vi.fn
+    >;
+    expect(dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
   });
 });

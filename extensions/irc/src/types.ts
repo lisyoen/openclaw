@@ -1,6 +1,6 @@
 // Irc type declarations define plugin contracts.
-import type { ChannelDeliveryStreamingConfig } from "openclaw/plugin-sdk/channel-outbound";
 import type {
+  BlockStreamingCoalesceConfig,
   DmConfig,
   DmPolicy,
   GroupPolicy,
@@ -60,7 +60,9 @@ export type IrcAccountConfig = {
   dmHistoryLimit?: number;
   dms?: Record<string, DmConfig>;
   textChunkLimit?: number;
-  streaming?: ChannelDeliveryStreamingConfig;
+  chunkMode?: "length" | "newline";
+  blockStreaming?: boolean;
+  blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
   responsePrefix?: string;
   mediaMaxMb?: number;
 };

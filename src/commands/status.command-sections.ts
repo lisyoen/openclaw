@@ -25,6 +25,7 @@ type AgentStatusLike = {
 
 type SummaryLike = Pick<StatusSummary, "tasks" | "taskAudit" | "heartbeat" | "sessions">;
 type MemoryLike = MemoryStatusSnapshot | null;
+type MemoryPluginLike = MemoryPluginStatus;
 type SessionsRecentLike = SessionStatus;
 type EventLoopHealthLike = NonNullable<HealthSummary["eventLoop"]>;
 
@@ -150,7 +151,7 @@ export function buildStatusLastHeartbeatValue(params: {
 export function buildStatusMemoryValue(
   params: {
     memory: MemoryLike;
-    memoryPlugin: MemoryPluginStatus;
+    memoryPlugin: MemoryPluginLike;
     ok: (value: string) => string;
     warn: (value: string) => string;
     muted: (value: string) => string;
@@ -323,7 +324,7 @@ export function buildStatusHealthRows(params: {
 }
 
 /** Formats event-loop latency/utilization health into one table detail string. */
-function formatEventLoopHealthDetail(eventLoop: EventLoopHealthLike): string {
+export function formatEventLoopHealthDetail(eventLoop: EventLoopHealthLike): string {
   const parts = [
     eventLoop.reasons.length > 0 ? `reasons ${eventLoop.reasons.join(",")}` : "healthy",
     `max ${Math.round(eventLoop.delayMaxMs)}ms`,
@@ -388,20 +389,14 @@ export function buildStatusModelSelectionLines(params: {
     const key = params.shortenText(sess.key, 48);
     const configured = sess.configuredModel ?? "unknown";
     const selected = sess.selectedModel ?? "unknown";
-    const isFallback = sess.modelSelectionReason === "fallback selected";
-    const intro = isFallback
-      ? `Session ${key} is running ${selected} (auto fallback); config primary is ${configured}.`
-      : `Session ${key} is pinned to ${selected}; config primary ${configured} will apply to new/unpinned sessions.`;
-    const reasonLine = `  Reason: ${sess.modelSelectionReason ?? "session override"}`;
-    const clearLine = isFallback
-      ? "  Action: check provider availability or retry with /model"
-      : "  Clear with: /model default";
     lines.push(
-      params.warn(intro),
+      params.warn(
+        `Session ${key} is pinned to ${selected}; config primary ${configured} will apply to new/unpinned sessions.`,
+      ),
       `  Configured default: ${configured}`,
       `  Session selected: ${selected}`,
-      reasonLine,
-      clearLine,
+      `  Reason: ${sess.modelSelectionReason ?? "session override"}`,
+      `  Clear with: /model ${configured} or /reset`,
       "  Docs: https://docs.openclaw.ai/concepts/models#selection-source-and-fallback-behavior",
     );
   }

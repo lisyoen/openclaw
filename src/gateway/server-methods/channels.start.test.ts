@@ -1,8 +1,6 @@
 /**
  * Gateway channels.start method tests.
  */
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelRuntimeSnapshot } from "../server-channel-runtime.types.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
@@ -75,10 +73,7 @@ async function runChannelsStart(running: boolean) {
   const startChannel = vi.fn();
   const respond = vi.fn();
 
-  await expectDefined(
-    channelsHandlers["channels.start"],
-    'channelsHandlers["channels.start"] test invariant',
-  )(
+  await channelsHandlers["channels.start"](
     createOptions(
       { channel: "whatsapp" },
       {
@@ -117,7 +112,7 @@ describe("channelsHandlers channels.start", () => {
     expect(mocks.applyPluginAutoEnable).toHaveBeenCalledWith({
       config: {},
     });
-    expect(startChannel).toHaveBeenCalledWith("whatsapp", "default-account", { manual: true });
+    expect(startChannel).toHaveBeenCalledWith("whatsapp", "default-account");
     expect(respond).toHaveBeenCalledWith(
       true,
       {
@@ -132,7 +127,7 @@ describe("channelsHandlers channels.start", () => {
   it("reports started=false when the channel runtime remains stopped", async () => {
     const { respond, startChannel } = await runChannelsStart(false);
 
-    expect(startChannel).toHaveBeenCalledWith("whatsapp", "default-account", { manual: true });
+    expect(startChannel).toHaveBeenCalledWith("whatsapp", "default-account");
     expect(respond).toHaveBeenCalledWith(
       true,
       {
@@ -163,10 +158,7 @@ describe("channelsHandlers channels.stop", () => {
     const stopChannel = vi.fn(async () => undefined);
     const respond = vi.fn();
 
-    await expectDefined(
-      channelsHandlers["channels.stop"],
-      'channelsHandlers["channels.stop"] test invariant',
-    )(
+    await channelsHandlers["channels.stop"](
       createOptions(
         { channel: "whatsapp" },
         {
@@ -246,10 +238,7 @@ describe("channelsHandlers channels.logout", () => {
       },
     });
 
-    await expectDefined(
-      channelsHandlers["channels.logout"],
-      'channelsHandlers["channels.logout"] test invariant',
-    )(
+    await channelsHandlers["channels.logout"](
       createOptions(
         { channel: "whatsapp" },
         {

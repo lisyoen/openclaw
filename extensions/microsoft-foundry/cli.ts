@@ -1,11 +1,9 @@
 // Microsoft Foundry plugin module implements cli behavior.
-import { execFileSync, spawn } from "node:child_process";
-import { runExec } from "openclaw/plugin-sdk/process-runtime";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import {
   normalizeOptionalString,
   normalizeStringifiedOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { AzAccessToken, AzAccount } from "./shared.js";
 import { COGNITIVE_SERVICES_RESOURCE } from "./shared.js";
 
@@ -36,7 +34,7 @@ function summarizeAzErrorMessage(raw: string): string {
   if (/aadsts\d+/i.test(normalized)) {
     return "Azure login failed for the selected tenant. Re-run `az login --use-device-code` and confirm the tenant is correct.";
   }
-  return truncateUtf16Safe(normalized, 300);
+  return normalized.slice(0, 300);
 }
 
 function buildAzCommandError(error: Error, stderr: string, stdout: string): Error {
@@ -57,18 +55,24 @@ export function execAz(args: string[]): string {
 }
 
 async function execAzAsync(args: string[]): Promise<string> {
-  try {
-    const { stdout } = await runExec("az", args, { logOutput: false, timeoutMs: 30_000 });
-    return normalizeStringifiedOptionalString(stdout) ?? "";
-  } catch (error) {
-    const commandError = error instanceof Error ? error : new Error(String(error));
-    const output = error as { stderr?: unknown; stdout?: unknown };
-    throw buildAzCommandError(
-      commandError,
-      typeof output.stderr === "string" ? output.stderr : "",
-      typeof output.stdout === "string" ? output.stdout : "",
+  return await new Promise<string>((resolve, reject) => {
+    execFile(
+      "az",
+      args,
+      {
+        encoding: "utf-8",
+        timeout: 30_000,
+        shell: process.platform === "win32",
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(buildAzCommandError(error, stderr ?? "", stdout ?? ""));
+          return;
+        }
+        resolve(normalizeStringifiedOptionalString(stdout) ?? "");
+      },
     );
-  }
+  });
 }
 
 export function isAzCliInstalled(): boolean {

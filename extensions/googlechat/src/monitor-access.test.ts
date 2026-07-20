@@ -140,8 +140,10 @@ describe("googlechat inbound access policy", () => {
       account: {
         accountId: "default",
         config: {
-          dmPolicy: "allowlist",
-          allowFrom,
+          dm: {
+            policy: "allowlist",
+            allowFrom,
+          },
         },
       } as never,
       senderId,
@@ -168,7 +170,7 @@ describe("googlechat inbound access policy", () => {
     const account = {
       accountId: "default",
       config: {
-        dmPolicy: "pairing",
+        dm: { policy: "pairing" },
       },
     };
 
@@ -303,8 +305,10 @@ describe("googlechat inbound access policy", () => {
       account: {
         accountId: "default",
         config: {
-          dmPolicy: "allowlist",
-          allowFrom: ["accessGroup:operators"],
+          dm: {
+            policy: "allowlist",
+            allowFrom: ["accessGroup:operators"],
+          },
         },
       } as never,
     });
@@ -323,8 +327,10 @@ describe("googlechat inbound access policy", () => {
         account: {
           accountId: "default",
           config: {
-            dmPolicy: "allowlist",
-            allowFrom: ["users/alice"],
+            dm: {
+              policy: "allowlist",
+              allowFrom: ["users/alice"],
+            },
             groups: {
               "spaces/AAA": {
                 enabled: true,

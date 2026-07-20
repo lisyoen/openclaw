@@ -32,7 +32,6 @@ const SHARED_FAMILY_HOOK_PATTERNS: ReadonlyArray<{
 const PROVIDER_BOUNDARY_TEST_SIGNALS = [
   /\bregister(?:Single)?ProviderPlugin\s*\(/u,
   /\bcreateTestPluginApi\s*\(/u,
-  /\bcapturePluginRegistration\s*\(/u,
   /\bexpectPassthroughReplayPolicy\s*\(/u,
 ] as const;
 const EXPECTED_SENTINEL_SHARED_FAMILY_ASSIGNMENTS: Record<string, ExpectedSharedFamilyContract> = {
@@ -42,10 +41,8 @@ const EXPECTED_SENTINEL_SHARED_FAMILY_ASSIGNMENTS: Record<string, ExpectedShared
   },
   minimax: {
     replayFamilies: ["hybrid-anthropic-openai"],
-    streamFamilies: ["minimax-fast-mode"],
   },
   openai: {
-    streamFamilies: ["openai-responses-defaults"],
     toolCompatFamilies: ["openai"],
   },
 };

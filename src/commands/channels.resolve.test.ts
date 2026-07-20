@@ -23,18 +23,14 @@ vi.mock("../cli/command-secret-targets.js", () => ({
   getChannelsCommandSecretTargetIds: mocks.getChannelsCommandSecretTargetIds,
 }));
 
-vi.mock("../config/config.js", async () => {
-  const actual = await vi.importActual<typeof import("../config/config.js")>("../config/config.js");
-  return {
-    ...actual,
-    getRuntimeConfig: mocks.loadConfig,
-    loadConfig: mocks.loadConfig,
-    readConfigFileSnapshot: mocks.readConfigFileSnapshot,
-    replaceConfigFile: mocks.replaceConfigFile,
-  };
-});
+vi.mock("../config/config.js", () => ({
+  getRuntimeConfig: mocks.loadConfig,
+  loadConfig: mocks.loadConfig,
+  readConfigFileSnapshot: mocks.readConfigFileSnapshot,
+  replaceConfigFile: mocks.replaceConfigFile,
+}));
 
-vi.mock("../plugins/registry-refresh.js", () => ({
+vi.mock("../cli/plugins-registry-refresh.js", () => ({
   refreshPluginRegistryAfterConfigMutation: mocks.refreshPluginRegistryAfterConfigMutation,
 }));
 

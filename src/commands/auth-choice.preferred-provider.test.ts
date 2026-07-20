@@ -24,7 +24,7 @@ vi.mock("../plugins/providers.runtime.js", () => ({
   resolvePluginProviders,
 }));
 
-import { resolvePreferredProviderForAuthChoice } from "../plugins/provider-auth-choice-preference.js";
+import { resolvePreferredProviderForAuthChoice } from "./auth-choice.preferred-provider.js";
 
 describe("resolvePreferredProviderForAuthChoice", () => {
   beforeEach(() => {

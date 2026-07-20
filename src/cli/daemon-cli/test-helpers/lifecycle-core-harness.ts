@@ -12,7 +12,6 @@ type LifecycleServiceHarness = GatewayService & {
   stage: MockFn<GatewayService["stage"]>;
   install: MockFn<GatewayService["install"]>;
   uninstall: MockFn<GatewayService["uninstall"]>;
-  start: MockFn<GatewayService["start"]>;
   stop: MockFn<GatewayService["stop"]>;
   isLoaded: MockFn<GatewayService["isLoaded"]>;
   readCommand: MockFn<GatewayService["readCommand"]>;
@@ -29,7 +28,6 @@ export const service: LifecycleServiceHarness = {
   stage: vi.fn(),
   install: vi.fn(),
   uninstall: vi.fn(),
-  start: vi.fn(),
   stop: vi.fn(),
   isLoaded: vi.fn(),
   readCommand: vi.fn(),
@@ -45,7 +43,6 @@ export function resetLifecycleServiceMocks() {
   service.stage.mockReset();
   service.install.mockReset();
   service.uninstall.mockReset();
-  service.start.mockReset();
   service.stop.mockReset();
   service.isLoaded.mockReset();
   service.readCommand.mockReset();
@@ -53,10 +50,9 @@ export function resetLifecycleServiceMocks() {
   service.restart.mockReset();
   service.isLoaded.mockResolvedValue(true);
   service.readCommand.mockResolvedValue({ programArguments: [], environment: {} });
-  service.readRuntime.mockResolvedValue({ status: "stopped" });
+  service.readRuntime.mockResolvedValue({ status: "running" });
   service.stop.mockResolvedValue(undefined);
   service.uninstall.mockResolvedValue(undefined);
-  service.start.mockResolvedValue(undefined);
   service.restart.mockResolvedValue({ outcome: "completed" });
 }
 

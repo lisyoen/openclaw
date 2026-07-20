@@ -17,7 +17,6 @@ import {
 import { resolvePluginWebSearchConfig } from "../config/plugin-web-search-config.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { readResponseWithLimit } from "../infra/http-body.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { planManifestModelCatalogRows } from "../model-catalog/index.js";
 import { isInstalledPluginEnabled } from "../plugins/installed-plugin-index.js";
@@ -27,10 +26,14 @@ import type {
   PluginManifestModelPricingProvider,
   PluginManifestModelPricingSource,
 } from "../plugins/manifest.js";
-import { resolvePluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import {
+  clearLoadPluginMetadataSnapshotMemo,
+  resolvePluginMetadataSnapshot,
+} from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataRegistryView } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { PluginRegistrySnapshot } from "../plugins/plugin-registry.js";
 import {
+  clearGatewayModelPricingCacheState,
   clearGatewayModelPricingFailures,
   clearGatewayModelPricingSourceFailure,
   getCachedGatewayModelPricing,
@@ -272,12 +275,6 @@ function toCachedModelPricing(
   };
 }
 
-async function cancelUnreadResponseBody(response: Response | undefined): Promise<void> {
-  if (response?.bodyUsed !== true) {
-    await response?.body?.cancel().catch(() => undefined);
-  }
-}
-
 async function readPricingJsonObject(
   response: Response,
   source: string,
@@ -286,12 +283,13 @@ async function readPricingJsonObject(
   if (contentLength !== null && contentLength > MAX_PRICING_CATALOG_BYTES) {
     throw new Error(`${source} pricing response too large: ${contentLength} bytes`);
   }
-  const buffer = await readResponseWithLimit(response, MAX_PRICING_CATALOG_BYTES, {
-    onOverflow: ({ size }) => new Error(`${source} pricing response too large: ${size} bytes`),
-  });
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength > MAX_PRICING_CATALOG_BYTES) {
+    throw new Error(`${source} pricing response too large: ${buffer.byteLength} bytes`);
+  }
   let payload: unknown;
   try {
-    payload = JSON.parse(buffer.toString("utf8")) as unknown;
+    payload = JSON.parse(Buffer.from(buffer).toString("utf8")) as unknown;
   } catch {
     throw new Error(`${source} pricing response is malformed JSON`);
   }
@@ -299,28 +297,6 @@ async function readPricingJsonObject(
     throw new Error(`${source} pricing response is not a JSON object`);
   }
   return payload as Record<string, unknown>;
-}
-
-async function fetchPricingJsonObject(params: {
-  fetchImpl: typeof fetch;
-  url: string;
-  source: string;
-  failureLabel: string;
-  signal?: AbortSignal;
-}): Promise<Record<string, unknown>> {
-  let response: Response | undefined;
-  try {
-    response = await params.fetchImpl(params.url, {
-      headers: { Accept: "application/json" },
-      signal: createPricingFetchSignal(params.signal),
-    });
-    if (!response.ok) {
-      throw new Error(`${params.failureLabel}: HTTP ${response.status}`);
-    }
-    return await readPricingJsonObject(response, params.source);
-  } finally {
-    await cancelUnreadResponseBody(response);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -407,13 +383,14 @@ async function fetchLiteLLMPricingCatalog(
   fetchImpl: typeof fetch,
   signal?: AbortSignal,
 ): Promise<LiteLLMPricingCatalog> {
-  const payload = await fetchPricingJsonObject({
-    fetchImpl,
-    url: LITELLM_PRICING_URL,
-    source: "LiteLLM",
-    failureLabel: "LiteLLM pricing fetch failed",
-    signal,
+  const response = await fetchImpl(LITELLM_PRICING_URL, {
+    headers: { Accept: "application/json" },
+    signal: createPricingFetchSignal(signal),
   });
+  if (!response.ok) {
+    throw new Error(`LiteLLM pricing fetch failed: HTTP ${response.status}`);
+  }
+  const payload = await readPricingJsonObject(response, "LiteLLM");
   const catalog: LiteLLMPricingCatalog = new Map();
   for (const [key, value] of Object.entries(payload)) {
     if (!value || typeof value !== "object") {
@@ -917,7 +894,7 @@ function filterExternalPricingRefs(params: {
   );
 }
 
-function collectConfiguredModelPricingRefs(
+export function collectConfiguredModelPricingRefs(
   config: OpenClawConfig,
   options: { manifestRegistry?: PluginManifestRegistry } = {},
 ): ModelRef[] {
@@ -1082,13 +1059,14 @@ async function fetchOpenRouterPricingCatalog(
   fetchImpl: typeof fetch,
   signal?: AbortSignal,
 ): Promise<Map<string, OpenRouterPricingEntry>> {
-  const payload = await fetchPricingJsonObject({
-    fetchImpl,
-    url: OPENROUTER_MODELS_URL,
-    source: "OpenRouter",
-    failureLabel: "OpenRouter /models failed",
-    signal,
+  const response = await fetchImpl(OPENROUTER_MODELS_URL, {
+    headers: { Accept: "application/json" },
+    signal: createPricingFetchSignal(signal),
   });
+  if (!response.ok) {
+    throw new Error(`OpenRouter /models failed: HTTP ${response.status}`);
+  }
+  const payload = await readPricingJsonObject(response, "OpenRouter");
   const entries = Array.isArray(payload.data) ? payload.data : [];
   const catalog = new Map<string, OpenRouterPricingEntry>();
   for (const entry of entries) {
@@ -1218,7 +1196,7 @@ function collectSeededPricing(params: {
   return seeded;
 }
 
-async function refreshGatewayModelPricingCache(
+export async function refreshGatewayModelPricingCache(
   params: GatewayModelPricingRefreshParams,
 ): Promise<void> {
   if (!isGatewayModelPricingEnabled(params.config)) {
@@ -1441,4 +1419,10 @@ export function startGatewayModelPricingRefresh(
     clearRefreshTimer();
   };
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+
+export function resetGatewayModelPricingCacheForTest(): void {
+  clearGatewayModelPricingCacheState();
+  clearLoadPluginMetadataSnapshotMemo();
+  clearRefreshTimer();
+  inFlightRefresh = null;
+}

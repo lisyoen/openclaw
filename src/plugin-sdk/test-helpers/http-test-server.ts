@@ -15,11 +15,8 @@ export async function withServer(handler: RequestListener, fn: (baseUrl: string)
   try {
     await fn(`http://127.0.0.1:${address.port}`);
   } finally {
-    const closed = new Promise<void>((resolve) => {
+    await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
-    // Hanging-response tests must still release active sockets when their assertion fails.
-    server.closeAllConnections();
-    await closed;
   }
 }

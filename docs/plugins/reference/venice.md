@@ -12,11 +12,11 @@ Adds Venice model provider support to OpenClaw.
 ## Distribution
 
 - Package: `@openclaw/venice-provider`
-- Install route: npm; ClawHub: `clawhub:@openclaw/venice-provider`
+- Install route: included in OpenClaw
 
 ## Surface
 
-providers: `venice`; contracts: `usageProviders`
+providers: venice
 
 ## Related docs
 

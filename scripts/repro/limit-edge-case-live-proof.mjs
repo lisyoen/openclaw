@@ -12,8 +12,8 @@ import { testing as voiceCallCliTesting } from "../../extensions/voice-call/src/
 import { loadSessionLogs, loadSessionUsageTimeSeries } from "../../src/infra/session-cost-usage.ts";
 import {
   getRecentDiagnosticPhases,
+  recordDiagnosticPhase,
   resetDiagnosticPhasesForTest,
-  withDiagnosticPhase,
 } from "../../src/logging/diagnostic-phase.ts";
 
 /**
@@ -30,8 +30,26 @@ export async function withProofTempRoot(callback) {
 
 async function main() {
   resetDiagnosticPhasesForTest();
-  await withDiagnosticPhase("phase-a", () => undefined);
-  await withDiagnosticPhase("phase-b", () => undefined);
+  recordDiagnosticPhase({
+    name: "phase-a",
+    startedAt: 1,
+    endedAt: 2,
+    durationMs: 1,
+    cpuUserMs: 0,
+    cpuSystemMs: 0,
+    cpuTotalMs: 0,
+    cpuCoreRatio: 0,
+  });
+  recordDiagnosticPhase({
+    name: "phase-b",
+    startedAt: 3,
+    endedAt: 4,
+    durationMs: 1,
+    cpuUserMs: 0,
+    cpuSystemMs: 0,
+    cpuTotalMs: 0,
+    cpuCoreRatio: 0,
+  });
   const zeroPhases = getRecentDiagnosticPhases(0);
   assert.equal(zeroPhases.length, 0);
   console.log("getRecentDiagnosticPhases(0).length =", zeroPhases.length);
@@ -53,7 +71,7 @@ async function main() {
             role: "assistant",
             content: "b",
             provider: "openai",
-            model: "gpt-5.6-luna",
+            model: "gpt-5.5",
             usage: {
               input: 1,
               output: 2,
@@ -71,7 +89,7 @@ async function main() {
             role: "assistant",
             content: "c",
             provider: "openai",
-            model: "gpt-5.6-luna",
+            model: "gpt-5.5",
             usage: {
               input: 3,
               output: 4,

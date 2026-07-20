@@ -1,10 +1,7 @@
 // Verifies Windows drive-letter paths are treated as absolute under POSIX hosts.
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
-import {
-  createHostWorkspaceWriteTool,
-  wrapToolMemoryFlushAppendOnlyWrite,
-} from "./agent-tools.read.js";
+import { describe, expect, it } from "vitest";
+import { resolveToolPathAgainstWorkspaceRoot } from "./agent-tools.read.js";
 import { resolveSandboxInputPath } from "./sandbox-paths.js";
 
 describe("resolveSandboxInputPath (Windows drive paths under POSIX rules)", () => {
@@ -23,27 +20,15 @@ describe("resolveSandboxInputPath (Windows drive paths under POSIX rules)", () =
   });
 });
 
-describe("memory-flush write paths (Windows drive paths)", () => {
+describe("resolveToolPathAgainstWorkspaceRoot (Windows drive paths)", () => {
   const root = path.resolve("/host/workspace");
 
-  it("rejects drive-letter paths outside the retained production write boundary", async () => {
-    const drivePath = "C:/temp/agent-output.txt";
-    const normalizeWindowsPath = vi.spyOn(path.win32, "normalize");
-    const writeTool = wrapToolMemoryFlushAppendOnlyWrite(createHostWorkspaceWriteTool(root), {
+  it("does not prefix workspace root for drive-letter paths", () => {
+    const resolved = resolveToolPathAgainstWorkspaceRoot({
+      filePath: "C:/temp/agent-output.txt",
       root,
-      relativePath: "memory.md",
     });
-
-    try {
-      await expect(
-        writeTool.execute("windows-drive-path", {
-          path: drivePath,
-          content: "must stay outside the workspace",
-        }),
-      ).rejects.toThrow(/Memory flush writes are restricted to memory\.md/);
-      expect(normalizeWindowsPath).toHaveBeenCalledWith(drivePath);
-    } finally {
-      normalizeWindowsPath.mockRestore();
-    }
+    expect(resolved).toBe(path.win32.normalize("C:/temp/agent-output.txt"));
+    expect(resolved).not.toContain("host");
   });
 });

@@ -1,4 +1,3 @@
-import { expectDefined } from "@openclaw/normalization-core";
 /** Config mutation helpers used by chat commands that edit OpenClaw config. */
 import { setConfigValueAtPath, unsetConfigValueAtPath } from "../../config/config-paths.js";
 import {
@@ -23,7 +22,7 @@ function assertValidConfig(
 ): { config: OpenClawConfig } {
   const validated = validateConfigObjectWithPlugins(next);
   if (!validated.ok) {
-    const issue = expectDefined(validated.issues[0], "issues entry at 0");
+    const issue = validated.issues[0];
     throw new AutoReplyConfigMutationError(
       `Config invalid after ${action} (${issue.path}: ${issue.message}).`,
     );

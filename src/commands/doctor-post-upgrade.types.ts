@@ -1,5 +1,5 @@
 /** Shared report types for post-upgrade doctor plugin probes. */
-type PostUpgradeFindingLevel = "ok" | "warn" | "error";
+export type PostUpgradeFindingLevel = "ok" | "warn" | "error";
 
 /** One post-upgrade validation finding, optionally tied to a plugin package entry. */
 export type PostUpgradeFinding = {
@@ -22,3 +22,5 @@ export const POST_UPGRADE_PROBE_CODES = [
   "plugin.entry_unresolved",
   "plugin.manifest_drift",
 ] as const;
+
+export type PostUpgradeProbeCode = (typeof POST_UPGRADE_PROBE_CODES)[number];

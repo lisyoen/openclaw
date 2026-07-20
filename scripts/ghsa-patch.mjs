@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // Applies GHSA patch payloads to advisory branches.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { GHSA_COMMAND_TIMEOUT_MS, runGhCommand } from "./lib/ghsa-patch-subprocess.mjs";
 
 function usage() {
   console.error(
@@ -45,19 +44,15 @@ function parseArgs(argv) {
 }
 
 function runGh(args) {
-  try {
-    return runGhCommand(args);
-  } catch (error) {
-    return fail(error instanceof Error ? error.message : String(error));
+  const proc = spawnSync("gh", args, { encoding: "utf8" });
+  if (proc.status !== 0) {
+    fail(proc.stderr.trim() || proc.stdout.trim() || `gh ${args.join(" ")} failed`);
   }
+  return proc.stdout;
 }
 
 function deriveRepoFromOrigin() {
-  const remote = execFileSync("git", ["remote", "get-url", "origin"], {
-    encoding: "utf8",
-    killSignal: "SIGKILL",
-    timeout: GHSA_COMMAND_TIMEOUT_MS,
-  }).trim();
+  const remote = execFileSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" }).trim();
   const httpsMatch = remote.match(/github\.com[/:]([^/]+)\/([^/.]+)(?:\.git)?$/);
   if (!httpsMatch) {
     fail(`Could not parse origin remote: ${remote}`);
@@ -130,20 +125,16 @@ const payload = {
 };
 
 const patchFile = writeTempJson(payload);
-try {
-  runGh([
-    "api",
-    "-H",
-    "X-GitHub-Api-Version: 2022-11-28",
-    "-X",
-    "PATCH",
-    advisoryPath,
-    "--input",
-    patchFile,
-  ]);
-} finally {
-  fs.rmSync(patchFile, { force: true });
-}
+runGh([
+  "api",
+  "-H",
+  "X-GitHub-Api-Version: 2022-11-28",
+  "-X",
+  "PATCH",
+  advisoryPath,
+  "--input",
+  patchFile,
+]);
 
 if (restoredCvss) {
   runGh([

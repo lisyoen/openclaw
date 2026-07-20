@@ -2,7 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { collectSecurityAuditFindings } from "./audit.test-support.js";
+import { collectFilesystemFindings } from "./audit.js";
 import { AsyncTempCaseFactory } from "./test-temp-cases.js";
 
 const isWindows = process.platform === "win32";
@@ -34,15 +34,10 @@ describe("security audit config symlink findings", () => {
     const configPath = path.join(stateDir, "openclaw.json");
     await fs.symlink(targetConfigPath, configPath);
 
-    const findings = await collectSecurityAuditFindings(
-      {},
-      {
-        stateDir,
-        configPath,
-        includeFilesystem: true,
-        configSnapshot: null,
-      },
-    );
+    const findings = await collectFilesystemFindings({
+      stateDir,
+      configPath,
+    });
 
     const checkIds = findings.map((finding) => finding.checkId);
     expect(checkIds).toContain("fs.config.symlink");

@@ -1,20 +1,12 @@
 // Outbound message entrypoint resolves channel/target, durable capability
 // requirements, payload plans, gateway fallback, and optional mirroring.
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
-import type { ChatType } from "../../channels/chat-type.js";
 import { deriveDurableFinalDeliveryRequirements } from "../../channels/message/capabilities.js";
-import {
-  sendDurableMessageBatch,
-  serializeDurableMessagePayloadOutcomes,
-  type SerializedDurableMessagePayloadOutcome,
-} from "../../channels/message/runtime.js";
-import type { DurableMessageSendIntent } from "../../channels/message/types.js";
+import { sendDurableMessageBatch } from "../../channels/message/runtime.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { OutboundMediaAccess } from "../../media/load-options.js";
 import type { PollInput } from "../../polls.js";
 import { normalizePollInput } from "../../polls.js";
-import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
-import { formatErrorMessage } from "../errors.js";
 import { resolveOutboundChannelPlugin } from "./channel-resolution.js";
 import { resolveMessageChannelSelection } from "./channel-selection.js";
 import {
@@ -24,7 +16,6 @@ import {
   type OutboundDeliveryQueuePolicy,
   type OutboundSendDeps,
 } from "./deliver.js";
-import type { DurableDeliveryCompletion } from "./delivery-completion.js";
 import {
   resolveOutboundMessageGatewayOptions,
   type OutboundMessageGatewayOptionsInput,
@@ -34,22 +25,29 @@ import {
   createOutboundPayloadPlan,
   projectOutboundPayloadPlanForDelivery,
   projectOutboundPayloadPlanForMirror,
-  type NormalizedOutboundPayload,
 } from "./payloads.js";
 import { buildOutboundSessionContext } from "./session-context.js";
 import { resolveOutboundTarget } from "./targets.js";
 
+let messageConfigRuntimePromise: Promise<typeof import("./message.config.runtime.js")> | null =
+  null;
+let messageGatewayRuntimePromise: Promise<typeof import("./message.gateway.runtime.js")> | null =
+  null;
 const SEND_BUFFER_MEDIA_URL = "buffer://message-send/attachment";
 
-const loadMessageConfigRuntime = createLazyRuntimeModule(
-  () => import("./message.config.runtime.js"),
-);
+function loadMessageConfigRuntime() {
+  // Keep config/runtime loading lazy so importing message helpers does not
+  // bootstrap plugin registries or gateway clients.
+  messageConfigRuntimePromise ??= import("./message.config.runtime.js");
+  return messageConfigRuntimePromise;
+}
 
-// Keep config/runtime loading lazy so importing message helpers does not
-// bootstrap plugin registries or gateway clients.
-const loadMessageGatewayRuntime = createLazyRuntimeModule(
-  () => import("./message.gateway.runtime.js"),
-);
+function loadMessageGatewayRuntime() {
+  messageGatewayRuntimePromise ??= import("./message.gateway.runtime.js");
+  return messageGatewayRuntimePromise;
+}
+
+export type MessageGatewayOptions = OutboundMessageGatewayOptionsInput;
 
 type MessageSendParams = {
   to: string;
@@ -78,9 +76,6 @@ type MessageSendParams = {
   gifPlayback?: boolean;
   forceDocument?: boolean;
   accountId?: string;
-  /** Known destination conversation kind prepared by the caller. */
-  conversationType?: ChatType;
-  conversationReadOrigin?: "delegated" | "direct-operator";
   replyToId?: string;
   threadId?: string | number;
   dryRun?: boolean;
@@ -90,25 +85,9 @@ type MessageSendParams = {
   mediaAccess?: OutboundMediaAccess;
   deps?: OutboundSendDeps;
   cfg?: OpenClawConfig;
-  gateway?: OutboundMessageGatewayOptionsInput;
+  gateway?: MessageGatewayOptions;
   idempotencyKey?: string;
-  /** @internal Channel-valid id reserved before a correlated conversation turn is sent. */
-  preparedMessageId?: string;
-  /** @internal Use the active adapter directly when already executing inside the Gateway. */
-  gatewayOwnedDelivery?: boolean;
-  /** @internal Stable producer id for idempotent durable queue creation. */
-  deliveryIntentId?: string;
-  /** @internal Serializable owner state finalized by live send or recovery. */
-  deliveryCompletion?: DurableDeliveryCompletion;
-  /** @internal Override provider unknown-send reconciliation independently from queue durability. */
-  requireUnknownSendReconciliation?: boolean;
-  /** @internal Runs after queue persistence and before platform I/O. */
-  onDeliveryIntent?: (intent: DurableMessageSendIntent) => void;
-  /** @internal Runs on identified platform evidence before queue acknowledgement. */
-  onDeliveryResult?: (result: OutboundDeliveryResult) => Promise<void> | void;
   mirror?: OutboundMirror;
-  /** @internal Reports the effective payload only after an identified direct send. */
-  onDeliveredPayload?: (payload: NormalizedOutboundPayload) => void;
   abortSignal?: AbortSignal;
   silent?: boolean;
   parseMode?: "HTML";
@@ -121,11 +100,7 @@ export type MessageSendResult = {
   mediaUrl: string | null;
   mediaUrls?: string[];
   result?: OutboundDeliveryResult | { messageId: string };
-  deliveryStatus?: "sent" | "suppressed" | "partial_failed" | "failed";
-  /** Formatted send error when deliveryStatus is "failed" or "partial_failed". */
-  error?: string;
-  sentBeforeError?: boolean;
-  payloadOutcomes?: SerializedDurableMessagePayloadOutcome[];
+  deliveryStatus?: "suppressed";
   dryRun?: boolean;
 };
 
@@ -143,7 +118,7 @@ type MessagePollParams = {
   isAnonymous?: boolean;
   dryRun?: boolean;
   cfg?: OpenClawConfig;
-  gateway?: OutboundMessageGatewayOptionsInput;
+  gateway?: MessageGatewayOptions;
   idempotencyKey?: string;
 };
 
@@ -155,7 +130,7 @@ export type MessagePollResult = {
   maxSelections: number;
   durationSeconds: number | null;
   durationHours: number | null;
-  via: "direct" | "gateway";
+  via: "gateway";
   result?: {
     messageId: string;
     toJid?: string;
@@ -176,7 +151,6 @@ function buildMessagePollResult(params: {
     durationSeconds?: number | null;
     durationHours?: number | null;
   };
-  via: MessagePollResult["via"];
   result?: MessagePollResult["result"];
   dryRun?: boolean;
 }): MessagePollResult {
@@ -188,37 +162,21 @@ function buildMessagePollResult(params: {
     maxSelections: params.normalized.maxSelections,
     durationSeconds: params.normalized.durationSeconds ?? null,
     durationHours: params.normalized.durationHours ?? null,
-    via: params.via,
+    via: "gateway",
     ...(params.dryRun ? { dryRun: true } : { result: params.result }),
   };
-}
-
-function assertPollOptionSupport(params: {
-  channel: string;
-  outbound: NonNullable<ReturnType<typeof resolveRequiredPlugin>["outbound"]>;
-  durationSeconds?: number;
-  isAnonymous?: boolean;
-}): void {
-  if (
-    typeof params.durationSeconds === "number" &&
-    params.outbound.supportsPollDurationSeconds !== true
-  ) {
-    throw new Error(`durationSeconds is not supported for ${params.channel} polls`);
-  }
-  if (typeof params.isAnonymous === "boolean" && params.outbound.supportsAnonymousPolls !== true) {
-    throw new Error(`isAnonymous is not supported for ${params.channel} polls`);
-  }
 }
 
 async function resolveRequiredChannel(params: {
   cfg: OpenClawConfig;
   channel?: string;
 }): Promise<string> {
-  const selection = await resolveMessageChannelSelection({
-    cfg: params.cfg,
-    channel: params.channel,
-  });
-  return selection.channel;
+  return (
+    await resolveMessageChannelSelection({
+      cfg: params.cfg,
+      channel: params.channel,
+    })
+  ).channel;
 }
 
 function resolveRequiredPlugin(channel: string, cfg: OpenClawConfig) {
@@ -302,12 +260,12 @@ async function assertRequiredMessageSendDurability(params: {
   );
 }
 
-function resolveGatewayOptions(opts?: OutboundMessageGatewayOptionsInput) {
+function resolveGatewayOptions(opts?: MessageGatewayOptions) {
   return resolveOutboundMessageGatewayOptions(opts);
 }
 
 async function callMessageGateway<T>(params: {
-  gateway?: OutboundMessageGatewayOptionsInput;
+  gateway?: MessageGatewayOptions;
   method: string;
   params: Record<string, unknown>;
 }): Promise<T> {
@@ -383,7 +341,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
     };
   }
 
-  if (deliveryMode !== "gateway" || params.gatewayOwnedDelivery === true) {
+  if (deliveryMode !== "gateway") {
     const outboundChannel = channel;
     const resolvedTarget = resolveOutboundTarget({
       channel: outboundChannel,
@@ -400,18 +358,13 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       cfg,
       agentId: params.agentId,
       sessionKey: params.requesterSessionKey ?? params.mirror?.sessionKey,
-      conversationType: params.conversationType,
       requesterAccountId: params.requesterAccountId ?? params.accountId,
       requesterSenderId: params.requesterSenderId,
       requesterSenderName: params.requesterSenderName,
       requesterSenderUsername: params.requesterSenderUsername,
       requesterSenderE164: params.requesterSenderE164,
     });
-    // Public queuePolicy:"required" is the exact-delivery contract preflighted below.
-    // Lower-level queue-required callers must leave this internal opt-in unset.
-    const requireUnknownSendReconciliation =
-      params.requireUnknownSendReconciliation ?? params.queuePolicy === "required";
-    if (requireUnknownSendReconciliation) {
+    if (params.queuePolicy === "required") {
       await assertRequiredMessageSendDurability({
         cfg,
         channel: outboundChannel,
@@ -427,7 +380,6 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       to: resolvedTarget.to,
       session: outboundSession,
       accountId: params.accountId,
-      conversationReadOrigin: params.conversationReadOrigin,
       payloads: normalizedPayloads,
       replyToId: params.replyToId,
       threadId: params.threadId,
@@ -435,19 +387,12 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       forceDocument: params.forceDocument,
       deps: params.deps,
       bestEffort: params.bestEffort,
-      ...(requireUnknownSendReconciliation ? { requireUnknownSendReconciliation: true } : {}),
       durability:
         params.bestEffort || params.queuePolicy === "best_effort" ? "best_effort" : "required",
       signal: params.abortSignal,
       silent: params.silent,
       mediaAccess: params.mediaAccess,
       formatting: params.parseMode ? { parseMode: params.parseMode } : undefined,
-      preparedMessageId: params.preparedMessageId,
-      deliveryIntentId: params.deliveryIntentId,
-      deliveryCompletion: params.deliveryCompletion,
-      ...(params.onDeliveryIntent ? { onDeliveryIntent: params.onDeliveryIntent } : {}),
-      ...(params.onDeliveryResult ? { onDeliveryResult: params.onDeliveryResult } : {}),
-      ...(params.onDeliveredPayload ? { onDeliveredPayload: params.onDeliveredPayload } : {}),
       mirror: params.mirror
         ? {
             ...params.mirror,
@@ -461,7 +406,6 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       throw send.error;
     }
     const results = send.status === "sent" || send.status === "partial_failed" ? send.results : [];
-    const payloadOutcomes = serializeDurableMessagePayloadOutcomes(send.payloadOutcomes);
 
     return {
       channel,
@@ -470,12 +414,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       mediaUrl: primaryMediaUrl,
       mediaUrls: mirrorMediaUrls.length ? mirrorMediaUrls : undefined,
       result: results.at(-1),
-      deliveryStatus: send.status,
-      ...(send.status === "failed" || send.status === "partial_failed"
-        ? { error: formatErrorMessage(send.error) }
-        : {}),
-      ...(send.status === "partial_failed" ? { sentBeforeError: true as const } : {}),
-      ...(payloadOutcomes ? { payloadOutcomes } : {}),
+      ...(send.status === "suppressed" ? { deliveryStatus: "suppressed" as const } : {}),
     };
   }
 
@@ -531,7 +470,6 @@ export async function sendPoll(params: MessagePollParams): Promise<MessagePollRe
   if (!outbound?.sendPoll) {
     throw new Error(`Unsupported poll channel: ${channel}`);
   }
-  const deliveryMode = outbound.deliveryMode ?? "direct";
   const normalized = outbound.pollMaxOptions
     ? normalizePollInput(pollInput, { maxOptions: outbound.pollMaxOptions })
     : normalizePollInput(pollInput);
@@ -541,46 +479,7 @@ export async function sendPoll(params: MessagePollParams): Promise<MessagePollRe
       channel,
       to: params.to,
       normalized,
-      via: deliveryMode === "gateway" ? "gateway" : "direct",
       dryRun: true,
-    });
-  }
-
-  assertPollOptionSupport({
-    channel,
-    outbound,
-    durationSeconds: params.durationSeconds,
-    isAnonymous: params.isAnonymous,
-  });
-
-  if (deliveryMode !== "gateway") {
-    const resolvedTarget = resolveOutboundTarget({
-      channel,
-      to: params.to,
-      cfg,
-      accountId: params.accountId,
-      mode: "explicit",
-    });
-    if (!resolvedTarget.ok) {
-      throw resolvedTarget.error;
-    }
-
-    const result = await outbound.sendPoll({
-      cfg,
-      to: resolvedTarget.to,
-      poll: normalized,
-      accountId: params.accountId,
-      threadId: params.threadId,
-      silent: params.silent,
-      isAnonymous: params.isAnonymous,
-    });
-
-    return buildMessagePollResult({
-      channel,
-      to: params.to,
-      normalized,
-      via: "direct",
-      result,
     });
   }
 
@@ -613,7 +512,6 @@ export async function sendPoll(params: MessagePollParams): Promise<MessagePollRe
     channel,
     to: params.to,
     normalized,
-    via: "gateway",
     result,
   });
 }

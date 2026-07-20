@@ -6,7 +6,6 @@ export type AuthChoiceOption = {
   value: AuthChoice;
   label: string;
   hint?: string;
-  providerId?: string;
   groupId?: AuthChoiceGroupId;
   groupLabel?: string;
   groupHint?: string;
@@ -19,7 +18,6 @@ export type AuthChoiceGroup = {
   value: AuthChoiceGroupId;
   label: string;
   hint?: string;
-  providerIds?: string[];
   options: AuthChoiceOption[];
 };
 

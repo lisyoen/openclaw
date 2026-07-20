@@ -1,14 +1,12 @@
 // Transcript append redaction tests cover secret scrubbing when appending transcript entries.
 import fs from "node:fs";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { onSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
 import { resolveSessionTranscriptPathInDir } from "./paths.js";
-import { loadTranscriptEvents, replaceSessionEntry } from "./session-accessor.js";
 import { useTempSessionsFixture } from "./test-helpers.js";
-import { appendSessionTranscriptMessage } from "./transcript-append.test-support.js";
+import { appendSessionTranscriptMessage } from "./transcript-append.js";
 import {
   appendAssistantMessageToSessionTranscript,
   appendExactAssistantMessageToSessionTranscript,
@@ -39,17 +37,6 @@ function readMessages(sessionFile: string) {
     .map((r) => r.message);
 }
 
-async function readStoredMessages(params: {
-  sessionId: string;
-  sessionKey: string;
-  storePath: string;
-}) {
-  return (await loadTranscriptEvents(params))
-    .map((event) => event as { type?: string; message?: unknown })
-    .filter((record) => record.type === "message")
-    .map((record) => record.message);
-}
-
 describe("appendSessionTranscriptMessage - redaction", () => {
   const fixture = useTempSessionsFixture("transcript-redact-test-");
 
@@ -78,12 +65,7 @@ describe("appendSessionTranscriptMessage - redaction", () => {
     const [msg] = readMessages(sessionFile) as Array<{
       content: Array<{ text: string }>;
     }>;
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").content[0],
-        "msg.content[0] test invariant",
-      ).text,
-    ).not.toContain("sk-abcdef1234567890xyz");
+    expect(msg.content[0].text).not.toContain("sk-abcdef1234567890xyz");
   });
 
   it("preserves image base64 payloads before writing to disk", async () => {
@@ -117,18 +99,8 @@ describe("appendSessionTranscriptMessage - redaction", () => {
     const [msg] = readMessages(sessionFile) as Array<{
       content: Array<{ type: string; text?: string; data?: string }>;
     }>;
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").content[0],
-        "msg.content[0] test invariant",
-      ).text,
-    ).not.toContain("sk-abcdef1234567890xyz");
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").content[1],
-        "msg.content[1] test invariant",
-      ).data,
-    ).toBe(IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING);
+    expect(msg.content[0].text).not.toContain("sk-abcdef1234567890xyz");
+    expect(msg.content[1].data).toBe(IMAGE_BASE64_WITH_SECRET_TOKEN_SUBSTRING);
   });
 
   it("writes content unchanged when redactSensitive is off", async () => {
@@ -219,18 +191,11 @@ describe("appendSessionTranscriptMessage - redaction", () => {
       command: string;
       safe: string;
     }>;
-    expect(expectDefined(msg, "msg test invariant").apiKey).toBe("plains…e123");
-    expect(expectDefined(msg, "msg test invariant").password).toBe("***");
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").nested.accessToken[0],
-        "msg.nested.accessToken[0] test invariant",
-      ),
-    ).toBe("nested…t123");
-    expect(expectDefined(msg, "msg test invariant").command).toBe(
-      "OPENAI_API_KEY=sk-abc…0xyz openclaw health",
-    );
-    expect(expectDefined(msg, "msg test invariant").safe).toBe("visible");
+    expect(msg.apiKey).toBe("plains…e123");
+    expect(msg.password).toBe("***");
+    expect(msg.nested.accessToken[0]).toBe("nested…t123");
+    expect(msg.command).toBe("OPENAI_API_KEY=sk-abc…0xyz openclaw health");
+    expect(msg.safe).toBe("visible");
   });
 
   it("uses configured custom patterns when cfg omits logging", async () => {
@@ -250,7 +215,11 @@ describe("appendSessionTranscriptMessage - redaction", () => {
         content: [{ type: "text", text: "email peter@dc.io and key sk-abcdef1234567890xyz ok" }],
       },
       config: {
-        session: {},
+        session: {
+          writeLock: {
+            acquireTimeoutMs: 25_000,
+          },
+        },
       },
     });
 
@@ -305,38 +274,11 @@ describe("appendSessionTranscriptMessage - redaction", () => {
         };
       }>;
     }>;
-    expect(
-      JSON.stringify(
-        expectDefined(
-          expectDefined(msg, "msg test invariant").content[0],
-          "msg.content[0] test invariant",
-        ).arguments,
-      ),
-    ).not.toContain("sk-abcdef1234567890xyz");
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").content[0],
-        "msg.content[0] test invariant",
-      ).arguments.command,
-    ).toBe("OPENAI_API_KEY=sk-abc…0xyz openclaw health");
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").content[0],
-        "msg.content[0] test invariant",
-      ).arguments.env.nested[0],
-    ).toBe("token sk-abc…0xyz");
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").content[0],
-        "msg.content[0] test invariant",
-      ).arguments.apiKey,
-    ).toBe("plains…e123");
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").content[0],
-        "msg.content[0] test invariant",
-      ).arguments.password,
-    ).toBe("***");
+    expect(JSON.stringify(msg.content[0].arguments)).not.toContain("sk-abcdef1234567890xyz");
+    expect(msg.content[0].arguments.command).toBe("OPENAI_API_KEY=sk-abc…0xyz openclaw health");
+    expect(msg.content[0].arguments.env.nested[0]).toBe("token sk-abc…0xyz");
+    expect(msg.content[0].arguments.apiKey).toBe("plains…e123");
+    expect(msg.content[0].arguments.password).toBe("***");
   });
 
   it("masks secrets in tool-result details before writing to disk", async () => {
@@ -381,23 +323,11 @@ describe("appendSessionTranscriptMessage - redaction", () => {
         safe: string;
       };
     }>;
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").content[0],
-        "msg.content[0] test invariant",
-      ).text,
-    ).not.toContain("sk-abcdef1234567890xyz");
-    expect(JSON.stringify(expectDefined(msg, "msg test invariant").details)).not.toContain(
-      "plainsecretvalue123",
-    );
-    expect(expectDefined(msg, "msg test invariant").details.apiKey).toBe("plains…e123");
-    expect(expectDefined(msg, "msg test invariant").details.password).toBe("***");
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").details.nested.accessToken[0],
-        "msg.details.nested.accessToken[0] test invariant",
-      ),
-    ).toBe("nested…t123");
+    expect(msg.content[0].text).not.toContain("sk-abcdef1234567890xyz");
+    expect(JSON.stringify(msg.details)).not.toContain("plainsecretvalue123");
+    expect(msg.details.apiKey).toBe("plains…e123");
+    expect(msg.details.password).toBe("***");
+    expect(msg.details.nested.accessToken[0]).toBe("nested…t123");
   });
 
   it("preserves env placeholders in persisted tool results", async () => {
@@ -429,35 +359,23 @@ describe("appendSessionTranscriptMessage - redaction", () => {
     const [msg] = readMessages(sessionFile) as Array<{
       content: Array<{ text: string }>;
     }>;
-    expect(
-      expectDefined(
-        expectDefined(msg, "msg test invariant").content[0],
-        "msg.content[0] test invariant",
-      ).text,
-    ).toBe(toolOutput);
+    expect(msg.content[0].text).toBe(toolOutput);
   });
 });
 
 describe("appendExactAssistantMessageToSessionTranscript - redaction", () => {
   const fixture = useTempSessionsFixture("exact-assistant-redact-test-");
 
-  async function seedSessionEntry(params: {
-    sessionId: string;
-    sessionKey: string;
-    storePath: string;
-  }) {
-    await replaceSessionEntry(
-      { sessionKey: params.sessionKey, storePath: params.storePath },
-      { sessionId: params.sessionId, updatedAt: Date.now() },
-    );
-  }
-
   it("does not redact when config.logging.redactSensitive is off", async () => {
+    // Set up a minimal session store so the function can resolve the session file.
     const sessionsDir = fixture.sessionsDir();
     const storePath = path.join(sessionsDir, "sessions.json");
     const sessionId = "test-session-redact-off";
     const sessionKey = "test-channel:test-user";
-    await seedSessionEntry({ sessionId, sessionKey, storePath });
+    const store = {
+      [sessionKey]: { sessionId, updatedAt: Date.now() },
+    };
+    fs.writeFileSync(storePath, JSON.stringify(store, null, 2), { encoding: "utf-8", mode: 0o600 });
 
     const fakeApiKey = "sk-proj-FAKEKEYFORTESTINGONLY1234567890";
     const config: OpenClawConfig = { logging: { redactSensitive: "off" } };
@@ -490,7 +408,7 @@ describe("appendExactAssistantMessageToSessionTranscript - redaction", () => {
       return;
     }
 
-    const raw = JSON.stringify(await readStoredMessages({ sessionId, sessionKey, storePath }));
+    const raw = fs.readFileSync(result.sessionFile, "utf-8");
     expect(raw).toContain(fakeApiKey);
   });
 
@@ -499,7 +417,11 @@ describe("appendExactAssistantMessageToSessionTranscript - redaction", () => {
     const storePath = path.join(sessionsDir, "sessions.json");
     const sessionId = "test-session-redact-event";
     const sessionKey = "test-channel:test-redact-event";
-    await seedSessionEntry({ sessionId, sessionKey, storePath });
+    fs.writeFileSync(
+      storePath,
+      JSON.stringify({ [sessionKey]: { sessionId, updatedAt: Date.now() } }, null, 2),
+      { encoding: "utf-8", mode: 0o600 },
+    );
 
     const fakeApiKey = "sk-proj-FAKEKEYFORTESTINGONLY1234567890";
     const config: OpenClawConfig = { logging: { redactSensitive: "tools" } };
@@ -535,7 +457,7 @@ describe("appendExactAssistantMessageToSessionTranscript - redaction", () => {
         return;
       }
 
-      const [diskMessage] = await readStoredMessages({ sessionId, sessionKey, storePath });
+      const [diskMessage] = readMessages(result.sessionFile);
       expect(JSON.stringify(diskMessage)).not.toContain(fakeApiKey);
       expect(updates).toHaveLength(1);
       expect(updates[0]?.message).toEqual(diskMessage);
@@ -550,7 +472,11 @@ describe("appendExactAssistantMessageToSessionTranscript - redaction", () => {
     const storePath = path.join(sessionsDir, "sessions.json");
     const sessionId = "test-session-redact-dedupe";
     const sessionKey = "test-channel:test-redact-dedupe";
-    await seedSessionEntry({ sessionId, sessionKey, storePath });
+    fs.writeFileSync(
+      storePath,
+      JSON.stringify({ [sessionKey]: { sessionId, updatedAt: Date.now() } }, null, 2),
+      { encoding: "utf-8", mode: 0o600 },
+    );
 
     const fakeApiKey = "sk-proj-FAKEKEYFORTESTINGONLY1234567890";
     const config: OpenClawConfig = { logging: { redactSensitive: "tools" } };
@@ -575,11 +501,9 @@ describe("appendExactAssistantMessageToSessionTranscript - redaction", () => {
     }
     expect(second.messageId).toBe(first.messageId);
 
-    const events = await loadTranscriptEvents({ sessionId, sessionKey, storePath });
-    expect(JSON.stringify(events)).not.toContain(fakeApiKey);
-    expect(events.filter((event) => (event as { type?: unknown }).type === "message")).toHaveLength(
-      1,
-    );
+    const raw = fs.readFileSync(second.sessionFile, "utf-8");
+    expect(raw).not.toContain(fakeApiKey);
+    expect(readMessages(second.sessionFile)).toHaveLength(1);
   });
 
   it("dedupes delivery mirrors against older unredacted assistant entries", async () => {
@@ -587,7 +511,11 @@ describe("appendExactAssistantMessageToSessionTranscript - redaction", () => {
     const storePath = path.join(sessionsDir, "sessions.json");
     const sessionId = "test-session-redact-upgrade-dedupe";
     const sessionKey = "test-channel:test-redact-upgrade-dedupe";
-    await seedSessionEntry({ sessionId, sessionKey, storePath });
+    fs.writeFileSync(
+      storePath,
+      JSON.stringify({ [sessionKey]: { sessionId, updatedAt: Date.now() } }, null, 2),
+      { encoding: "utf-8", mode: 0o600 },
+    );
 
     const fakeApiKey = "sk-proj-OLDERUNREDACTEDTRANSCRIPT1234567890";
     const unredacted = await appendExactAssistantMessageToSessionTranscript({
@@ -626,10 +554,8 @@ describe("appendExactAssistantMessageToSessionTranscript - redaction", () => {
     }
     expect(deduped.messageId).toBe(unredacted.messageId);
 
-    const events = await loadTranscriptEvents({ sessionId, sessionKey, storePath });
-    expect(JSON.stringify(events)).toContain(fakeApiKey);
-    expect(events.filter((event) => (event as { type?: unknown }).type === "message")).toHaveLength(
-      1,
-    );
+    const raw = fs.readFileSync(deduped.sessionFile, "utf-8");
+    expect(raw).toContain(fakeApiKey);
+    expect(readMessages(deduped.sessionFile)).toHaveLength(1);
   });
 });

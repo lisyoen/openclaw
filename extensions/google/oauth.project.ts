@@ -1,6 +1,4 @@
 // Google plugin module implements oauth.project behavior.
-import { readProviderJsonResponse } from "openclaw/plugin-sdk/provider-http";
-import { sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { fetchWithTimeout } from "./oauth.http.js";
 import {
   CODE_ASSIST_ENDPOINT_PROD,
@@ -17,21 +15,16 @@ const LOAD_CODE_ASSIST_METADATA = {
   pluginType: "GEMINI",
 } as const;
 
-async function getUserEmail(
-  accessToken: string,
-  signal?: AbortSignal,
-): Promise<string | undefined> {
+async function getUserEmail(accessToken: string): Promise<string | undefined> {
   try {
     const response = await fetchWithTimeout(USERINFO_URL, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      ...(signal ? { signal } : {}),
     });
     if (response.ok) {
-      const data = await readProviderJsonResponse<{ email?: string }>(response, "google.userinfo");
+      const data = (await response.json()) as { email?: string };
       return data.email;
     }
   } catch {
-    signal?.throwIfAborted();
     // ignore
   }
   return undefined;
@@ -70,21 +63,21 @@ async function pollOperation(
   endpoint: string,
   operationName: string,
   headers: Record<string, string>,
-  signal?: AbortSignal,
 ): Promise<{ done?: boolean; response?: { cloudaicompanionProject?: { id?: string } } }> {
   for (let attempt = 0; attempt < 24; attempt += 1) {
-    await sleepWithAbort(5000, signal);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 5000);
+    });
     const response = await fetchWithTimeout(`${endpoint}/v1internal/${operationName}`, {
       headers,
-      ...(signal ? { signal } : {}),
     });
     if (!response.ok) {
       continue;
     }
-    const data = await readProviderJsonResponse<{
+    const data = (await response.json()) as {
       done?: boolean;
       response?: { cloudaicompanionProject?: { id?: string } };
-    }>(response, "google.poll-operation");
+    };
     if (data.done) {
       return data;
     }
@@ -92,29 +85,23 @@ async function pollOperation(
   throw new Error("Operation polling timeout");
 }
 
-export async function resolveGoogleOAuthIdentity(
-  accessToken: string,
-  signal?: AbortSignal,
-): Promise<{
+export async function resolveGoogleOAuthIdentity(accessToken: string): Promise<{
   email?: string;
   projectId?: string;
 }> {
-  const email = await getUserEmail(accessToken, signal);
-  const projectId = await discoverProject(accessToken, signal);
+  const email = await getUserEmail(accessToken);
+  const projectId = await discoverProject(accessToken);
   return { email, projectId };
 }
 
-export async function resolveGooglePersonalOAuthIdentity(
-  accessToken: string,
-  signal?: AbortSignal,
-): Promise<{
+export async function resolveGooglePersonalOAuthIdentity(accessToken: string): Promise<{
   email?: string;
   projectId?: string;
 }> {
-  return { email: await getUserEmail(accessToken, signal) };
+  return { email: await getUserEmail(accessToken) };
 }
 
-async function discoverProject(accessToken: string, signal?: AbortSignal): Promise<string> {
+async function discoverProject(accessToken: string): Promise<string> {
   const envProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID;
   const headers = {
     Authorization: `Bearer ${accessToken}`,
@@ -145,14 +132,10 @@ async function discoverProject(accessToken: string, signal?: AbortSignal): Promi
         method: "POST",
         headers,
         body: JSON.stringify(loadBody),
-        ...(signal ? { signal } : {}),
       });
 
       if (!response.ok) {
-        const errorPayload = await readProviderJsonResponse(
-          response,
-          "google.load-code-assist",
-        ).catch(() => null);
+        const errorPayload = await response.json().catch(() => null);
         if (isVpcScAffected(errorPayload)) {
           data = { currentTier: { id: TIER_STANDARD } };
           activeEndpoint = endpoint;
@@ -163,12 +146,11 @@ async function discoverProject(accessToken: string, signal?: AbortSignal): Promi
         continue;
       }
 
-      data = await readProviderJsonResponse<typeof data>(response, "google.load-code-assist");
+      data = (await response.json()) as typeof data;
       activeEndpoint = endpoint;
       loadError = undefined;
       break;
     } catch (err) {
-      signal?.throwIfAborted();
       loadError = err instanceof Error ? err : new Error("loadCodeAssist failed", { cause: err });
     }
   }
@@ -223,21 +205,20 @@ async function discoverProject(accessToken: string, signal?: AbortSignal): Promi
     method: "POST",
     headers,
     body: JSON.stringify(onboardBody),
-    ...(signal ? { signal } : {}),
   });
 
   if (!onboardResponse.ok) {
     throw new Error(`onboardUser failed: ${onboardResponse.status} ${onboardResponse.statusText}`);
   }
 
-  let lro = await readProviderJsonResponse<{
+  let lro = (await onboardResponse.json()) as {
     done?: boolean;
     name?: string;
     response?: { cloudaicompanionProject?: { id?: string } };
-  }>(onboardResponse, "google.onboard-user");
+  };
 
   if (!lro.done && lro.name) {
-    lro = await pollOperation(activeEndpoint, lro.name, headers, signal);
+    lro = await pollOperation(activeEndpoint, lro.name, headers);
   }
 
   const projectId = lro.response?.cloudaicompanionProject?.id;

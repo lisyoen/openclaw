@@ -59,7 +59,6 @@ export async function runManagerInitializeSession(params: {
         mode: input.mode,
         resumeSessionId: input.resumeSessionId,
         ...(requestedModel ? { model: requestedModel } : {}),
-        ...(requestedModel && input.modelExplicit ? { modelExplicit: true } : {}),
         ...(requestedThinking ? { thinking: requestedThinking } : {}),
         cwd: requestedCwd,
       }),
@@ -67,13 +66,8 @@ export async function runManagerInitializeSession(params: {
     fallbackMessage: "Could not initialize ACP session runtime.",
   });
   const effectiveCwd = normalizeText(handle.cwd) ?? requestedCwd;
-  const effectiveModel = resolveEffectiveSessionModel({
-    requestedModel,
-    appliedModel: handle.appliedModel,
-  });
   const effectiveRuntimeOptions = normalizeRuntimeOptions({
     ...initialRuntimeOptions,
-    model: effectiveModel,
     ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
   });
 
@@ -134,17 +128,6 @@ export async function runManagerInitializeSession(params: {
     handle,
     meta,
   };
-}
-
-function resolveEffectiveSessionModel(params: {
-  requestedModel: string | undefined;
-  appliedModel: AcpRuntimeHandle["appliedModel"];
-}): string | undefined {
-  const { appliedModel } = params;
-  if (!appliedModel) {
-    return params.requestedModel;
-  }
-  return appliedModel.kind === "applied" ? appliedModel.model : undefined;
 }
 
 async function persistInitializedSessionMeta(params: {

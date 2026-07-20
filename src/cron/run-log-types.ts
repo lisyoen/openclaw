@@ -1,4 +1,4 @@
-/** Stable cron run-history wire shape and legacy JSONL migration input. */
+/** Shared cron run-log entry shape for SQLite and legacy JSONL stores. */
 import type { FailoverReason } from "../agents/embedded-agent-helpers/types.js";
 import type {
   CronDeliveryStatus,
@@ -9,7 +9,7 @@ import type {
   CronRunTelemetry,
 } from "./types.js";
 
-/** Run-history record for a completed cron job execution. */
+/** Append-only run-log record for a completed cron job execution. */
 export type CronRunLogEntry = {
   ts: number;
   jobId: string;
@@ -30,5 +30,4 @@ export type CronRunLogEntry = {
   runAtMs?: number;
   durationMs?: number;
   nextRunAtMs?: number;
-  triggerFired?: boolean;
 } & CronRunTelemetry;

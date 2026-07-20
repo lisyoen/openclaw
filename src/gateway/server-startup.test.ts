@@ -4,13 +4,14 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 
-const prepareModelRuntimeSnapshotMock = vi.fn(async (_params: unknown) => ({}));
-const refreshPreparedModelRuntimeSnapshotsMock = vi.fn(
-  async (
-    _cfg: OpenClawConfig,
-    _options?: { gatewayLifecycle?: boolean; defaultWorkspaceDir?: string },
-  ) => {},
-);
+const ensureOpenClawModelsJsonMock = vi.fn<
+  (
+    config: unknown,
+    agentDir: unknown,
+    options?: unknown,
+  ) => Promise<{ agentDir: string; wrote: boolean }>
+>(async () => ({ agentDir: "/tmp/agent", wrote: false }));
+const resolveModelMock = vi.fn<(...args: unknown[]) => Record<string, never>>(() => ({}));
 
 vi.mock("../agents/agent-scope.js", () => ({
   resolveDefaultAgentDir: () => "/tmp/agent",
@@ -18,32 +19,41 @@ vi.mock("../agents/agent-scope.js", () => ({
   resolveDefaultAgentId: () => "default",
 }));
 
-vi.mock("../agents/prepared-model-runtime.js", () => ({
-  publishPreparedModelRuntimeSnapshot: (params: unknown) => prepareModelRuntimeSnapshotMock(params),
-  refreshPreparedModelRuntimeSnapshots: (
-    cfg: OpenClawConfig,
-    options?: { gatewayLifecycle?: boolean; defaultWorkspaceDir?: string },
-  ) => refreshPreparedModelRuntimeSnapshotsMock(cfg, options),
+vi.mock("../agents/models-config.js", () => ({
+  ensureOpenClawModelsJson: (config: unknown, agentDir: unknown, options?: unknown) =>
+    ensureOpenClawModelsJsonMock(config, agentDir, options),
+}));
+
+vi.mock("../agents/embedded-agent-runner/model.js", () => ({
+  resolveModel: (...args: unknown[]) => resolveModelMock(...args),
 }));
 
 let prewarmConfiguredPrimaryModel: typeof import("./server-startup-post-attach.js").testing.prewarmConfiguredPrimaryModel;
-let publishStartupModelRuntime: typeof import("./server-startup-post-attach.js").testing.publishStartupModelRuntime;
 let shouldSkipStartupModelPrewarm: typeof import("./server-startup-post-attach.js").testing.shouldSkipStartupModelPrewarm;
+
+function expectModelsJsonPrewarmCall(cfg: OpenClawConfig) {
+  expect(ensureOpenClawModelsJsonMock).toHaveBeenCalledTimes(1);
+  const [calledConfig, agentDir, options] = ensureOpenClawModelsJsonMock.mock.calls.at(0) ?? [];
+  expect(calledConfig).toBe(cfg);
+  expect(agentDir).toBe("/tmp/agent");
+  expect(options).toEqual({
+    workspaceDir: "/tmp/workspace",
+    providerDiscoveryProviderIds: ["openai"],
+    providerDiscoveryTimeoutMs: 5000,
+    providerDiscoveryEntriesOnly: true,
+  });
+}
 
 describe("gateway startup primary model warmup", () => {
   beforeAll(async () => {
     ({
-      testing: {
-        prewarmConfiguredPrimaryModel,
-        publishStartupModelRuntime,
-        shouldSkipStartupModelPrewarm,
-      },
+      testing: { prewarmConfiguredPrimaryModel, shouldSkipStartupModelPrewarm },
     } = await import("./server-startup-post-attach.js"));
   });
 
   beforeEach(() => {
-    prepareModelRuntimeSnapshotMock.mockClear();
-    refreshPreparedModelRuntimeSnapshotsMock.mockClear();
+    ensureOpenClawModelsJsonMock.mockClear();
+    resolveModelMock.mockClear();
   });
 
   it("prewarms an explicit configured primary model", async () => {
@@ -62,21 +72,18 @@ describe("gateway startup primary model warmup", () => {
       log: { warn: vi.fn() },
     });
 
-    expect(refreshPreparedModelRuntimeSnapshotsMock).toHaveBeenCalledWith(cfg, {
-      gatewayLifecycle: true,
-    });
+    expectModelsJsonPrewarmCall(cfg);
+    expect(resolveModelMock).not.toHaveBeenCalled();
   });
 
-  it("prewarms the default catalog when no explicit primary model is configured", async () => {
-    const cfg = {} as OpenClawConfig;
+  it("skips warmup when no explicit primary model is configured", async () => {
     await prewarmConfiguredPrimaryModel({
-      cfg,
+      cfg: {} as OpenClawConfig,
       log: { warn: vi.fn() },
     });
 
-    expect(refreshPreparedModelRuntimeSnapshotsMock).toHaveBeenCalledWith(cfg, {
-      gatewayLifecycle: true,
-    });
+    expect(ensureOpenClawModelsJsonMock).not.toHaveBeenCalled();
+    expect(resolveModelMock).not.toHaveBeenCalled();
   });
 
   it("honors the startup model prewarm skip env", () => {
@@ -93,84 +100,49 @@ describe("gateway startup primary model warmup", () => {
     ).toBe(true);
   });
 
-  it("publishes required runtime snapshots when optional startup prewarm is skipped", async () => {
-    vi.stubEnv("OPENCLAW_SKIP_STARTUP_MODEL_PREWARM", "1");
-    const optionalPrewarm = vi.fn(async () => {});
-    try {
-      await publishStartupModelRuntime(
-        {
-          cfg: {} as OpenClawConfig,
-          workspaceDir: "/tmp/skip-explicit-workspace",
-          log: { warn: vi.fn() },
-        },
-        optionalPrewarm,
-      );
-
-      expect(refreshPreparedModelRuntimeSnapshotsMock).toHaveBeenCalledOnce();
-      expect(refreshPreparedModelRuntimeSnapshotsMock).toHaveBeenCalledWith(
-        expect.any(Object),
-        expect.objectContaining({ defaultWorkspaceDir: "/tmp/skip-explicit-workspace" }),
-      );
-      expect(optionalPrewarm).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("publishes lifecycle owners for configured CLI backends", async () => {
-    const cfg = {
-      agents: {
-        defaults: {
-          model: {
-            primary: "codex-cli/gpt-5.5",
-          },
-          cliBackends: {
-            "codex-cli": {
-              command: "codex",
-              args: ["exec"],
-            },
-          },
-        },
-      },
-    } as OpenClawConfig;
-    await prewarmConfiguredPrimaryModel({ cfg, log: { warn: vi.fn() } });
-
-    expect(refreshPreparedModelRuntimeSnapshotsMock).toHaveBeenCalledWith(cfg, {
-      gatewayLifecycle: true,
-    });
-  });
-
-  it("preserves the explicit startup workspace in the published default owner", async () => {
-    const cfg = {} as OpenClawConfig;
+  it("skips static warmup for configured CLI backends", async () => {
     await prewarmConfiguredPrimaryModel({
-      cfg,
-      workspaceDir: "/tmp/explicit-workspace",
-      log: { warn: vi.fn() },
-    });
-
-    expect(refreshPreparedModelRuntimeSnapshotsMock).toHaveBeenCalledWith(cfg, {
-      gatewayLifecycle: true,
-      defaultWorkspaceDir: "/tmp/explicit-workspace",
-    });
-  });
-
-  it("propagates lifecycle catalog preparation failure", async () => {
-    const error = new Error("models write failed");
-    refreshPreparedModelRuntimeSnapshotsMock.mockRejectedValueOnce(error);
-
-    await expect(
-      prewarmConfiguredPrimaryModel({
-        cfg: {
-          agents: {
-            defaults: {
-              model: {
-                primary: "codex/gpt-5.4",
+      cfg: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "codex-cli/gpt-5.5",
+            },
+            cliBackends: {
+              "codex-cli": {
+                command: "codex",
+                args: ["exec"],
               },
             },
           },
-        } as OpenClawConfig,
-        log: { warn: vi.fn() },
-      }),
-    ).rejects.toBe(error);
+        },
+      } as OpenClawConfig,
+      log: { warn: vi.fn() },
+    });
+
+    expect(ensureOpenClawModelsJsonMock).not.toHaveBeenCalled();
+    expect(resolveModelMock).not.toHaveBeenCalled();
+  });
+
+  it("warns when scoped models.json preparation fails", async () => {
+    ensureOpenClawModelsJsonMock.mockRejectedValueOnce(new Error("models write failed"));
+    const warn = vi.fn();
+
+    await prewarmConfiguredPrimaryModel({
+      cfg: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "codex/gpt-5.4",
+            },
+          },
+        },
+      } as OpenClawConfig,
+      log: { warn },
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      "startup model warmup failed for codex/gpt-5.4: Error: models write failed",
+    );
   });
 });

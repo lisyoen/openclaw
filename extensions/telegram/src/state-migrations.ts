@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ChannelLegacyStateMigrationPlan } from "openclaw/plugin-sdk/channel-contract";
+import { resolveChannelAllowFromPath } from "openclaw/plugin-sdk/channel-pairing";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   type PersistentDedupeLegacyJsonImportEntry,
@@ -11,9 +12,9 @@ import {
   shouldReplacePersistentDedupeEntry,
 } from "openclaw/plugin-sdk/persistent-dedupe";
 import { createPluginStateSyncKeyedStore } from "openclaw/plugin-sdk/runtime-doctor";
-import { fileExists } from "openclaw/plugin-sdk/security-runtime";
+import { statRegularFileSync } from "openclaw/plugin-sdk/security-runtime";
 import { resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
-import { isRecord, uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { listTelegramAccountIds, resolveDefaultTelegramAccountId } from "./account-selection.js";
 import {
   listTelegramLegacyBotInfoCacheEntries,
@@ -22,13 +23,11 @@ import {
   TELEGRAM_BOT_INFO_CACHE_NAMESPACE,
 } from "./bot-info-cache.js";
 import {
-  isTelegramMessageCacheSourceMessage,
+  listTelegramLegacyMessageCacheEntries,
   resolveTelegramMessageCachePath,
   resolveTelegramMessageCachePersistentScopeKey,
-  type PersistedTelegramMessageCacheValue,
   TELEGRAM_MESSAGE_CACHE_PERSISTENT_MAX_MESSAGES,
   TELEGRAM_MESSAGE_CACHE_PERSISTENT_NAMESPACE,
-  TELEGRAM_MESSAGE_CACHE_PERSISTED_VERSION,
 } from "./message-cache.js";
 import {
   buildTelegramMessageDispatchAccountReplayKey,
@@ -39,7 +38,6 @@ import {
   TELEGRAM_MESSAGE_DISPATCH_DEDUPE_STATE_MAX_ENTRIES,
   TELEGRAM_MESSAGE_DISPATCH_DEDUPE_TTL_MS,
 } from "./message-dispatch-dedupe.js";
-import { parseTelegramMessageThreadId } from "./outbound-params.js";
 import {
   listTelegramLegacySentMessageCacheEntries,
   TELEGRAM_SENT_MESSAGE_CACHE_MAX_ENTRIES,
@@ -80,6 +78,14 @@ type TelegramLegacyMessageDispatchDedupeRecord = {
   entries: Record<string, number>;
 };
 
+function fileExists(pathValue: string): boolean {
+  try {
+    return !statRegularFileSync(pathValue).missing;
+  } catch {
+    return false;
+  }
+}
+
 function resolveLegacySessionStorePath(params: {
   env: NodeJS.ProcessEnv;
   stateDir?: string;
@@ -96,93 +102,17 @@ function resolveMigrationStateDir(params: { env: NodeJS.ProcessEnv; stateDir?: s
   );
 }
 
-function parseLegacyMessageCacheJson(text: string): unknown[] | undefined {
-  try {
-    const value: unknown = JSON.parse(text);
-    return Array.isArray(value) ? value : [value];
-  } catch {
-    return undefined;
-  }
-}
-
-function readLegacyMessageCacheValues(raw: string): unknown[] {
-  const text = raw.trim();
-  const whole = parseLegacyMessageCacheJson(text);
-  if (whole) {
-    return whole;
-  }
-  const values: unknown[] = [];
-  let jsonl = text;
-  if (text.startsWith("[")) {
-    for (const match of text.matchAll(/\](?=\s*\{\s*"key"\s*:)/g)) {
-      const arrayEnd = (match.index ?? -1) + 1;
-      const initial = parseLegacyMessageCacheJson(text.slice(0, arrayEnd));
-      if (initial) {
-        values.push(...initial);
-        jsonl = text.slice(arrayEnd);
-        break;
-      }
-    }
-  }
-  for (const line of jsonl.split("\n")) {
-    // Legacy append logs may end in a torn row; doctor imports valid rows.
-    values.push(...(parseLegacyMessageCacheJson(line) ?? []));
-  }
-  return values;
-}
-
-function listTelegramLegacyMessageCacheEntries(persistedPath: string) {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(persistedPath, "utf8");
-  } catch {
-    return [];
-  }
-  const entries = new Map<string, PersistedTelegramMessageCacheValue>();
-  for (const value of readLegacyMessageCacheValues(raw)) {
-    if (
-      !isRecord(value) ||
-      typeof value.key !== "string" ||
-      !value.key.trim() ||
-      !value.key.includes(":") ||
-      !isRecord(value.node)
-    ) {
-      continue;
-    }
-    const sourceMessage = value.node.sourceMessage;
-    if (!isTelegramMessageCacheSourceMessage(sourceMessage)) {
-      continue;
-    }
-    const { openclaw_prompt_context_projection: _projection, ...canonicalSourceMessage } =
-      sourceMessage as PersistedTelegramMessageCacheValue["sourceMessage"] & {
-        openclaw_prompt_context_projection?: unknown;
-      };
-    const parsedThreadId = parseTelegramMessageThreadId(value.node.threadId);
-    const threadId = parsedThreadId === undefined ? undefined : String(parsedThreadId);
-    const key = `${value.key.slice(0, value.key.lastIndexOf(":") + 1)}${sourceMessage.message_id}`;
-    entries.delete(key);
-    entries.set(key, {
-      version: TELEGRAM_MESSAGE_CACHE_PERSISTED_VERSION,
-      sourceMessage: canonicalSourceMessage as PersistedTelegramMessageCacheValue["sourceMessage"],
-      ...(threadId ? { threadId } : {}),
-    });
-    if (entries.size > TELEGRAM_MESSAGE_CACHE_PERSISTENT_MAX_MESSAGES) {
-      const oldest = entries.keys().next().value;
-      if (oldest !== undefined) {
-        entries.delete(oldest);
-      }
-    }
-  }
-  return Array.from(entries, ([key, value]) => ({ key, value }));
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function readLegacyMessageDispatchDedupeRecord(
   value: unknown,
 ): TelegramLegacyMessageDispatchDedupeRecord | undefined {
-  if (!isRecord(value) || typeof value.namespace !== "string") {
+  if (!isObjectRecord(value) || typeof value.namespace !== "string") {
     return undefined;
   }
-  if (!isRecord(value.entries)) {
+  if (!isObjectRecord(value.entries)) {
     return undefined;
   }
   const entries: Record<string, number> = {};
@@ -223,7 +153,8 @@ function readTelegramLegacyMessageDispatchBuckets(params: {
     // Lock rows persist as `<accountId>:lock` buckets without dedupe entries;
     // track them as removable so cleanup empties the retired namespace.
     const ownsRecord =
-      record.namespace === params.accountId || record.namespace.startsWith(`${params.accountId}:`);
+      record.namespace === params.accountId ||
+      record.namespace.startsWith(`${params.accountId}:`);
     if (!ownsRecord) {
       continue;
     }
@@ -314,7 +245,8 @@ function detectTelegramMessageCacheLegacyStateMigration(params: {
   const legacyStorePath = resolveLegacySessionStorePath(params);
   const legacyPersistedPath = resolveTelegramMessageCachePath(legacyStorePath);
   const scopeKey = resolveTelegramMessageCachePersistentScopeKey(runtimePersistedPath);
-  return uniqueStrings([runtimePersistedPath, legacyPersistedPath]).flatMap((persistedPath) => {
+  const sourcePaths = uniqueStrings([runtimePersistedPath, legacyPersistedPath]);
+  return sourcePaths.flatMap((persistedPath) => {
     if (!fileExists(persistedPath)) {
       return [];
     }
@@ -329,7 +261,12 @@ function detectTelegramMessageCacheLegacyStateMigration(params: {
       scopeKey,
       cleanupSource: "rename",
       preview: `- Telegram prompt-context message cache: ${persistedPath} → plugin state (${TELEGRAM_MESSAGE_CACHE_PERSISTENT_NAMESPACE})`,
-      readEntries: () => listTelegramLegacyMessageCacheEntries(persistedPath),
+      readEntries: () => {
+        return listTelegramLegacyMessageCacheEntries({
+          persistedPath,
+          maxMessages: TELEGRAM_MESSAGE_CACHE_PERSISTENT_MAX_MESSAGES,
+        });
+      },
     };
   });
 }
@@ -464,7 +401,6 @@ function detectTelegramSentMessageCacheLegacyStateMigration(params: {
       maxEntries: TELEGRAM_SENT_MESSAGE_CACHE_MAX_ENTRIES,
       scopeKey: "",
       cleanupSource: "rename",
-      cleanupWhenEmpty: true,
       preview: `- Telegram sent-message cache: ${source.sourcePath} → plugin state (${TELEGRAM_SENT_MESSAGE_CACHE_NAMESPACE})`,
       readEntries: () =>
         listTelegramLegacySentMessageCacheEntries({
@@ -542,7 +478,6 @@ function detectTelegramMessageDispatchLegacyStateMigration(params: {
         defaultTtlMs: TELEGRAM_MESSAGE_DISPATCH_DEDUPE_TTL_MS,
         scopeKey: "",
         cleanupSource: "rename",
-        cleanupWhenEmpty: true,
         preview: `- Telegram message dispatch dedupe: ${sourcePath} → plugin state (${namespace})`,
         shouldReplaceExistingEntry: ({ existingValue, incomingValue }) =>
           shouldReplacePersistentDedupeEntry({ existingValue, incomingValue }),
@@ -659,6 +594,19 @@ export async function detectTelegramLegacyStateMigrations(params: {
   stateDir?: string;
 }): Promise<ChannelLegacyStateMigrationPlan[]> {
   const plans: ChannelLegacyStateMigrationPlan[] = [];
+  const legacyPath = resolveChannelAllowFromPath("telegram", params.env);
+  if (fileExists(legacyPath)) {
+    const accountId = resolveDefaultTelegramAccountId(params.cfg);
+    const targetPath = resolveChannelAllowFromPath("telegram", params.env, accountId);
+    if (!fileExists(targetPath)) {
+      plans.push({
+        kind: "copy",
+        label: "Telegram pairing allowFrom",
+        sourcePath: legacyPath,
+        targetPath,
+      });
+    }
+  }
   plans.push(...detectTelegramUpdateOffsetLegacyStateMigration(params));
   plans.push(...detectTelegramBotInfoCacheLegacyStateMigration(params));
   plans.push(...detectTelegramStickerCacheLegacyStateMigration(params));

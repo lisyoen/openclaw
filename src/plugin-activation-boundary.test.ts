@@ -45,9 +45,11 @@ const loadPluginManifestRegistryForPluginRegistry = vi.hoisted(() =>
         channels: ["discord", "irc", "slack", "telegram"],
         providers: [],
         cliBackends: [],
-        packageChannel: {
-          id: "discord",
-          configuredState: { env: { anyOf: ["DISCORD_BOT_TOKEN"] } },
+        channelEnvVars: {
+          discord: ["DISCORD_BOT_TOKEN"],
+          irc: ["IRC_HOST", "IRC_NICK"],
+          slack: ["SLACK_BOT_TOKEN"],
+          telegram: ["TELEGRAM_BOT_TOKEN"],
         },
         modelIdNormalization: testModelIdNormalization,
         skills: [],

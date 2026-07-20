@@ -24,6 +24,9 @@ export function verifyTwilioProviderWebhook(params: {
 
   if (!result.ok) {
     console.warn(`[twilio] Webhook verification failed: ${result.reason}`);
+    if (result.verificationUrl) {
+      console.warn(`[twilio] Verification URL: ${result.verificationUrl}`);
+    }
   }
 
   return {

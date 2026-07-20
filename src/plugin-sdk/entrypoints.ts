@@ -4,11 +4,11 @@ import deprecatedPublicPluginSdkSubpathList from "../../scripts/lib/plugin-sdk-d
 import pluginSdkEntryList from "../../scripts/lib/plugin-sdk-entrypoints.json" with { type: "json" };
 import privateLocalOnlyPluginSdkSubpathList from "../../scripts/lib/plugin-sdk-private-local-only-subpaths.json" with { type: "json" };
 
-/** All declared SDK subpath entrypoints, including public and local-only surfaces. */
+/** All declared SDK entrypoints, including public, deprecated, and local-only subpaths. */
 export const pluginSdkEntrypoints = [...pluginSdkEntryList];
 
-/** All SDK subpaths; the removed package root is intentionally absent. */
-export const pluginSdkSubpaths = pluginSdkEntrypoints;
+/** SDK subpaths without the root `openclaw/plugin-sdk` barrel entry. */
+export const pluginSdkSubpaths = pluginSdkEntrypoints.filter((entry) => entry !== "index");
 
 const privateLocalOnlyPluginSdkSubpathSet = new Set<string>(
   privateLocalOnlyPluginSdkSubpathList.filter(
@@ -23,11 +23,13 @@ export const privateLocalOnlyPluginSdkEntrypoints = pluginSdkSubpaths.filter((en
 
 /** Entrypoints exported by the published package for third-party plugin imports. */
 export const publicPluginSdkEntrypoints = pluginSdkEntrypoints.filter(
-  (entry) => !privateLocalOnlyPluginSdkSubpathSet.has(entry),
+  (entry) => entry === "index" || !privateLocalOnlyPluginSdkSubpathSet.has(entry),
 );
 
-/** Published SDK subpaths. */
-export const publicPluginSdkSubpaths = publicPluginSdkEntrypoints;
+/** Published SDK subpaths, excluding the root barrel. */
+export const publicPluginSdkSubpaths = publicPluginSdkEntrypoints.filter(
+  (entry) => entry !== "index",
+);
 
 /** Public SDK subpaths that remain importable but are marked deprecated in docs/contracts. */
 export const deprecatedPublicPluginSdkEntrypoints = publicPluginSdkSubpaths.filter((entry) =>
@@ -44,30 +46,71 @@ export const deprecatedBarrelPluginSdkEntrypoints = pluginSdkSubpaths.filter((en
  *
  * Cross-owner extension imports are blocked by package contract guardrails.
  */
-export const reservedBundledPluginSdkEntrypoints = [] as const;
+export const reservedBundledPluginSdkEntrypoints = ["codex-mcp-projection"] as const;
 
 /**
  * Supported SDK facades backed by bundled plugins until generic contracts replace them.
  */
 export const supportedBundledFacadeSdkEntrypoints = [
   "discord",
+  "lmstudio",
+  "lmstudio-runtime",
   "matrix",
+  "mattermost",
+  "memory-core-engine-runtime",
+  "provider-zai-endpoint",
+  "qa-runner-runtime",
   "telegram-account",
+  "tts-runtime",
+  "zalouser",
 ] as const;
 
 /** Plugin-owned surfaces intentionally public and documented for third-party plugins. */
-export const publicPluginOwnedSdkEntrypoints = ["memory-core-host-engine-foundation"] as const;
+export const publicPluginOwnedSdkEntrypoints = [
+  "browser-config",
+  "image-generation-core",
+  "memory-core",
+  "memory-core-host-embedding-registry",
+  "memory-core-host-engine-embeddings",
+  "memory-core-host-engine-foundation",
+  "memory-core-host-engine-qmd",
+  "memory-core-host-engine-storage",
+  "memory-core-host-events",
+  "memory-core-host-multimodal",
+  "memory-core-host-query",
+  "memory-core-host-runtime-cli",
+  "memory-core-host-runtime-core",
+  "memory-core-host-runtime-files",
+  "memory-core-host-secret",
+  "memory-core-host-status",
+  "memory-host-core",
+  "memory-host-events",
+  "memory-host-files",
+  "memory-host-markdown",
+  "memory-host-search",
+  "memory-host-status",
+  "speech-core",
+  "telegram-command-config",
+  "video-generation-core",
+] as const;
 
 /** Map every SDK entrypoint name to its source file path inside the repo. */
 export function buildPluginSdkEntrySources(entries: readonly string[] = pluginSdkEntrypoints) {
   return Object.fromEntries(entries.map((entry) => [entry, `src/plugin-sdk/${entry}.ts`]));
 }
 
+/** List the public package specifiers that should resolve to plugin SDK entrypoints. */
+export function buildPluginSdkSpecifiers() {
+  return publicPluginSdkEntrypoints.map((entry) =>
+    entry === "index" ? "openclaw/plugin-sdk" : `openclaw/plugin-sdk/${entry}`,
+  );
+}
+
 /** Build the package.json exports map for public plugin SDK subpaths. */
 export function buildPluginSdkPackageExports() {
   return Object.fromEntries(
     publicPluginSdkEntrypoints.map((entry) => [
-      `./plugin-sdk/${entry}`,
+      entry === "index" ? "./plugin-sdk" : `./plugin-sdk/${entry}`,
       {
         types: `./dist/plugin-sdk/${entry}.d.ts`,
         default: `./dist/plugin-sdk/${entry}.js`,

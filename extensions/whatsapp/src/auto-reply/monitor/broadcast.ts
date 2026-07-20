@@ -9,26 +9,24 @@ import {
   normalizeAgentId,
 } from "openclaw/plugin-sdk/routing";
 import { resolveWhatsAppGroupSessionRoute } from "../../group-session-key.js";
-import { requireWhatsAppInboundAdmission } from "../../inbound/admission.js";
-import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
+import type { WebInboundMessage } from "../../inbound/types.js";
 import { formatError } from "../../session.js";
 import { whatsappInboundLog } from "../loggers.js";
 import type { GroupHistoryEntry } from "./inbound-context.js";
 
 function buildBroadcastRouteKeys(params: {
   cfg: OpenClawConfig;
-  msg: AdmittedWebInboundMessage;
+  msg: WebInboundMessage;
   route: ReturnType<typeof resolveAgentRoute>;
   peerId: string;
   agentId: string;
 }) {
-  const admission = requireWhatsAppInboundAdmission(params.msg);
   const sessionKey = buildAgentSessionKey({
     agentId: params.agentId,
     channel: "whatsapp",
     accountId: params.route.accountId,
     peer: {
-      kind: admission.conversation.kind,
+      kind: params.msg.chatType === "group" ? "group" : "direct",
       id: params.peerId,
     },
     dmScope: params.cfg.session?.dmScope,
@@ -51,13 +49,13 @@ function buildBroadcastRouteKeys(params: {
 
 export async function maybeBroadcastMessage(params: {
   cfg: OpenClawConfig;
-  msg: AdmittedWebInboundMessage;
+  msg: WebInboundMessage;
   peerId: string;
   route: ReturnType<typeof resolveAgentRoute>;
   groupHistoryKey: string;
   groupHistories: Map<string, GroupHistoryEntry[]>;
   processMessage: (
-    msg: AdmittedWebInboundMessage,
+    msg: WebInboundMessage,
     route: ReturnType<typeof resolveAgentRoute>,
     groupHistoryKey: string,
     opts?: {
@@ -85,11 +83,10 @@ export async function maybeBroadcastMessage(params: {
 
   const agentIds = params.cfg.agents?.list?.map((agent) => normalizeAgentId(agent.id));
   const hasKnownAgents = (agentIds?.length ?? 0) > 0;
-  const admission = requireWhatsAppInboundAdmission(params.msg);
-  const isGroupConversation = admission.conversation.kind === "group";
-  const groupHistorySnapshot = isGroupConversation
-    ? (params.groupHistories.get(params.groupHistoryKey) ?? [])
-    : undefined;
+  const groupHistorySnapshot =
+    params.msg.chatType === "group"
+      ? (params.groupHistories.get(params.groupHistoryKey) ?? [])
+      : undefined;
 
   const processForAgent = async (agentId: string): Promise<boolean> => {
     const normalizedAgentId = normalizeAgentId(agentId);
@@ -109,9 +106,10 @@ export async function maybeBroadcastMessage(params: {
       agentId: normalizedAgentId,
       ...routeKeys,
     };
-    const agentRoute = isGroupConversation
-      ? resolveWhatsAppGroupSessionRoute(baseAgentRoute)
-      : baseAgentRoute;
+    const agentRoute =
+      params.msg.chatType === "group"
+        ? resolveWhatsAppGroupSessionRoute(baseAgentRoute)
+        : baseAgentRoute;
 
     try {
       const opts: {
@@ -148,7 +146,7 @@ export async function maybeBroadcastMessage(params: {
     await Promise.allSettled(broadcastAgents.map(processForAgent));
   }
 
-  if (isGroupConversation) {
+  if (params.msg.chatType === "group") {
     params.groupHistories.set(params.groupHistoryKey, []);
   }
 

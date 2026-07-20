@@ -1,5 +1,8 @@
 // Zalo plugin module implements approval auth behavior.
-import { createChannelApprovalAuth } from "openclaw/plugin-sdk/approval-auth-runtime";
+import {
+  createResolvedApproverActionAuthAdapter,
+  resolveApprovalApprovers,
+} from "openclaw/plugin-sdk/approval-auth-runtime";
 import { resolveZaloAccount } from "./accounts.js";
 
 function normalizeZaloApproverId(value: string | number): string | undefined {
@@ -10,11 +13,14 @@ function normalizeZaloApproverId(value: string | number): string | undefined {
   return /^\d+$/.test(normalized) ? normalized : undefined;
 }
 
-export const zaloApprovalAuth = createChannelApprovalAuth({
+export const zaloApprovalAuth = createResolvedApproverActionAuthAdapter({
   channelLabel: "Zalo",
-  resolveInputs: ({ cfg, accountId }) => {
+  resolveApprovers: ({ cfg, accountId }) => {
     const account = resolveZaloAccount({ cfg, accountId }).config;
-    return { allowFrom: account.allowFrom };
+    return resolveApprovalApprovers({
+      allowFrom: account.allowFrom,
+      normalizeApprover: normalizeZaloApproverId,
+    });
   },
-  normalizeApprover: normalizeZaloApproverId,
-}).approvalAuth;
+  normalizeSenderId: (value) => normalizeZaloApproverId(value),
+});

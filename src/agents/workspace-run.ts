@@ -19,9 +19,8 @@ import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
 type WorkspaceFallbackReason = "missing" | "blank" | "invalid_type";
 type AgentIdSource = "explicit" | "session_key" | "default";
 
-export type ResolveRunWorkspaceResult = {
+type ResolveRunWorkspaceResult = {
   workspaceDir: string;
-  isCanonicalWorkspace: boolean;
   usedFallback: boolean;
   fallbackReason?: WorkspaceFallbackReason;
   agentId: string;
@@ -100,14 +99,8 @@ export function resolveRunWorkspaceDir(params: {
       if (sanitized !== trimmed) {
         logWarn("Control/format characters stripped from workspaceDir (OC-19 hardening).");
       }
-      const workspaceDir = resolveUserPath(sanitized, env);
-      const canonicalWorkspaceDir = resolveUserPath(
-        resolveAgentWorkspaceDir(params.config ?? {}, agentId, env),
-        env,
-      );
       return {
-        workspaceDir,
-        isCanonicalWorkspace: workspaceDir === canonicalWorkspaceDir,
+        workspaceDir: resolveUserPath(sanitized, env),
         usedFallback: false,
         agentId,
         agentIdSource,
@@ -124,7 +117,6 @@ export function resolveRunWorkspaceDir(params: {
   }
   return {
     workspaceDir: resolveUserPath(sanitizedFallback, env),
-    isCanonicalWorkspace: true,
     usedFallback: true,
     fallbackReason,
     agentId,

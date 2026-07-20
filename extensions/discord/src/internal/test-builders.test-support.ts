@@ -1,13 +1,10 @@
 // Discord plugin module implements test builders support behavior.
 import { ComponentType, InteractionType } from "discord-api-types/v10";
 import { vi, type Mock } from "vitest";
-import { Client } from "./client.js";
+import { Client, type ClientOptions } from "./client.js";
 import type { BaseCommand } from "./commands.js";
 import type { RawInteraction } from "./interactions.js";
-import type { RequestClient, RequestData } from "./rest.js";
-
-type ClientOptions = ConstructorParameters<typeof Client>[0];
-type RequestQuery = Parameters<RequestClient["get"]>[1];
+import type { QueuedRequest, RequestClient, RequestData } from "./rest.js";
 
 type RestMock = Partial<Record<"get" | "post" | "patch" | "put" | "delete", Mock>>;
 type RestMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
@@ -20,7 +17,7 @@ type FakeRestCall = {
   method: RestMethod;
   path: string;
   data?: RequestData;
-  query?: RequestQuery;
+  query?: QueuedRequest["query"];
 };
 
 type FakeRestClient = RequestClient & {
@@ -102,7 +99,7 @@ export function createFakeRestClient(responses: unknown[] = []): FakeRestClient 
     method: RestMethod,
     path: string,
     data?: RequestData,
-    query?: RequestQuery,
+    query?: QueuedRequest["query"],
   ) => {
     calls.push({ method, path, data, query });
     return queued.shift();

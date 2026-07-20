@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { withTimeout } from "../utils/with-timeout.js";
 import { CronService } from "./service.js";
 import { writeCronStoreSnapshot } from "./service.test-harness.js";
 
@@ -19,6 +18,22 @@ type IsolatedRunResult = {
   summary?: string;
   error?: string;
 };
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
 
 async function makeStorePath() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cron-"));
@@ -64,12 +79,12 @@ function createDeferredIsolatedRun() {
 
 function expectCronStatus(
   status: Awaited<ReturnType<CronService["status"]>>,
-  params: { jobs: number },
+  params: { storePath: string; jobs: number },
 ) {
   expect(status.enabled).toBe(true);
+  expect(status.storePath).toBe(params.storePath);
   expect(status.storage).toBe("sqlite");
   expect(status.sqlitePath).toContain("openclaw.sqlite");
-  expect(status.storePath).toBe(status.sqlitePath);
   expect(status.jobs).toBe(params.jobs);
   if (status.nextWakeAtMs !== null) {
     expect(status.nextWakeAtMs).toBeTypeOf("number");
@@ -129,7 +144,7 @@ describe("CronService read ops while job is running", () => {
       expect(isolatedRun.runIsolatedAgentJob).toHaveBeenCalledTimes(1);
 
       await expect(cron.list({ includeDisabled: true })).resolves.toHaveLength(1);
-      expectCronStatus(await cron.status(), { jobs: 1 });
+      expectCronStatus(await cron.status(), { storePath: store.storePath, jobs: 1 });
 
       const running = await cron.list({ includeDisabled: true });
       expect(running[0]?.state.runningAtMs).toBeTypeOf("number");
@@ -196,18 +211,12 @@ describe("CronService read ops while job is running", () => {
       await isolatedRun.runStarted;
 
       await expect(
-        withTimeout(cron.list({ includeDisabled: true }), 300, {
-          message: "cron.list during cron.run timed out",
-        }),
+        withTimeout(cron.list({ includeDisabled: true }), 300, "cron.list during cron.run"),
       ).resolves.toHaveLength(1);
-      expectCronStatus(
-        await withTimeout(cron.status(), 300, {
-          message: "cron.status during cron.run timed out",
-        }),
-        {
-          jobs: 1,
-        },
-      );
+      expectCronStatus(await withTimeout(cron.status(), 300, "cron.status during cron.run"), {
+        storePath: store.storePath,
+        jobs: 1,
+      });
 
       isolatedRun.completeRun({ status: "ok", summary: "manual done" });
       await expect(runPromise).resolves.toEqual({ ok: true, ran: true });
@@ -264,18 +273,12 @@ describe("CronService read ops while job is running", () => {
       expect(isolatedRun.runIsolatedAgentJob).not.toHaveBeenCalled();
 
       await expect(
-        withTimeout(cron.list({ includeDisabled: true }), 300, {
-          message: "cron.list during startup timed out",
-        }),
+        withTimeout(cron.list({ includeDisabled: true }), 300, "cron.list during startup"),
       ).resolves.toHaveLength(1);
-      expectCronStatus(
-        await withTimeout(cron.status(), 300, {
-          message: "cron.status during startup timed out",
-        }),
-        {
-          jobs: 1,
-        },
-      );
+      expectCronStatus(await withTimeout(cron.status(), 300, "cron.status during startup"), {
+        storePath: store.storePath,
+        jobs: 1,
+      });
 
       const jobs = await cron.list({ includeDisabled: true });
       expect(jobs[0]?.state.lastStatus).toBeUndefined();

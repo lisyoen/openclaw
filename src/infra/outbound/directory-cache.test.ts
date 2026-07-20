@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { DirectoryCache, buildDirectoryCacheKey } from "./directory-cache.js";
+import type { DirectoryCacheKey } from "./directory-cache.js";
 
 describe("buildDirectoryCacheKey", () => {
   it.each([
@@ -12,7 +13,7 @@ describe("buildDirectoryCacheKey", () => {
         kind: "channel",
         source: "cache",
       },
-      expected: "workspace:default:channel:cache:default:query:",
+      expected: "workspace:default:channel:cache:default",
     },
     {
       input: {
@@ -21,16 +22,15 @@ describe("buildDirectoryCacheKey", () => {
         kind: "user",
         source: "live",
         signature: "v2",
-        query: "alice",
       },
-      expected: "richchat:work:user:live:v2:query:alice",
+      expected: "richchat:work:user:live:v2",
     },
-  ] satisfies Array<{
-    input: Parameters<typeof buildDirectoryCacheKey>[0];
-    expected: string;
-  }>)("includes account and signature fallbacks for %j", ({ input, expected }) => {
-    expect(buildDirectoryCacheKey(input)).toBe(expected);
-  });
+  ] satisfies Array<{ input: DirectoryCacheKey; expected: string }>)(
+    "includes account and signature fallbacks for %j",
+    ({ input, expected }) => {
+      expect(buildDirectoryCacheKey(input)).toBe(expected);
+    },
+  );
 });
 
 describe("DirectoryCache", () => {

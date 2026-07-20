@@ -146,7 +146,7 @@ function normalizeRawCommandText(rawCommand?: unknown): string | null {
   return typeof rawCommand === "string" && rawCommand.trim().length > 0 ? rawCommand.trim() : null;
 }
 
-function validateSystemRunCommandConsistency(params: {
+export function validateSystemRunCommandConsistency(params: {
   argv: string[];
   rawCommand?: string | null;
   allowLegacyShellText?: boolean;
@@ -182,6 +182,14 @@ function validateSystemRunCommandConsistency(params: {
     commandText: display.commandText,
     previewText: display.previewText,
   };
+}
+
+/** Resolve system-run command fields with strict rawCommand matching. */
+export function resolveSystemRunCommand(params: {
+  command?: unknown;
+  rawCommand?: unknown;
+}): ResolvedSystemRunCommand {
+  return resolveSystemRunCommandWithMode(params, false);
 }
 
 /** Resolve request command fields while accepting the legacy shell-preview text. */

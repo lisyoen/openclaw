@@ -83,7 +83,7 @@ const MEDIA_URI_REGEX = /\bmedia:\/\/inbound\/([^\]\s/\\]+)/;
 /**
  * Result of detecting an image reference in text.
  */
-interface DetectedImageRef {
+export interface DetectedImageRef {
   /** The raw matched string from the prompt */
   raw: string;
   /** The type of reference */
@@ -120,7 +120,7 @@ function isOpenClawCliImageCachePath(filePath: string): boolean {
  * existing inline images and offloaded attachments follow `imageOrder`, then
  * explicit prompt path/media refs are appended after attachment-owned images.
  */
-function mergePromptAttachmentImages(params: {
+export function mergePromptAttachmentImages(params: {
   imageOrder?: PromptImageOrderEntry[];
   existingImages?: ImageContent[];
   offloadedImages?: Array<ImageContent | null>;
@@ -146,7 +146,9 @@ function mergePromptAttachmentImages(params: {
         promptImages.push(image);
       }
     }
-    promptImages.push(...existingImages.slice(inlineIndex));
+    while (inlineIndex < existingImages.length) {
+      promptImages.push(existingImages[inlineIndex++]);
+    }
     while (offloadedIndex < offloadedImages.length) {
       const image = offloadedImages[offloadedIndex++];
       if (image) {
@@ -249,13 +251,9 @@ function extractTrailingAttachmentMediaUris(prompt: string, count: number): stri
     uris.push(match[1]);
   }
   for (let left = 0, right = uris.length - 1; left < right; left += 1, right -= 1) {
-    const leftUri = uris.at(left);
-    const rightUri = uris.at(right);
-    if (leftUri === undefined || rightUri === undefined) {
-      break;
-    }
-    uris[left] = rightUri;
-    uris[right] = leftUri;
+    const uri = uris[left];
+    uris[left] = uris[right];
+    uris[right] = uri;
   }
   return uris;
 }
@@ -265,7 +263,7 @@ function extractTrailingAttachmentMediaUris(prompt: string, count: number): stri
  * actually typed into the prompt. Attachment refs are already represented by
  * existing/offloaded image content and should not be loaded a second time.
  */
-function splitPromptAndAttachmentRefs(params: {
+export function splitPromptAndAttachmentRefs(params: {
   prompt: string;
   refs: DetectedImageRef[];
   imageOrder?: PromptImageOrderEntry[];
@@ -376,9 +374,6 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
   let match: RegExpExecArray | null;
   while ((match = MEDIA_ATTACHED_PATTERN.exec(prompt)) !== null) {
     const content = match[1];
-    if (content === undefined) {
-      continue;
-    }
 
     // Skip "[media attached: N files]" header lines
     if (/^\d+\s+files?$/i.test(content.trim())) {
@@ -389,9 +384,8 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
     // This must be tested before the extension-based path regex because the
     // URI has no file extension suffix in its base form.
     const mediaUriMatch = content.match(MEDIA_URI_REGEX);
-    const mediaId = mediaUriMatch?.at(1);
-    if (mediaId && !mediaId.includes("\0")) {
-      const uri = `media://inbound/${mediaId}`;
+    if (mediaUriMatch && !mediaUriMatch[1].includes("\0")) {
+      const uri = `media://inbound/${mediaUriMatch[1]}`;
       const dedupeKey = normalizeRefForDedupe(uri);
       if (!seen.has(dedupeKey)) {
         seen.add(dedupeKey);
@@ -543,7 +537,7 @@ export async function loadImageFromRef(
 }
 
 /** Returns whether the resolved model advertises native image input support. */
-function modelSupportsImages(model: { input?: string[] }): boolean {
+export function modelSupportsImages(model: { input?: string[] }): boolean {
   return model.input?.includes("image") ?? false;
 }
 

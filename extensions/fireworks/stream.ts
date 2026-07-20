@@ -11,7 +11,9 @@ function isFireworksProviderId(providerId: string): boolean {
   return normalized === "fireworks" || normalized === "fireworks-ai";
 }
 
-function createFireworksKimiThinkingDisabledWrapper(baseStreamFn: StreamFn | undefined): StreamFn {
+export function createFireworksKimiThinkingDisabledWrapper(
+  baseStreamFn: StreamFn | undefined,
+): StreamFn {
   const underlying = baseStreamFn ?? streamSimple;
   return (model, context, options) =>
     streamWithPayloadPatch(underlying, model, context, options, (payloadObj) => {

@@ -11,7 +11,7 @@ type AccessStageResult =
       peerId: string;
       qualifiedTarget: string;
       fromAddress: string;
-      route: InboundContext["route"];
+      route: { sessionKey: string; accountId: string; agentId?: string };
       access: QQBotInboundAccess;
     }
   | { kind: "block"; context: InboundContext };

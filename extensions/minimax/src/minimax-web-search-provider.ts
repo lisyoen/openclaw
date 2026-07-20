@@ -1,4 +1,3 @@
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 // Minimax provider module implements model/runtime integration.
 import {
   createWebSearchProviderContractFields,
@@ -13,9 +12,14 @@ const MINIMAX_TOKEN_PLAN_ENV_VARS = [
 ] as const;
 const MINIMAX_WEB_SEARCH_ENV_VARS = [...MINIMAX_TOKEN_PLAN_ENV_VARS, "MINIMAX_API_KEY"] as const;
 
-const loadMiniMaxWebSearchRuntime = createLazyRuntimeModule(
-  () => import("./minimax-web-search-provider.runtime.js"),
-);
+type MiniMaxWebSearchRuntime = typeof import("./minimax-web-search-provider.runtime.js");
+
+let miniMaxWebSearchRuntimePromise: Promise<MiniMaxWebSearchRuntime> | undefined;
+
+function loadMiniMaxWebSearchRuntime(): Promise<MiniMaxWebSearchRuntime> {
+  miniMaxWebSearchRuntimePromise ??= import("./minimax-web-search-provider.runtime.js");
+  return miniMaxWebSearchRuntimePromise;
+}
 
 const MiniMaxSearchSchema = {
   type: "object",

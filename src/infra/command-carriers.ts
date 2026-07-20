@@ -213,7 +213,7 @@ function resolveEnvSplitPayload(
   return resolveEnvCarriedArgv(["env", ...carriedArgv], depth + 1) ?? carriedArgv;
 }
 
-type ParsedEnvInvocationPrelude = {
+export type ParsedEnvInvocationPrelude = {
   assignmentKeys: string[];
   commandIndex: number;
   splitArgv?: string[];
@@ -295,7 +295,7 @@ export function unwrapEnvInvocation(argv: string[]): string[] | null {
 }
 
 /** Resolve the command argv behind an `env` carrier, honoring bounded `env -S` recursion. */
-function resolveEnvCarriedArgv(argv: string[], depth = 0): string[] | null {
+export function resolveEnvCarriedArgv(argv: string[], depth = 0): string[] | null {
   const parsed = parseEnvInvocationPrelude(argv, depth);
   return parsed ? (parsed.splitArgv ?? argv.slice(parsed.commandIndex)) : null;
 }

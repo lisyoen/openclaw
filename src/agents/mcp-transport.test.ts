@@ -11,19 +11,13 @@ type StreamableTransportOptions = {
 const {
   lookupMock,
   runtimeFetchMock,
-  oauthBearerMock,
   streamableTransportConstructorMock,
   sseTransportConstructorMock,
 } = vi.hoisted(() => ({
   lookupMock: vi.fn(),
   runtimeFetchMock: vi.fn(),
-  oauthBearerMock: vi.fn((params: { fetchFn: unknown }) => params.fetchFn),
   streamableTransportConstructorMock: vi.fn(),
   sseTransportConstructorMock: vi.fn(),
-}));
-
-vi.mock("./mcp-oauth-fetch.js", () => ({
-  withMcpOAuthBearer: oauthBearerMock,
 }));
 
 vi.mock("node:dns/promises", () => ({
@@ -122,7 +116,6 @@ describe("resolveMcpTransport", () => {
     lookupMock.mockReset();
     lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
     runtimeFetchMock.mockReset();
-    oauthBearerMock.mockClear();
     streamableTransportConstructorMock.mockClear();
     sseTransportConstructorMock.mockClear();
   });
@@ -302,7 +295,7 @@ describe("resolveMcpTransport", () => {
     expect(runtimeFetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("routes native OAuth through the host fetch coordinator instead of the SDK provider", () => {
+  it("passes OAuth providers and TLS options into HTTP transports", () => {
     resolveMcpTransport("probe", {
       url: "https://mcp.example.com/mcp",
       transport: "streamable-http",
@@ -315,15 +308,9 @@ describe("resolveMcpTransport", () => {
     });
 
     const options = latestStreamableTransportOptions();
-    expect(options.authProvider).toBeUndefined();
+    expect(options.authProvider).toBeTypeOf("object");
     expect(options.fetch).toBeTypeOf("function");
     expect(options.requestInit).toBeUndefined();
-    expect(oauthBearerMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        serverName: "probe",
-        resourceUrl: "https://mcp.example.com/mcp",
-      }),
-    );
   });
 
   it("keeps OAuth runtime headers scoped to the MCP resource origin", async () => {
@@ -342,18 +329,8 @@ describe("resolveMcpTransport", () => {
     await options.fetch?.("https://mcp.example.com/mcp");
     await options.fetch?.("https://auth.example.com/token");
 
-    const oauthParams = oauthBearerMock.mock.calls.at(-1)?.[0] as
-      | { authFetchFn?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }
-      | undefined;
-    await oauthParams?.authFetchFn?.(
-      "https://mcp.example.com/.well-known/oauth-protected-resource",
-    );
-    await oauthParams?.authFetchFn?.("https://auth.example.com/token");
-
     expect(new Headers(runtimeFetchCall(0)?.[1]?.headers).get("x-tenant")).toBe("docs");
     expect(new Headers(runtimeFetchCall(1)?.[1]?.headers).get("x-tenant")).toBeNull();
-    expect(new Headers(runtimeFetchCall(2)?.[1]?.headers).get("x-tenant")).toBe("docs");
-    expect(new Headers(runtimeFetchCall(3)?.[1]?.headers).get("x-tenant")).toBeNull();
   });
 
   it("merges SSE event-source headers case-insensitively so auth is not duplicated", async () => {

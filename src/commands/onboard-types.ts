@@ -25,20 +25,9 @@ export type GatewayAuthChoice = "token" | "password";
 export type ResetScope = "config" | "config+creds+sessions" | "full";
 export type GatewayBind = "loopback" | "lan" | "auto" | "custom" | "tailnet";
 export type TailscaleMode = "off" | "serve" | "funnel";
-const NODE_MANAGER_CHOICES = ["npm", "pnpm", "bun"] as const;
-export type NodeManagerChoice = (typeof NODE_MANAGER_CHOICES)[number];
-const ONBOARD_FLOWS = ["quickstart", "advanced", "manual", "import"] as const;
-type OnboardFlow = (typeof ONBOARD_FLOWS)[number];
+export type NodeManagerChoice = "npm" | "pnpm" | "bun";
 export type ChannelChoice = ChannelId;
 export type { SecretInputMode } from "../plugins/provider-auth-types.js";
-
-export function isNodeManagerChoice(value: unknown): value is NodeManagerChoice {
-  return NODE_MANAGER_CHOICES.some((choice) => choice === value);
-}
-
-export function isOnboardFlow(value: unknown): value is OnboardFlow {
-  return ONBOARD_FLOWS.some((flow) => flow === value);
-}
 
 type OnboardDynamicProviderOptions = {
   /**
@@ -52,11 +41,7 @@ type OnboardDynamicProviderOptions = {
 export type OnboardOptions = OnboardDynamicProviderOptions & {
   mode?: OnboardMode;
   /** "manual" is an alias for "advanced". */
-  flow?: OnboardFlow;
-  /** Force the classic multi-step interactive wizard instead of guided setup. */
-  classic?: boolean;
-  /** Force the terminal hatch instead of the guided browser handoff. */
-  tui?: boolean;
+  flow?: "quickstart" | "advanced" | "manual" | "import";
   workspace?: string;
   nonInteractive?: boolean;
   /** Required for non-interactive setup; skips the interactive risk prompt when true. */
@@ -95,6 +80,8 @@ export type OnboardOptions = OnboardDynamicProviderOptions & {
   installDaemon?: boolean;
   daemonRuntime?: GatewayDaemonRuntime;
   skipChannels?: boolean;
+  /** @deprecated Legacy alias for `skipChannels`. */
+  skipProviders?: boolean;
   skipSkills?: boolean;
   skipBootstrap?: boolean;
   skipSearch?: boolean;

@@ -1,9 +1,17 @@
 // Defines proxy-related Zod schema fragments for config parsing.
-import { isHttpUrl } from "@openclaw/net-policy/url-protocol";
 import { z } from "zod";
 import { sensitive } from "./zod-schema.sensitive.js";
 
-const ProxyLoopbackModeSchema = z.enum(["gateway-only", "proxy", "block"]);
+function isHttpOrHttpsProxyUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export const ProxyLoopbackModeSchema = z.enum(["gateway-only", "proxy", "block"]);
 
 const ProxyTlsConfigSchema = z
   .object({
@@ -17,7 +25,7 @@ export const ProxyConfigSchema = z
     enabled: z.boolean().optional(),
     proxyUrl: z
       .url()
-      .refine(isHttpUrl, {
+      .refine(isHttpOrHttpsProxyUrl, {
         message: "proxyUrl must use http:// or https://",
       })
       .register(sensitive)

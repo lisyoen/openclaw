@@ -3,7 +3,6 @@ import crypto from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import zlib from "node:zlib";
-import { expectDefined } from "@openclaw/normalization-core";
 import type { SessionSystemPromptReport } from "../../config/sessions/types.js";
 import { resolvePreferredOpenClawTmpDir } from "../../infra/tmp-openclaw-dir.js";
 import { estimateTokensFromChars } from "../../utils/cjk-chars.js";
@@ -151,13 +150,13 @@ function layoutBinary<T extends { value: number }>(rawItems: T[], rect: Rect): P
     return [];
   }
   if (items.length === 1) {
-    return [{ item: expectDefined(items[0], "items entry at 0"), rect }];
+    return [{ item: items[0], rect }];
   }
   const total = totalValue(items);
   let splitIndex = 1;
   let splitSum = items[0]?.value ?? 0;
   for (let i = 1; i < items.length - 1; i += 1) {
-    const next = splitSum + expectDefined(items[i], "items entry at i").value;
+    const next = splitSum + items[i].value;
     if (Math.abs(total / 2 - next) > Math.abs(total / 2 - splitSum)) {
       break;
     }
@@ -235,9 +234,9 @@ class PngCanvas {
     const cursorY = Math.floor(y);
     for (const rawChar of text) {
       const char = rawChar.toUpperCase();
-      const glyph = expectDefined(FONT[char] ?? FONT[" "], "treemap font glyph");
+      const glyph = FONT[char] ?? FONT[" "];
       for (let row = 0; row < glyph.length; row += 1) {
-        const line = expectDefined(glyph[row], "treemap glyph row");
+        const line = glyph[row];
         for (let col = 0; col < line.length; col += 1) {
           if (line[col] !== "1") {
             continue;
@@ -335,11 +334,7 @@ function treemapGroup(params: { name: string; color: Rgba; leaves: TreemapLeaf[]
   return { ...params, value: totalValue(params.leaves) };
 }
 
-function buildGroups(params: {
-  report: SessionSystemPromptReport;
-  conversation: TreemapLeaf[];
-}): TreemapGroup[] {
-  const { report } = params;
+function buildGroups(report: SessionSystemPromptReport): TreemapGroup[] {
   const injectedTotal = report.injectedWorkspaceFiles.reduce(
     (sum, file) => sum + file.injectedChars,
     0,
@@ -350,11 +345,17 @@ function buildGroups(params: {
   const tools = report.tools.entries
     .map((tool) => ({ name: tool.name, value: tool.schemaChars ?? 0 }))
     .filter((tool) => tool.value > 0);
+  const currentTurnLeaves = report.currentTurn
+    ? [
+        { name: "Model prompt", value: report.currentTurn.promptChars },
+        { name: "Runtime context", value: report.currentTurn.runtimeContextChars },
+      ].filter((leaf) => leaf.value > 0)
+    : [];
   const groups = [
     treemapGroup({
-      name: "Conversation",
-      color: rgba(201, 82, 96),
-      leaves: params.conversation,
+      name: report.currentTurn?.kind === "room_event" ? "Room event" : "Current turn",
+      color: rgba(72, 135, 197),
+      leaves: currentTurnLeaves,
     }),
     treemapGroup({
       name: "Workspace files",
@@ -454,10 +455,8 @@ function drawLegend(canvas: PngCanvas, groups: TreemapGroup[], rect: Rect, total
 export async function renderContextTreemapPng(params: {
   report: SessionSystemPromptReport;
   session: ContextTreemapSessionStats;
-  conversation: TreemapLeaf[];
 }): Promise<{ path: string; trackedChars: number; caption: string }> {
-  const groups = buildGroups({ report: params.report, conversation: params.conversation });
-  const conversationChars = totalValue(params.conversation);
+  const groups = buildGroups(params.report);
   const trackedChars = totalValue(groups);
   const canvas = new PngCanvas();
   canvas.fill(rgba(238, 241, 245));
@@ -508,7 +507,6 @@ export async function renderContextTreemapPng(params: {
     "Context treemap",
     `Source: ${params.report.source}`,
     `Tracked: ${formatInt(trackedChars)} chars (~${formatInt(estimateTokensFromChars(trackedChars))} tok)`,
-    `Conversation: ${formatInt(conversationChars)} chars (~${formatInt(estimateTokensFromChars(conversationChars))} tok)`,
     params.session.cachedContextTokens == null
       ? "Actual cached context: unavailable"
       : `Actual cached context: ${formatInt(params.session.cachedContextTokens)} tok`,

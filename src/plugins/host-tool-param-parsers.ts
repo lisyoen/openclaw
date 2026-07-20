@@ -14,12 +14,12 @@ import {
  * rewrites params. Fields are optional and additive: a missing field means
  * derivation produced nothing usable, never that it failed loudly.
  */
-type HostToolDerivedParams = {
+export type HostToolDerivedParams = {
   /** Best-effort destination path hints the tool may read or write, when discoverable. */
   derivedPaths?: readonly string[];
 };
 
-type HostToolDerivationOptions = ApplyPatchPathExtractionOptions;
+export type HostToolDerivationOptions = ApplyPatchPathExtractionOptions;
 
 /**
  * Per-tool host-owned param derivers. Keep this map small and focused — every

@@ -66,16 +66,14 @@ enum CronSchedule: Codable, Equatable {
     case at(at: String)
     case every(everyMs: Int, anchorMs: Int?)
     case cron(expr: String, tz: String?)
-    case onExit(command: String, cwd: String?)
 
-    enum CodingKeys: String, CodingKey { case kind, at, atMs, everyMs, anchorMs, expr, tz, command, cwd }
+    enum CodingKeys: String, CodingKey { case kind, at, atMs, everyMs, anchorMs, expr, tz }
 
     var kind: String {
         switch self {
         case .at: "at"
         case .every: "every"
         case .cron: "cron"
-        case .onExit: "on-exit"
         }
     }
 
@@ -107,10 +105,6 @@ enum CronSchedule: Codable, Equatable {
             self = try .cron(
                 expr: container.decode(String.self, forKey: .expr),
                 tz: container.decodeIfPresent(String.self, forKey: .tz))
-        case "on-exit":
-            self = try .onExit(
-                command: container.decode(String.self, forKey: .command),
-                cwd: container.decodeIfPresent(String.self, forKey: .cwd))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .kind,
@@ -131,9 +125,6 @@ enum CronSchedule: Codable, Equatable {
         case let .cron(expr, tz):
             try container.encode(expr, forKey: .expr)
             try container.encodeIfPresent(tz, forKey: .tz)
-        case let .onExit(command, cwd):
-            try container.encode(command, forKey: .command)
-            try container.encodeIfPresent(cwd, forKey: .cwd)
         }
     }
 
@@ -418,4 +409,12 @@ struct CronRunLogEntry: Codable, Identifiable {
         guard let runAtMs else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(runAtMs) / 1000)
     }
+}
+
+struct CronListResponse: Codable {
+    let jobs: [CronJob]
+}
+
+struct CronRunsResponse: Codable {
+    let entries: [CronRunLogEntry]
 }

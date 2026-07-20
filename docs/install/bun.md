@@ -1,16 +1,16 @@
 ---
-summary: "Bun workflow for installs and package scripts; Node is required at runtime"
+summary: "Bun workflow (experimental): installs and gotchas vs pnpm"
 read_when:
-  - You want to install dependencies or run package scripts with Bun
+  - You want the fastest local dev loop (bun + watch)
   - You hit Bun install/patch/lifecycle script issues
-title: "Bun"
+title: "Bun (experimental)"
 ---
 
 <Warning>
-Bun cannot run the OpenClaw CLI or Gateway because it does not provide the required `node:sqlite` API. Install a supported Node version for all OpenClaw runtime commands.
+Bun is **not recommended for gateway runtime** (known issues with WhatsApp and Telegram). Use Node for production.
 </Warning>
 
-Bun remains usable as an optional dependency installer and package-script runner. The default package manager remains `pnpm`, which is fully supported and used by docs tooling. Bun cannot use `pnpm-lock.yaml` and ignores it.
+Bun is an optional local runtime for running TypeScript directly (`bun run ...`, `bun --watch ...`). The default package manager remains `pnpm`, which is fully supported and used by docs tooling. Bun cannot use `pnpm-lock.yaml` and will ignore it.
 
 ## Install
 
@@ -32,9 +32,6 @@ Bun remains usable as an optional dependency installer and package-script runner
     bun run build
     bun run vitest run
     ```
-
-    Commands that launch OpenClaw itself must still run through Node.
-
   </Step>
 </Steps>
 
@@ -42,10 +39,10 @@ Bun remains usable as an optional dependency installer and package-script runner
 
 Bun blocks dependency lifecycle scripts unless explicitly trusted. For this repo, the commonly blocked scripts are not required:
 
-- `baileys` `preinstall`: checks Node major >= 20 (OpenClaw requires Node 22.22.3+, 24.15+, or 25.9+, with Node 24 recommended)
-- `protobufjs` `postinstall`: emits warnings about incompatible version schemes (no build artifacts)
+- `baileys` `preinstall` -- checks Node major >= 20 (OpenClaw defaults to Node 24 and still supports Node 22 LTS, currently `22.19+`)
+- `protobufjs` `postinstall` -- emits warnings about incompatible version schemes (no build artifacts)
 
-If you hit a runtime issue that needs these scripts, trust them explicitly:
+If you hit a runtime issue that requires these scripts, trust them explicitly:
 
 ```sh
 bun pm trust baileys protobufjs
@@ -53,7 +50,7 @@ bun pm trust baileys protobufjs
 
 ## Caveats
 
-Some package scripts hardcode `pnpm` internally (for example `check:docs`, `ui:*`, `protocol:check`). Running them via `bun run` still shells out to `pnpm`, so just run those via `pnpm` directly.
+Some scripts still hardcode pnpm (for example `check:docs`, `ui:*`, `protocol:check`). Run those via pnpm for now.
 
 ## Related
 

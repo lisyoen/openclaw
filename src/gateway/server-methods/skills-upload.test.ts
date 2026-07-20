@@ -7,10 +7,6 @@ import path from "node:path";
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  closeOpenClawStateDatabaseForTest,
-  openOpenClawStateDatabase,
-} from "../../state/openclaw-state-db.js";
-import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
@@ -147,15 +143,6 @@ async function expectPathMissing(targetPath: string): Promise<void> {
   }
 }
 
-function skillUploadExists(stateDir: string, uploadId: string): boolean {
-  const { db } = openOpenClawStateDatabase({
-    env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
-  });
-  return Boolean(
-    db.prepare("SELECT 1 AS found FROM skill_uploads WHERE upload_id = ?").get(uploadId),
-  );
-}
-
 function expectError(result: CallResult, code: string, message: string): void {
   expect(result.error?.code).toBe(code);
   expect(result.error?.message).toBe(message);
@@ -246,7 +233,6 @@ describe("skill upload gateway handlers", () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    closeOpenClawStateDatabaseForTest();
     await Promise.all([
       ...tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
       ...testStates.splice(0).map((state) => state.cleanup()),
@@ -314,8 +300,7 @@ describe("skill upload gateway handlers", () => {
       fs.readFile(path.join(workspaceDir, "skills", "uploaded-demo", "SKILL.md"), "utf8"),
     ).resolves.toContain("Uploaded Demo");
     await expectPathMissing(path.join(workspaceDir, "skills", "archive-internal-name"));
-    expect(skillUploadExists(stateDir, uploadId)).toBe(false);
-    await expectPathMissing(path.join(stateDir, "tmp", "skill-uploads"));
+    await expectPathMissing(path.join(stateDir, "tmp", "skill-uploads", uploadId));
 
     const status = await call(handlers, "skills.status", {});
     expect(status.ok).toBe(true);
@@ -395,7 +380,7 @@ describe("skill upload gateway handlers", () => {
 
     expect(install.ok).toBe(false);
     expectError(install, "INVALID_REQUEST", "install sha256 does not match uploaded archive");
-    expect(skillUploadExists(stateDir, upload.uploadId)).toBe(false);
+    await expectPathMissing(path.join(stateDir, "tmp", "skill-uploads", upload.uploadId));
   });
 
   it("rejects expired committed uploads through skills.install", async () => {
@@ -404,9 +389,16 @@ describe("skill upload gateway handlers", () => {
       archive: await makeSkillArchive({}),
       slug: "expired-skill",
     });
-    openOpenClawStateDatabase({ env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } })
-      .db.prepare("UPDATE skill_uploads SET expires_at = ? WHERE upload_id = ?")
-      .run(Date.now() - 1, upload.uploadId);
+    const metadataPath = path.join(
+      stateDir,
+      "tmp",
+      "skill-uploads",
+      upload.uploadId,
+      "metadata.json",
+    );
+    const metadata = JSON.parse(await fs.readFile(metadataPath, "utf8")) as { expiresAt: number };
+    metadata.expiresAt = Date.now() - 1;
+    await fs.writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
 
     const install = await call(handlers, "skills.install", {
       source: "upload",
@@ -416,7 +408,7 @@ describe("skill upload gateway handlers", () => {
 
     expect(install.ok).toBe(false);
     expectError(install, "INVALID_REQUEST", "upload has expired");
-    expect(skillUploadExists(stateDir, upload.uploadId)).toBe(false);
+    await expectPathMissing(path.join(stateDir, "tmp", "skill-uploads", upload.uploadId));
   });
 
   it("rejects invalid slugs, missing SKILL.md, and archive traversal", async () => {
@@ -441,7 +433,7 @@ describe("skill upload gateway handlers", () => {
     expect(missingInstall.ok).toBe(false);
     expect(missingInstall.error?.code).toBe("INVALID_REQUEST");
     expect(missingInstall.error?.message).toContain("SKILL.md");
-    expect(skillUploadExists(stateDir, missingSkill.uploadId)).toBe(false);
+    await expectPathMissing(path.join(stateDir, "tmp", "skill-uploads", missingSkill.uploadId));
 
     const legacyMarker = await uploadArchive(handlers, {
       archive: await makeSkillArchive({
@@ -458,7 +450,7 @@ describe("skill upload gateway handlers", () => {
     expect(legacyMarkerInstall.ok).toBe(false);
     expect(legacyMarkerInstall.error?.code).toBe("INVALID_REQUEST");
     expect(legacyMarkerInstall.error?.message).toContain("SKILL.md");
-    expect(skillUploadExists(stateDir, legacyMarker.uploadId)).toBe(false);
+    await expectPathMissing(path.join(stateDir, "tmp", "skill-uploads", legacyMarker.uploadId));
 
     const traversal = await uploadArchive(handlers, {
       archive: await makeSkillArchive({ traversal: true }),
@@ -506,7 +498,7 @@ describe("skill upload gateway handlers", () => {
     expect(scanInput.origin?.type).toBe("upload");
     expect(scanInput.origin?.uploadId).toBe(upload.uploadId);
     expect(scanInput.skillName).toBe("scan-blocked");
-    expect(skillUploadExists(stateDir, upload.uploadId)).toBe(false);
+    await expectPathMissing(path.join(stateDir, "tmp", "skill-uploads", upload.uploadId));
   });
 
   it("preserves existing installs unless force was bound at begin", async () => {
@@ -543,7 +535,7 @@ describe("skill upload gateway handlers", () => {
     expect(blockedInstall.ok).toBe(false);
     expect(blockedInstall.error?.code).toBe("INVALID_REQUEST");
     expect(blockedInstall.error?.message).toContain("already exists");
-    expect(skillUploadExists(stateDir, blocked.uploadId)).toBe(false);
+    await expectPathMissing(path.join(stateDir, "tmp", "skill-uploads", blocked.uploadId));
 
     const forced = await uploadArchive(handlers, {
       archive: await makeSkillArchive({
@@ -610,6 +602,7 @@ describe("skill upload gateway handlers", () => {
     await expect(
       fs.readFile(path.join(workspaceDir, "skills", "rollback-demo", "SKILL.md"), "utf8"),
     ).resolves.toContain("first version");
-    expect(skillUploadExists(stateDir, forced.uploadId)).toBe(true);
+    const uploadStat = await fs.stat(path.join(stateDir, "tmp", "skill-uploads", forced.uploadId));
+    expect(uploadStat.isDirectory()).toBe(true);
   });
 });

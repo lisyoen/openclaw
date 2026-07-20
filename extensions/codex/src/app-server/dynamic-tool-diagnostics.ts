@@ -6,7 +6,6 @@ import type { CodexDynamicToolCallParams, CodexDynamicToolCallResponse } from ".
 
 type DynamicToolDiagnosticContext = {
   call: CodexDynamicToolCallParams;
-  agentId?: string | undefined;
   runId?: string | undefined;
   sessionId?: string | undefined;
   sessionKey?: string | undefined;
@@ -16,7 +15,6 @@ type DynamicToolDiagnosticContext = {
 export function emitDynamicToolStartedDiagnostic(params: DynamicToolDiagnosticContext): void {
   emitTrustedDiagnosticEvent({
     type: "tool.execution.started",
-    agentId: params.agentId,
     runId: params.runId,
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
@@ -29,12 +27,10 @@ export function emitDynamicToolStartedDiagnostic(params: DynamicToolDiagnosticCo
 export function emitDynamicToolErrorDiagnostic(
   params: DynamicToolDiagnosticContext & {
     durationMs: number;
-    terminalReason?: "failed" | "cancelled" | "timed_out";
   },
 ): void {
   emitTrustedDiagnosticEvent({
     type: "tool.execution.error",
-    agentId: params.agentId,
     runId: params.runId,
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
@@ -42,7 +38,6 @@ export function emitDynamicToolErrorDiagnostic(
     toolCallId: params.call.callId,
     durationMs: params.durationMs,
     errorCategory: "codex_dynamic_tool_error",
-    terminalReason: params.terminalReason ?? "failed",
   });
 }
 
@@ -58,7 +53,6 @@ export function emitDynamicToolTerminalDiagnostic(
   if (terminalType === "completed") {
     emitTrustedDiagnosticEvent({
       type: "tool.execution.completed",
-      agentId: params.agentId,
       runId: params.runId,
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
@@ -71,7 +65,6 @@ export function emitDynamicToolTerminalDiagnostic(
   if (terminalType === "blocked") {
     emitTrustedDiagnosticEvent({
       type: "tool.execution.blocked",
-      agentId: params.agentId,
       runId: params.runId,
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
@@ -82,8 +75,5 @@ export function emitDynamicToolTerminalDiagnostic(
     });
     return;
   }
-  emitDynamicToolErrorDiagnostic({
-    ...params,
-    terminalReason: params.response.diagnosticTerminalReason ?? "failed",
-  });
+  emitDynamicToolErrorDiagnostic(params);
 }

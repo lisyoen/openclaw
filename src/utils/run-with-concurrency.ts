@@ -1,5 +1,3 @@
-import pLimit from "p-limit";
-
 /** Controls whether the worker pool keeps scheduling after a task failure. */
 export type ConcurrencyErrorMode = "continue" | "stop";
 
@@ -35,31 +33,39 @@ export async function runTasksWithConcurrency<T>(
     return { results: [], firstError: undefined, hasError: false };
   }
 
-  const resolvedLimit = Number.isFinite(limit)
-    ? Math.max(1, Math.min(Math.floor(limit), tasks.length))
-    : tasks.length;
+  const resolvedLimit = Math.max(1, Math.min(limit, tasks.length));
   const results: T[] = Array.from({ length: tasks.length });
+  let next = 0;
   let firstError: unknown = undefined;
   let hasError = false;
-  const limiter = pLimit(resolvedLimit);
 
-  const runs = tasks.map((task, index) =>
-    limiter(async () => {
+  const workers = Array.from({ length: resolvedLimit }, async () => {
+    while (true) {
       if (errorMode === "stop" && hasError) {
         return;
       }
+      // Synchronous cursor adoption is the whole scheduling lock: each worker
+      // claims one stable index before awaiting task work.
+      const index = next;
+      next += 1;
+      if (index >= tasks.length) {
+        return;
+      }
       try {
-        results[index] = await task();
+        results[index] = await tasks[index]();
       } catch (error) {
         if (!hasError) {
           firstError = error;
           hasError = true;
         }
         onTaskError?.(error, index);
+        if (errorMode === "stop") {
+          return;
+        }
       }
-    }),
-  );
+    }
+  });
 
-  await Promise.allSettled(runs);
+  await Promise.allSettled(workers);
   return { results, firstError, hasError };
 }

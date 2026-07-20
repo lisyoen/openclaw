@@ -4,8 +4,6 @@ import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/channel-contrac
 import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk/channel-send-result";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
-import { readResponseTextLimited } from "openclaw/plugin-sdk/provider-http";
 import { monitorTlonProvider } from "./monitor/index.js";
 import { tlonSetupWizard } from "./setup-surface.js";
 import {
@@ -68,7 +66,7 @@ async function createHttpPokeApi(params: {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
-            Cookie: expectDefined(cookie.split(";").at(0), "cookie first segment"),
+            Cookie: cookie.split(";")[0],
           },
           body: JSON.stringify([pokeData]),
         },
@@ -78,7 +76,7 @@ async function createHttpPokeApi(params: {
 
       try {
         if (!response.ok && response.status !== 204) {
-          const errorText = await readResponseTextLimited(response, 16 * 1024);
+          const errorText = await response.text();
           throw new Error(`Poke failed: ${response.status} - ${errorText}`);
         }
 
@@ -233,11 +231,6 @@ export async function probeTlonAccount(account: ConfiguredTlonAccount) {
       }
       return { ok: true };
     } finally {
-      // Guard release does not settle unread response streams; cancel first so
-      // the probe cannot leave its pinned connection open.
-      if (!response.bodyUsed) {
-        await response.body?.cancel().catch(() => undefined);
-      }
       await release();
     }
   } catch (error) {

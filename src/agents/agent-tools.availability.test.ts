@@ -31,7 +31,6 @@ describe("tool availability", () => {
     expect(toolNames).toContain("cron");
     expect(toolNames).toContain("gateway");
     expect(toolNames).toContain("nodes");
-    expect(toolNames).toContain("openclaw");
   });
 
   it("keeps canvas available by current trust model", () => {

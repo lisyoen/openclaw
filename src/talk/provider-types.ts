@@ -67,11 +67,9 @@ export type RealtimeVoiceBridgeEvent = {
   responseId?: string;
 };
 
-export type RealtimeVoiceAudioClearReason = "barge-in";
-
 export type RealtimeVoiceBridgeCallbacks = {
   onAudio: (audio: Buffer) => void;
-  onClearAudio: (reason?: RealtimeVoiceAudioClearReason) => void;
+  onClearAudio: () => void;
   onMark?: (markName: string) => void;
   onTranscript?: (role: RealtimeVoiceRole, text: string, isFinal: boolean) => void;
   onEvent?: (event: RealtimeVoiceBridgeEvent) => void;
@@ -89,8 +87,6 @@ export type RealtimeVoiceProviderCapabilities = {
   outputAudioFormats: RealtimeVoiceAudioFormat[];
   supportsBrowserSession?: boolean;
   supportsBargeIn?: boolean;
-  /** True when provider VAD reports confirmed interruptions through onClearAudio("barge-in"). */
-  handlesInputAudioBargeIn?: boolean;
   supportsToolCalls?: boolean;
   supportsVideoFrames?: boolean;
   supportsSessionResumption?: boolean;
@@ -111,7 +107,6 @@ export type RealtimeVoiceBridgeCreateRequest = RealtimeVoiceBridgeCallbacks & {
   providerConfig: RealtimeVoiceProviderConfig;
   audioFormat?: RealtimeVoiceAudioFormat;
   instructions?: string;
-  language?: string;
   autoRespondToAudio?: boolean;
   interruptResponseOnInputAudio?: boolean;
   tools?: RealtimeVoiceTool[];
@@ -137,7 +132,7 @@ export type RealtimeVoiceBrowserAudioContract = {
   outputSampleRateHz: number;
 };
 
-type RealtimeVoiceBrowserWebRtcSdpSession = {
+export type RealtimeVoiceBrowserWebRtcSdpSession = {
   provider: RealtimeVoiceProviderId;
   transport: "webrtc";
   clientSecret: string;
@@ -148,7 +143,7 @@ type RealtimeVoiceBrowserWebRtcSdpSession = {
   expiresAt?: number;
 };
 
-type RealtimeVoiceBrowserJsonPcmWebSocketSession = {
+export type RealtimeVoiceBrowserJsonPcmWebSocketSession = {
   provider: RealtimeVoiceProviderId;
   transport: "provider-websocket";
   protocol: string;
@@ -161,7 +156,7 @@ type RealtimeVoiceBrowserJsonPcmWebSocketSession = {
   expiresAt?: number;
 };
 
-type RealtimeVoiceBrowserGatewayRelaySession = {
+export type RealtimeVoiceBrowserGatewayRelaySession = {
   provider: RealtimeVoiceProviderId;
   transport: "gateway-relay";
   relaySessionId: string;
@@ -171,7 +166,7 @@ type RealtimeVoiceBrowserGatewayRelaySession = {
   expiresAt?: number;
 };
 
-type RealtimeVoiceBrowserManagedRoomSession = {
+export type RealtimeVoiceBrowserManagedRoomSession = {
   provider: RealtimeVoiceProviderId;
   transport: "managed-room";
   roomUrl: string;
@@ -189,24 +184,14 @@ export type RealtimeVoiceBrowserSession =
 
 export type RealtimeVoiceBridge = {
   supportsToolResultContinuation?: boolean;
-  /** False when the provider cannot accept a tool result without starting a response. */
-  supportsToolResultSuppression?: boolean;
   connect(): Promise<void>;
   sendAudio(audio: Buffer): void;
   setMediaTimestamp(ts: number): void;
   sendUserMessage?(text: string): void;
   triggerGreeting?(instructions?: string): void;
   handleBargeIn?(options?: RealtimeVoiceBargeInOptions): void;
-  /**
-   * Returns void when submission completes synchronously, or a Promise that resolves at the
-   * asynchronous completion boundary exposed by the provider and rejects on submission failure.
-   */
-  submitToolResult(
-    callId: string,
-    result: unknown,
-    options?: RealtimeVoiceToolResultOptions,
-  ): void | Promise<void>;
-  acknowledgeMark(markName?: string): void;
+  submitToolResult(callId: string, result: unknown, options?: RealtimeVoiceToolResultOptions): void;
+  acknowledgeMark(): void;
   close(): void;
   isConnected(): boolean;
 };

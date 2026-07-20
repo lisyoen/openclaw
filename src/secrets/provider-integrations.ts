@@ -25,7 +25,7 @@ export type SecretProviderIntegrationPreset = {
 };
 
 /** Result of materializing a plugin integration into a manual exec provider config. */
-type SecretProviderIntegrationResolution =
+export type SecretProviderIntegrationResolution =
   | {
       ok: true;
       providerConfig: ManualExecSecretProviderConfig;

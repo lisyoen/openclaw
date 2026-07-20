@@ -1,7 +1,5 @@
 // Live tool replay repair tests validate repaired historical transcripts across
 // selected real model providers.
-
-import { expectDefined } from "@openclaw/normalization-core";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import type { Context, Model } from "openclaw/plugin-sdk/llm";
@@ -26,7 +24,7 @@ import { transformTransportMessages } from "./transport-message-transform.js";
 
 const LIVE = isLiveTestEnabled();
 const REQUIRE_PROFILE_KEYS = isLiveProfileKeyModeEnabled();
-const DEFAULT_TARGET_MODEL_REFS = "openai/gpt-5.6-luna,google/gemini-3-flash-preview";
+const DEFAULT_TARGET_MODEL_REFS = "openai/gpt-5.5,google/gemini-3-flash-preview";
 const TARGET_MODEL_REFS = parseTargetModelRefs(
   process.env.OPENCLAW_LIVE_TOOL_REPLAY_REPAIR_MODELS ?? DEFAULT_TARGET_MODEL_REFS,
 );
@@ -37,34 +35,6 @@ type TargetModelRef = {
   provider: string;
   modelId: string;
 };
-
-function createDirectTargetModel(target: TargetModelRef): Model | null {
-  const common = {
-    id: target.modelId,
-    name: target.modelId,
-    provider: target.provider,
-    reasoning: true,
-    input: ["text"] as Model["input"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200_000,
-    maxTokens: 8_192,
-  };
-  if (target.provider === "openai") {
-    return {
-      ...common,
-      api: "openai-responses",
-      baseUrl: "https://api.openai.com/v1",
-    };
-  }
-  if (target.provider === "anthropic") {
-    return {
-      ...common,
-      api: "anthropic-messages",
-      baseUrl: "https://api.anthropic.com",
-    };
-  }
-  return null;
-}
 
 function parseTargetModelRefs(raw: string | undefined): TargetModelRef[] {
   const refs: TargetModelRef[] = [];
@@ -132,21 +102,6 @@ function buildReplayMessages(model: Model): AgentMessage[] {
         };
 
   return [
-    {
-      role: "assistant",
-      provider: source.provider,
-      api: source.api,
-      model: source.model,
-      stopReason: "length",
-      timestamp: now - 1,
-      content: [
-        {
-          type: "thinking",
-          thinking: "partial hidden reasoning",
-          thinkingSignature: "partial-signature",
-        },
-      ],
-    },
     {
       role: "user",
       content: "Use noop.",
@@ -250,9 +205,7 @@ describeLive("tool replay repair live", () => {
         const agentDir = resolveDefaultAgentDir(cfg);
         const authStorage = discoverAuthStorage(agentDir);
         const modelRegistry = discoverModels(authStorage, agentDir);
-        const model =
-          (modelRegistry.find(target.provider, target.modelId) as Model | null) ??
-          createDirectTargetModel(target);
+        const model = modelRegistry.find(target.provider, target.modelId) as Model | null;
 
         if (!model) {
           logProgress(`[tool-replay-repair] model missing from registry: ${target.ref}`);
@@ -302,7 +255,7 @@ describeLive("tool replay repair live", () => {
           "toolResult",
           "user",
         ]);
-        const assistantMessage = expectDefined(sanitized[1], "sanitized[1] test invariant");
+        const assistantMessage = sanitized[1];
         expect(assistantMessage?.role).toBe("assistant");
         expect(
           sanitized.slice(2, 5).map((message) => (message as { toolCallId?: string }).toolCallId),
@@ -363,9 +316,7 @@ describeLive("tool replay repair live", () => {
         const agentDir = resolveDefaultAgentDir(cfg);
         const authStorage = discoverAuthStorage(agentDir);
         const modelRegistry = discoverModels(authStorage, agentDir);
-        const model =
-          (modelRegistry.find(target.provider, target.modelId) as Model | null) ??
-          createDirectTargetModel(target);
+        const model = modelRegistry.find(target.provider, target.modelId) as Model | null;
 
         if (!model) {
           logProgress(`[tool-replay-repair] model missing from registry: ${target.ref}`);

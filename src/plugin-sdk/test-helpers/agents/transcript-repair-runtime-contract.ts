@@ -2,8 +2,7 @@
 import type { AgentMessage } from "../../../agents/runtime/index.js";
 
 export const QUEUED_USER_MESSAGE_MARKER =
-  "[Queued user message from a previous active turn; preserved as context only. " +
-  "Continue with the active prompt below.]";
+  "[Queued user message that arrived while the previous turn was still active]";
 
 export function textOrphanLeaf(text = "older active-turn message"): { content: string } {
   return { content: text };

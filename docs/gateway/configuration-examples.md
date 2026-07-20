@@ -137,7 +137,7 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
         enabled: true,
         maxBytes: 20971520,
         models: [
-          { provider: "openai", model: "gpt-4o-transcribe" },
+          { provider: "openai", model: "gpt-4o-mini-transcribe" },
           // Optional CLI fallback (Whisper binary):
           // { type: "cli", command: "whisper", args: ["--model", "base", "{{MediaPath}}"] }
         ],
@@ -164,7 +164,7 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
       discord: { mode: "idle", idleMinutes: 10080 },
     },
     resetTriggers: ["/new", "/reset"],
-    store: "~/.openclaw/agents/main/sessions/sessions.json",
+    store: "~/.openclaw/agents/default/sessions/sessions.json",
     maintenance: {
       mode: "warn",
       pruneAfter: "30d",
@@ -173,6 +173,7 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
       maxDiskBytes: "500mb", // optional
       highWaterBytes: "400mb", // optional (defaults to 80% of maxDiskBytes)
     },
+    typingIntervalSeconds: 5,
     sendPolicy: {
       default: "allow",
       rules: [{ action: "deny", match: { channel: "discord", chatType: "group" } }],
@@ -207,8 +208,8 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
           slug: "friends-of-openclaw",
           requireMention: false,
           channels: {
-            general: { enabled: true },
-            help: { enabled: true, requireMention: true },
+            general: { allow: true },
+            help: { allow: true, requireMention: true },
           },
         },
       },
@@ -219,7 +220,7 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
       botToken: "xoxb-REPLACE_ME",
       appToken: "xapp-REPLACE_ME",
       channels: {
-        "#general": { enabled: true, requireMention: true },
+        "#general": { allow: true, requireMention: true },
       },
       dm: { enabled: true, allowFrom: ["U123"] },
       slashCommand: {
@@ -382,8 +383,13 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
   // Cron jobs
   cron: {
     enabled: true,
-    store: "~/.openclaw/cron/jobs.json",
+    store: "~/.openclaw/cron/cron.json",
+    maxConcurrentRuns: 8, // default; cron dispatch + isolated cron agent-turn execution
     sessionRetention: "24h",
+    runLog: {
+      maxBytes: "2mb",
+      keepLines: 2000,
+    },
   },
 
   // Webhooks
@@ -441,7 +447,7 @@ Save to `~/.openclaw/openclaw.json` and you can DM the bot from that number.
       allowTailscale: true,
     },
     tailscale: { mode: "serve", resetOnExit: false },
-    remote: { url: "ws://gateway-host.ts.net:18789", token: "remote-token" },
+    remote: { url: "ws://gateway.tailnet:18789", token: "remote-token" },
     reload: { mode: "hybrid", debounceMs: 300 },
   },
 
@@ -582,7 +588,7 @@ If more than one person can DM your bot (multiple entries in `allowFrom`, pairin
 }
 ```
 
-For Discord/Google Chat/IRC/Mattermost/Microsoft Teams/Slack, sender authorization is ID-first by default.
+For Discord/Slack/Google Chat/Microsoft Teams/Mattermost/IRC, sender authorization is ID-first by default.
 Only enable direct mutable name/email/nick matching with each channel's `dangerouslyAllowNameMatching: true` if you explicitly accept that risk.
 
 ### Anthropic API key + MiniMax fallback
@@ -645,8 +651,8 @@ Only enable direct mutable name/email/nick matching with each channel's `dangero
       enabled: true,
       botToken: "xoxb-...",
       channels: {
-        "#engineering": { enabled: true, requireMention: true },
-        "#general": { enabled: true, requireMention: true },
+        "#engineering": { allow: true, requireMention: true },
+        "#general": { allow: true, requireMention: true },
       },
     },
   },

@@ -72,8 +72,6 @@ export async function planAllModelListSources(params: {
   enableCascade?: boolean;
   providerFilter?: string;
   cfg: OpenClawConfig;
-  agentId?: string;
-  agentDir?: string;
   metadataSnapshot?: PluginMetadataSnapshot;
   dependencies?: Partial<ModelListSourcePlanDependencies>;
 }): Promise<ModelListSourcePlan> {
@@ -130,8 +128,6 @@ export async function planAllModelListSources(params: {
 
   const hasProviderRuntimeCatalog = await hasProviderRuntimeCatalogForFilter({
     cfg: params.cfg,
-    ...(params.agentId ? { agentId: params.agentId } : {}),
-    ...(params.agentDir ? { agentDir: params.agentDir } : {}),
     providerFilter: params.providerFilter,
     metadataSnapshot: params.metadataSnapshot,
   });
@@ -176,8 +172,6 @@ export async function planAllModelListSources(params: {
 
   const hasProviderStaticCatalog = await hasProviderStaticCatalogForFilter({
     cfg: params.cfg,
-    ...(params.agentId ? { agentId: params.agentId } : {}),
-    ...(params.agentDir ? { agentDir: params.agentDir } : {}),
     providerFilter: params.providerFilter,
     metadataSnapshot: params.metadataSnapshot,
   });

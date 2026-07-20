@@ -8,6 +8,7 @@ import {
   applyXiaomiConfig,
   applyXiaomiProviderConfig,
   applyXiaomiTokenPlanConfig,
+  applyXiaomiTokenPlanProviderConfig,
 } from "./onboard.js";
 import { buildXiaomiProvider, buildXiaomiTokenPlanProvider } from "./provider-catalog.js";
 
@@ -16,12 +17,16 @@ describe("xiaomi onboard", () => {
     const cfg = applyXiaomiConfig({});
     const provider = cfg.models?.providers?.xiaomi;
     expect(provider).toEqual(buildXiaomiProvider());
-    expect(provider?.models.map((m) => m.id)).toEqual(["mimo-v2.5", "mimo-v2.5-pro"]);
-    expect(cfg.agents?.defaults?.models?.["xiaomi/mimo-v2.5"]).toEqual({ alias: "Xiaomi" });
-    expect(cfg.agents?.defaults?.model).toEqual({ primary: "xiaomi/mimo-v2.5" });
+    expect(provider?.models.map((m) => m.id)).toEqual([
+      "mimo-v2-flash",
+      "mimo-v2-pro",
+      "mimo-v2-omni",
+    ]);
+    expect(cfg.agents?.defaults?.models?.["xiaomi/mimo-v2-flash"]).toEqual({ alias: "Xiaomi" });
+    expect(cfg.agents?.defaults?.model).toEqual({ primary: "xiaomi/mimo-v2-flash" });
     expectProviderOnboardPrimaryModel({
       applyConfig: applyXiaomiConfig,
-      modelRef: "xiaomi/mimo-v2.5",
+      modelRef: "xiaomi/mimo-v2-flash",
     });
   });
 
@@ -37,8 +42,9 @@ describe("xiaomi onboard", () => {
     });
     expect(provider?.models.map((m) => m.id)).toEqual([
       "custom-model",
-      "mimo-v2.5",
-      "mimo-v2.5-pro",
+      "mimo-v2-flash",
+      "mimo-v2-pro",
+      "mimo-v2-omni",
     ]);
   });
 
@@ -62,7 +68,7 @@ describe("xiaomi onboard", () => {
 
   it("merges Xiaomi Token Plan models and rewrites the selected regional base URL", () => {
     const provider = expectProviderOnboardMergedLegacyConfig({
-      applyProviderConfig: (config) => applyXiaomiTokenPlanConfig(config, "sgp"),
+      applyProviderConfig: (config) => applyXiaomiTokenPlanProviderConfig(config, "sgp"),
       providerId: "xiaomi-token-plan",
       providerApi: "openai-completions",
       baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",

@@ -1,7 +1,12 @@
 // Kimi Coding tests cover onboard plugin behavior.
 import { resolveAgentModelPrimaryValue } from "openclaw/plugin-sdk/provider-onboard";
 import { describe, expect, it } from "vitest";
-import { applyKimiCodeConfig, KIMI_CODING_MODEL_REF, KIMI_MODEL_REF } from "./onboard.js";
+import {
+  applyKimiCodeConfig,
+  applyKimiCodeProviderConfig,
+  KIMI_CODING_MODEL_REF,
+  KIMI_MODEL_REF,
+} from "./onboard.js";
 
 describe("kimi coding onboard", () => {
   it("keeps the historical Kimi model ref alias pointed at the coding default", () => {
@@ -10,7 +15,7 @@ describe("kimi coding onboard", () => {
   });
 
   it("adds the Kimi coding provider defaults", () => {
-    const cfg = applyKimiCodeConfig({});
+    const cfg = applyKimiCodeProviderConfig({});
     const provider = cfg.models?.providers?.kimi;
 
     expect(provider).toEqual({

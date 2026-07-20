@@ -16,8 +16,8 @@ Adds video generation provider support.
 
 ## Surface
 
-contracts: `videoGenerationProviders`
+contracts: videoGenerationProviders
 
 ## Related docs
 
-- [Runway](/providers/runway)
+- [runway](/providers/runway)

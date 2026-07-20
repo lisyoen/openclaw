@@ -4,9 +4,6 @@
  * output, cache, reasoning, and total token accounting fields.
  */
 import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
-import type { Usage } from "../llm/types.js";
-
-export type ContextUsage = NonNullable<Usage["contextUsage"]>;
 
 /** Provider/SDK usage payload variants accepted by usage normalization. */
 export type UsageLike = {
@@ -14,7 +11,6 @@ export type UsageLike = {
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
-  contextUsage?: ContextUsage;
   total?: number;
   // Common alternates across providers/SDKs.
   inputTokens?: number;
@@ -49,8 +45,6 @@ export type UsageLike = {
     prompt_n?: number;
     predicted_n?: number;
   };
-  // Optional cost metadata carried through transcripts for downstream cost accounting.
-  cost?: Partial<Usage["cost"]>;
 };
 
 /** Normalized token counts used by runtime accounting. */
@@ -59,7 +53,6 @@ export type NormalizedUsage = {
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
-  contextUsage?: ContextUsage;
   reasoningTokens?: number;
   total?: number;
 };
@@ -74,7 +67,20 @@ export type OpenAiChatCompletionsUsage = {
 };
 
 /** Assistant usage snapshot with token counts and computed cost buckets. */
-export type AssistantUsageSnapshot = Usage;
+export type AssistantUsageSnapshot = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+};
 
 /** Build a zeroed assistant usage snapshot. */
 export function makeZeroUsageSnapshot(): AssistantUsageSnapshot {
@@ -99,19 +105,14 @@ export function hasNonzeroUsage(usage?: NormalizedUsage | null): usage is Normal
   if (!usage) {
     return false;
   }
-  return (
-    [
-      usage.input,
-      usage.output,
-      usage.cacheRead,
-      usage.cacheWrite,
-      usage.contextUsage?.state === "available" ? usage.contextUsage.promptTokens : undefined,
-      usage.contextUsage?.state === "available" ? usage.contextUsage.totalTokens : undefined,
-      usage.reasoningTokens,
-      usage.total,
-    ].some((v) => typeof v === "number" && Number.isFinite(v) && v > 0) ||
-    usage.contextUsage?.state === "unavailable"
-  );
+  return [
+    usage.input,
+    usage.output,
+    usage.cacheRead,
+    usage.cacheWrite,
+    usage.reasoningTokens,
+    usage.total,
+  ].some((v) => typeof v === "number" && Number.isFinite(v) && v > 0);
 }
 
 const normalizeTokenCount = (value: unknown): number | undefined => {
@@ -177,26 +178,6 @@ export function normalizeUsage(raw?: UsageLike | null): NormalizedUsage | undefi
   const cacheWrite = normalizeTokenCount(
     raw.cacheWrite ?? raw.cache_write ?? raw.cache_creation_input_tokens,
   );
-  const contextPromptTokens =
-    raw.contextUsage?.state === "available"
-      ? normalizeTokenCount(raw.contextUsage.promptTokens)
-      : undefined;
-  const contextTotalTokens =
-    raw.contextUsage?.state === "available"
-      ? normalizeTokenCount(raw.contextUsage.totalTokens)
-      : undefined;
-  const contextUsage =
-    raw.contextUsage?.state === "unavailable"
-      ? ({ state: "unavailable" } as const)
-      : contextPromptTokens !== undefined &&
-          contextTotalTokens !== undefined &&
-          contextTotalTokens >= contextPromptTokens
-        ? ({
-            state: "available",
-            promptTokens: contextPromptTokens,
-            totalTokens: contextTotalTokens,
-          } as const)
-        : undefined;
   const reasoningTokens = normalizeTokenCount(
     raw.reasoningTokens ??
       raw.reasoning_tokens ??
@@ -210,7 +191,6 @@ export function normalizeUsage(raw?: UsageLike | null): NormalizedUsage | undefi
     output === undefined &&
     cacheRead === undefined &&
     cacheWrite === undefined &&
-    contextUsage === undefined &&
     reasoningTokens === undefined &&
     total === undefined
   ) {
@@ -222,7 +202,6 @@ export function normalizeUsage(raw?: UsageLike | null): NormalizedUsage | undefi
     output,
     cacheRead,
     cacheWrite,
-    ...(contextUsage ? { contextUsage } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     total,
   };
@@ -287,23 +266,6 @@ export function derivePromptTokens(usage?: {
   return sum > 0 ? sum : undefined;
 }
 
-function derivePromptTokensFromTotal(usage?: NormalizedUsage): number | undefined {
-  const total = usage?.total;
-  const output = usage?.output;
-  if (
-    typeof total !== "number" ||
-    !Number.isFinite(total) ||
-    total <= 0 ||
-    typeof output !== "number" ||
-    !Number.isFinite(output) ||
-    output < 0
-  ) {
-    return undefined;
-  }
-  const promptTokens = total - output;
-  return promptTokens > 0 ? promptTokens : undefined;
-}
-
 /** Resolve context prompt tokens from explicit override, last call, or aggregate usage. */
 export function deriveContextPromptTokens(params: {
   lastCallUsage?: NormalizedUsage;
@@ -315,30 +277,18 @@ export function deriveContextPromptTokens(params: {
     return promptOverride;
   }
 
-  if (params.lastCallUsage?.contextUsage?.state === "unavailable") {
-    return undefined;
-  }
-  if (params.lastCallUsage?.contextUsage?.state === "available") {
-    return params.lastCallUsage.contextUsage.promptTokens;
-  }
-  const lastCallPromptTokens =
-    derivePromptTokens(params.lastCallUsage) ?? derivePromptTokensFromTotal(params.lastCallUsage);
-  if (lastCallPromptTokens !== undefined) {
-    return lastCallPromptTokens;
-  }
-  if (params.usage?.contextUsage?.state === "unavailable") {
-    return undefined;
-  }
-  if (params.usage?.contextUsage?.state === "available") {
-    return params.usage.contextUsage.promptTokens;
-  }
-  return derivePromptTokens(params.usage);
+  return derivePromptTokens(params.lastCallUsage) ?? derivePromptTokens(params.usage);
 }
 
 /** Derive the session prompt-token snapshot stored for context display. */
 export function deriveSessionTotalTokens(params: {
-  lastCallUsage?: NormalizedUsage;
-  usage?: NormalizedUsage;
+  usage?: {
+    input?: number;
+    output?: number;
+    total?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
   contextTokens?: number;
   promptTokens?: number;
 }): number | undefined {
@@ -347,14 +297,13 @@ export function deriveSessionTotalTokens(params: {
     typeof promptOverride === "number" && Number.isFinite(promptOverride) && promptOverride > 0;
 
   const usage = params.usage;
-  if (!params.lastCallUsage && !usage && !hasPromptOverride) {
+  if (!usage && !hasPromptOverride) {
     return undefined;
   }
 
   // NOTE: SessionEntry.totalTokens is used as a prompt/context snapshot.
   // It intentionally excludes completion/output tokens.
   const promptTokens = deriveContextPromptTokens({
-    lastCallUsage: params.lastCallUsage,
     promptTokens: hasPromptOverride ? promptOverride : undefined,
     usage,
   });

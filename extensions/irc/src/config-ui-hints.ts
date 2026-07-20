@@ -1,4 +1,3 @@
-import { createChannelConfigUiHints } from "openclaw/plugin-sdk/channel-core";
 // Irc helper module supports config ui hints behavior.
 import type { ChannelConfigUiHint } from "openclaw/plugin-sdk/core";
 
@@ -7,7 +6,10 @@ export const ircChannelConfigUiHints = {
     label: "IRC",
     help: "IRC channel provider configuration and compatibility settings for classic IRC transport workflows. Use this section when bridging legacy chat infrastructure into OpenClaw.",
   },
-  ...createChannelConfigUiHints({ channelLabel: "IRC", dmPolicy: { channelKey: "irc" } }),
+  dmPolicy: {
+    label: "IRC DM Policy",
+    help: 'Direct message access control ("pairing" recommended). "open" requires channels.irc.allowFrom=["*"].',
+  },
   "nickserv.enabled": {
     label: "IRC NickServ Enabled",
     help: "Enable NickServ identify/register after connect (defaults to enabled when password is configured).",
@@ -32,5 +34,8 @@ export const ircChannelConfigUiHints = {
     label: "IRC NickServ Register Email",
     help: "Email used with NickServ REGISTER (required when register=true).",
   },
-  ...createChannelConfigUiHints({ channelLabel: "IRC", configWrites: true }),
+  configWrites: {
+    label: "IRC Config Writes",
+    help: "Allow IRC to write config in response to channel events/commands (default: true).",
+  },
 } satisfies Record<string, ChannelConfigUiHint>;

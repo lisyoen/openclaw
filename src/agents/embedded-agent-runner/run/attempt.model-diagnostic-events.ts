@@ -1,5 +1,3 @@
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 /**
  * Emits diagnostic model-call events around embedded-agent stream functions.
  */
@@ -27,7 +25,6 @@ import {
   formatDiagnosticTraceparent,
   type DiagnosticTraceContext,
 } from "../../../infra/diagnostic-trace-context.js";
-import { emitDiagnosticsTimelineEvent } from "../../../infra/diagnostics-timeline.js";
 import { markDiagnosticRunProgress } from "../../../logging/diagnostic-run-activity.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import type {
@@ -37,7 +34,8 @@ import type {
   PluginHookModelCallStartedEvent,
 } from "../../../plugins/hook-types.js";
 import type { StreamFn } from "../../runtime/index.js";
-import { derivePromptTokens, normalizeUsage, type UsageLike } from "../../usage.js";
+
+export { diagnosticErrorCategory };
 
 type ModelCallDiagnosticContext = {
   runId: string;
@@ -79,29 +77,20 @@ type ModelCallSizeTimingFields = Pick<
   Extract<DiagnosticEventInput, { type: "model.call.completed" }>,
   "requestPayloadBytes" | "responseStreamBytes" | "timeToFirstByteMs"
 >;
-type ModelCallPromptStats = NonNullable<
-  Extract<DiagnosticEventInput, { type: "model.call.started" }>["promptStats"]
->;
-type ModelCallUsage = NonNullable<
-  Extract<DiagnosticEventInput, { type: "model.call.completed" }>["usage"]
->;
 type ModelCallObservationState = {
   requestPayloadBytes?: number;
   responseStreamBytes: number;
   timeToFirstByteMs?: number;
   modelContent?: DiagnosticModelCallContent;
   outputMessages?: unknown[];
-  usage?: ModelCallUsage;
   contentCapture?: DiagnosticModelContentCapturePolicy;
   lastStreamProgressAt?: number;
-  terminalEventEmitted?: boolean;
 };
 
 const MODEL_CALL_STREAM_PROGRESS_INTERVAL_MS = 30_000;
 const MODEL_CALL_STREAM_PROGRESS_REASON = "model_call:stream_progress";
 const MODEL_CALL_STREAM_RETURN_TIMEOUT_MS = 1000;
 const TRACEPARENT_HEADER_NAME = "traceparent";
-const TIMELINE_ATTRIBUTE_MAX_LENGTH = 256;
 type ModelCallStreamOptions = Parameters<StreamFn>[2];
 
 function utf8JsonByteLength(value: unknown): number | undefined {
@@ -119,16 +108,12 @@ function assignRequestPayloadBytes(state: ModelCallObservationState, payload: un
   }
 }
 
-function utf8StringByteLength(value: string): number {
-  return Buffer.byteLength(value, "utf8");
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function jsonCharLength(value: unknown): number | undefined {
-  try {
-    return JSON.stringify(value)?.length;
-  } catch {
-    return undefined;
-  }
+function utf8StringByteLength(value: string): number {
+  return Buffer.byteLength(value, "utf8");
 }
 
 function streamDeltaByteLength(chunk: Record<string, unknown>): number | undefined {
@@ -188,108 +173,14 @@ function streamContextModelContentFields(
   return Object.keys(content).length > 0 ? content : undefined;
 }
 
-function streamContextModelPromptStats(streamContext: unknown): ModelCallPromptStats | undefined {
-  if (!isRecord(streamContext)) {
-    return undefined;
-  }
-  const messages = Array.isArray(streamContext.messages) ? streamContext.messages : undefined;
-  const tools = Array.isArray(streamContext.tools) ? streamContext.tools : undefined;
-  const systemPrompt =
-    typeof streamContext.systemPrompt === "string" ? streamContext.systemPrompt : undefined;
-  const inputMessagesChars = messages ? jsonCharLength(messages) : undefined;
-  const toolDefinitionsChars = tools ? jsonCharLength(tools) : undefined;
-  const systemPromptChars = systemPrompt?.length;
-  if (
-    messages === undefined &&
-    tools === undefined &&
-    systemPromptChars === undefined &&
-    inputMessagesChars === undefined &&
-    toolDefinitionsChars === undefined
-  ) {
-    return undefined;
-  }
-  const totalChars =
-    (inputMessagesChars ?? 0) + (systemPromptChars ?? 0) + (toolDefinitionsChars ?? 0);
-  return {
-    ...(messages ? { inputMessagesCount: messages.length } : {}),
-    ...(inputMessagesChars !== undefined ? { inputMessagesChars } : {}),
-    ...(systemPromptChars !== undefined ? { systemPromptChars } : {}),
-    ...(tools ? { toolDefinitionsCount: tools.length } : {}),
-    ...(toolDefinitionsChars !== undefined ? { toolDefinitionsChars } : {}),
-    totalChars,
-  };
-}
-
-function normalizedModelCallUsage(rawUsage: unknown): ModelCallUsage | undefined {
-  if (!isRecord(rawUsage)) {
-    return undefined;
-  }
-  const usage = normalizeUsage(rawUsage as UsageLike);
-  if (!usage) {
-    return undefined;
-  }
-  const promptTokens = derivePromptTokens(usage);
-  return {
-    ...usage,
-    ...(promptTokens !== undefined ? { promptTokens } : {}),
-  };
-}
-
-function observeModelCallUsage(state: ModelCallObservationState, value: unknown): void {
-  if (!isRecord(value)) {
-    return;
-  }
-  let rawUsage: unknown;
-  try {
-    rawUsage = value.usage;
-  } catch {
-    return;
-  }
-  const usage = normalizedModelCallUsage(rawUsage);
-  if (usage) {
-    state.usage = usage;
-  }
-}
-
 function observeOutputMessageContent(state: ModelCallObservationState, chunk: unknown): void {
-  if (!isRecord(chunk)) {
+  if (!state.contentCapture?.outputMessages || !isRecord(chunk)) {
     return;
   }
-  let type: unknown;
-  let message: unknown;
-  try {
-    type = chunk.type;
-    message = type === "done" ? chunk.message : type === "error" ? chunk.error : undefined;
-  } catch {
-    return;
-  }
-  // Terminal events carry the final AssistantMessage with usage — `done` for
-  // success, `error` for aborted/error streams. Capture usage from either so
-  // iterated error-terminated calls still report the per-call usage that the
-  // model.call.error event and its OTel span already expose.
+  const message =
+    chunk.type === "done" ? chunk.message : chunk.type === "error" ? chunk.error : undefined;
   if (message !== undefined) {
-    observeModelCallUsage(state, message);
-    if (state.contentCapture?.outputMessages) {
-      state.outputMessages = [cloneDiagnosticContentValue(message)];
-    }
-  }
-}
-
-function observeResultMessageContent(
-  state: ModelCallObservationState,
-  startedAt: number,
-  result: unknown,
-): void {
-  state.timeToFirstByteMs ??= Math.max(0, Date.now() - startedAt);
-  observeModelCallUsage(state, result);
-  if (state.contentCapture?.outputMessages && state.outputMessages === undefined) {
-    state.outputMessages = [cloneDiagnosticContentValue(result)];
-  }
-  if (state.responseStreamBytes === 0) {
-    const bytes = utf8JsonByteLength(result);
-    if (bytes !== undefined) {
-      state.responseStreamBytes = bytes;
-    }
+    state.outputMessages = [cloneDiagnosticContentValue(message)];
   }
 }
 
@@ -381,7 +272,6 @@ function baseModelCallEvent(
   ctx: ModelCallDiagnosticContext,
   callId: string,
   trace: DiagnosticTraceContext,
-  promptStats: ModelCallPromptStats | undefined,
 ): ModelCallEventBase {
   return {
     runId: ctx.runId,
@@ -392,13 +282,11 @@ function baseModelCallEvent(
     model: ctx.model,
     ...(ctx.api && { api: ctx.api }),
     ...(ctx.transport && { transport: ctx.transport }),
-    observationUnit: "request",
     ...(ctx.contextTokenBudget ? { contextTokenBudget: ctx.contextTokenBudget } : {}),
     ...(ctx.contextWindowSource ? { contextWindowSource: ctx.contextWindowSource } : {}),
     ...(ctx.contextWindowReferenceTokens
       ? { contextWindowReferenceTokens: ctx.contextWindowReferenceTokens }
       : {}),
-    ...(promptStats ? { promptStats } : {}),
     trace,
   };
 }
@@ -415,42 +303,6 @@ function modelCallCompletedContent(state: ModelCallObservationState) {
     ...state.modelContent,
     ...(state.outputMessages ? { outputMessages: state.outputMessages } : {}),
   };
-}
-
-function modelCallUsageField(state: ModelCallObservationState) {
-  return state.usage ? { usage: state.usage } : {};
-}
-
-function boundedTimelineAttribute(value: string | undefined): string | undefined {
-  return truncateUtf16Safe(value?.trim() ?? "", TIMELINE_ATTRIBUTE_MAX_LENGTH) || undefined;
-}
-
-function emitProviderRequestTimelineEvent(
-  eventBase: ModelCallEventBase,
-  startedAt: number,
-  durationMs: number,
-  ok: boolean,
-): void {
-  const provider = boundedTimelineAttribute(eventBase.provider);
-  const model = boundedTimelineAttribute(eventBase.model);
-  const api = boundedTimelineAttribute(eventBase.api);
-  const transport = boundedTimelineAttribute(eventBase.transport);
-  emitDiagnosticsTimelineEvent({
-    type: "provider.request",
-    name: "provider.request",
-    timestamp: new Date(startedAt).toISOString(),
-    runId: eventBase.runId,
-    spanId: eventBase.callId,
-    durationMs,
-    provider,
-    operation: api ?? transport ?? "model.call",
-    ok,
-    attributes: {
-      ...(model ? { model } : {}),
-      ...(api ? { api } : {}),
-      ...(transport ? { transport } : {}),
-    },
-  });
 }
 
 function modelCallErrorFields(err: unknown): ModelCallErrorFields {
@@ -567,20 +419,14 @@ function emitModelCallCompleted(
   startedAt: number,
   state: ModelCallObservationState,
 ): void {
-  if (state.terminalEventEmitted) {
-    return;
-  }
-  state.terminalEventEmitted = true;
   const durationMs = Date.now() - startedAt;
   const sizeTimingFields = modelCallSizeTimingFields(state);
-  emitProviderRequestTimelineEvent(eventBase, startedAt, durationMs, true);
   emitTrustedDiagnosticEventWithPrivateData(
     {
       type: "model.call.completed",
       ...eventBase,
       durationMs,
       ...sizeTimingFields,
-      ...modelCallUsageField(state),
     },
     modelContentPrivateData(modelCallCompletedContent(state)),
   );
@@ -597,13 +443,8 @@ function emitModelCallError(
   state: ModelCallObservationState,
   fields: ModelCallErrorFields,
 ): void {
-  if (state.terminalEventEmitted) {
-    return;
-  }
-  state.terminalEventEmitted = true;
   const durationMs = Date.now() - startedAt;
   const sizeTimingFields = modelCallSizeTimingFields(state);
-  emitProviderRequestTimelineEvent(eventBase, startedAt, durationMs, false);
   emitTrustedDiagnosticEventWithPrivateData(
     {
       type: "model.call.error",
@@ -611,7 +452,6 @@ function emitModelCallError(
       durationMs,
       ...sizeTimingFields,
       ...fields,
-      ...modelCallUsageField(state),
     },
     modelContentPrivateData(modelCallCompletedContent(state)),
   );
@@ -623,11 +463,10 @@ function emitModelCallError(
   });
 }
 
-function withDiagnosticRequestContext(
+function withDiagnosticTraceparentHeader(
   options: ModelCallStreamOptions,
   trace: DiagnosticTraceContext,
   state: ModelCallObservationState,
-  callId: string,
 ): ModelCallStreamOptions {
   const traceparent = formatDiagnosticTraceparent(trace);
   const originalOnPayload = options?.onPayload;
@@ -650,7 +489,6 @@ function withDiagnosticRequestContext(
   if (!traceparent) {
     return {
       ...options,
-      requestId: callId,
       onPayload,
     };
   }
@@ -665,7 +503,6 @@ function withDiagnosticRequestContext(
   headers[TRACEPARENT_HEADER_NAME] = traceparent;
   return {
     ...options,
-    requestId: callId,
     headers,
     onPayload,
   };
@@ -711,78 +548,31 @@ async function* observeModelCallIterator<T>(
   startedAt: number,
   state: ModelCallObservationState,
 ): AsyncIterable<T> {
-  // Tracks whether the underlying iterator terminated on its own (done or threw).
-  // This is independent of state.terminalEventEmitted: result() can emit the
-  // terminal event first, but the abandoned iterator still needs return() cleanup.
-  let iteratorSettled = false;
+  let terminalEmitted = false;
   try {
     for (;;) {
       const next = await iterator.next();
       if (next.done) {
-        iteratorSettled = true;
         break;
       }
       observeResponseChunk(state, startedAt, next.value);
       maybeEmitModelCallStreamProgress(eventBase, state);
       yield next.value;
     }
+    terminalEmitted = true;
     emitModelCallCompleted(eventBase, startedAt, state);
   } catch (err) {
-    iteratorSettled = true;
+    terminalEmitted = true;
     emitModelCallError(eventBase, startedAt, state, modelCallErrorFields(err));
     throw err;
   } finally {
-    if (!iteratorSettled) {
-      // A consumer can stop reading before the provider emits done/error — e.g.
-      // the agent loop returns on the terminal event after awaiting result().
-      // Close the underlying iterator for provider cleanup (idle-timeout abort
-      // listeners, SSE readers) even when result() already emitted the terminal
-      // event; emitModelCallCompleted self-dedupes via state.terminalEventEmitted.
+    if (!terminalEmitted) {
+      // A consumer can stop reading before the provider emits done/error. Close
+      // the iterator best-effort and record the call as completed with observed bytes.
       await safeReturnIterator(iterator);
       emitModelCallCompleted(eventBase, startedAt, state);
     }
   }
-}
-
-function observeModelCallFinalResult<T>(
-  result: T,
-  eventBase: ModelCallEventBase,
-  startedAt: number,
-  state: ModelCallObservationState,
-): T {
-  observeResultMessageContent(state, startedAt, result);
-  emitModelCallCompleted(eventBase, startedAt, state);
-  return result;
-}
-
-function createObservedResultFunction(
-  stream: unknown,
-  eventBase: ModelCallEventBase,
-  startedAt: number,
-  state: ModelCallObservationState,
-): ((...args: unknown[]) => unknown) | undefined {
-  if (!isRecord(stream) || typeof stream.result !== "function") {
-    return undefined;
-  }
-  const resultFn = stream.result;
-  return (...args: unknown[]) => {
-    try {
-      const result = resultFn.apply(stream, args);
-      if (isPromiseLike(result)) {
-        return result.then(
-          (resolved) => observeModelCallFinalResult(resolved, eventBase, startedAt, state),
-          (err: unknown) => {
-            emitModelCallError(eventBase, startedAt, state, modelCallErrorFields(err));
-            throw err;
-          },
-        );
-      }
-      return observeModelCallFinalResult(result, eventBase, startedAt, state);
-    } catch (err) {
-      emitModelCallError(eventBase, startedAt, state, modelCallErrorFields(err));
-      throw err;
-    }
-  };
 }
 
 function observeModelCallStream<T extends AsyncIterable<unknown>>(
@@ -794,7 +584,6 @@ function observeModelCallStream<T extends AsyncIterable<unknown>>(
 ): T {
   const observedIterator = () =>
     observeModelCallIterator(createIterator(), eventBase, startedAt, state)[Symbol.asyncIterator]();
-  const observedResult = createObservedResultFunction(stream, eventBase, startedAt, state);
   let hasNonConfigurableIterator;
   try {
     hasNonConfigurableIterator =
@@ -805,16 +594,12 @@ function observeModelCallStream<T extends AsyncIterable<unknown>>(
   if (hasNonConfigurableIterator) {
     return {
       [Symbol.asyncIterator]: observedIterator,
-      ...(observedResult ? { result: observedResult } : {}),
     } as T;
   }
   return new Proxy(stream, {
     get(target, property, receiver) {
       if (property === Symbol.asyncIterator) {
         return observedIterator;
-      }
-      if (property === "result" && observedResult) {
-        return observedResult;
       }
       const value = Reflect.get(target, property, receiver);
       return typeof value === "function" ? value.bind(target) : value;
@@ -854,14 +639,7 @@ export function wrapStreamFnWithDiagnosticModelCallEvents(
   return ((model, streamContext, options) => {
     const callId = ctx.nextCallId();
     const trace = freezeDiagnosticTraceContext(createChildDiagnosticTraceContext(ctx.trace));
-    // Prompt stats JSON-stringify the input messages and tool definitions; only
-    // the diagnostic events consume them (plugin hooks never receive prompt
-    // stats), so skip the work when diagnostics are disabled and those events
-    // would be dropped.
-    const promptStats = areDiagnosticsEnabledForProcess()
-      ? streamContextModelPromptStats(streamContext)
-      : undefined;
-    const eventBase = baseModelCallEvent(ctx, callId, trace, promptStats);
+    const eventBase = baseModelCallEvent(ctx, callId, trace);
     const modelContent = streamContextModelContentFields(ctx.contentCapture, streamContext);
     emitModelCallStarted(eventBase, modelContent);
     ctx.onStarted?.();
@@ -871,9 +649,7 @@ export function wrapStreamFnWithDiagnosticModelCallEvents(
       modelContent,
       contentCapture: ctx.contentCapture,
     };
-    // Provider wrappers consume this same call id for transport correlation,
-    // keeping external request evidence joined to the emitted diagnostics.
-    const propagatedOptions = withDiagnosticRequestContext(options, trace, state, callId);
+    const propagatedOptions = withDiagnosticTraceparentHeader(options, trace, state);
 
     try {
       const result = streamFn(model, streamContext, propagatedOptions);
@@ -893,4 +669,3 @@ export function wrapStreamFnWithDiagnosticModelCallEvents(
     }
   }) as StreamFn;
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

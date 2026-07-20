@@ -1,7 +1,7 @@
 // Covers the compaction planning worker boundary and timeout behavior.
 import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
-import { beforeAll, describe, expect, it, vi } from "vitest";
-import { compactionPlanningWorkerTesting } from "./compaction-planning-worker.test-support.js";
+import { describe, expect, it, vi } from "vitest";
+import { compactionPlanningWorkerTesting } from "./compaction-planning-worker.js";
 import { runCompactionPlanningWorkerInput } from "./compaction-planning.worker.js";
 import type { AgentMessage } from "./runtime/index.js";
 
@@ -20,21 +20,6 @@ function createSyntheticWorkerUrl(source: string): URL {
 }
 
 describe("compaction planning worker", () => {
-  let packagedSummaryChunks: Awaited<
-    ReturnType<typeof compactionPlanningWorkerTesting.runCompactionPlanningWorker>
-  >;
-
-  beforeAll(async () => {
-    packagedSummaryChunks = await compactionPlanningWorkerTesting.runCompactionPlanningWorker({
-      input: {
-        kind: "summaryChunks",
-        messages: [makeMessage(1), makeMessage(2), makeMessage(3)],
-        maxChunkTokens: 1200,
-      },
-      timeoutMs: 30_000,
-    });
-  });
-
   it("resolves the packaged worker URL from stable and hashed dist modules", () => {
     // Hashed bundle names still resolve to the stable worker sibling emitted by
     // the build, so runtime imports do not depend on the main chunk hash.
@@ -57,7 +42,18 @@ describe("compaction planning worker", () => {
     });
   });
 
-  it("plans summary chunks in the packaged worker", () => {
+  it("plans summary chunks in the packaged worker", async () => {
+    const packagedSummaryChunks = await compactionPlanningWorkerTesting.runCompactionPlanningWorker(
+      {
+        input: {
+          kind: "summaryChunks",
+          messages: [makeMessage(1), makeMessage(2), makeMessage(3)],
+          maxChunkTokens: 1200,
+        },
+        timeoutMs: 30_000,
+      },
+    );
+
     expect(packagedSummaryChunks.kind).toBe("summaryChunks");
     if (packagedSummaryChunks.kind !== "summaryChunks") {
       return;

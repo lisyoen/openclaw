@@ -30,7 +30,7 @@ Core methods used:
 - `send`
 - `chats.list` (probe/diagnostics)
 
-See [iMessage](/channels/imessage) for setup and addressing (`chat_id` preferred over display strings).
+See [iMessage](/channels/imessage) for legacy setup and addressing (`chat_id` preferred).
 
 ## Adapter guidelines
 

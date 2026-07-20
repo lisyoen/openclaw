@@ -2,14 +2,10 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import pMap from "p-map";
 import type { RootHelpRenderOptions } from "../src/cli/program/root-help.js";
 import type { OpenClawConfig } from "../src/config/config.js";
-import { resolveCliStartupRootHelpBundleIdentity } from "./lib/cli-startup-root-help-bundle.js";
-import { resolveWindowsTaskkillPath } from "./lib/windows-taskkill.mjs";
 
 function dedupe(values: string[]): string[] {
   const seen = new Set<string>();
@@ -31,21 +27,12 @@ const distDir = path.join(rootDir, "dist");
 const outputPath = path.join(distDir, "cli-startup-metadata.json");
 const extensionsDir = path.join(rootDir, "extensions");
 const ROOT_HELP_RENDER_TIMEOUT_MS = 120_000;
+const BROWSER_HELP_RENDER_TIMEOUT_MS = 120_000;
 const COMMAND_HELP_RENDER_TIMEOUT_MS = 120_000;
 const COMMAND_HELP_RENDER_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const COMMAND_HELP_RENDER_KILL_GRACE_MS = 5_000;
-// Each help render is an isolated CLI boot; concurrency only bounds process
-// fan-out, not output content, so scale with the host instead of serializing
-// eight boots two at a time.
-const COMMAND_HELP_RENDER_CONCURRENCY = Math.min(8, Math.max(2, availableParallelism()));
-const PRECOMPUTED_SUBCOMMAND_HELP_COMMANDS = [
-  "doctor",
-  "gateway",
-  "models",
-  "plugins",
-  "sessions",
-  "tasks",
-] as const;
+const COMMAND_HELP_RENDER_CONCURRENCY = 2;
+const PRECOMPUTED_SUBCOMMAND_HELP_COMMANDS = ["doctor", "gateway", "models", "plugins"] as const;
 const CORE_CHANNEL_ORDER = [
   "telegram",
   "whatsapp",
@@ -73,104 +60,27 @@ type PrecomputedSubcommandHelpCommand = (typeof PRECOMPUTED_SUBCOMMAND_HELP_COMM
 type PrecomputedSubcommandHelpText = Record<PrecomputedSubcommandHelpCommand, string>;
 type RootHelpRenderContext = Pick<RootHelpRenderOptions, "config" | "env">;
 type Awaitable<T> = T | Promise<T>;
-type SourceCommandHelpCommand = "browser" | "nodes" | "secrets" | PrecomputedSubcommandHelpCommand;
+type SourceCommandHelpCommand = "nodes" | "secrets" | PrecomputedSubcommandHelpCommand;
 type SourceCommandHelpText = Record<SourceCommandHelpCommand, string>;
-type ExistingCliStartupMetadata = {
-  rootHelpBundleSignature?: unknown;
-  generatorSignature?: unknown;
-  browserHelpSourceSignature?: unknown;
-  secretsHelpSourceSignature?: unknown;
-  nodesHelpSourceSignature?: unknown;
-  subcommandHelpSourceSignature?: unknown;
-  channelCatalogSignature?: unknown;
-  browserHelpText?: unknown;
-  secretsHelpText?: unknown;
-  nodesHelpText?: unknown;
-  subcommandHelpText?: unknown;
-  rootHelpText?: unknown;
-};
-type SpawnTextParentSignalState = {
-  done: boolean;
-  signal: NodeJS.Signals | null;
-};
-type KillableChild = {
-  kill(signal: NodeJS.Signals): boolean;
-  pid?: number;
-};
-type RunTaskkill = (
-  command: string,
-  args: string[],
-  options: { stdio: "ignore" },
-) => { error?: unknown; status?: number | null } | undefined;
 
-const activeSpawnTextParentSignals = new Set<SpawnTextParentSignalState>();
-
-function maybeReraiseSpawnTextParentSignal(signal: NodeJS.Signals): void {
-  for (const state of activeSpawnTextParentSignals) {
-    if (state.signal === null || !state.done) {
-      return;
-    }
+function resolveRootHelpBundleIdentity(
+  distDirOverride: string = distDir,
+): { bundleName: string; signature: string } | null {
+  const bundleName = readdirSync(distDirOverride).find(
+    (entry) =>
+      entry.startsWith("root-help-") &&
+      !entry.startsWith("root-help-metadata-") &&
+      entry.endsWith(".js"),
+  );
+  if (!bundleName) {
+    return null;
   }
-  process.kill(process.pid, signal);
-}
-
-function signalWindowsProcessTree(
-  pid: number,
-  signal: NodeJS.Signals,
-  runTaskkill: RunTaskkill = spawnSync,
-): boolean {
-  const args = ["/PID", String(pid), "/T"];
-  if (signal === "SIGKILL") {
-    args.push("/F");
-  }
-  const result = runTaskkill(resolveWindowsTaskkillPath(), args, { stdio: "ignore" });
-  return !result?.error && result?.status === 0;
-}
-
-function signalWindowsProcessTreeOrForce(
-  pid: number,
-  signal: NodeJS.Signals,
-  runTaskkill: RunTaskkill = spawnSync,
-): boolean {
-  if (signalWindowsProcessTree(pid, signal, runTaskkill)) {
-    return true;
-  }
-  return signal !== "SIGKILL" && signalWindowsProcessTree(pid, "SIGKILL", runTaskkill);
-}
-
-function signalCliStartupMetadataProcessTree(
-  child: KillableChild,
-  signal: NodeJS.Signals,
-  {
-    appendDiagnostic = () => {},
-    platform = process.platform,
-    runTaskkill = spawnSync,
-    useProcessGroup = platform !== "win32",
-  }: {
-    appendDiagnostic?: (message: string) => void;
-    platform?: NodeJS.Platform;
-    runTaskkill?: RunTaskkill;
-    useProcessGroup?: boolean;
-  } = {},
-): void {
-  if (useProcessGroup && typeof child.pid === "number") {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
-        appendDiagnostic(
-          `failed to send ${signal} to process group: ${error instanceof Error ? error.message : String(error)}\n`,
-        );
-      }
-    }
-  }
-  if (platform === "win32" && typeof child.pid === "number") {
-    if (signalWindowsProcessTreeOrForce(child.pid, signal, runTaskkill)) {
-      return;
-    }
-  }
-  child.kill(signal);
+  const bundlePath = path.join(distDirOverride, bundleName);
+  const raw = readFileSync(bundlePath, "utf8");
+  return {
+    bundleName,
+    signature: createHash("sha1").update(raw).digest("hex"),
+  };
 }
 
 function updateHashFromFiles(
@@ -255,7 +165,6 @@ function resolveSubcommandHelpSourceSignature(sourceRootDir: string = rootDir): 
       path.join(sourceRootDir, "src/cli/help-format.ts"),
       path.join(sourceRootDir, "src/cli/daemon-cli/register-service-commands.ts"),
       path.join(sourceRootDir, "src/cli/program/register.maintenance.ts"),
-      path.join(sourceRootDir, "src/cli/program/register.status-health-sessions.ts"),
       path.join(sourceRootDir, "src/cli/gateway-cli.ts"),
       path.join(sourceRootDir, "src/cli/gateway-cli/register.ts"),
       path.join(sourceRootDir, "src/cli/gateway-cli/run-command.ts"),
@@ -269,7 +178,7 @@ function resolveSubcommandHelpSourceSignature(sourceRootDir: string = rootDir): 
   return hash.digest("hex");
 }
 
-function readBundledChannelCatalog(
+export function readBundledChannelCatalog(
   extensionsDirOverride: string = extensionsDir,
 ): BundledChannelCatalog {
   const entries: ExtensionChannelEntry[] = [];
@@ -316,6 +225,12 @@ function readBundledChannelCatalog(
   };
 }
 
+export function readBundledChannelCatalogIds(
+  extensionsDirOverride: string = extensionsDir,
+): string[] {
+  return readBundledChannelCatalog(extensionsDirOverride).ids;
+}
+
 function createIsolatedRootHelpRenderContext(
   bundledPluginsDir: string = extensionsDir,
 ): RootHelpRenderContext {
@@ -342,8 +257,35 @@ function createIsolatedRootHelpRenderContext(
         workspace: workspaceDir,
       },
     },
+    plugins: {
+      loadPaths: [],
+    },
   };
   return { config, env };
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  limit: number,
+  run: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  results.length = values.length;
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, limit), values.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      for (;;) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= values.length) {
+          return;
+        }
+        results[index] = await run(values[index]);
+      }
+    }),
+  );
+  return results;
 }
 
 async function spawnText(
@@ -354,16 +296,14 @@ async function spawnText(
     failureMessage: string;
     killGraceMs?: number;
     maxOutputBytes?: number;
-    spawnProcess?: typeof spawn;
     timeoutMs: number;
   },
 ): Promise<string> {
   const maxOutputBytes = options.maxOutputBytes ?? COMMAND_HELP_RENDER_MAX_OUTPUT_BYTES;
   const killGraceMs = options.killGraceMs ?? COMMAND_HELP_RENDER_KILL_GRACE_MS;
-  const spawnProcess = options.spawnProcess ?? spawn;
   const useProcessGroup = process.platform !== "win32";
   return await new Promise((resolve, reject) => {
-    const child = spawnProcess(process.execPath, args, {
+    const child = spawn(process.execPath, args, {
       cwd: options.cwd,
       detached: useProcessGroup,
       env: options.env,
@@ -373,15 +313,11 @@ async function spawnText(
     let stderr = "";
     let outputBytes = 0;
     let outputExceeded = false;
-    let outputStreamError: { streamName: "stdout" | "stderr"; error: Error } | undefined;
     let settled = false;
     let timedOut = false;
     let waitingForKillGrace = false;
     let childClosedResult: { code: number | null; signal: NodeJS.Signals | null } | null = null;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
-    let parentSignalPending: NodeJS.Signals | null = null;
-    const parentSignalState: SpawnTextParentSignalState = { done: false, signal: null };
-    activeSpawnTextParentSignals.add(parentSignalState);
     const parentSignalHandlers: { handler: () => void; signal: NodeJS.Signals }[] = [];
     const cleanupParentSignalHandlers = () => {
       for (const { signal, handler } of parentSignalHandlers) {
@@ -390,37 +326,23 @@ async function spawnText(
       parentSignalHandlers.length = 0;
     };
     const signalChild = (signal: NodeJS.Signals) => {
-      signalCliStartupMetadataProcessTree(child, signal, {
-        appendDiagnostic: (message) => {
-          stderr += message;
-        },
-        useProcessGroup,
-      });
+      if (useProcessGroup && typeof child.pid === "number") {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+            stderr += `failed to send ${signal} to process group: ${error instanceof Error ? error.message : String(error)}\n`;
+          }
+        }
+      }
+      child.kill(signal);
     };
     const relayParentSignal = (signal: NodeJS.Signals) => {
       const handler = () => {
-        parentSignalPending = signal;
-        parentSignalState.signal = signal;
         signalChild(signal);
         cleanupParentSignalHandlers();
-        if (!processGroupIsAlive()) {
-          parentSignalState.done = true;
-          maybeReraiseSpawnTextParentSignal(signal);
-          return;
-        }
-        if (killTimer) {
-          clearTimeout(killTimer);
-        }
-        // Keep this timer ref'ed so parent signal relay waits long enough to
-        // force-kill stubborn detached descendants before re-raising.
-        waitingForKillGrace = true;
-        killTimer = setTimeout(() => {
-          waitingForKillGrace = false;
-          killTimer = undefined;
-          signalChild("SIGKILL");
-          parentSignalState.done = true;
-          maybeReraiseSpawnTextParentSignal(signal);
-        }, killGraceMs);
+        process.kill(process.pid, signal);
       };
       parentSignalHandlers.push({ handler, signal });
       process.once(signal, handler);
@@ -447,26 +369,14 @@ async function spawnText(
       }
       settled = true;
       clearTimeout(timeout);
-      if (!parentSignalPending && killTimer) {
+      if (killTimer) {
         clearTimeout(killTimer);
-      }
-      if (!parentSignalPending) {
-        activeSpawnTextParentSignals.delete(parentSignalState);
       }
       cleanupParentSignalHandlers();
       callback();
     };
     const finishClose = (result: { code: number | null; signal: NodeJS.Signals | null }) => {
       settle(() => {
-        if (outputStreamError) {
-          reject(
-            new Error(
-              `${options.failureMessage}: ${outputStreamError.streamName} read error: ${outputStreamError.error.message}`,
-              { cause: outputStreamError.error },
-            ),
-          );
-          return;
-        }
         if (result.code === 0 && !timedOut && !outputExceeded) {
           resolve(stdout);
           return;
@@ -506,15 +416,6 @@ async function spawnText(
       signalChild("SIGTERM");
       scheduleKill();
     };
-    const failOutputStream = (streamName: "stdout" | "stderr", error: Error) => {
-      // Keep the first stop cause: killing for a timeout or output cap can make
-      // the stdio pipes fail secondarily while the child is shutting down.
-      if (outputStreamError || timedOut || outputExceeded) {
-        return;
-      }
-      outputStreamError = { streamName, error };
-      requestStop();
-    };
     const timeout = setTimeout(() => {
       timedOut = true;
       requestStop();
@@ -546,12 +447,6 @@ async function spawnText(
       }
       stderr += chunk;
     });
-    child.stdout.once("error", (error: Error) => {
-      failOutputStream("stdout", error);
-    });
-    child.stderr.once("error", (error: Error) => {
-      failOutputStream("stderr", error);
-    });
     child.once("error", (error) => {
       settle(() => {
         reject(error);
@@ -559,19 +454,6 @@ async function spawnText(
     });
     child.once("close", (code, signal) => {
       const result = { code, signal };
-      if (parentSignalPending) {
-        if (processGroupIsAlive()) {
-          childClosedResult = result;
-          return;
-        }
-        if (killTimer) {
-          clearTimeout(killTimer);
-          killTimer = undefined;
-        }
-        parentSignalState.done = true;
-        maybeReraiseSpawnTextParentSignal(parentSignalPending);
-        return;
-      }
       if (waitingForKillGrace && processGroupIsAlive()) {
         childClosedResult = result;
         return;
@@ -589,7 +471,7 @@ export async function renderBundledRootHelpText(
       : extensionsDir,
   ),
 ): Promise<string> {
-  const bundleIdentity = resolveCliStartupRootHelpBundleIdentity(_distDirOverride);
+  const bundleIdentity = resolveRootHelpBundleIdentity(_distDirOverride);
   if (!bundleIdentity) {
     throw new Error("No root-help bundle found in dist; cannot write CLI startup metadata.");
   }
@@ -606,13 +488,23 @@ export async function renderBundledRootHelpText(
     `await mod.outputRootHelp(${JSON.stringify(renderOptions)});`,
     "process.exit(0);",
   ].join("\n");
-  return await spawnText(["--input-type=module", "--eval", inlineModule], {
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", inlineModule], {
     cwd: _distDirOverride,
-    // RootHelpRenderOptions marks env optional; spawnText requires one.
-    env: renderContext.env ?? process.env,
-    failureMessage: `Failed to render bundled root help from ${bundleIdentity.bundleName}`,
-    timeoutMs: ROOT_HELP_RENDER_TIMEOUT_MS,
+    encoding: "utf8",
+    env: renderContext.env,
+    timeout: ROOT_HELP_RENDER_TIMEOUT_MS,
   });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    const stderr = result.stderr?.trim();
+    throw new Error(
+      `Failed to render bundled root help from ${bundleIdentity.bundleName}` +
+        (stderr ? `: ${stderr}` : result.signal ? `: terminated by ${result.signal}` : ""),
+    );
+  }
+  return result.stdout ?? "";
 }
 
 function renderSourceRootHelpText(
@@ -640,7 +532,6 @@ function renderSourceRootHelpText(
       cwd: rootDir,
       encoding: "utf8",
       env: renderContext.env,
-      killSignal: "SIGKILL",
       timeout: ROOT_HELP_RENDER_TIMEOUT_MS,
     },
   );
@@ -660,11 +551,33 @@ function renderSourceRootHelpText(
 async function renderSourceBrowserHelpText(
   renderContext: RootHelpRenderContext = createIsolatedRootHelpRenderContext(),
 ): Promise<string> {
-  // The launcher CLI boot renders byte-identical browser help to a direct
-  // tsx source render (registerBrowserCli + configureProgramHelp) while
-  // avoiding a tsx evaluation of the whole browser CLI import graph, which
-  // dominated this script's wall time.
-  return await renderSourceCommandHelpText("browser", renderContext);
+  const browserCliUrl = pathToFileURL(
+    path.join(rootDir, "extensions/browser/src/cli/browser-cli.ts"),
+  ).href;
+  const helpUrl = pathToFileURL(path.join(rootDir, "src/cli/program/help.ts")).href;
+  const contextUrl = pathToFileURL(path.join(rootDir, "src/cli/program/context.ts")).href;
+  const inlineModule = [
+    `const { Command } = await import("commander");`,
+    `const { registerBrowserCli } = await import(${JSON.stringify(browserCliUrl)});`,
+    `const { configureProgramHelp } = await import(${JSON.stringify(helpUrl)});`,
+    `const { createProgramContext } = await import(${JSON.stringify(contextUrl)});`,
+    `const program = new Command();`,
+    `configureProgramHelp(program, createProgramContext());`,
+    `registerBrowserCli(program, ["node", "openclaw", "browser", "--help"]);`,
+    `const browser = program.commands.find((cmd) => cmd.name() === "browser");`,
+    `if (!browser) throw new Error("Browser command was not registered.");`,
+    `browser.outputHelp();`,
+    "process.exit(0);",
+  ].join("\n");
+  return await spawnText(["--import", "tsx", "--input-type=module", "--eval", inlineModule], {
+    cwd: rootDir,
+    env: {
+      ...renderContext.env,
+      OPENCLAW_DISABLE_CLI_STARTUP_HELP_FAST_PATH: "1",
+    },
+    failureMessage: "Failed to render source browser help",
+    timeoutMs: BROWSER_HELP_RENDER_TIMEOUT_MS,
+  });
 }
 
 async function renderSourceCommandHelpText(
@@ -698,13 +611,10 @@ async function renderSourceCommandHelpTextRecord(
   commands: readonly SourceCommandHelpCommand[],
   renderContext: RootHelpRenderContext = createIsolatedRootHelpRenderContext(),
 ): Promise<SourceCommandHelpText> {
-  const helpTexts = await pMap(
+  const helpTexts = await mapWithConcurrency(
     commands,
+    COMMAND_HELP_RENDER_CONCURRENCY,
     async (commandName) => await renderSourceCommandHelpText(commandName, renderContext),
-    {
-      concurrency: COMMAND_HELP_RENDER_CONCURRENCY,
-      stopOnError: true,
-    },
   );
   return Object.fromEntries(
     commands.map((commandName, index) => [commandName, helpTexts[index]]),
@@ -745,7 +655,7 @@ export async function writeCliStartupMetadata(options?: {
   const resolvedExtensionsDir = options?.extensionsDir ?? extensionsDir;
   const resolvedSourceRootDir = options?.sourceRootDir ?? rootDir;
   const channelCatalog = readBundledChannelCatalog(resolvedExtensionsDir);
-  const bundleIdentity = resolveCliStartupRootHelpBundleIdentity(resolvedDistDir);
+  const bundleIdentity = resolveRootHelpBundleIdentity(resolvedDistDir);
   const browserHelpSourceSignature = resolveBrowserHelpSourceSignature(resolvedSourceRootDir);
   const secretsHelpSourceSignature = resolveSecretsHelpSourceSignature(resolvedSourceRootDir);
   const nodesHelpSourceSignature = resolveNodesHelpSourceSignature(resolvedSourceRootDir);
@@ -756,154 +666,96 @@ export async function writeCliStartupMetadata(options?: {
   );
   const channelOptions = dedupe([...CORE_CHANNEL_ORDER, ...channelCatalog.ids]);
 
-  let existing: ExistingCliStartupMetadata | undefined;
   try {
-    existing = JSON.parse(readFileSync(resolvedOutputPath, "utf8")) as ExistingCliStartupMetadata;
+    const existing = JSON.parse(readFileSync(resolvedOutputPath, "utf8")) as {
+      rootHelpBundleSignature?: unknown;
+      generatorSignature?: unknown;
+      browserHelpSourceSignature?: unknown;
+      secretsHelpSourceSignature?: unknown;
+      nodesHelpSourceSignature?: unknown;
+      subcommandHelpSourceSignature?: unknown;
+      channelCatalogSignature?: unknown;
+      browserHelpText?: unknown;
+      secretsHelpText?: unknown;
+      nodesHelpText?: unknown;
+      subcommandHelpText?: unknown;
+    };
+    if (
+      bundleIdentity &&
+      existing.rootHelpBundleSignature === bundleIdentity.signature &&
+      existing.generatorSignature === generatorSignature &&
+      existing.browserHelpSourceSignature === browserHelpSourceSignature &&
+      existing.secretsHelpSourceSignature === secretsHelpSourceSignature &&
+      existing.nodesHelpSourceSignature === nodesHelpSourceSignature &&
+      existing.subcommandHelpSourceSignature === subcommandHelpSourceSignature &&
+      existing.channelCatalogSignature === channelCatalog.signature &&
+      typeof existing.browserHelpText === "string" &&
+      existing.browserHelpText.length > 0 &&
+      typeof existing.secretsHelpText === "string" &&
+      existing.secretsHelpText.length > 0 &&
+      typeof existing.nodesHelpText === "string" &&
+      existing.nodesHelpText.length > 0 &&
+      hasAllPrecomputedSubcommandHelpText(existing.subcommandHelpText)
+    ) {
+      return;
+    }
   } catch {
     // Missing or malformed existing metadata means we should regenerate it.
   }
 
-  const reusableExisting =
-    existing?.generatorSignature === generatorSignature &&
-    existing.channelCatalogSignature === channelCatalog.signature
-      ? existing
-      : undefined;
-  const reusableRootHelpText =
-    reusableExisting &&
-    bundleIdentity &&
-    reusableExisting.rootHelpBundleSignature === bundleIdentity.signature &&
-    typeof reusableExisting.rootHelpText === "string" &&
-    reusableExisting.rootHelpText.length > 0
-      ? reusableExisting.rootHelpText
-      : undefined;
-  const reusableBrowserHelpText =
-    reusableExisting &&
-    bundleIdentity &&
-    reusableExisting.rootHelpBundleSignature === bundleIdentity.signature &&
-    reusableExisting.browserHelpSourceSignature === browserHelpSourceSignature &&
-    typeof reusableExisting.browserHelpText === "string" &&
-    reusableExisting.browserHelpText.length > 0
-      ? reusableExisting.browserHelpText
-      : undefined;
-  const reusableSecretsHelpText =
-    reusableExisting &&
-    bundleIdentity &&
-    reusableExisting.rootHelpBundleSignature === bundleIdentity.signature &&
-    reusableExisting.secretsHelpSourceSignature === secretsHelpSourceSignature &&
-    typeof reusableExisting.secretsHelpText === "string" &&
-    reusableExisting.secretsHelpText.length > 0
-      ? reusableExisting.secretsHelpText
-      : undefined;
-  const reusableNodesHelpText =
-    reusableExisting &&
-    bundleIdentity &&
-    reusableExisting.rootHelpBundleSignature === bundleIdentity.signature &&
-    reusableExisting.nodesHelpSourceSignature === nodesHelpSourceSignature &&
-    typeof reusableExisting.nodesHelpText === "string" &&
-    reusableExisting.nodesHelpText.length > 0
-      ? reusableExisting.nodesHelpText
-      : undefined;
-  const reusableSubcommandHelpText =
-    reusableExisting &&
-    bundleIdentity &&
-    reusableExisting.rootHelpBundleSignature === bundleIdentity.signature &&
-    reusableExisting.subcommandHelpSourceSignature === subcommandHelpSourceSignature &&
-    hasAllPrecomputedSubcommandHelpText(reusableExisting.subcommandHelpText)
-      ? (reusableExisting.subcommandHelpText as PrecomputedSubcommandHelpText)
-      : undefined;
-  if (
-    reusableRootHelpText &&
-    reusableBrowserHelpText &&
-    reusableSecretsHelpText &&
-    reusableNodesHelpText &&
-    reusableSubcommandHelpText
-  ) {
-    return;
+  let rootHelpText: string;
+  try {
+    rootHelpText = await (options?.renderBundledRootHelpText ?? renderBundledRootHelpText)(
+      resolvedDistDir,
+      renderContext,
+    );
+  } catch {
+    rootHelpText = (options?.renderSourceRootHelpText ?? renderSourceRootHelpText)(renderContext);
   }
-
-  const rootHelpTextPromise = reusableRootHelpText
-    ? Promise.resolve(reusableRootHelpText)
-    : (async () => {
-        try {
-          return await (options?.renderBundledRootHelpText ?? renderBundledRootHelpText)(
-            resolvedDistDir,
-            renderContext,
-          );
-        } catch {
-          // The spawnSync source fallback blocks the event loop; that is fine for
-          // this rare recovery path (missing/broken bundle) and only delays
-          // draining sibling render output, not its correctness.
-          return (options?.renderSourceRootHelpText ?? renderSourceRootHelpText)(renderContext);
-        }
-      })();
+  const browserHelpTextPromise = Promise.resolve(
+    (options?.renderSourceBrowserHelpText ?? renderSourceBrowserHelpText)(renderContext),
+  );
   const hasCustomCommandRenderer =
-    options?.renderSourceBrowserHelpText ||
     options?.renderSourceSecretsHelpText ||
     options?.renderSourceNodesHelpText ||
     options?.renderSourceSubcommandHelpTextRecord;
-  const sourceCommandsToRender: SourceCommandHelpCommand[] = [];
-  if (!reusableBrowserHelpText) {
-    sourceCommandsToRender.push("browser");
-  }
-  if (!reusableSecretsHelpText) {
-    sourceCommandsToRender.push("secrets");
-  }
-  if (!reusableNodesHelpText) {
-    sourceCommandsToRender.push("nodes");
-  }
-  if (!reusableSubcommandHelpText) {
-    sourceCommandsToRender.push(...PRECOMPUTED_SUBCOMMAND_HELP_COMMANDS);
-  }
-  const commandHelpTextPromise =
-    hasCustomCommandRenderer || sourceCommandsToRender.length === 0
-      ? null
-      : renderSourceCommandHelpTextRecord(sourceCommandsToRender, renderContext);
-  const browserHelpTextPromise = reusableBrowserHelpText
-    ? Promise.resolve(reusableBrowserHelpText)
-    : commandHelpTextPromise
-      ? commandHelpTextPromise.then((commandHelpText) => commandHelpText.browser)
-      : Promise.resolve(
-          (options?.renderSourceBrowserHelpText ?? renderSourceBrowserHelpText)(renderContext),
-        );
-  const secretsHelpTextPromise = reusableSecretsHelpText
-    ? Promise.resolve(reusableSecretsHelpText)
-    : commandHelpTextPromise
-      ? commandHelpTextPromise.then((commandHelpText) => commandHelpText.secrets)
-      : Promise.resolve(
-          (options?.renderSourceSecretsHelpText ?? renderSourceSecretsHelpText)(renderContext),
-        );
-  const nodesHelpTextPromise = reusableNodesHelpText
-    ? Promise.resolve(reusableNodesHelpText)
-    : commandHelpTextPromise
-      ? commandHelpTextPromise.then((commandHelpText) => commandHelpText.nodes)
-      : Promise.resolve(
-          (options?.renderSourceNodesHelpText ?? renderSourceNodesHelpText)(renderContext),
-        );
-  const subcommandHelpTextPromise = reusableSubcommandHelpText
-    ? Promise.resolve(reusableSubcommandHelpText)
-    : commandHelpTextPromise
-      ? commandHelpTextPromise.then(
-          (commandHelpText) =>
-            Object.fromEntries(
-              PRECOMPUTED_SUBCOMMAND_HELP_COMMANDS.map((commandName) => [
-                commandName,
-                commandHelpText[commandName],
-              ]),
-            ) as PrecomputedSubcommandHelpText,
-        )
-      : Promise.resolve(
-          (options?.renderSourceSubcommandHelpTextRecord ?? renderSourceSubcommandHelpTextRecord)(
-            renderContext,
-          ),
-        );
-  const [rootHelpText, browserHelpText, secretsHelpText, nodesHelpText, subcommandHelpText] =
-    await Promise.all([
-      rootHelpTextPromise,
-      browserHelpTextPromise,
-      secretsHelpTextPromise,
-      nodesHelpTextPromise,
-      subcommandHelpTextPromise,
-    ]);
+  const commandHelpTextPromise = hasCustomCommandRenderer
+    ? null
+    : renderSourceCommandHelpTextRecord(
+        ["secrets", "nodes", ...PRECOMPUTED_SUBCOMMAND_HELP_COMMANDS],
+        renderContext,
+      );
+  const secretsHelpTextPromise = commandHelpTextPromise
+    ? commandHelpTextPromise.then((commandHelpText) => commandHelpText.secrets)
+    : Promise.resolve(
+        (options?.renderSourceSecretsHelpText ?? renderSourceSecretsHelpText)(renderContext),
+      );
+  const nodesHelpTextPromise = commandHelpTextPromise
+    ? commandHelpTextPromise.then((commandHelpText) => commandHelpText.nodes)
+    : Promise.resolve(
+        (options?.renderSourceNodesHelpText ?? renderSourceNodesHelpText)(renderContext),
+      );
+  const subcommandHelpTextPromise = commandHelpTextPromise
+    ? commandHelpTextPromise.then(
+        (commandHelpText) =>
+          Object.fromEntries(
+            PRECOMPUTED_SUBCOMMAND_HELP_COMMANDS.map((commandName) => [
+              commandName,
+              commandHelpText[commandName],
+            ]),
+          ) as PrecomputedSubcommandHelpText,
+      )
+    : Promise.resolve(
+        (options?.renderSourceSubcommandHelpTextRecord ?? renderSourceSubcommandHelpTextRecord)(
+          renderContext,
+        ),
+      );
+  const [browserHelpText, secretsHelpText, nodesHelpText, subcommandHelpText] = await Promise.all([
+    browserHelpTextPromise,
+    secretsHelpTextPromise,
+    nodesHelpTextPromise,
+    subcommandHelpTextPromise,
+  ]);
 
   mkdirSync(resolvedDistDir, { recursive: true });
   writeFileSync(
@@ -943,8 +795,7 @@ function hasAllPrecomputedSubcommandHelpText(value: unknown): boolean {
 }
 
 export const testing = {
-  renderSourceRootHelpText,
-  signalCliStartupMetadataProcessTree,
+  mapWithConcurrency,
   spawnText,
 };
 

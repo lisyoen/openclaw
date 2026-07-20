@@ -81,15 +81,15 @@ describe("directive behavior", () => {
             workspace: "/tmp/openclaw",
             models: {
               "anthropic/claude-opus-4-6": {
-                params: { fastMode: "auto", fastAutoOnSeconds: 30 },
+                params: { fastMode: true },
               },
             },
           },
         },
       } as OpenClawConfig,
     });
-    expect(fastText).toContain("Current fast mode: auto (30 sec) (default: model)");
-    expect(fastText).toContain("Options: on, off, auto (30 sec), default, status.");
+    expect(fastText).toContain("Current fast mode: on (config)");
+    expect(fastText).toContain("Options: status, on, off, default.");
 
     const { text: verboseText } = await runDirectiveStatus("/verbose", {
       currentVerboseLevel: "on",
@@ -136,7 +136,7 @@ describe("directive behavior", () => {
     );
     expect(runEmbeddedAgentMock).not.toHaveBeenCalled();
   });
-  it("reports concise fast status for explicit status queries", async () => {
+  it("treats /fast status like the no-argument status query", async () => {
     const { text: statusText } = await runDirectiveStatus("/fast status", {
       cfg: {
         commands: { text: true },
@@ -146,7 +146,7 @@ describe("directive behavior", () => {
             workspace: "/tmp/openclaw",
             models: {
               "anthropic/claude-opus-4-6": {
-                params: { fastMode: "auto", fastAutoOnSeconds: 30 },
+                params: { fastMode: true },
               },
             },
           },
@@ -154,8 +154,8 @@ describe("directive behavior", () => {
       } as OpenClawConfig,
     });
 
-    expect(statusText).toContain("Current fast mode: auto (30 sec) (default: model)");
-    expect(statusText).not.toContain("Options:");
+    expect(statusText).toContain("Current fast mode: on (config)");
+    expect(statusText).toContain("Options: status, on, off, default.");
     expect(runEmbeddedAgentMock).not.toHaveBeenCalled();
   });
   it("enforces per-agent elevated restrictions and status visibility", async () => {

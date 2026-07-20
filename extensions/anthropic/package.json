@@ -1,8 +1,8 @@
 {
   "name": "@openclaw/anthropic-provider",
-  "version": "2026.7.2",
+  "version": "2026.6.8",
   "private": true,
-  "description": "OpenClaw Anthropic provider, Claude CLI, and native session catalog plugin",
+  "description": "OpenClaw Anthropic provider plugin",
   "type": "module",
   "devDependencies": {
     "@openclaw/plugin-sdk": "workspace:*"

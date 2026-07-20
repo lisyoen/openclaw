@@ -93,7 +93,7 @@ describe("discord channel message adapter", () => {
       });
       expect(hoisted.sendMessageDiscordMock).toHaveBeenLastCalledWith("channel:123456", "hello", {
         verbose: false,
-        reply: undefined,
+        replyTo: undefined,
         accountId: "default",
         silent: undefined,
         cfg: {},
@@ -121,7 +121,7 @@ describe("discord channel message adapter", () => {
         mediaAccess: undefined,
         mediaLocalRoots: undefined,
         mediaReadFile: undefined,
-        reply: undefined,
+        replyTo: undefined,
         accountId: "default",
         silent: undefined,
         cfg: {},
@@ -142,22 +142,17 @@ describe("discord channel message adapter", () => {
         payload: { text: "payload" },
         accountId: "default",
       });
-      expect(hoisted.sendMessageDiscordMock).toHaveBeenLastCalledWith(
-        "channel:123456",
-        "payload",
-        expect.objectContaining({
-          verbose: false,
-          reply: undefined,
-          accountId: "default",
-          silent: undefined,
-          cfg: {},
-          textLimit: undefined,
-          maxLinesPerMessage: undefined,
-          tableMode: undefined,
-          chunkMode: undefined,
-          onDeliveryResult: expect.any(Function),
-        }),
-      );
+      expect(hoisted.sendMessageDiscordMock).toHaveBeenLastCalledWith("channel:123456", "payload", {
+        verbose: false,
+        replyTo: undefined,
+        accountId: "default",
+        silent: undefined,
+        cfg: {},
+        textLimit: undefined,
+        maxLinesPerMessage: undefined,
+        tableMode: undefined,
+        chunkMode: undefined,
+      });
       expect(result.receipt.platformMessageIds).toEqual(["msg-1"]);
     };
 
@@ -199,7 +194,7 @@ describe("discord channel message adapter", () => {
         {
           verbose: false,
           accountId: "default",
-          reply: { messageId: "reply-1", scope: "all" },
+          replyTo: "reply-1",
           silent: true,
           cfg: {},
           textLimit: undefined,
@@ -242,7 +237,7 @@ describe("discord channel message adapter", () => {
           expect(adapter.live?.finalizer?.capabilities?.discardPending).toBe(true);
         },
         previewFinalization: () => {
-          expect(adapter.live?.finalizer?.capabilities?.normalFallback).toBe(true);
+          expect(adapter.live?.finalizer?.capabilities?.finalEdit).toBe(true);
         },
         progressUpdates: () => {
           expect(adapter.live?.capabilities?.draftPreview).toBe(true);
@@ -255,7 +250,7 @@ describe("discord channel message adapter", () => {
       adapter,
       proofs: {
         finalEdit: () => {
-          expect(adapter.live?.finalizer?.capabilities?.finalEdit).toBe(false);
+          expect(adapter.live?.capabilities?.previewFinalization).toBe(true);
         },
         normalFallback: () => {
           expect(sendText).toBeTypeOf("function");

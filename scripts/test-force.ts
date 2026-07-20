@@ -4,10 +4,8 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { forceFreePort } from "../src/cli/ports.js";
+import { forceFreePort, type PortProcess } from "../src/cli/ports.js";
 import { resolveGatewayPort } from "../src/config/config.js";
-
-type PortProcess = ReturnType<typeof forceFreePort>[number];
 
 function usage(): string {
   return [

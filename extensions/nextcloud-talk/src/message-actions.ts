@@ -41,7 +41,7 @@ export const nextcloudTalkMessageActions: ChannelMessageActionAdapter = {
     return { actions };
   },
 
-  supportsAction: ({ action }) => action === "react",
+  supportsAction: ({ action }) => action !== "send",
 
   handleAction: async ({ action, params, cfg, accountId, toolContext }) => {
     if (action === "send") {

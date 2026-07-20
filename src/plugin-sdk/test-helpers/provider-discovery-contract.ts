@@ -1,11 +1,11 @@
 // Provider discovery contract helpers define reusable discovery tests for provider plugins.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { runProviderCatalog } from "../../plugins/provider-discovery.js";
+import type { AuthProfileStore, OpenClawConfig } from "../provider-auth.js";
 import {
   registerProviderPlugins as registerProviders,
   requireRegisteredProvider as requireProvider,
-} from "../../test-utils/plugin-registration.js";
-import type { AuthProfileStore, OpenClawConfig } from "../provider-auth.js";
+  runProviderCatalog,
+} from "../testing.js";
 
 const resolveCopilotApiTokenMock = vi.hoisted(() => vi.fn());
 const buildVllmProviderMock = vi.hoisted(() => vi.fn());
@@ -170,12 +170,6 @@ function installDiscoveryHooks(state: DiscoveryState, options: DiscoveryContract
         ensureAuthProfileStore: ensureAuthProfileStoreMock,
         listProfilesForProvider: listProfilesForProviderMock,
         normalizeApiKeyInput: (value: unknown) => (typeof value === "string" ? value.trim() : ""),
-        normalizeGithubCopilotDomain: (raw: unknown) => {
-          const trimmed = typeof raw === "string" ? raw.trim().toLowerCase() : "";
-          return trimmed === "github.com" || /^[a-z0-9-]+\.ghe\.com$/.test(trimmed)
-            ? trimmed
-            : "github.com";
-        },
         normalizeOptionalSecretInput: (value: unknown) =>
           typeof value === "string" && value.trim() ? value.trim() : undefined,
         resolveNonEnvSecretRefApiKeyMarker: (source: unknown) =>
@@ -912,4 +906,3 @@ export function describeCloudflareAiGatewayProviderDiscoveryContract(
     });
   });
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

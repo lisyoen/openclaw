@@ -4,14 +4,6 @@ import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import type { ModelProviderConfig } from "../config/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
-/** Agent-owned runtime handle carried opaquely through media provider requests. */
-type MediaPreparedModelRuntime = Readonly<{
-  agentDir: string;
-  workspaceDir?: string;
-  config: OpenClawConfig;
-  createStores: () => unknown;
-}>;
-
 type MediaUnderstandingKind = "audio.transcription" | "video.description" | "image.description";
 
 export type MediaUnderstandingCapability = "image" | "audio" | "video";
@@ -37,8 +29,6 @@ export type MediaUnderstandingOutput = {
   text: string;
   provider: string;
   model?: string;
-  requestedBackend?: string;
-  observedBackend?: string;
 };
 
 type MediaUnderstandingDecisionOutcome =
@@ -52,8 +42,6 @@ type MediaUnderstandingDecisionOutcome =
 export type MediaUnderstandingModelDecision = {
   provider?: string;
   model?: string;
-  requestedBackend?: string;
-  observedBackend?: string;
   type: "provider" | "cli";
   outcome: "success" | "skipped" | "failed";
   reason?: string;
@@ -156,10 +144,8 @@ export type ImageDescriptionRequest = {
   profile?: string;
   preferredProfile?: string;
   authStore?: AuthProfileStore;
-  agentId?: string;
   agentDir: string;
   workspaceDir?: string;
-  preparedModelRuntime?: MediaPreparedModelRuntime;
   cfg: OpenClawConfig;
   model: string;
   provider: string;
@@ -181,10 +167,8 @@ export type ImagesDescriptionRequest = {
   profile?: string;
   preferredProfile?: string;
   authStore?: AuthProfileStore;
-  agentId?: string;
   agentDir: string;
   workspaceDir?: string;
-  preparedModelRuntime?: MediaPreparedModelRuntime;
   cfg: OpenClawConfig;
 };
 
@@ -239,7 +223,7 @@ export type StructuredExtractionResult = {
   contentType?: "json" | "text";
 };
 
-type MediaUnderstandingDocumentModelDefaults = {
+export type MediaUnderstandingDocumentModelDefaults = {
   textExtraction?: string;
   image?: string | false;
 };

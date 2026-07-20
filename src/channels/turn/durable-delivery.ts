@@ -39,7 +39,7 @@ export type DurableInboundReplyDeliveryParams = DurableInboundReplyDeliveryOptio
 };
 
 /** Outcome of attempting durable final delivery for an inbound reply payload. */
-type DurableInboundReplyDeliveryResult =
+export type DurableInboundReplyDeliveryResult =
   | { status: "not_applicable"; reason: "non_final" }
   | {
       status: "unsupported";
@@ -62,7 +62,7 @@ function resolveDeliveryTarget(params: DurableInboundReplyDeliveryParams): strin
   );
 }
 
-function resolveDurableInboundReplyToId(
+export function resolveDurableInboundReplyToId(
   params: Pick<DurableInboundReplyDeliveryParams, "ctxPayload" | "payload" | "replyToId">,
 ): string | null | undefined {
   // Explicit null means "do not reply to a source message"; do not fall back to context ids.
@@ -207,7 +207,6 @@ export async function deliverInboundReplyWithMessageSendContext(
     mediaAccess: params.mediaAccess,
     silent: params.silent,
     durability,
-    ...(durability === "required" ? { requireUnknownSendReconciliation: true } : {}),
     session,
     gatewayClientScopes: params.ctxPayload.GatewayClientScopes ?? [],
   });
@@ -234,3 +233,6 @@ export async function deliverInboundReplyWithMessageSendContext(
   }
   return { status: "handled_visible", delivery };
 }
+
+/** @deprecated Use `deliverInboundReplyWithMessageSendContext`. */
+export const deliverDurableInboundReplyPayload = deliverInboundReplyWithMessageSendContext;

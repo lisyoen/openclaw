@@ -9,7 +9,7 @@ import {
   mapSandboxSkillEntriesForPrompt,
   resolveSandboxSkillRuntimeInputs,
 } from "../../agents/embedded-agent-runner/sandbox-skills.js";
-import { resolveNodeExecEligibility } from "../../agents/exec-defaults.js";
+import { canExecRequestNode } from "../../agents/exec-defaults.js";
 import { resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import { resolveAgentPromptSurfaceForSessionKey } from "../../agents/prompt-surface.js";
 import type { AgentTool } from "../../agents/runtime/index.js";
@@ -29,7 +29,7 @@ import type { SkillEligibilityContext } from "../../skills/types.js";
 import type { HandleCommandsParams } from "./commands-types.js";
 import { resolveRuntimePolicySessionKey } from "./runtime-policy-session-key.js";
 
-type CommandsSystemPromptBundle = {
+export type CommandsSystemPromptBundle = {
   systemPrompt: string;
   tools: AgentTool[];
   skillsPrompt: string;
@@ -45,28 +45,25 @@ function resolveCommandSkillsEligibility(params: {
   sessionKey: string | undefined;
 }): SkillEligibilityContext {
   try {
-    const nodeSkills = resolveNodeExecEligibility({
-      cfg: params.config,
-      sessionEntry: params.sessionEntry,
-      sessionKey: params.sessionKey,
-      agentId: params.agentId,
-    });
     return {
-      nodeSkills,
       remote: getRemoteSkillEligibility({
-        advertiseExecNode: nodeSkills.canExec,
+        advertiseExecNode: canExecRequestNode({
+          cfg: params.config,
+          sessionEntry: params.sessionEntry,
+          sessionKey: params.sessionKey,
+          agentId: params.agentId,
+        }),
       }),
     };
   } catch {
     try {
       return {
-        nodeSkills: { canExec: false },
         remote: getRemoteSkillEligibility({
           advertiseExecNode: false,
         }),
       };
     } catch {
-      return { nodeSkills: { canExec: false } };
+      return {};
     }
   }
 }

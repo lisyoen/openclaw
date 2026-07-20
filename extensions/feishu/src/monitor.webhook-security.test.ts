@@ -39,12 +39,15 @@ vi.mock("./monitor.state.js", async (importOriginal) => {
 });
 
 import type { RuntimeEnv } from "../runtime-api.js";
-import { buildFeishuWebhookRateLimitKey } from "./monitor-rate-limit-key.js";
 import { resolveRequestClientIp } from "./monitor-transport-runtime-api.js";
-import { cleanupFeishuMonitorStateForTests } from "./monitor.cleanup.test-helpers.js";
-import { monitorFeishuProvider } from "./monitor.js";
-import { feishuWebhookRateLimiter } from "./monitor.state.js";
-import { monitorWebhook } from "./monitor.transport.js";
+import {
+  clearFeishuWebhookRateLimitStateForTest,
+  getFeishuWebhookRateLimitStateSizeForTest,
+  isWebhookRateLimitedForTest,
+  monitorFeishuProvider,
+  stopFeishuMonitor,
+} from "./monitor.js";
+import { buildFeishuWebhookRateLimitKeyForTest, monitorWebhook } from "./monitor.transport.js";
 import type { ResolvedFeishuAccount } from "./types.js";
 
 beforeAll(async () => {
@@ -162,8 +165,8 @@ function resolveTestClientIp(remoteAddress: string | undefined): string | undefi
 }
 
 afterEach(async () => {
-  feishuWebhookRateLimiter.clear();
-  cleanupFeishuMonitorStateForTests();
+  clearFeishuWebhookRateLimitStateForTest();
+  await stopFeishuMonitor();
 });
 
 afterAll(() => {
@@ -332,19 +335,19 @@ describe("Feishu webhook security hardening", () => {
     };
 
     expect([
-      buildFeishuWebhookRateLimitKey({
+      buildFeishuWebhookRateLimitKeyForTest({
         ...base,
         clientIp: resolveTestClientIp("127.0.0.1"),
       }),
-      buildFeishuWebhookRateLimitKey({
+      buildFeishuWebhookRateLimitKeyForTest({
         ...base,
         clientIp: resolveTestClientIp("127.0.0.42"),
       }),
-      buildFeishuWebhookRateLimitKey({
+      buildFeishuWebhookRateLimitKeyForTest({
         ...base,
         clientIp: resolveTestClientIp("::ffff:127.0.0.1"),
       }),
-      buildFeishuWebhookRateLimitKey({
+      buildFeishuWebhookRateLimitKeyForTest({
         ...base,
         clientIp: resolveTestClientIp("::1"),
       }),
@@ -362,10 +365,10 @@ describe("Feishu webhook security hardening", () => {
       path: "/hook-rate-limit-key",
     };
 
-    expect(buildFeishuWebhookRateLimitKey({ ...base, clientIp: "10.0.0.1" })).toBe(
+    expect(buildFeishuWebhookRateLimitKeyForTest({ ...base, clientIp: "10.0.0.1" })).toBe(
       "rate-limit-key:/hook-rate-limit-key:10.0.0.1",
     );
-    expect(buildFeishuWebhookRateLimitKey(base)).toBe(
+    expect(buildFeishuWebhookRateLimitKeyForTest(base)).toBe(
       "rate-limit-key:/hook-rate-limit-key:unknown",
     );
   });
@@ -373,19 +376,19 @@ describe("Feishu webhook security hardening", () => {
   it("caps tracked webhook rate-limit keys to prevent unbounded growth", () => {
     const now = 1_000_000;
     for (let i = 0; i < 4_500; i += 1) {
-      feishuWebhookRateLimiter.isRateLimited(`/feishu-rate-limit:key-${i}`, now);
+      isWebhookRateLimitedForTest(`/feishu-rate-limit:key-${i}`, now);
     }
-    expect(feishuWebhookRateLimiter.size()).toBeLessThanOrEqual(4_096);
+    expect(getFeishuWebhookRateLimitStateSizeForTest()).toBeLessThanOrEqual(4_096);
   });
 
   it("prunes stale webhook rate-limit state after window elapses", () => {
     const now = 2_000_000;
     for (let i = 0; i < 100; i += 1) {
-      feishuWebhookRateLimiter.isRateLimited(`/feishu-rate-limit-stale:key-${i}`, now);
+      isWebhookRateLimitedForTest(`/feishu-rate-limit-stale:key-${i}`, now);
     }
-    expect(feishuWebhookRateLimiter.size()).toBe(100);
+    expect(getFeishuWebhookRateLimitStateSizeForTest()).toBe(100);
 
-    feishuWebhookRateLimiter.isRateLimited("/feishu-rate-limit-stale:fresh", now + 60_001);
-    expect(feishuWebhookRateLimiter.size()).toBe(1);
+    isWebhookRateLimitedForTest("/feishu-rate-limit-stale:fresh", now + 60_001);
+    expect(getFeishuWebhookRateLimitStateSizeForTest()).toBe(1);
   });
 });

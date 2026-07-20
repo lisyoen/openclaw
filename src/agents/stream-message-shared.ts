@@ -11,6 +11,17 @@ type StreamModelDescriptor = {
   id: string;
 };
 
+export function buildZeroUsage(): Usage {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+}
+
 export function buildUsageWithNoCost(params: {
   input?: number;
   output?: number;
@@ -51,7 +62,7 @@ export function buildAssistantMessage(params: {
   };
 }
 
-function buildAssistantMessageWithZeroUsage(params: {
+export function buildAssistantMessageWithZeroUsage(params: {
   model: StreamModelDescriptor;
   content: AssistantMessage["content"];
   stopReason: StopReason;
@@ -61,7 +72,7 @@ function buildAssistantMessageWithZeroUsage(params: {
     model: params.model,
     content: params.content,
     stopReason: params.stopReason,
-    usage: buildUsageWithNoCost({}),
+    usage: buildZeroUsage(),
     timestamp: params.timestamp,
   });
 }

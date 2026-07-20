@@ -1,4 +1,3 @@
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 // Perplexity provider module implements model/runtime integration.
 import {
   mergeScopedSearchConfig,
@@ -12,9 +11,14 @@ import {
   resolvePerplexityWebSearchRuntimeMetadata,
 } from "./perplexity-web-search-provider.shared.js";
 
-const loadPerplexityWebSearchRuntime = createLazyRuntimeModule(
-  () => import("./perplexity-web-search-provider.runtime.js"),
-);
+type PerplexityWebSearchRuntime = typeof import("./perplexity-web-search-provider.runtime.js");
+
+let perplexityWebSearchRuntimePromise: Promise<PerplexityWebSearchRuntime> | undefined;
+
+function loadPerplexityWebSearchRuntime(): Promise<PerplexityWebSearchRuntime> {
+  perplexityWebSearchRuntimePromise ??= import("./perplexity-web-search-provider.runtime.js");
+  return perplexityWebSearchRuntimePromise;
+}
 
 function createPerplexityParameters(transport?: string): Record<string, unknown> {
   const properties: Record<string, unknown> = {

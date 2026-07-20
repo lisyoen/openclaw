@@ -8,18 +8,13 @@ import type {
   ActiveChannelPluginRuntimeShape,
   ActivePluginChannelRegistration,
 } from "../../plugins/channel-registry-state.types.js";
-import {
-  getActivePluginChannelRegistrySnapshotFromState,
-  type ActivePluginChannelRegistrySnapshot,
-} from "../../plugins/runtime-channel-state.js";
+import { getActivePluginChannelRegistryFromState } from "../../plugins/runtime-channel-state.js";
 import { CHAT_CHANNEL_ORDER } from "../registry.js";
-import type { ChannelPlugin } from "./types.plugin.js";
-import type { ChannelId } from "./types.public.js";
 
 /**
  * Loaded channel plugin shape after id/meta normalization.
  */
-type LoadedChannelPlugin = ActiveChannelPluginRuntimeShape & {
+export type LoadedChannelPlugin = ActiveChannelPluginRuntimeShape & {
   id: string;
   meta: NonNullable<ActiveChannelPluginRuntimeShape["meta"]>;
 };
@@ -27,18 +22,15 @@ type LoadedChannelPlugin = ActiveChannelPluginRuntimeShape & {
 /**
  * Loaded channel registry entry with a normalized plugin payload.
  */
-type LoadedChannelPluginEntry = ActivePluginChannelRegistration & {
+export type LoadedChannelPluginEntry = ActivePluginChannelRegistration & {
   plugin: LoadedChannelPlugin;
 };
 
 type ChannelPluginView = {
-  snapshot: ActivePluginChannelRegistrySnapshot;
   sorted: LoadedChannelPlugin[];
   byId: Map<string, LoadedChannelPlugin>;
   entriesById: Map<string, LoadedChannelPluginEntry>;
 };
-
-let cachedChannelPluginView: ChannelPluginView | undefined;
 
 function coerceLoadedChannelPlugin(
   plugin: ActiveChannelPluginRuntimeShape | null | undefined,
@@ -70,12 +62,7 @@ function dedupeChannels(channels: LoadedChannelPlugin[]): LoadedChannelPlugin[] 
 }
 
 function resolveChannelPlugins(): ChannelPluginView {
-  const snapshot = getActivePluginChannelRegistrySnapshotFromState();
-  const cached = cachedChannelPluginView;
-  if (cached?.snapshot === snapshot) {
-    return cached;
-  }
-  const registry = snapshot.registry;
+  const registry = getActivePluginChannelRegistryFromState();
 
   const channelPlugins: LoadedChannelPlugin[] = [];
   const pluginEntries: LoadedChannelPluginEntry[] = [];
@@ -112,15 +99,11 @@ function resolveChannelPlugins(): ChannelPluginView {
     }
   }
 
-  // The runtime owns snapshot invalidation across active and pinned registry
-  // changes. Share one derived view until that lifecycle snapshot changes.
-  cachedChannelPluginView = {
-    snapshot,
+  return {
     sorted,
     byId,
     entriesById,
   };
-  return cachedChannelPluginView;
 }
 
 /**
@@ -139,11 +122,6 @@ export function getLoadedChannelPluginById(id: string): LoadedChannelPlugin | un
     return undefined;
   }
   return resolveChannelPlugins().byId.get(resolvedId);
-}
-
-/** Returns one loaded channel plugin without triggering bundled discovery. */
-export function getLoadedChannelPluginForRead(id: ChannelId): ChannelPlugin | undefined {
-  return getLoadedChannelPluginById(id) as ChannelPlugin | undefined;
 }
 
 /**

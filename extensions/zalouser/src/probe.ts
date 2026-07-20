@@ -14,24 +14,14 @@ export async function probeZalouser(
   timeoutMs?: number,
 ): Promise<ZalouserProbeResult> {
   try {
-    let user: ZcaUserInfo | null;
-    if (timeoutMs) {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        user = await Promise.race([
+    const user = timeoutMs
+      ? await Promise.race([
           getZaloUserInfo(profile),
           new Promise<null>((resolve) => {
-            timeout = setTimeout(() => resolve(null), resolveTimerTimeoutMs(timeoutMs, 1000, 1000));
+            setTimeout(() => resolve(null), resolveTimerTimeoutMs(timeoutMs, 1000, 1000));
           }),
-        ]);
-      } finally {
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-      }
-    } else {
-      user = await getZaloUserInfo(profile);
-    }
+        ])
+      : await getZaloUserInfo(profile);
 
     if (!user) {
       return { ok: false, error: "Not authenticated" };

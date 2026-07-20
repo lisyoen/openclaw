@@ -2,33 +2,29 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveEmbeddedSessionLane } from "../agents/embedded-agent-runner/lanes.js";
 import {
+  testing as embeddedRunTesting,
   clearActiveEmbeddedRun,
   setActiveEmbeddedRun,
 } from "../agents/embedded-agent-runner/runs.js";
-import { testing as embeddedRunTesting } from "../agents/embedded-agent-runner/runs.test-support.js";
-import { createReplyOperation } from "../auto-reply/reply/reply-run-registry.js";
-import { testing as replyRunTesting } from "../auto-reply/reply/reply-run-registry.test-support.js";
-import { enqueueCommandInLane, getQueueSize, resetCommandLane } from "../process/command-queue.js";
-import { resetCommandQueueStateForTest } from "../process/command-queue.test-support.js";
+import {
+  testing as replyRunTesting,
+  createReplyOperation,
+} from "../auto-reply/reply/reply-run-registry.js";
+import {
+  enqueueCommandInLane,
+  getQueueSize,
+  resetCommandLane,
+  resetCommandQueueStateForTest,
+} from "../process/command-queue.js";
 import {
   testing as recoveryTesting,
   recoverStuckDiagnosticSession,
 } from "./diagnostic-stuck-session-recovery.runtime.js";
 
-async function expectPendingAfterEventLoopTurn(promise: Promise<unknown>): Promise<void> {
-  let settled = false;
-  void promise.then(
-    () => {
-      settled = true;
-    },
-    () => {
-      settled = true;
-    },
-  );
-  await new Promise<void>((resolve) => {
-    setImmediate(resolve);
+function delay(ms: number): Promise<"blocked"> {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve("blocked"), ms);
   });
-  expect(settled).toBe(false);
 }
 
 describe("stuck session recovery integration", () => {
@@ -65,7 +61,7 @@ describe("stuck session recovery integration", () => {
       queueDepth: 1,
     });
 
-    await expectPendingAfterEventLoopTurn(queued);
+    await expect(Promise.race([queued, delay(100)])).resolves.toBe("blocked");
     expect(getQueueSize(lane)).toBe(2);
 
     operation.complete();
@@ -109,7 +105,7 @@ describe("stuck session recovery integration", () => {
       reason: "active_embedded_run",
       activeSessionId,
     });
-    await expectPendingAfterEventLoopTurn(queued);
+    await expect(Promise.race([queued, delay(100)])).resolves.toBe("blocked");
     expect(getQueueSize(lane)).toBe(2);
 
     clearActiveEmbeddedRun(activeSessionId, handle, activeSessionKey, sessionFile);
@@ -206,7 +202,7 @@ describe("stuck session recovery integration", () => {
     const queued = enqueueCommandInLane(lane, async () => "drained", {
       warnAfterMs: Number.MAX_SAFE_INTEGER,
     });
-    await expect(queued).resolves.toBe("drained");
+    await expect(Promise.race([queued, delay(100)])).resolves.toBe("drained");
   });
 
   it("does not reset a lane that unwedged and started a queued turn during the abort (#91700)", async () => {
@@ -269,8 +265,7 @@ describe("stuck session recovery integration", () => {
     const third = enqueueCommandInLane(lane, async () => "third", {
       warnAfterMs: Number.MAX_SAFE_INTEGER,
     });
-    await expectPendingAfterEventLoopTurn(third);
-    expect(getQueueSize(lane)).toBe(2);
+    await expect(Promise.race([third, delay(100)])).resolves.toBe("blocked");
     releaseFreshTurn("done");
     await expect(freshTurn).resolves.toBe("done");
     await expect(third).resolves.toBe("third");
@@ -297,7 +292,7 @@ describe("stuck session recovery integration", () => {
       queueDepth: 1,
     });
 
-    await expectPendingAfterEventLoopTurn(queued);
+    await expect(Promise.race([queued, delay(100)])).resolves.toBe("blocked");
     expect(getQueueSize(lane)).toBe(2);
 
     expect(resetCommandLane(lane)).toBe(1);

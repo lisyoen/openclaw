@@ -13,7 +13,6 @@ import {
   type WizardPrompter,
   normalizeAccountId,
   createSetupTranslator,
-  setSetupChannelEnabled,
 } from "openclaw/plugin-sdk/setup";
 import { normalizeStringEntries } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
@@ -474,7 +473,18 @@ export const twitchSetupWizard: ChannelSetupWizard = {
   },
   dmPolicy: twitchDmPolicy,
   groupAccess: twitchGroupAccess,
-  disable: (cfg) => setSetupChannelEnabled(cfg, channel, false),
+  disable: (cfg) => {
+    const twitch = (cfg.channels as Record<string, unknown>)?.twitch as
+      | Record<string, unknown>
+      | undefined;
+    return {
+      ...cfg,
+      channels: {
+        ...cfg.channels,
+        twitch: { ...twitch, enabled: false },
+      },
+    };
+  },
 };
 
 type ResolvedTwitchAccount = TwitchAccountConfig & { accountId?: string | null };

@@ -1,5 +1,5 @@
 /** Agent identity fields returned by gateway session listing APIs. */
-type GatewayAgentIdentity = {
+export type GatewayAgentIdentity = {
   name?: string;
   theme?: string;
   emoji?: string;
@@ -8,7 +8,7 @@ type GatewayAgentIdentity = {
 };
 
 /** Model summary returned for an agent/session row. */
-type GatewayAgentModel = {
+export type GatewayAgentModel = {
   primary?: string;
   fallbacks?: string[];
 };
@@ -17,15 +17,7 @@ type GatewayAgentModel = {
 export type GatewayAgentRuntime = {
   id: string;
   fallback?: "openclaw" | "none";
-  source:
-    | "env"
-    | "agent"
-    | "defaults"
-    | "model"
-    | "provider"
-    | "implicit"
-    | "session"
-    | "session-key";
+  source: "env" | "agent" | "defaults" | "model" | "provider" | "implicit" | "session-key";
 };
 
 /** Thinking-level option exposed to UI clients. */
@@ -40,7 +32,6 @@ export type GatewayAgentRow = {
   name?: string;
   identity?: GatewayAgentIdentity;
   workspace?: string;
-  workspaceGit?: boolean;
   model?: GatewayAgentModel;
   agentRuntime?: GatewayAgentRuntime;
   thinkingLevels?: GatewayThinkingLevelOption[];

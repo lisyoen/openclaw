@@ -9,9 +9,8 @@ read_when:
 title: "OpenRouter"
 ---
 
-OpenRouter routes requests to many models behind one API and one key. It is
-OpenAI-compatible, so OpenClaw talks to it over the same
-`openai-completions`-style transport used for other proxy providers.
+OpenRouter provides a **unified API** that routes requests to many models behind a single
+endpoint and API key. It is OpenAI-compatible, so most OpenAI SDKs work by switching the base URL.
 
 ## Getting started
 
@@ -23,8 +22,8 @@ OpenAI-compatible, so OpenClaw talks to it over the same
         openclaw onboard --auth-choice openrouter-oauth
         ```
 
-        OpenClaw opens OpenRouter's browser sign-in flow (PKCE), exchanges the
-        code for an OpenRouter API key, and stores it in the default
+        OpenClaw opens OpenRouter's browser sign-in flow, exchanges the PKCE
+        code for an OpenRouter API key, and stores that key in the default
         OpenRouter auth profile. On remote/headless hosts, OpenClaw prints the
         sign-in URL and asks you to paste the redirect URL after signing in.
       </Step>
@@ -82,7 +81,7 @@ Model refs follow the pattern `openrouter/<provider>/<model>`. For the full list
 available providers and models, see [/concepts/model-providers](/concepts/model-providers).
 </Note>
 
-Bundled fallback models, used when live catalog discovery is unavailable:
+Bundled fallback examples:
 
 | Model ref                         | Notes                        |
 | --------------------------------- | ---------------------------- |
@@ -90,14 +89,9 @@ Bundled fallback models, used when live catalog discovery is unavailable:
 | `openrouter/moonshotai/kimi-k2.6` | Kimi K2.6 via MoonshotAI     |
 | `openrouter/moonshotai/kimi-k2.5` | Kimi K2.5 via MoonshotAI     |
 
-Any other `openrouter/<provider>/<model>` ref, including
-`openrouter/openrouter/fusion` (see [Fusion router](#fusion-router)), resolves
-dynamically against OpenRouter's live model catalog.
-
 ## Image generation
 
-OpenRouter can back the `image_generate` tool. Set an OpenRouter image model
-under `agents.defaults.imageGenerationModel`:
+OpenRouter can also back the `image_generate` tool. Use an OpenRouter image model under `agents.defaults.imageGenerationModel`:
 
 ```json5
 {
@@ -113,17 +107,11 @@ under `agents.defaults.imageGenerationModel`:
 }
 ```
 
-OpenClaw sends image requests to OpenRouter's chat-completions image API with
-`modalities: ["image", "text"]`. Gemini image models additionally receive
-`aspectRatio` and `resolution` hints through OpenRouter's `image_config`; other
-image models do not. Use `agents.defaults.imageGenerationModel.timeoutMs` for
-slower models; the `image_generate` tool's per-call `timeoutMs` still wins.
+OpenClaw sends image requests to OpenRouter's chat completions image API with `modalities: ["image", "text"]`. Gemini image models receive supported `aspectRatio` and `resolution` hints through OpenRouter's `image_config`. Use `agents.defaults.imageGenerationModel.timeoutMs` for slower OpenRouter image models; the `image_generate` tool's per-call `timeoutMs` parameter still wins.
 
 ## Video generation
 
-OpenRouter can back the `video_generate` tool through its asynchronous
-`/videos` API. Set an OpenRouter video model under
-`agents.defaults.videoGenerationModel`:
+OpenRouter can also back the `video_generate` tool through its asynchronous `/videos` API. Use an OpenRouter video model under `agents.defaults.videoGenerationModel`:
 
 ```json5
 {
@@ -138,19 +126,20 @@ OpenRouter can back the `video_generate` tool through its asynchronous
 }
 ```
 
-OpenClaw submits text-to-video and image-to-video jobs, polls the returned
-`polling_url`, and downloads the finished video from OpenRouter's
-`unsigned_urls` or the job content endpoint. Reference images default to
-first/last-frame images; images tagged `reference_image` are sent as input
-references instead. The bundled `google/veo-3.1-fast` default supports 4/6/8
-second durations, `720P`/`1080P` resolutions, and `16:9`/`9:16` aspect ratios.
-Video-to-video is not supported: the upstream API only accepts text and image
-references.
+OpenClaw submits text-to-video and image-to-video jobs to OpenRouter, polls
+the returned `polling_url`, and downloads the completed video from
+OpenRouter's `unsigned_urls` or the documented job content endpoint.
+Reference images are sent as first/last frame images by default; images
+tagged with `reference_image` are sent as OpenRouter input references. The
+bundled `google/veo-3.1-fast` default advertises the currently supported 4/6/8
+second durations, `720P`/`1080P` resolutions, and `16:9`/`9:16` aspect
+ratios. Video-to-video is not registered for OpenRouter because the upstream
+video generation API currently accepts text and image references.
 
 ## Music generation
 
-OpenRouter can back the `music_generate` tool through chat-completions audio
-output. Set an OpenRouter audio model under
+OpenRouter can also back the `music_generate` tool through chat completions
+audio output. Use an OpenRouter audio model under
 `agents.defaults.musicGenerationModel`:
 
 ```json5
@@ -167,17 +156,17 @@ output. Set an OpenRouter audio model under
 }
 ```
 
-The bundled OpenRouter music provider defaults to `google/lyria-3-pro-preview`
-and also exposes `google/lyria-3-clip-preview`. OpenClaw sends `modalities:
-["text", "audio"]`, streams the response, collects the audio chunks, and saves
-the result as generated media for channel delivery. Lyria models accept one
-reference image through the shared `music_generate image=...` parameter.
-Streaming audio, transcript retention, and the derived SSE event envelope are
-bounded by `agents.defaults.mediaMaxMb` (the default audio cap is 16 MB).
+The bundled OpenRouter music provider defaults to
+`google/lyria-3-pro-preview` and also exposes
+`google/lyria-3-clip-preview`. OpenClaw sends `modalities: ["text",
+"audio"]`, enables streaming, collects the streamed audio chunks, and saves
+the result as generated media for channel delivery. Reference images are
+accepted for Lyria models through the shared `music_generate image=...`
+parameter.
 
 ## Text-to-speech
 
-OpenRouter can act as a TTS provider through its OpenAI-compatible
+OpenRouter can also be used as a TTS provider through its OpenAI-compatible
 `/audio/speech` endpoint.
 
 ```json5
@@ -198,13 +187,13 @@ OpenRouter can act as a TTS provider through its OpenAI-compatible
 }
 ```
 
-If `messages.tts.providers.openrouter.apiKey` is omitted, TTS falls back to
+If `messages.tts.providers.openrouter.apiKey` is omitted, TTS reuses
 `models.providers.openrouter.apiKey`, then `OPENROUTER_API_KEY`.
 
 ## Speech-to-text (inbound audio)
 
 OpenRouter can transcribe inbound voice/audio attachments through the shared
-`tools.media.audio` path, using its STT endpoint (`/audio/transcriptions`).
+`tools.media.audio` path using its STT endpoint (`/audio/transcriptions`).
 This applies to any channel plugin that forwards inbound voice/audio into
 media understanding preflight.
 
@@ -222,96 +211,26 @@ media understanding preflight.
 ```
 
 OpenClaw sends OpenRouter STT requests as JSON with base64 audio under
-`input_audio` (OpenRouter's STT contract), not as multipart OpenAI form
-uploads.
-
-## Fusion router
-
-OpenRouter Fusion sends one OpenClaw model ref to several OpenRouter models in
-parallel, has OpenRouter judge their answers, and returns one final response
-through the normal OpenRouter endpoint. The upstream model slug is
-`openrouter/fusion`, so the OpenClaw model ref carries both the OpenClaw
-provider prefix and the upstream OpenRouter namespace:
-
-```bash
-openclaw models set openrouter/openrouter/fusion
-```
-
-Configure Fusion's panel and judge through the model's `params.extraBody`;
-those fields forward directly into the OpenRouter chat-completions request
-body. Fusion works with either OAuth or API-key onboarding; if you use OAuth,
-omit the `env.OPENROUTER_API_KEY` line below.
-
-```json5
-{
-  env: { OPENROUTER_API_KEY: "sk-or-..." },
-  agents: {
-    defaults: {
-      model: { primary: "openrouter/openrouter/fusion" },
-      models: {
-        "openrouter/openrouter/fusion": {
-          params: {
-            extraBody: {
-              plugins: [
-                {
-                  id: "fusion",
-                  analysis_models: [
-                    "google/gemini-3.5-flash",
-                    "moonshotai/kimi-k2.6",
-                    "deepseek/deepseek-v4-pro",
-                  ],
-                  model: "google/gemini-3.5-flash",
-                },
-              ],
-            },
-          },
-        },
-      },
-    },
-  },
-}
-```
-
-`analysis_models` is the parallel panel; `model` inside the Fusion plugin
-config is the judge model. Do not set top-level `tool_choice` to `"required"`
-in normal agent/chat turns to try to force Fusion: OpenClaw turns can include
-its own tool definitions, and a top-level required tool choice may pick one of
-those instead of the Fusion router. When this Fusion plugin config is present,
-OpenClaw adds a sanitized system-prompt note listing the configured analysis
-models and judge model, so the agent can answer questions about its own Fusion
-panel. Other `extraBody` fields are not copied into the prompt.
-
-Fusion is slower by design: OpenRouter fans the prompt out to multiple
-analysis models, then runs a judge/synthesis step, so latency runs higher than
-a direct single-model request. Use it for deliberate, high-quality answers or
-escalation paths, not as a latency-sensitive default. Keep the panel small and
-pick faster analysis/judge models for quicker responses.
-
-Test a configured ref with a one-shot local call:
-
-```bash
-openclaw infer model run --local \
-  --model openrouter/openrouter/fusion \
-  --prompt "Reply with exactly: FUSION_OK" \
-  --json
-```
+`input_audio` (OpenRouter STT contract), not as multipart OpenAI form uploads.
 
 ## Authentication and headers
 
-OpenRouter uses a Bearer token from your API key. OpenRouter OAuth is a PKCE
-login flow that issues an OpenRouter API key, so OpenClaw stores the result in
-the same `openrouter:default` API-key auth profile used by manual API-key
-setup.
+OpenRouter uses a Bearer token with your API key under the hood. OpenRouter
+OAuth is a PKCE login flow that issues an OpenRouter API key, so OpenClaw stores
+the result as the same `openrouter:default` API-key auth profile used by the
+manual API-key setup path.
 
-To sign in or rotate the stored key on an existing install without rerunning
-full onboarding:
+For an existing install, sign in or rotate the stored OpenRouter key without
+rerunning full onboarding:
 
 ```bash
 openclaw models auth login --provider openrouter --method oauth
-openclaw models auth login --provider openrouter --method api-key
 ```
 
-On verified OpenRouter requests (`https://openrouter.ai/api/v1`), OpenClaw adds
+Use `openclaw models auth login --provider openrouter --method api-key` when
+you want to paste a key you created manually at OpenRouter.
+
+On real OpenRouter requests (`https://openrouter.ai/api/v1`), OpenClaw also adds
 OpenRouter's documented app-attribution headers:
 
 | Header                    | Value                                                                                                  |
@@ -329,7 +248,8 @@ does **not** inject those OpenRouter-specific headers or Anthropic cache markers
 
 <AccordionGroup>
   <Accordion title="Response caching">
-    OpenRouter response caching is opt-in. Enable it per model:
+    OpenRouter response caching is opt-in. Enable it per OpenRouter model with
+    model params:
 
     ```json5
     {
@@ -350,57 +270,56 @@ does **not** inject those OpenRouter-specific headers or Anthropic cache markers
 
     OpenClaw sends `X-OpenRouter-Cache: true` and, when configured,
     `X-OpenRouter-Cache-TTL`. `responseCacheClear: true` forces a refresh for
-    the current request and stores the replacement response. Snake_case
-    aliases (`response_cache`, `response_cache_ttl_seconds`,
-    `response_cache_clear`) are accepted, as is `responseCacheTtl` /
-    `response_cache_ttl` without the `Seconds` suffix.
+    the current request and stores the replacement response. Snake_case aliases
+    (`response_cache`, `response_cache_ttl_seconds`, and
+    `response_cache_clear`) are also accepted.
 
     This is separate from provider prompt caching and from OpenRouter's
-    Anthropic `cache_control` markers. It only applies on verified
+    Anthropic `cache_control` markers. It is only applied on verified
     `openrouter.ai` routes, not custom proxy base URLs.
 
   </Accordion>
 
   <Accordion title="Anthropic cache markers">
-    On verified OpenRouter routes, Anthropic model refs keep OpenRouter's
-    Anthropic `cache_control` markers for better prompt-cache reuse on
-    system/developer prompt blocks.
+    On verified OpenRouter routes, Anthropic model refs keep the
+    OpenRouter-specific Anthropic `cache_control` markers that OpenClaw uses for
+    better prompt-cache reuse on system/developer prompt blocks.
   </Accordion>
 
   <Accordion title="Anthropic reasoning prefill">
     On verified OpenRouter routes, Anthropic model refs with reasoning enabled
-    drop trailing assistant prefill turns before the request reaches
-    OpenRouter, matching Anthropic's requirement that reasoning conversations
-    end with a user turn.
+    drop trailing assistant prefill turns before the request reaches OpenRouter,
+    matching Anthropic's requirement that reasoning conversations end with a user
+    turn.
   </Accordion>
 
   <Accordion title="Thinking / reasoning injection">
-    On supported non-`auto` routes, OpenClaw maps the selected thinking level
-    to OpenRouter proxy reasoning payloads. `openrouter/auto` and unsupported
-    model hints skip that injection. Stale `openrouter/hunter-alpha` refs also
-    skip it, because OpenRouter could return final answer text in reasoning
-    fields on that retired route.
+    On supported non-`auto` routes, OpenClaw maps the selected thinking level to
+    OpenRouter proxy reasoning payloads. Unsupported model hints and
+    `openrouter/auto` skip that reasoning injection. Hunter Alpha also skips
+    proxy reasoning for stale configured model refs because OpenRouter could
+    return final answer text in reasoning fields for that retired route.
   </Accordion>
 
   <Accordion title="DeepSeek V4 reasoning replay">
     On verified OpenRouter routes, `openrouter/deepseek/deepseek-v4-flash` and
     `openrouter/deepseek/deepseek-v4-pro` fill missing `reasoning_content` on
-    replayed assistant turns, keeping thinking/tool conversations in DeepSeek
-    V4's required follow-up shape. OpenClaw sends OpenRouter-supported
-    `reasoning.effort` values for these routes: `xhigh`/`max` map to `xhigh`,
-    every other non-off level maps to `high`.
+    replayed assistant turns so thinking/tool conversations keep DeepSeek V4's
+    required follow-up shape. OpenClaw sends OpenRouter-supported
+    `reasoning_effort` values for these routes; `xhigh` is the highest advertised
+    level, and stale `max` overrides are mapped to `xhigh`.
   </Accordion>
 
   <Accordion title="OpenAI-only request shaping">
-    OpenRouter runs through the proxy-style OpenAI-compatible path, so native
-    OpenAI-only request shaping such as `serviceTier`, Responses `store`,
+    OpenRouter still runs through the proxy-style OpenAI-compatible path, so
+    native OpenAI-only request shaping such as `serviceTier`, Responses `store`,
     OpenAI reasoning-compat payloads, and prompt-cache hints is not forwarded.
   </Accordion>
 
   <Accordion title="Gemini-backed routes">
     Gemini-backed OpenRouter refs stay on the proxy-Gemini path: OpenClaw keeps
-    Gemini thought-signature sanitation there, but does not enable native
-    Gemini replay validation or bootstrap rewrites.
+    Gemini thought-signature sanitation there, but does not enable native Gemini
+    replay validation or bootstrap rewrites.
   </Accordion>
 
   <Accordion title="Provider routing metadata">
@@ -432,7 +351,7 @@ does **not** inject those OpenRouter-specific headers or Anthropic cache markers
     `data_collection`, `quantizations`, `max_price`, `preferred_max_latency`,
     `preferred_min_throughput`, `zdr`, and `enforce_distillable_text`.
 
-    Per-model params override the provider-wide routing object:
+    Per-model params still override the provider-wide routing object:
 
     ```json5
     {

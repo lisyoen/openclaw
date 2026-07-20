@@ -4,19 +4,11 @@
  * Keeps tree traversal and filtering independent from persistence and mutable process state.
  */
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
-import { isDeliverySuspended } from "./subagent-delivery-state.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
-import { compareSubagentRunGeneration } from "./subagent-run-generation.js";
 import { hasSubagentRunEnded, isLiveUnendedSubagentRun } from "./subagent-run-liveness.js";
 
 function resolveControllerSessionKey(entry: SubagentRunRecord): string {
   return entry.controllerSessionKey?.trim() || entry.requesterSessionKey;
-}
-
-function resolveConcurrencyOwnerSessionKey(entry: SubagentRunRecord): string {
-  return entry.collect
-    ? entry.swarmRequesterSessionKey?.trim() || resolveControllerSessionKey(entry)
-    : resolveControllerSessionKey(entry);
 }
 
 /** Lists requester-owned runs, optionally scoped to the lifetime of a requester run. */
@@ -78,37 +70,15 @@ export type SubagentRunReadIndex = {
   runsByControllerSessionKey: ReadonlyMap<string, readonly SubagentRunRecord[]>;
 };
 
-export type LatestSubagentRunReadIndex = {
-  getLatestSubagentRun(childSessionKey: string): SubagentRunRecord | null;
-};
-
 function rememberLatestRunEntry(
   map: Map<string, SubagentRunRecord>,
   key: string,
   entry: SubagentRunRecord,
 ): void {
   const existing = map.get(key);
-  if (!existing || compareSubagentRunGeneration(entry, existing) > 0) {
+  if (!existing || entry.createdAt > existing.createdAt) {
     map.set(key, entry);
   }
-}
-
-/** Builds a reusable latest-generation lookup from one registry snapshot. */
-export function buildLatestSubagentRunReadIndexFromRuns(
-  runs: Map<string, SubagentRunRecord>,
-): LatestSubagentRunReadIndex {
-  const latestRunByChildSessionKey = new Map<string, SubagentRunRecord>();
-  for (const entry of runs.values()) {
-    const childSessionKey = entry.childSessionKey.trim();
-    if (!childSessionKey) {
-      continue;
-    }
-    rememberLatestRunEntry(latestRunByChildSessionKey, childSessionKey, entry);
-  }
-  return {
-    getLatestSubagentRun: (childSessionKey) =>
-      latestRunByChildSessionKey.get(childSessionKey.trim()) ?? null,
-  };
 }
 
 function rememberLatestRunPair(
@@ -118,7 +88,7 @@ function rememberLatestRunPair(
   entry: SubagentRunRecord,
 ): void {
   const existing = map.get(key);
-  if (!existing || compareSubagentRunGeneration(entry, existing.entry) > 0) {
+  if (!existing || entry.createdAt > existing.entry.createdAt) {
     map.set(key, { runId, entry });
   }
 }
@@ -156,18 +126,12 @@ export function buildSubagentRunReadIndexFromRuns(params: {
       inMemoryDisplayByChildSessionKey.set(childSessionKey, display);
     }
     if (hasSubagentRunEnded(entry)) {
-      if (
-        !display.latestInMemoryEnded ||
-        compareSubagentRunGeneration(entry, display.latestInMemoryEnded) > 0
-      ) {
+      if (!display.latestInMemoryEnded || entry.createdAt > display.latestInMemoryEnded.createdAt) {
         display.latestInMemoryEnded = entry;
       }
       continue;
     }
-    if (
-      !display.latestInMemoryActive ||
-      compareSubagentRunGeneration(entry, display.latestInMemoryActive) > 0
-    ) {
+    if (!display.latestInMemoryActive || entry.createdAt > display.latestInMemoryActive.createdAt) {
       display.latestInMemoryActive = entry;
     }
   }
@@ -217,8 +181,7 @@ export function buildSubagentRunReadIndexFromRuns(params: {
       if (latestInMemoryEnded || latestInMemoryActive) {
         if (
           latestInMemoryEnded &&
-          (!latestInMemoryActive ||
-            compareSubagentRunGeneration(latestInMemoryEnded, latestInMemoryActive) > 0)
+          (!latestInMemoryActive || latestInMemoryEnded.createdAt > latestInMemoryActive.createdAt)
         ) {
           return latestInMemoryEnded;
         }
@@ -295,7 +258,7 @@ function findLatestRunForChildSession(
     if (entry.childSessionKey !== key) {
       continue;
     }
-    if (!latest || compareSubagentRunGeneration(entry, latest) > 0) {
+    if (!latest || entry.createdAt > latest.createdAt) {
       latest = entry;
     }
   }
@@ -328,12 +291,12 @@ export function getSubagentRunByChildSessionKeyFromRuns(
       continue;
     }
     if (isLiveUnendedSubagentRun(entry)) {
-      if (!latestActive || compareSubagentRunGeneration(entry, latestActive) > 0) {
+      if (!latestActive || entry.createdAt > latestActive.createdAt) {
         latestActive = entry;
       }
       continue;
     }
-    if (!latestEnded || compareSubagentRunGeneration(entry, latestEnded) > 0) {
+    if (!latestEnded || entry.createdAt > latestEnded.createdAt) {
       latestEnded = entry;
     }
   }
@@ -378,7 +341,6 @@ export function shouldIgnorePostCompletionAnnounceForSessionFromRuns(
 export function countActiveRunsForSessionFromRuns(
   runs: Map<string, SubagentRunRecord>,
   controllerSessionKey: string,
-  options?: { collect?: boolean },
 ): number {
   const key = controllerSessionKey.trim();
   if (!key) {
@@ -396,17 +358,12 @@ export function countActiveRunsForSessionFromRuns(
   };
 
   const latestByChildSessionKey = new Map<string, SubagentRunRecord>();
-  // Records already carry collect, and spawn admission is not request-hot, so a
-  // filtered snapshot is simpler than maintaining a second registry index.
   for (const entry of runs.values()) {
-    if (options?.collect !== undefined && (entry.collect === true) !== options.collect) {
-      continue;
-    }
-    if (resolveConcurrencyOwnerSessionKey(entry) !== key) {
+    if (resolveControllerSessionKey(entry) !== key) {
       continue;
     }
     const existing = latestByChildSessionKey.get(entry.childSessionKey);
-    if (!existing || compareSubagentRunGeneration(entry, existing) > 0) {
+    if (!existing || entry.createdAt > existing.createdAt) {
       latestByChildSessionKey.set(entry.childSessionKey, entry);
     }
   }
@@ -427,7 +384,7 @@ export function countActiveRunsForSessionFromRuns(
 function forEachDescendantRun(
   runs: Map<string, SubagentRunRecord>,
   rootSessionKey: string,
-  visitor: (runId: string, entry: SubagentRunRecord) => void | boolean,
+  visitor: (runId: string, entry: SubagentRunRecord) => void,
 ): boolean {
   const root = rootSessionKey.trim();
   if (!root) {
@@ -446,7 +403,7 @@ function forEachDescendantRun(
       }
       const childKey = entry.childSessionKey.trim();
       const existing = latestByChildSessionKey.get(childKey);
-      if (!existing || compareSubagentRunGeneration(entry, existing[1]) > 0) {
+      if (!existing || entry.createdAt > existing[1].createdAt) {
         latestByChildSessionKey.set(childKey, [runId, entry]);
       }
     }
@@ -459,10 +416,7 @@ function forEachDescendantRun(
       ) {
         continue;
       }
-      // A visitor may stop the traversal early by returning true.
-      if (visitor(runId, entry) === true) {
-        return true;
-      }
+      visitor(runId, entry);
       const childKey = entry.childSessionKey.trim();
       if (!childKey || visited.has(childKey)) {
         continue;
@@ -495,30 +449,18 @@ export function countActiveDescendantRunsFromRuns(
 function countPendingDescendantRunsInternal(
   runs: Map<string, SubagentRunRecord>,
   rootSessionKey: string,
-  options?: {
-    excludeRunId?: string;
-    treatSuspendedDeliveryAsSettled?: boolean;
-    stopAtFirst?: boolean;
-  },
+  excludeRunId?: string,
 ): number {
-  const excludedRunId = options?.excludeRunId?.trim();
+  const excludedRunId = excludeRunId?.trim();
   let count = 0;
   if (
     !forEachDescendantRun(runs, rootSessionKey, (runId, entry) => {
-      if (runId === excludedRunId) {
-        return undefined;
-      }
-      const runPending = hasSubagentRunEnded(entry)
-        ? typeof entry.cleanupCompletedAt !== "number" &&
-          !(options?.treatSuspendedDeliveryAsSettled === true && isDeliverySuspended(entry))
-        : isLiveUnendedSubagentRun(entry);
-      if (runPending) {
+      const runEnded = hasSubagentRunEnded(entry);
+      const cleanupCompleted = typeof entry.cleanupCompletedAt === "number";
+      const runPending = runEnded ? !cleanupCompleted : isLiveUnendedSubagentRun(entry);
+      if (runPending && runId !== excludedRunId) {
         count += 1;
-        if (options?.stopAtFirst === true) {
-          return true;
-        }
       }
-      return undefined;
     })
   ) {
     return 0;
@@ -540,27 +482,7 @@ export function countPendingDescendantRunsExcludingRunFromRuns(
   rootSessionKey: string,
   excludeRunId: string,
 ): number {
-  return countPendingDescendantRunsInternal(runs, rootSessionKey, { excludeRunId });
-}
-
-/**
- * True when any descendant below a root session has not reached a terminal
- * settle. Differs from the pending count in one way: a run whose final
- * delivery was suspended counts as settled — suspension is terminal for
- * automatic announce retries, so requester-drain decisions must not wait on it.
- */
-export function hasDescendantRunAwaitingSettleFromRuns(
-  runs: Map<string, SubagentRunRecord>,
-  rootSessionKey: string,
-  excludeRunId?: string,
-): boolean {
-  return (
-    countPendingDescendantRunsInternal(runs, rootSessionKey, {
-      excludeRunId,
-      treatSuspendedDeliveryAsSettled: true,
-      stopAtFirst: true,
-    }) > 0
-  );
+  return countPendingDescendantRunsInternal(runs, rootSessionKey, excludeRunId);
 }
 
 /** Lists latest descendant runs under a requester/session tree. */

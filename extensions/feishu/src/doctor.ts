@@ -9,17 +9,12 @@ import type {
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
 import {
-  isValidAgentHarnessSessionStoreEntry,
-  deleteSessionEntry,
-  listSessionEntries,
-  loadTranscriptEventsSync,
-  parseSqliteSessionFileMarker,
-  resolveSessionStoreBackupPaths,
+  loadSessionStore,
+  resolveSessionFilePath,
   resolveStorePath,
+  updateSessionStore,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
-import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { legacyConfigRules, normalizeCompatibilityConfig } from "./doctor-contract.js";
 
 const FEISHU_STATE_DIR = "feishu";
 const BACKUP_PREFIX = "feishu-state-repair";
@@ -68,14 +63,14 @@ type FeishuDoctorSessionEntry = {
   entry: FeishuSessionEntry;
 };
 
-type FeishuDoctorInspection = {
+export type FeishuDoctorInspection = {
   stateDir: string;
   feishuStateDir: string;
   findings: FeishuDoctorFinding[];
   sessionEntries: FeishuDoctorSessionEntry[];
 };
 
-type FeishuDoctorRepairReport = {
+export type FeishuDoctorRepairReport = {
   backupDir: string;
   stateDirRepairAttempted: boolean;
   rebuiltStateDir: boolean;
@@ -87,6 +82,10 @@ type FeishuDoctorRepairReport = {
 
 function timestampForPath(now = new Date()): string {
   return now.toISOString().replaceAll(":", "-");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function toFeishuSessionEntry(value: unknown): FeishuSessionEntry {
@@ -117,14 +116,6 @@ function existsFile(filePath: string): boolean {
   } catch {
     return false;
   }
-}
-
-function resolveFeishuAgentSessionsDir(agentId: string): string {
-  return path.join(resolveStateDir(), "agents", normalizeAgentId(agentId), "sessions");
-}
-
-function isSqliteTranscriptMarker(value: string): boolean {
-  return parseSqliteSessionFileMarker(value) !== undefined;
 }
 
 function safeReadDir(dir: string): fs.Dirent[] {
@@ -171,7 +162,7 @@ function formatFinding(finding: FeishuDoctorFinding): string {
   return exhaustive;
 }
 
-function isFeishuSessionStoreKey(key: string): boolean {
+export function isFeishuSessionStoreKey(key: string): boolean {
   const normalized = key.trim().toLowerCase();
   return /^agent:[^:]+:feishu(?::|$)/.test(normalized) || /^feishu(?::|$)/.test(normalized);
 }
@@ -249,11 +240,9 @@ function collectFeishuSessionTargets(params: {
 }): FeishuSessionTarget[] {
   const byStorePath = new Map<string, FeishuSessionTarget>();
   const addTarget = (target: FeishuSessionTarget) => {
-    const resolvedStorePath = path.resolve(target.storePath);
-    byStorePath.set(`${normalizeAgentId(target.agentId)}\0${resolvedStorePath}`, {
+    byStorePath.set(path.resolve(target.storePath), {
       ...target,
-      agentId: normalizeAgentId(target.agentId),
-      storePath: resolvedStorePath,
+      storePath: path.resolve(target.storePath),
     });
   };
 
@@ -328,39 +317,29 @@ function resolveSessionTranscriptCandidates(params: {
 }): string[] {
   const candidates = new Set<string>();
   const sessionsDir = path.dirname(params.storePath);
-  const agentSessionsDir = resolveFeishuAgentSessionsDir(params.agentId);
-  const addSafeCandidate = (candidate: string): boolean => {
+  const addSafeCandidate = (candidate: string) => {
     const resolved = path.isAbsolute(candidate)
       ? path.resolve(candidate)
       : path.resolve(sessionsDir, candidate);
-    const isStoreCandidate = isPathWithinRoot(resolved, sessionsDir);
-    const isAgentSessionCandidate = isPathWithinRoot(resolved, agentSessionsDir);
-    if (
-      resolved === sessionsDir ||
-      resolved === agentSessionsDir ||
-      (!isStoreCandidate && !isAgentSessionCandidate)
-    ) {
-      return false;
+    if (resolved === sessionsDir || !isPathWithinRoot(resolved, sessionsDir)) {
+      return;
     }
     candidates.add(resolved);
-    return true;
   };
 
   if (
     typeof params.entry.sessionId === "string" &&
     /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(params.entry.sessionId)
   ) {
-    let addedExplicitCandidate = false;
-    if (typeof params.entry.sessionFile === "string" && params.entry.sessionFile.trim()) {
-      const explicitSessionFile = params.entry.sessionFile.trim();
-      if (isSqliteTranscriptMarker(explicitSessionFile)) {
-        return [];
-      }
-      addedExplicitCandidate = addSafeCandidate(explicitSessionFile);
-    }
-    if (!addedExplicitCandidate) {
-      candidates.add(path.join(sessionsDir, `${params.entry.sessionId}.jsonl`));
-    }
+    candidates.add(
+      resolveSessionFilePath(
+        params.entry.sessionId,
+        typeof params.entry.sessionFile === "string"
+          ? { sessionFile: params.entry.sessionFile }
+          : undefined,
+        { agentId: params.agentId, sessionsDir },
+      ),
+    );
     return [...candidates].toSorted();
   }
 
@@ -396,72 +375,6 @@ function isUserMessage(value: unknown): boolean {
     isRecord(value.message) &&
     value.message.role === "user"
   );
-}
-
-function inspectTranscriptEntries(params: {
-  sessionKey: string;
-  storePath: string;
-  transcriptPath: string;
-  entries: unknown[];
-  allowMissingSessionHeader?: boolean;
-  malformedLines?: number;
-}): FeishuDoctorFinding | null {
-  let blankUserMessageRun = 0;
-  let maxBlankUserMessageRun = 0;
-  for (const entry of params.entries) {
-    if (isBlankUserMessage(entry)) {
-      blankUserMessageRun += 1;
-      maxBlankUserMessageRun = Math.max(maxBlankUserMessageRun, blankUserMessageRun);
-    } else if (isUserMessage(entry)) {
-      blankUserMessageRun = 0;
-    }
-  }
-
-  if (params.entries.length === 0) {
-    if (params.allowMissingSessionHeader) {
-      return null;
-    }
-    return {
-      kind: "invalid-session-transcript",
-      sessionKey: params.sessionKey,
-      storePath: params.storePath,
-      path: params.transcriptPath,
-      reason: "empty transcript",
-    };
-  }
-  const firstEntry = params.entries[0];
-  if (
-    !isSessionHeader(firstEntry) &&
-    (!params.allowMissingSessionHeader ||
-      (!isUserMessage(firstEntry) && !isBlankUserMessage(firstEntry)))
-  ) {
-    return {
-      kind: "invalid-session-transcript",
-      sessionKey: params.sessionKey,
-      storePath: params.storePath,
-      path: params.transcriptPath,
-      reason: "invalid session header",
-    };
-  }
-  if ((params.malformedLines ?? 0) > 0) {
-    return {
-      kind: "invalid-session-transcript",
-      sessionKey: params.sessionKey,
-      storePath: params.storePath,
-      path: params.transcriptPath,
-      reason: `${params.malformedLines} malformed JSONL line(s)`,
-    };
-  }
-  if (maxBlankUserMessageRun >= BLANK_USER_MESSAGE_REPAIR_THRESHOLD) {
-    return {
-      kind: "blank-user-message-run",
-      sessionKey: params.sessionKey,
-      storePath: params.storePath,
-      path: params.transcriptPath,
-      count: maxBlankUserMessageRun,
-    };
-  }
-  return null;
 }
 
 function inspectSessionTranscript(params: {
@@ -503,6 +416,8 @@ function inspectSessionTranscript(params: {
 
   const entries: unknown[] = [];
   let malformedLines = 0;
+  let blankUserMessageRun = 0;
+  let maxBlankUserMessageRun = 0;
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) {
       continue;
@@ -510,55 +425,54 @@ function inspectSessionTranscript(params: {
     try {
       const entry = JSON.parse(line);
       entries.push(entry);
+      if (isBlankUserMessage(entry)) {
+        blankUserMessageRun += 1;
+        maxBlankUserMessageRun = Math.max(maxBlankUserMessageRun, blankUserMessageRun);
+      } else if (isUserMessage(entry)) {
+        blankUserMessageRun = 0;
+      }
     } catch {
       malformedLines += 1;
     }
   }
 
-  return inspectTranscriptEntries({ ...params, entries, malformedLines });
-}
-
-function inspectSqliteSessionTranscript(params: {
-  agentId: string;
-  sessionKey: string;
-  storePath: string;
-  entry: FeishuSessionEntry;
-}): FeishuDoctorFinding | null {
-  if (typeof params.entry.sessionFile !== "string") {
-    return null;
-  }
-  const marker = parseSqliteSessionFileMarker(params.entry.sessionFile);
-  if (!marker) {
-    return null;
-  }
-  const sessionId =
-    typeof params.entry.sessionId === "string" && params.entry.sessionId.trim()
-      ? params.entry.sessionId.trim()
-      : marker.sessionId;
-  let entries: unknown[];
-  try {
-    entries = loadTranscriptEventsSync({
-      agentId: marker.agentId,
-      sessionId,
-      sessionKey: params.sessionKey,
-      storePath: marker.storePath,
-    });
-  } catch {
+  if (entries.length === 0) {
     return {
       kind: "invalid-session-transcript",
       sessionKey: params.sessionKey,
       storePath: params.storePath,
-      path: params.entry.sessionFile,
-      reason: "unreadable",
+      path: params.transcriptPath,
+      reason: "empty transcript",
     };
   }
-  return inspectTranscriptEntries({
-    sessionKey: params.sessionKey,
-    storePath: params.storePath,
-    transcriptPath: params.entry.sessionFile,
-    allowMissingSessionHeader: true,
-    entries,
-  });
+  if (!isSessionHeader(entries[0])) {
+    return {
+      kind: "invalid-session-transcript",
+      sessionKey: params.sessionKey,
+      storePath: params.storePath,
+      path: params.transcriptPath,
+      reason: "invalid session header",
+    };
+  }
+  if (malformedLines > 0) {
+    return {
+      kind: "invalid-session-transcript",
+      sessionKey: params.sessionKey,
+      storePath: params.storePath,
+      path: params.transcriptPath,
+      reason: `${malformedLines} malformed JSONL line(s)`,
+    };
+  }
+  if (maxBlankUserMessageRun >= BLANK_USER_MESSAGE_REPAIR_THRESHOLD) {
+    return {
+      kind: "blank-user-message-run",
+      sessionKey: params.sessionKey,
+      storePath: params.storePath,
+      path: params.transcriptPath,
+      count: maxBlankUserMessageRun,
+    };
+  }
+  return null;
 }
 
 function collectFeishuSessionFindings(params: {
@@ -567,10 +481,6 @@ function collectFeishuSessionFindings(params: {
   storePath: string;
   entry: FeishuSessionEntry;
 }): FeishuDoctorFinding[] {
-  const sqliteFinding = inspectSqliteSessionTranscript(params);
-  if (sqliteFinding) {
-    return [sqliteFinding];
-  }
   const transcriptCandidates = resolveSessionTranscriptCandidates(params);
   const existing = transcriptCandidates.filter(existsFile);
   if (transcriptCandidates.length > 0 && existing.length === 0) {
@@ -637,7 +547,7 @@ function collectRepairSessionEntries(
   );
 }
 
-function inspectFeishuDoctorState(params: {
+export function inspectFeishuDoctorState(params: {
   cfg: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
 }): FeishuDoctorInspection {
@@ -648,16 +558,13 @@ function inspectFeishuDoctorState(params: {
   const sessionEntries: FeishuDoctorInspection["sessionEntries"] = [];
 
   for (const target of collectFeishuSessionTargets({ cfg: params.cfg, env, stateDir })) {
-    for (const { sessionKey: key, entry } of listSessionEntries({
-      agentId: target.agentId,
-      storePath: target.storePath,
-    })
-      .filter(
-        ({ sessionKey, entry: sessionEntry }) =>
-          !isValidAgentHarnessSessionStoreEntry(sessionKey, sessionEntry) &&
-          isFeishuSessionEntry(sessionKey, sessionEntry),
-      )
-      .toSorted((left, right) => left.sessionKey.localeCompare(right.sessionKey))) {
+    const store = loadSessionStore(target.storePath, { skipCache: true });
+    for (const [key, entry] of Object.entries(store).toSorted(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      if (!isFeishuSessionEntry(key, entry)) {
+        continue;
+      }
       const sessionEntry = toFeishuSessionEntry(entry);
       sessionEntries.push({
         key,
@@ -718,18 +625,17 @@ function movePathToBackup(params: {
 }
 
 function copyStoreBackup(params: { storePath: string; backupDir: string; agentId: string }) {
-  const targetDir = path.join(params.backupDir, "session-stores", params.agentId);
-  for (const sourcePath of resolveSessionStoreBackupPaths({
-    agentId: params.agentId,
-    storePath: params.storePath,
-  })) {
-    if (!existsFile(sourcePath)) {
-      continue;
-    }
-    const targetPath = path.join(targetDir, path.basename(sourcePath));
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true, mode: 0o700 });
-    fs.copyFileSync(sourcePath, resolveUniquePath(targetPath));
+  if (!existsFile(params.storePath)) {
+    return;
   }
+  const targetPath = path.join(
+    params.backupDir,
+    "session-stores",
+    params.agentId,
+    path.basename(params.storePath),
+  );
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true, mode: 0o700 });
+  fs.copyFileSync(params.storePath, resolveUniquePath(targetPath));
 }
 
 function collectSessionArtifactPaths(params: {
@@ -830,28 +736,25 @@ async function repairFeishuDoctorState(params: {
     try {
       copyStoreBackup({ storePath, backupDir, agentId: group.agentId });
       const keys = new Set(group.entries.map((entry) => entry.key));
-      const removedEntries: typeof group.entries = [];
-      for (const key of keys) {
-        const currentEntry = listSessionEntries({ agentId: group.agentId, storePath }).find(
-          (candidate) => candidate.sessionKey === key,
-        )?.entry;
-        if (!currentEntry || isValidAgentHarnessSessionStoreEntry(key, currentEntry)) {
-          continue;
-        }
-        const deleted = await deleteSessionEntry({
-          agentId: group.agentId,
-          archiveTranscript: true,
-          sessionKey: key,
-          storePath,
-        });
-        if (!deleted) {
-          continue;
-        }
-        const entry = group.entries.find((candidate) => candidate.key === key);
-        if (entry) {
-          removedEntries.push(entry);
-        }
-      }
+      const removedEntries = await updateSessionStore(
+        storePath,
+        (store) => {
+          const removed: typeof group.entries = [];
+          for (const key of keys) {
+            if (Object.hasOwn(store, key)) {
+              delete store[key];
+              const entry = group.entries.find((candidate) => candidate.key === key);
+              if (entry) {
+                removed.push(entry);
+              }
+            }
+          }
+          return removed;
+        },
+        {
+          skipMaintenance: true,
+        },
+      );
       const removed = removedEntries.length;
       removedSessionEntries += removed;
       if (removed > 0) {
@@ -935,7 +838,7 @@ function hasConfiguredFeishuChannel(cfg: OpenClawConfig): boolean {
   return Boolean(cfg.channels?.feishu);
 }
 
-async function runFeishuDoctorSequence(params: {
+export async function runFeishuDoctorSequence(params: {
   cfg: OpenClawConfig;
   env: NodeJS.ProcessEnv;
   shouldRepair: boolean;
@@ -968,9 +871,6 @@ async function runFeishuDoctorSequence(params: {
 }
 
 export const feishuDoctor: ChannelDoctorAdapter = {
-  legacyConfigRules,
-  normalizeCompatibilityConfig,
   runConfigSequence: async ({ cfg, env, shouldRepair }) =>
     await runFeishuDoctorSequence({ cfg, env, shouldRepair }),
 };
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

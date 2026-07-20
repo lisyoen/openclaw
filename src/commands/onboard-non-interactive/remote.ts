@@ -11,7 +11,6 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { type RuntimeEnv, writeRuntimeJson } from "../../runtime.js";
 import { applySkipBootstrapConfig } from "../onboard-config.js";
 import { applyWizardMetadata } from "../onboard-helpers.js";
-import { enableDefaultOnboardingInternalHooks } from "../onboard-hooks.js";
 import type { OnboardOptions } from "../onboard-types.js";
 import { commitNonInteractiveOnboardConfig } from "./config-write.js";
 
@@ -35,17 +34,6 @@ export async function runNonInteractiveRemoteSetup(params: {
     runtime.exit(1);
     return;
   }
-  const remoteToken = normalizeOptionalString(opts.remoteToken);
-  if (opts.remoteToken !== undefined && !remoteToken) {
-    runtime.error("Invalid --remote-token: value cannot be empty.");
-    runtime.exit(1);
-    return;
-  }
-  const existingRemote = baseConfig.gateway?.remote;
-  const remoteUrlChanged = normalizeOptionalString(existingRemote?.url) !== remoteUrl;
-  // A remote block belongs to one endpoint. Reusing it for a different URL can
-  // send old credentials or keep routing through the old SSH target.
-  const preservedRemote = remoteUrlChanged ? {} : existingRemote;
 
   let nextConfig: OpenClawConfig = {
     ...baseConfig,
@@ -53,17 +41,13 @@ export async function runNonInteractiveRemoteSetup(params: {
       ...baseConfig.gateway,
       mode: "remote",
       remote: {
-        ...preservedRemote,
         url: remoteUrl,
-        ...(remoteToken ? { token: remoteToken } : {}),
+        token: normalizeOptionalString(opts.remoteToken),
       },
     },
   };
   if (opts.skipBootstrap) {
     nextConfig = applySkipBootstrapConfig(nextConfig);
-  }
-  if (!opts.skipHooks) {
-    nextConfig = enableDefaultOnboardingInternalHooks(nextConfig);
   }
   nextConfig = applyWizardMetadata(nextConfig, { command: "onboard", mode });
   await commitNonInteractiveOnboardConfig({
@@ -77,11 +61,7 @@ export async function runNonInteractiveRemoteSetup(params: {
   const payload = {
     mode,
     remoteUrl,
-    auth: nextConfig.gateway?.remote?.token
-      ? "token"
-      : nextConfig.gateway?.remote?.password
-        ? ["pass", "word"].join("")
-        : "none",
+    auth: opts.remoteToken ? "token" : "none",
   };
   if (opts.json) {
     writeRuntimeJson(runtime, payload);

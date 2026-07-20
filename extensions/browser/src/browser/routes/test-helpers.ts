@@ -4,9 +4,7 @@
  * Provides an in-memory route registrar and response object for focused route
  * unit tests without standing up the HTTP server.
  */
-import type { BrowserResponse, BrowserRouteRegistrar } from "./types.js";
-
-type BrowserRouteHandler = Parameters<BrowserRouteRegistrar["get"]>[1];
+import type { BrowserResponse, BrowserRouteHandler, BrowserRouteRegistrar } from "./types.js";
 
 /** Create an in-memory route app that records handlers by method and path. */
 export function createBrowserRouteApp() {

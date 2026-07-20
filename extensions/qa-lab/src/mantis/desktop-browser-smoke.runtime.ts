@@ -5,7 +5,6 @@ import { pathToFileURL } from "node:url";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { pathExists } from "openclaw/plugin-sdk/security-runtime";
 import { ensureRepoBoundDirectory, resolveRepoRelativeOutputDir } from "../cli-paths.js";
-import { isTruthyOptIn, trimToValue } from "../mantis-options.runtime.js";
 import {
   type CommandRunner,
   type CrabboxInspect,
@@ -39,7 +38,7 @@ export type MantisDesktopBrowserSmokeOptions = {
   videoDurationSeconds?: number;
 };
 
-type MantisDesktopBrowserSmokeResult = {
+export type MantisDesktopBrowserSmokeResult = {
   outputDir: string;
   reportPath: string;
   screenshotPath?: string;
@@ -89,6 +88,16 @@ const CRABBOX_TTL_ENV = "OPENCLAW_MANTIS_CRABBOX_TTL";
 const BROWSER_PROFILE_ARCHIVE_ENV = "OPENCLAW_MANTIS_BROWSER_PROFILE_TGZ_B64";
 const BROWSER_PROFILE_DIR_ENV = "OPENCLAW_MANTIS_BROWSER_PROFILE_DIR";
 const DEFAULT_VIDEO_DURATION_SECONDS = 10;
+
+function trimToValue(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function isTruthyOptIn(value: string | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
 
 function defaultOutputDir(repoRoot: string, startedAt: Date) {
   const stamp = startedAt.toISOString().replace(/[:.]/gu, "-");

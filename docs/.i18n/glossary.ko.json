@@ -78,13 +78,5 @@
   {
     "source": "Webhook",
     "target": "Webhook"
-  },
-  {
-    "source": "Pull request review flow",
-    "target": "풀 리퀘스트 리뷰 흐름"
-  },
-  {
-    "source": "CI pipeline",
-    "target": "CI 파이프라인"
   }
 ]

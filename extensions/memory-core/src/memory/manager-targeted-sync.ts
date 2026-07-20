@@ -9,27 +9,27 @@ type TargetedSyncProgress = {
   report: (update: MemorySyncProgressUpdate) => void;
 };
 
-function clearMemorySyncedArchiveFiles(params: {
+export function clearMemorySyncedSessionFiles(params: {
   sessionsDirtyFiles: Set<string>;
-  targetArchiveFiles?: Iterable<string> | null;
+  targetSessionFiles?: Iterable<string> | null;
 }): boolean {
-  if (!params.targetArchiveFiles) {
+  if (!params.targetSessionFiles) {
     params.sessionsDirtyFiles.clear();
   } else {
-    for (const targetArchiveFile of params.targetArchiveFiles) {
-      params.sessionsDirtyFiles.delete(targetArchiveFile);
+    for (const targetSessionFile of params.targetSessionFiles) {
+      params.sessionsDirtyFiles.delete(targetSessionFile);
     }
   }
   return params.sessionsDirtyFiles.size > 0;
 }
 
-export function markMemoryTargetArchiveFilesDirty(params: {
+export function markMemoryTargetSessionFilesDirty(params: {
   sessionsDirtyFiles: Set<string>;
-  targetArchiveFiles?: Iterable<string> | null;
+  targetSessionFiles?: Iterable<string> | null;
 }): boolean {
-  if (params.targetArchiveFiles) {
-    for (const targetArchiveFile of params.targetArchiveFiles) {
-      params.sessionsDirtyFiles.add(targetArchiveFile);
+  if (params.targetSessionFiles) {
+    for (const targetSessionFile of params.targetSessionFiles) {
+      params.sessionsDirtyFiles.add(targetSessionFile);
     }
   }
   return params.sessionsDirtyFiles.size > 0;
@@ -37,20 +37,20 @@ export function markMemoryTargetArchiveFilesDirty(params: {
 
 export async function runMemoryTargetedSessionSync(params: {
   hasSessionSource: boolean;
-  targetArchiveFiles: Set<string> | null;
+  targetSessionFiles: Set<string> | null;
   reason?: string;
   progress?: TargetedSyncProgress;
   sessionsFullRetryDirty?: boolean;
   sessionsDirtyFiles: Set<string>;
-  syncArchiveFiles: (params: {
+  syncSessionFiles: (params: {
     needsFullReindex: boolean;
-    targetArchiveFiles?: string[];
+    targetSessionFiles?: string[];
     progress?: TargetedSyncProgress;
   }) => Promise<void>;
   shouldFallbackOnError: (err: unknown) => boolean;
   activateFallbackProvider: (reason: string) => Promise<boolean>;
 }): Promise<{ handled: boolean; sessionsDirty: boolean }> {
-  if (!params.hasSessionSource || !params.targetArchiveFiles) {
+  if (!params.hasSessionSource || !params.targetSessionFiles) {
     return {
       handled: false,
       sessionsDirty: Boolean(params.sessionsFullRetryDirty) || params.sessionsDirtyFiles.size > 0,
@@ -58,14 +58,14 @@ export async function runMemoryTargetedSessionSync(params: {
   }
 
   try {
-    await params.syncArchiveFiles({
+    await params.syncSessionFiles({
       needsFullReindex: false,
-      targetArchiveFiles: Array.from(params.targetArchiveFiles),
+      targetSessionFiles: Array.from(params.targetSessionFiles),
       progress: params.progress,
     });
-    const remainingSessionsDirty = clearMemorySyncedArchiveFiles({
+    const remainingSessionsDirty = clearMemorySyncedSessionFiles({
       sessionsDirtyFiles: params.sessionsDirtyFiles,
-      targetArchiveFiles: params.targetArchiveFiles,
+      targetSessionFiles: params.targetSessionFiles,
     });
     return {
       handled: true,
@@ -78,9 +78,9 @@ export async function runMemoryTargetedSessionSync(params: {
     if (!activated) {
       throw err;
     }
-    const remainingSessionsDirty = markMemoryTargetArchiveFilesDirty({
+    const remainingSessionsDirty = markMemoryTargetSessionFilesDirty({
       sessionsDirtyFiles: params.sessionsDirtyFiles,
-      targetArchiveFiles: params.targetArchiveFiles,
+      targetSessionFiles: params.targetSessionFiles,
     });
     return {
       handled: true,

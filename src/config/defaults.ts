@@ -5,7 +5,6 @@ import {
   normalizeConfiguredProviderCatalogModelId,
 } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { DEFAULT_CONTEXT_TOKENS } from "../agents/defaults.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import {
@@ -13,6 +12,7 @@ import {
   DEFAULT_SUBAGENT_ARCHIVE_AFTER_MINUTES,
   DEFAULT_SUBAGENT_MAX_CONCURRENT,
 } from "./agent-limits.js";
+import { DEFAULT_CRON_MAX_CONCURRENT_RUNS } from "./cron-limits.js";
 import { normalizeAgentModelMapForConfig, normalizeAgentModelRefForConfig } from "./model-input.js";
 import {
   applyProviderConfigDefaultsForConfig,
@@ -30,10 +30,10 @@ type ProviderPolicyDefaultsOptions = {
 
 const defaultWarnState: WarnState = { warned: false };
 
-export const DEFAULT_MODEL_ALIASES: Readonly<Record<string, string>> = {
+const DEFAULT_MODEL_ALIASES: Readonly<Record<string, string>> = {
   // Anthropic (shared model runtime catalog uses "latest" ids without date suffix)
   opus: "anthropic/claude-opus-4-8",
-  sonnet: "anthropic/claude-sonnet-5",
+  sonnet: "anthropic/claude-sonnet-4-6",
 
   // OpenAI
   gpt: "openai/gpt-5.4",
@@ -169,7 +169,7 @@ export function applyModelDefaults(
       const normalizedProvider = normalizeProviderConfigForConfigDefaults({
         provider: providerId,
         providerConfig: provider,
-        manifestRegistry,
+        manifestRegistry: options.manifestRegistry,
       });
       const models = normalizedProvider.models;
       if (!Array.isArray(models) || models.length === 0) {
@@ -352,15 +352,6 @@ export function applyModelDefaults(
     if (entry.alias !== undefined) {
       continue;
     }
-    const normalizedAlias = normalizeLowercaseStringOrEmpty(alias);
-    const aliasAlreadyOwned = Object.entries(nextModels).some(
-      ([modelRef, candidate]) =>
-        modelRef !== target && normalizeLowercaseStringOrEmpty(candidate.alias) === normalizedAlias,
-    );
-    // Preserve explicit alias ownership when a newer default target is also configured.
-    if (aliasAlreadyOwned) {
-      continue;
-    }
     nextModels[target] = { ...entry, alias };
     mutated = true;
   }
@@ -459,7 +450,17 @@ export function applyAgentDefaults(cfg: OpenClawConfig): OpenClawConfig {
 }
 
 export function applyCronDefaults(cfg: OpenClawConfig): OpenClawConfig {
-  return cfg;
+  const raw = cfg.cron?.maxConcurrentRuns;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return cfg;
+  }
+  return {
+    ...cfg,
+    cron: {
+      ...cfg.cron,
+      maxConcurrentRuns: DEFAULT_CRON_MAX_CONCURRENT_RUNS,
+    },
+  };
 }
 
 export function applyLoggingDefaults(cfg: OpenClawConfig): OpenClawConfig {

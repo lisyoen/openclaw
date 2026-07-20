@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 // Normalizes package-acceptance inputs into the tarball shape consumed by Docker E2E.
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lookup as dnsLookupCb } from "node:dns";
 import { lookup as dnsLookup } from "node:dns/promises";
-import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
@@ -13,7 +12,6 @@ import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
-import { resolveWindowsTaskkillPath } from "./lib/windows-taskkill.mjs";
 import { resolveNpmRunner } from "./npm-runner.mjs";
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -21,13 +19,9 @@ const DEFAULT_OUTPUT_NAME = "openclaw-current.tgz";
 const PACKAGE_URL_DOWNLOAD_TIMEOUT_MS = 60_000;
 const PACKAGE_URL_MAX_BYTES = 250 * 1024 * 1024;
 const PACKAGE_URL_MAX_REDIRECTS = 5;
-export const ARTIFACT_TARBALL_SCAN_MAX_ENTRIES = 10_000;
 const COMMAND_STDOUT_CAPTURE_MAX_CHARS = 8 * 1024 * 1024;
 const COMMAND_STDERR_CAPTURE_MAX_CHARS = 128 * 1024;
 const COMMAND_TIMEOUT_KILL_AFTER_MS = 5_000;
-const FORWARDED_SIGNAL_KILL_AFTER_MS = 250;
-const COMMAND_PROCESS_TREE_EXIT_POLL_MS = 50;
-const MAX_TIMER_TIMEOUT_MS = 2_147_000_000;
 const ACTIVE_CHILD_KILLERS = new Set();
 const SIGNAL_EXIT_CODES = {
   SIGHUP: 129,
@@ -59,11 +53,11 @@ for (const signal of Object.keys(SIGNAL_EXIT_CODES)) {
         killChild("SIGKILL");
       }
       process.exit(forwardedSignalExitCode);
-    }, FORWARDED_SIGNAL_KILL_AFTER_MS);
+    }, COMMAND_TIMEOUT_KILL_AFTER_MS);
   });
 }
 export const OPENCLAW_PACKAGE_SPEC_RE =
-  /^openclaw@(alpha|beta|extended-stable|latest|[0-9]{4}\.[1-9][0-9]*\.[1-9][0-9]*(-[1-9][0-9]*|-(alpha|beta)\.[1-9][0-9]*)?)$/u;
+  /^openclaw@(alpha|beta|latest|[0-9]{4}\.[1-9][0-9]*\.[1-9][0-9]*(-[1-9][0-9]*|-(alpha|beta)\.[1-9][0-9]*)?)$/u;
 
 function usage() {
   return `Usage: node scripts/resolve-openclaw-package-candidate.mjs --source <ref|npm|url|trusted-url|artifact> --output-dir <dir> [options]
@@ -97,86 +91,52 @@ export function parseArgs(argv) {
     trustedSourceId: "",
     trustedSourcePolicy: TRUSTED_PACKAGE_SOURCE_POLICY,
   };
-  const seen = new Set();
-  const setOnce = (flag, key, value) => {
-    if (seen.has(flag)) {
-      throw new Error(`${flag} was provided more than once`);
-    }
-    seen.add(flag);
-    options[key] = value;
-  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    const readValue = (name, readOptions = {}) => {
+    const readValue = (name) => {
       const value = argv[(index += 1)];
-      if (
-        value === undefined ||
-        (!readOptions.allowEmpty && value === "") ||
-        value.startsWith("-")
-      ) {
+      if (value === undefined) {
         throw new Error(`${name} requires a value`);
       }
       return value;
     };
     if (arg === "--artifact-dir") {
-      setOnce(arg, "artifactDir", readValue(arg));
+      options.artifactDir = readValue(arg);
     } else if (arg === "--github-output") {
-      setOnce(arg, "githubOutput", readValue(arg));
+      options.githubOutput = readValue(arg);
     } else if (arg === "--metadata") {
-      setOnce(arg, "metadata", readValue(arg));
+      options.metadata = readValue(arg);
     } else if (arg === "--output-dir") {
-      setOnce(arg, "outputDir", readValue(arg));
+      options.outputDir = readValue(arg);
     } else if (arg === "--output-name") {
-      setOnce(arg, "outputName", readValue(arg));
+      options.outputName = readValue(arg);
     } else if (arg === "--package-sha256") {
-      setOnce(arg, "packageSha256", readValue(arg, { allowEmpty: true }).toLowerCase());
+      options.packageSha256 = readValue(arg).toLowerCase();
     } else if (arg === "--package-ref") {
-      setOnce(arg, "packageRef", readValue(arg, { allowEmpty: true }));
+      options.packageRef = readValue(arg);
     } else if (arg === "--package-spec") {
-      setOnce(arg, "packageSpec", readValue(arg, { allowEmpty: true }));
+      options.packageSpec = readValue(arg);
     } else if (arg === "--package-url") {
-      setOnce(arg, "packageUrl", readValue(arg, { allowEmpty: true }));
+      options.packageUrl = readValue(arg);
     } else if (arg === "--source") {
-      setOnce(arg, "source", readValue(arg));
+      options.source = readValue(arg);
     } else if (arg === "--trusted-source-id") {
-      setOnce(arg, "trustedSourceId", readValue(arg, { allowEmpty: true }));
+      options.trustedSourceId = readValue(arg);
     } else if (arg === "--trusted-source-policy") {
-      setOnce(arg, "trustedSourcePolicy", readValue(arg));
+      options.trustedSourcePolicy = readValue(arg);
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  validateOutputName(options.outputName);
   return options;
-}
-
-function validateOutputName(value) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.t(?:ar\.)?gz$/u.test(value)) {
-    throw new Error(`--output-name must be a tarball filename, not a path: ${value}`);
-  }
-}
-
-function resolvePackedOpenClawTarballFilename(value) {
-  const filename = typeof value === "string" ? value.trim() : "";
-  if (
-    !/^openclaw-[A-Za-z0-9._-]+\.tgz$/u.test(filename) ||
-    filename.includes("\0") ||
-    filename !== path.basename(filename) ||
-    filename !== path.win32.basename(filename)
-  ) {
-    throw new Error(
-      `npm pack reported unsafe OpenClaw tarball filename: ${JSON.stringify(filename)}`,
-    );
-  }
-  return filename;
 }
 
 export function validateOpenClawPackageSpec(spec) {
   if (!OPENCLAW_PACKAGE_SPEC_RE.test(spec)) {
     throw new Error(
-      `package_spec must be openclaw@alpha, openclaw@beta, openclaw@extended-stable, openclaw@latest, or an exact OpenClaw release version; got: ${spec}`,
+      `package_spec must be openclaw@alpha, openclaw@beta, openclaw@latest, or an exact OpenClaw release version; got: ${spec}`,
     );
   }
 }
@@ -193,30 +153,8 @@ export function resolveNpmPackageCandidatePackRunner(packageSpec, outputDir, par
   });
 }
 
-function numericTimerValueMs(valueMs) {
-  const value = Number(valueMs);
-  return Number.isFinite(value) ? Math.floor(value) : undefined;
-}
-
-function resolveTimerTimeoutMs(valueMs, fallbackMs = MAX_TIMER_TIMEOUT_MS) {
-  const value = numericTimerValueMs(valueMs) ?? numericTimerValueMs(fallbackMs);
-  return Math.min(Math.max(value ?? MAX_TIMER_TIMEOUT_MS, 1), MAX_TIMER_TIMEOUT_MS);
-}
-
-function resolveOptionalTimerTimeoutMs(valueMs) {
-  if (valueMs === undefined) {
-    return undefined;
-  }
-  return resolveTimerTimeoutMs(valueMs, 1);
-}
-
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const resolvedTimeoutMs = resolveOptionalTimerTimeoutMs(options.timeoutMs);
-    const resolvedKillAfterMs = resolveTimerTimeoutMs(
-      options.killAfterMs,
-      COMMAND_TIMEOUT_KILL_AFTER_MS,
-    );
     const useProcessGroup = process.platform !== "win32";
     const spawnOptions = {
       cwd: options.cwd ?? ROOT_DIR,
@@ -233,24 +171,33 @@ function run(command, args, options = {}) {
     });
     let timedOut = false;
     let killTimer;
-    let forceKillAt;
-    const killChild = (signal) => signalChildProcessTree(child, signal, { useProcessGroup });
+    let timeoutReject;
+    const killChild = (signal) => {
+      if (useProcessGroup && child.pid) {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch {
+          // The process group can disappear between timeout and cleanup.
+        }
+      }
+      child.kill(signal);
+    };
     const terminateChild = () => {
       killChild("SIGTERM");
-      forceKillAt = Date.now() + resolvedKillAfterMs;
       killTimer = setTimeout(() => {
         killTimer = undefined;
-        forceKillAt = undefined;
         killChild("SIGKILL");
-      }, resolvedKillAfterMs);
+        timeoutReject?.();
+      }, options.killAfterMs ?? COMMAND_TIMEOUT_KILL_AFTER_MS);
     };
     const timeout =
-      resolvedTimeoutMs === undefined
+      options.timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
             timedOut = true;
             terminateChild();
-          }, resolvedTimeoutMs);
+          }, options.timeoutMs);
     timeout?.unref?.();
     ACTIVE_CHILD_KILLERS.add(killChild);
     let stdout = { text: "", truncatedChars: 0 };
@@ -273,7 +220,6 @@ function run(command, args, options = {}) {
       }
       if (killTimer && !timedOut) {
         clearTimeout(killTimer);
-        forceKillAt = undefined;
       }
       ACTIVE_CHILD_KILLERS.delete(killChild);
       if (
@@ -288,16 +234,10 @@ function run(command, args, options = {}) {
       }
       if (timedOut) {
         const timeoutError = new Error(
-          `${command} ${args.join(" ")} timed out after ${resolvedTimeoutMs}ms`,
+          `${command} ${args.join(" ")} timed out after ${options.timeoutMs}ms`,
         );
         if (killTimer) {
-          void finishTimedOutProcessTree(child, {
-            forceKillAt,
-            killChild,
-            killTimer,
-            killAfterMs: resolvedKillAfterMs,
-            useProcessGroup,
-          }).then(() => reject(timeoutError), reject);
+          timeoutReject = () => reject(timeoutError);
           return;
         }
         reject(timeoutError);
@@ -322,91 +262,6 @@ function run(command, args, options = {}) {
   });
 }
 
-async function finishTimedOutProcessTree(
-  child,
-  { forceKillAt, killAfterMs, killChild, killTimer, useProcessGroup },
-) {
-  const graceRemainingMs =
-    forceKillAt === undefined ? killAfterMs : Math.max(0, forceKillAt - Date.now());
-  if (graceRemainingMs > 0) {
-    await waitForProcessTreeExit(child, graceRemainingMs, useProcessGroup);
-  }
-  clearTimeout(killTimer);
-  if (processTreeIsAlive(child, useProcessGroup)) {
-    killChild("SIGKILL");
-    await waitForProcessTreeExit(child, killAfterMs, useProcessGroup);
-  }
-}
-
-export function signalChildProcessTree(
-  child,
-  signal,
-  {
-    platform = process.platform,
-    runTaskkill = spawnSync,
-    useProcessGroup = platform !== "win32",
-  } = {},
-) {
-  if (useProcessGroup && child.pid) {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // The process group can disappear between timeout and cleanup.
-    }
-  }
-  if (platform === "win32" && typeof child.pid === "number") {
-    const taskkillPath = resolveWindowsTaskkillPath();
-    const args = ["/PID", String(child.pid), "/T"];
-    if (signal === "SIGKILL") {
-      args.push("/F");
-    }
-    const result = runTaskkill(taskkillPath, args, { stdio: "ignore" });
-    if (!result?.error && result?.status === 0) {
-      return;
-    }
-    if (signal !== "SIGKILL") {
-      const forceResult = runTaskkill(taskkillPath, [...args, "/F"], { stdio: "ignore" });
-      if (!forceResult?.error && forceResult?.status === 0) {
-        return;
-      }
-    }
-  }
-  child.kill(signal);
-}
-
-function childHasExited(child) {
-  return child.exitCode !== null || child.signalCode !== null;
-}
-
-function processTreeIsAlive(child, useProcessGroup) {
-  if (!child || typeof child.pid !== "number") {
-    return false;
-  }
-  if (!useProcessGroup) {
-    return !childHasExited(child);
-  }
-  try {
-    process.kill(-child.pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
-}
-
-async function waitForProcessTreeExit(child, timeoutMs, useProcessGroup) {
-  const deadlineAt = Date.now() + timeoutMs;
-  while (Date.now() < deadlineAt) {
-    if (!processTreeIsAlive(child, useProcessGroup)) {
-      return true;
-    }
-    await new Promise((resolvePoll) => {
-      setTimeout(resolvePoll, COMMAND_PROCESS_TREE_EXIT_POLL_MS);
-    });
-  }
-  return !processTreeIsAlive(child, useProcessGroup);
-}
-
 function appendBoundedCommandOutput(buffer, chunk, maxChars) {
   const nextText = buffer.text + String(chunk);
   if (nextText.length <= maxChars) {
@@ -425,6 +280,20 @@ function formatCapturedCommandOutput(buffer) {
 
 export const runCommandForTest = run;
 
+async function walkFiles(dir) {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const absolute = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await walkFiles(absolute)));
+    } else if (entry.isFile()) {
+      files.push(absolute);
+    }
+  }
+  return files;
+}
+
 async function sha256(file) {
   const hash = createHash("sha256");
   const handle = await fs.open(file, "r");
@@ -439,7 +308,7 @@ async function sha256(file) {
 }
 
 function assertSha256(value) {
-  if (!/^[a-f0-9]{64}$/iu.test(value)) {
+  if (!/^[a-f0-9]{64}$/u.test(value)) {
     throw new Error(`package_sha256 must be a lowercase or uppercase 64-character SHA-256 digest`);
   }
 }
@@ -456,56 +325,17 @@ async function assertExpectedSha256(file, expected) {
   return actual;
 }
 
-export const assertExpectedSha256ForTest = assertExpectedSha256;
-
-async function findSingleTarball(dir, maxEntries = ARTIFACT_TARBALL_SCAN_MAX_ENTRIES) {
-  const root = path.resolve(ROOT_DIR, dir);
-  const pending = [root];
-  const tarballs = [];
-  let scannedEntries = 0;
-
-  while (pending.length > 0) {
-    const currentDir = pending.pop();
-    if (!currentDir) {
-      continue;
-    }
-    const handle = await fs.opendir(currentDir);
-    for await (const entry of handle) {
-      scannedEntries += 1;
-      if (scannedEntries > maxEntries) {
-        throw new Error(
-          `source=artifact scan exceeded ${maxEntries} filesystem entries under ${dir}; provide a smaller artifact directory containing exactly one .tgz.`,
-        );
-      }
-
-      const absolute = path.join(currentDir, entry.name);
-      if (entry.isDirectory()) {
-        pending.push(absolute);
-        continue;
-      }
-      if (entry.isFile() && /\.t(?:ar\.)?gz$/u.test(entry.name)) {
-        tarballs.push(absolute);
-        if (tarballs.length > 1) {
-          const relativeTarballs = tarballs
-            .map((tarball) => path.relative(root, tarball))
-            .toSorted((a, b) => a.localeCompare(b));
-          throw new Error(
-            `source=artifact requires exactly one .tgz under ${dir}; found at least 2: ${relativeTarballs.join(", ")}`,
-          );
-        }
-      }
-    }
-  }
-
-  if (tarballs.length !== 1) {
+async function findSingleTarball(dir) {
+  const files = (await walkFiles(path.resolve(ROOT_DIR, dir)))
+    .filter((file) => /\.t(?:ar\.)?gz$/u.test(path.basename(file)))
+    .toSorted((a, b) => a.localeCompare(b));
+  if (files.length !== 1) {
     throw new Error(
-      `source=artifact requires exactly one .tgz under ${dir}; found ${tarballs.length}: ${tarballs.join(", ")}`,
+      `source=artifact requires exactly one .tgz under ${dir}; found ${files.length}: ${files.join(", ")}`,
     );
   }
-  return tarballs[0];
+  return files[0];
 }
-
-export const findSingleTarballForTest = findSingleTarball;
 
 export async function readArtifactPackageCandidateMetadata(dir) {
   const metadataPath = path.join(path.resolve(ROOT_DIR, dir), "package-candidate.json");
@@ -521,18 +351,6 @@ export async function readArtifactPackageCandidateMetadata(dir) {
   const parsed = JSON.parse(raw);
   if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`artifact package-candidate.json must contain a JSON object`);
-  }
-  const packageSourceSha =
-    typeof parsed.packageSourceSha === "string" ? parsed.packageSourceSha.trim() : "";
-  if (packageSourceSha && !/^[0-9a-f]{40}$/iu.test(packageSourceSha)) {
-    throw new Error(
-      "artifact package-candidate.json packageSourceSha must be a 40-character commit SHA",
-    );
-  }
-  if (typeof parsed.packageSourceSha === "string") {
-    return packageSourceSha
-      ? { ...parsed, packageSourceSha: packageSourceSha.toLowerCase() }
-      : { ...parsed, packageSourceSha: "" };
   }
   return parsed;
 }
@@ -656,41 +474,24 @@ async function installPackageSourceDeps(sourceDir) {
 
 async function moveNewestPackedTarball(outputDir, packOutput, outputName) {
   let filename = "";
-  let parsed;
   try {
-    parsed = JSON.parse(packOutput);
-  } catch {}
-  if (Array.isArray(parsed)) {
-    const packedFilename =
-      parsed.find((entry) => typeof entry?.filename === "string")?.filename ?? "";
-    if (packedFilename) {
-      filename = resolvePackedOpenClawTarballFilename(packedFilename);
+    const parsed = JSON.parse(packOutput);
+    if (Array.isArray(parsed)) {
+      filename = parsed.find((entry) => typeof entry?.filename === "string")?.filename ?? "";
     }
-  }
+  } catch {}
   if (!filename) {
     for (const line of packOutput.split(/\r?\n/u)) {
       const trimmed = line.trim();
-      if (
-        trimmed.endsWith(".tgz") &&
-        (trimmed.startsWith("openclaw-") ||
-          trimmed.includes(":") ||
-          trimmed.includes("/") ||
-          trimmed.includes("\\"))
-      ) {
-        filename = resolvePackedOpenClawTarballFilename(trimmed);
+      if (/^openclaw-.*\.tgz$/u.test(trimmed)) {
+        filename = trimmed;
       }
     }
   }
   if (!filename) {
     const entries = await fs.readdir(outputDir);
     filename = entries
-      .filter((entry) => {
-        try {
-          return resolvePackedOpenClawTarballFilename(entry) === entry;
-        } catch {
-          return false;
-        }
-      })
+      .filter((entry) => /^openclaw-.*\.tgz$/u.test(entry))
       .toSorted((a, b) => a.localeCompare(b))
       .at(-1);
   }
@@ -705,34 +506,6 @@ async function moveNewestPackedTarball(outputDir, packOutput, outputName) {
   }
   return target;
 }
-
-export const moveNewestPackedTarballForTest = moveNewestPackedTarball;
-
-async function cleanPackedOpenClawTarballs(outputDir) {
-  let entries;
-  try {
-    entries = await fs.readdir(outputDir);
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      entries = [];
-    } else {
-      throw error;
-    }
-  }
-  await Promise.all(
-    entries
-      .filter((entry) => {
-        try {
-          return resolvePackedOpenClawTarballFilename(entry) === entry;
-        } catch {
-          return false;
-        }
-      })
-      .map((entry) => fs.rm(path.join(outputDir, entry), { force: true })),
-  );
-}
-
-export const cleanPackedOpenClawTarballsForTest = cleanPackedOpenClawTarballs;
 
 function normalizeUrlHostname(hostname) {
   return hostname.replace(/^\[/u, "").replace(/\]$/u, "").replace(/\.+$/u, "").toLowerCase();
@@ -920,29 +693,11 @@ function toTrustedPorts(value, sourceId) {
   if (!Array.isArray(ports) || ports.length === 0) {
     throw new Error(`trusted package source ${sourceId} must define non-empty ports`);
   }
-  const normalized = ports.map((port) => parseTrustedPort(port));
+  const normalized = ports.map((port) => Number(port));
   if (normalized.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)) {
     throw new Error(`trusted package source ${sourceId} has invalid ports`);
   }
   return [...new Set(normalized)].toSorted((a, b) => a - b);
-}
-
-function parseTrustedPort(value) {
-  if (typeof value === "number") {
-    return value;
-  }
-  if (typeof value === "string" && /^[0-9]+$/u.test(value)) {
-    return Number(value);
-  }
-  return Number.NaN;
-}
-
-function pathnameMatchesTrustedPrefix(pathname, prefix) {
-  if (prefix === "/") {
-    return true;
-  }
-  const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
-  return pathname === prefix || pathname.startsWith(normalizedPrefix);
 }
 
 function toPathPrefixes(value, sourceId) {
@@ -1036,11 +791,7 @@ function validateTrustedPackageDownloadUrl(parsed, trustedSource, options = {}) 
       `package_url port ${packageUrlPort(parsed)} is not allowed by trusted package source ${trustedSource.id}`,
     );
   }
-  if (
-    !trustedSource.pathPrefixes.some((prefix) =>
-      pathnameMatchesTrustedPrefix(parsed.pathname, prefix),
-    )
-  ) {
+  if (!trustedSource.pathPrefixes.some((prefix) => parsed.pathname.startsWith(prefix))) {
     throw new Error(
       `package_url path is not allowed by trusted package source ${trustedSource.id}`,
     );
@@ -1052,11 +803,8 @@ function validateTrustedPackageDownloadUrl(parsed, trustedSource, options = {}) 
   }
 }
 
-function createTrustedPackageAuthHeaders(trustedSource, parsed, initialOrigin) {
+function createTrustedPackageAuthHeaders(trustedSource) {
   if (!trustedSource?.auth) {
-    return undefined;
-  }
-  if (parsed.origin !== initialOrigin) {
     return undefined;
   }
   const token = process.env[TRUSTED_PACKAGE_SOURCE_TOKEN_ENV];
@@ -1167,15 +915,6 @@ function responseHeader(response, name) {
   return response.headers?.get?.(name) ?? null;
 }
 
-function createPackageDownloadTimeoutError(parsed, timeoutMs) {
-  return Object.assign(
-    new Error(`package_url download timed out after ${timeoutMs}ms: ${parsed.toString()}`),
-    {
-      code: "ETIMEDOUT",
-    },
-  );
-}
-
 async function closeResponseBody(body) {
   if (!body) {
     return;
@@ -1191,16 +930,8 @@ async function closeResponseBody(body) {
 
 async function openFetchPackageDownloadResponse(parsed, options) {
   const controller = new AbortController();
-  const timeoutError = createPackageDownloadTimeoutError(parsed, options.timeoutMs);
-  let timeout;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeout = setTimeout(() => {
-      controller.abort(timeoutError);
-      reject(timeoutError);
-    }, options.timeoutMs);
-    timeout.unref?.();
-  });
-  timeoutPromise.catch(() => {});
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  timeout.unref?.();
   const response = await options
     .fetchImpl(parsed, {
       headers: options.headers,
@@ -1210,7 +941,12 @@ async function openFetchPackageDownloadResponse(parsed, options) {
     .catch((error) => {
       clearTimeout(timeout);
       if (error?.name === "AbortError") {
-        throw Object.assign(timeoutError, { cause: error });
+        throw new Error(
+          `package_url download timed out after ${options.timeoutMs}ms: ${parsed.toString()}`,
+          {
+            cause: error,
+          },
+        );
       }
       throw error;
     });
@@ -1218,23 +954,14 @@ async function openFetchPackageDownloadResponse(parsed, options) {
     close: async () => closeResponseBody(response.body),
     response,
     timeout,
-    timeoutPromise,
     timeoutMs: options.timeoutMs,
   };
 }
 
 async function openHttpsPackageDownloadResponse(parsed, options) {
   const controller = new AbortController();
-  const timeoutError = createPackageDownloadTimeoutError(parsed, options.timeoutMs);
-  let timeout;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeout = setTimeout(() => {
-      controller.abort(timeoutError);
-      reject(timeoutError);
-    }, options.timeoutMs);
-    timeout.unref?.();
-  });
-  timeoutPromise.catch(() => {});
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  timeout.unref?.();
   const lookup = createPinnedLookup(parsed.hostname, options.addresses);
   const response = await new Promise((resolve, reject) => {
     const request = httpsRequest(
@@ -1266,7 +993,12 @@ async function openHttpsPackageDownloadResponse(parsed, options) {
     /** @param {unknown} error */ (error) => {
       clearTimeout(timeout);
       if (error?.name === "AbortError" || error?.code === "ABORT_ERR") {
-        throw Object.assign(timeoutError, { cause: error });
+        throw new Error(
+          `package_url download timed out after ${options.timeoutMs}ms: ${parsed.toString()}`,
+          {
+            cause: error,
+          },
+        );
       }
       throw error;
     },
@@ -1275,18 +1007,17 @@ async function openHttpsPackageDownloadResponse(parsed, options) {
     close: async () => closeResponseBody(response.body),
     response,
     timeout,
-    timeoutPromise,
     timeoutMs: options.timeoutMs,
   };
 }
 
 async function openPackageDownloadResponse(url, options) {
   const lookupHost = options.lookupHost ?? defaultLookupHost;
-  const timeoutMs = resolveTimerTimeoutMs(options.timeoutMs, PACKAGE_URL_DOWNLOAD_TIMEOUT_MS);
+  const timeoutMs = options.timeoutMs ?? PACKAGE_URL_DOWNLOAD_TIMEOUT_MS;
   const maxRedirects = options.maxRedirects ?? PACKAGE_URL_MAX_REDIRECTS;
   const trustedSource = options.trustedSource;
+  const headers = createTrustedPackageAuthHeaders(trustedSource);
   let parsed = new URL(url);
-  const initialOrigin = parsed.origin;
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
     if (trustedSource) {
       validateTrustedPackageDownloadUrl(parsed, trustedSource, { isRedirect: redirectCount > 0 });
@@ -1294,7 +1025,6 @@ async function openPackageDownloadResponse(url, options) {
       validatePackageDownloadUrl(parsed);
     }
     const addresses = await resolvePackageDownloadAddresses(parsed, lookupHost, trustedSource);
-    const headers = createTrustedPackageAuthHeaders(trustedSource, parsed, initialOrigin);
     const opened = options.fetchImpl
       ? await openFetchPackageDownloadResponse(parsed, {
           fetchImpl: options.fetchImpl,
@@ -1322,47 +1052,7 @@ async function openPackageDownloadResponse(url, options) {
   throw new Error(`package_url exceeded ${maxRedirects} redirects: ${url}`);
 }
 
-async function* limitWebResponseBody(body, maxBytes, timeoutPromise) {
-  let downloaded = 0;
-  const reader = body.getReader();
-  let timedOut = false;
-  let timeoutFailure;
-  const timeoutRead = timeoutPromise?.catch((error) => {
-    timedOut = true;
-    timeoutFailure = error;
-    void reader.cancel().catch(() => {});
-    throw error;
-  });
-  try {
-    for (;;) {
-      const next = reader.read();
-      const { done, value } = timeoutRead ? await Promise.race([next, timeoutRead]) : await next;
-      if (timedOut) {
-        throw toLintErrorObject(timeoutFailure, "package_url download timed out");
-      }
-      if (done) {
-        return;
-      }
-      const size = typeof value === "string" ? Buffer.byteLength(value) : value.byteLength;
-      downloaded += size;
-      if (downloaded > maxBytes) {
-        await reader.cancel().catch(() => {});
-        throw new Error(`package_url exceeds maximum download size of ${maxBytes} bytes`);
-      }
-      yield value;
-    }
-  } finally {
-    if (!timedOut) {
-      reader.releaseLock();
-    }
-  }
-}
-
-async function* limitResponseBody(body, maxBytes, timeoutPromise) {
-  if (typeof body.getReader === "function") {
-    yield* limitWebResponseBody(body, maxBytes, timeoutPromise);
-    return;
-  }
+async function* limitResponseBody(body, maxBytes) {
   let downloaded = 0;
   for await (const chunk of body) {
     const size = typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
@@ -1376,33 +1066,20 @@ async function* limitResponseBody(body, maxBytes, timeoutPromise) {
 
 export async function downloadUrl(url, target, options = {}) {
   const maxBytes = options.maxBytes ?? PACKAGE_URL_MAX_BYTES;
-  const { close, response, timeout, timeoutMs, timeoutPromise } = await openPackageDownloadResponse(
-    url,
-    options,
-  );
+  const { close, response, timeout, timeoutMs } = await openPackageDownloadResponse(url, options);
   const tempTarget = `${target}.tmp`;
-  let output;
   try {
     if (!responseOk(response) || !response.body) {
       throw new Error(`failed to download package_url: HTTP ${responseStatus(response)}`);
     }
-    const rawContentLength = responseHeader(response, "content-length");
-    const contentLength =
-      rawContentLength && /^\d+$/u.test(rawContentLength) ? Number(rawContentLength) : undefined;
-    if (
-      contentLength !== undefined &&
-      (!Number.isSafeInteger(contentLength) || contentLength > maxBytes)
-    ) {
+    const contentLength = Number(responseHeader(response, "content-length") ?? "");
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
       throw new Error(`package_url exceeds maximum download size of ${maxBytes} bytes`);
     }
     await fs.rm(tempTarget, { force: true });
-    output = createWriteStream(tempTarget);
-    await pipeline(limitResponseBody(response.body, maxBytes, timeoutPromise), output);
+    await pipeline(limitResponseBody(response.body, maxBytes), createWriteStream(tempTarget));
     await fs.rename(tempTarget, target);
   } catch (error) {
-    if (error?.code === "ETIMEDOUT") {
-      throw error;
-    }
     if (error?.name === "AbortError") {
       throw new Error(`package_url download timed out after ${timeoutMs}ms: ${url}`, {
         cause: error,
@@ -1412,9 +1089,6 @@ export async function downloadUrl(url, target, options = {}) {
   } finally {
     clearTimeout(timeout);
     await close();
-    if (output && !output.closed) {
-      await once(output, "close").catch(() => {});
-    }
     await fs.rm(tempTarget, { force: true });
   }
 }
@@ -1476,7 +1150,6 @@ async function resolveCandidate(options) {
       await installPackageSourceDeps(packageSource.sourceDir);
       await run("node", [
         "scripts/package-openclaw-for-docker.mjs",
-        "--allow-unreleased-changelog",
         "--source-dir",
         packageSource.sourceDir,
         "--output-dir",
@@ -1488,7 +1161,6 @@ async function resolveCandidate(options) {
       const npmPackRunner = resolveNpmPackageCandidatePackRunner(options.packageSpec, outputDir, {
         env: process.env,
       });
-      await cleanPackedOpenClawTarballs(outputDir);
       const packOutput = await run(npmPackRunner.command, npmPackRunner.args, {
         capture: true,
         env: npmPackRunner.env,

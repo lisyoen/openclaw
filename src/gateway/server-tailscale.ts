@@ -10,7 +10,6 @@ import {
   hasTailscaleFunnelRouteForPort,
 } from "../infra/tailscale.js";
 import { resolveTailscalePublishedHost } from "../shared/tailscale-status.js";
-import { prepareMcpAppChannelOrigin } from "./mcp-app-channel-origin.js";
 
 export async function startGatewayTailscaleExposure(params: {
   tailscaleMode: "off" | "serve" | "funnel";
@@ -26,31 +25,28 @@ export async function startGatewayTailscaleExposure(params: {
   }
   const serviceName =
     params.tailscaleMode === "serve" ? params.serviceName?.trim() || undefined : undefined;
-  let effectiveMode = params.tailscaleMode;
-  let preservedFunnel = false;
-  let clearPublishedOrigin: (() => void) | undefined;
 
   try {
     if (params.tailscaleMode === "serve") {
       if (params.preserveFunnel === true) {
         const funnelCovers = await hasTailscaleFunnelRouteForPort(params.port);
         if (funnelCovers) {
-          effectiveMode = "funnel";
-          preservedFunnel = true;
           const resetSuffix = params.resetOnExit
             ? "; resetOnExit is a no-op because no Serve route was applied this run"
             : "";
           params.logTailscale.info(
             `serve skipped: preserving externally configured Tailscale Funnel for port ${params.port}${resetSuffix}`,
           );
+          // Skip the resetOnExit teardown deliberately: the Funnel route is
+          // owned by an external operator, so we must not run
+          // disableTailscaleServe on shutdown either.
+          return null;
         }
       }
-      if (!preservedFunnel) {
-        if (serviceName) {
-          await enableTailscaleServe(params.port, undefined, serviceName);
-        } else {
-          await enableTailscaleServe(params.port);
-        }
+      if (serviceName) {
+        await enableTailscaleServe(params.port, undefined, serviceName);
+      } else {
+        await enableTailscaleServe(params.port);
       }
     } else {
       await enableTailscaleFunnel(params.port);
@@ -59,40 +55,30 @@ export async function startGatewayTailscaleExposure(params: {
     if (host) {
       const uiPath = params.controlUiBasePath ? `${params.controlUiBasePath}/` : "/";
       const publicHost = resolveTailscalePublishedHost({
-        tailscaleMode: effectiveMode,
+        tailscaleMode: params.tailscaleMode,
         tailnetHost: host,
-        serviceName: effectiveMode === "serve" ? serviceName : undefined,
+        serviceName,
       });
       if (publicHost) {
-        clearPublishedOrigin = prepareMcpAppChannelOrigin({
-          origin: `https://${publicHost}`,
-          reachability: effectiveMode === "funnel" ? "internet" : "tailnet",
-        });
-        if (!preservedFunnel) {
-          const serviceLabel = serviceName ? ` for ${serviceName}` : "";
-          params.logTailscale.info(
-            `${params.tailscaleMode} enabled${serviceLabel}: https://${publicHost}${uiPath} (WS via wss://${publicHost})`,
-          );
-        }
-      } else if (!preservedFunnel) {
+        const serviceLabel = serviceName ? ` for ${serviceName}` : "";
+        params.logTailscale.info(
+          `${params.tailscaleMode} enabled${serviceLabel}: https://${publicHost}${uiPath} (WS via wss://${publicHost})`,
+        );
+      } else {
         params.logTailscale.info(`${params.tailscaleMode} enabled`);
       }
-    } else if (!preservedFunnel) {
+    } else {
       params.logTailscale.info(`${params.tailscaleMode} enabled`);
     }
   } catch (err) {
     params.logTailscale.warn(`${params.tailscaleMode} failed: ${formatErrorMessage(err)}`);
   }
 
-  if (!params.resetOnExit && !clearPublishedOrigin) {
+  if (!params.resetOnExit) {
     return null;
   }
 
   return async () => {
-    clearPublishedOrigin?.();
-    if (!params.resetOnExit || preservedFunnel) {
-      return;
-    }
     try {
       if (params.tailscaleMode === "serve") {
         if (serviceName) {

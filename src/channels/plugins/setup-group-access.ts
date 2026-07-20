@@ -14,21 +14,21 @@ export type ChannelAccessPolicy = "allowlist" | "open" | "disabled";
 /**
  * Parses comma, semicolon, or newline separated allowlist entries.
  */
-function parseAllowlistEntries(raw: string): string[] {
+export function parseAllowlistEntries(raw: string): string[] {
   return normalizeStringEntries(raw.split(/[\n,;]+/g));
 }
 
 /**
  * Formats allowlist entries for setup prompt initial values.
  */
-function formatAllowlistEntries(entries: string[]): string {
+export function formatAllowlistEntries(entries: string[]): string {
   return normalizeStringEntries(entries).join(", ");
 }
 
 /**
  * Prompts for the group access policy allowed by the channel setup flow.
  */
-async function promptChannelAccessPolicy(params: {
+export async function promptChannelAccessPolicy(params: {
   prompter: WizardPrompter;
   label: string;
   currentPolicy?: ChannelAccessPolicy;
@@ -55,7 +55,7 @@ async function promptChannelAccessPolicy(params: {
 /**
  * Prompts for group allowlist entries and normalizes the response.
  */
-async function promptChannelAllowlist(params: {
+export async function promptChannelAllowlist(params: {
   prompter: WizardPrompter;
   label: string;
   currentEntries?: string[];

@@ -1,7 +1,6 @@
 // Memory Host SDK module implements embeddings worker child behavior.
 import { createLocalEmbeddingProviderInProcess } from "./embeddings.js";
 import type { EmbeddingProvider, EmbeddingProviderOptions } from "./embeddings.types.js";
-import { getLocalEmbeddingRuntimeFacts } from "./local-embedding-runtime-facts.js";
 
 // Child process entrypoint for local embedding work.
 
@@ -88,31 +87,17 @@ async function handleRequest(request: LocalEmbeddingWorkerRequest): Promise<void
 
   const currentProvider = await getProvider(request.options);
   if (request.type === "initialize") {
-    send({
-      id: request.id,
-      ok: true,
-      runtimeFacts: getLocalEmbeddingRuntimeFacts(currentProvider),
-    });
+    send({ id: request.id, ok: true });
     return;
   }
   if (request.type === "embedQuery") {
     const value = await currentProvider.embedQuery(request.text);
-    send({
-      id: request.id,
-      ok: true,
-      value,
-      runtimeFacts: getLocalEmbeddingRuntimeFacts(currentProvider),
-    });
+    send({ id: request.id, ok: true, value });
     return;
   }
 
   const value = await currentProvider.embedBatch(request.texts);
-  send({
-    id: request.id,
-    ok: true,
-    value,
-    runtimeFacts: getLocalEmbeddingRuntimeFacts(currentProvider),
-  });
+  send({ id: request.id, ok: true, value });
 }
 
 // Requests are serialized so node-llama-cpp context state is not used concurrently.
@@ -122,12 +107,7 @@ process.on("message", (message) => {
     try {
       await handleRequest(request);
     } catch (err) {
-      send({
-        id: request.id,
-        ok: false,
-        error: serializeError(err),
-        runtimeFacts: getLocalEmbeddingRuntimeFacts(provider),
-      });
+      send({ id: request.id, ok: false, error: serializeError(err) });
     }
   });
 });

@@ -1,6 +1,5 @@
 // Discord plugin module implements runtime.messaging.send behavior.
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { createReusableDiscordReplyReference } from "../reply-reference.js";
 import {
   assertMediaNotDataUrl,
   jsonResult,
@@ -15,7 +14,6 @@ import { isThreadChannelType } from "../send.permissions.js";
 import type { DiscordSendComponents, DiscordSendEmbeds } from "../send.shared.js";
 import { discordMessagingActionRuntime } from "./runtime.messaging.runtime.js";
 import type { DiscordMessagingActionContext } from "./runtime.messaging.shared.js";
-import { readDiscordAutoArchiveDurationParam } from "./runtime.shared.js";
 
 function hasDiscordComponentObjectKeys(value: unknown): value is Record<string, unknown> {
   return Boolean(
@@ -252,7 +250,7 @@ export async function handleDiscordMessageSendAction(ctx: DiscordMessagingAction
           {
             ...ctx.withOpts(),
             silent,
-            reply: createReusableDiscordReplyReference(replyTo),
+            replyTo: replyTo ?? undefined,
             sessionKey: sessionKey ?? undefined,
             agentId: agentId ?? undefined,
             mediaUrl: mediaUrl ?? undefined,
@@ -286,7 +284,7 @@ export async function handleDiscordMessageSendAction(ctx: DiscordMessagingAction
         assertMediaNotDataUrl(mediaUrl);
         const result = await discordMessagingActionRuntime.sendVoiceMessageDiscord(to, mediaUrl, {
           ...ctx.withOpts(),
-          reply: createReusableDiscordReplyReference(replyTo),
+          replyTo,
           silent,
         });
         return jsonResult(
@@ -305,7 +303,7 @@ export async function handleDiscordMessageSendAction(ctx: DiscordMessagingAction
         filename: filename ?? undefined,
         mediaLocalRoots: ctx.options?.mediaLocalRoots,
         mediaReadFile: ctx.options?.mediaReadFile,
-        reply: createReusableDiscordReplyReference(replyTo),
+        replyTo,
         components,
         embeds,
         silent,
@@ -327,10 +325,7 @@ export async function handleDiscordMessageSendAction(ctx: DiscordMessagingAction
       const name = readStringParam(ctx.params, "name", { required: true });
       const messageId = readStringParam(ctx.params, "messageId");
       const content = readStringParam(ctx.params, "content");
-      const autoArchiveMinutes = readDiscordAutoArchiveDurationParam(
-        ctx.params,
-        "autoArchiveMinutes",
-      );
+      const autoArchiveMinutes = readPositiveIntegerParam(ctx.params, "autoArchiveMinutes");
       const appliedTags = readStringArrayParam(ctx.params, "appliedTags");
       const payload = {
         name,
@@ -370,15 +365,6 @@ export async function handleDiscordMessageSendAction(ctx: DiscordMessagingAction
       const includeArchived = readBooleanParam(ctx.params, "includeArchived");
       const before = readStringParam(ctx.params, "before");
       const limit = readPositiveIntegerParam(ctx.params, "limit");
-      if (channelId && includeArchived === true) {
-        await ctx.assertReadTargetAllowed({ guildId, channelId });
-      } else {
-        await ctx.assertGuildReadTargetAllowed({
-          guildId,
-          channelTargetRequiredMessage:
-            "Discord active thread lists require a wildcard channel allowlist so each read target can be authorized.",
-        });
-      }
       const threads = await discordMessagingActionRuntime.listThreadsDiscord(
         {
           guildId,
@@ -418,7 +404,7 @@ export async function handleDiscordMessageSendAction(ctx: DiscordMessagingAction
           mediaUrl,
           mediaLocalRoots: ctx.options?.mediaLocalRoots,
           mediaReadFile: ctx.options?.mediaReadFile,
-          reply: createReusableDiscordReplyReference(replyTo),
+          replyTo,
         },
       );
       return jsonResult({ ok: true, result });

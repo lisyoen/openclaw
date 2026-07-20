@@ -79,8 +79,6 @@ type ApproverRestrictedNativeApprovalParams = {
   nativeRuntime?: ChannelApprovalCapability["nativeRuntime"];
   /** Optional setup description helper shown when exec approvals are unavailable. */
   describeExecApprovalSetup?: ChannelApprovalCapability["describeExecApprovalSetup"];
-  /** Optional setup description helper shown when plugin approvals are unavailable. */
-  describePluginApprovalSetup?: ChannelApprovalCapability["describePluginApprovalSetup"];
 };
 
 /** Build the canonical approval capability for channels that restrict approvals to configured approvers. */
@@ -150,11 +148,9 @@ function buildApproverRestrictedNativeApprovalCapability(
       cfg: OpenClawConfig;
       accountId?: string | null;
       action: "approve";
-      approvalKind?: ApprovalKind;
     }) => availabilityState(hasConfiguredApprovers({ cfg, accountId })),
     getExecInitiatingSurfaceState: resolveExecInitiatingSurfaceState,
     describeExecApprovalSetup: params.describeExecApprovalSetup,
-    describePluginApprovalSetup: params.describePluginApprovalSetup,
     delivery: {
       hasConfiguredDmRoute: ({ cfg }: { cfg: OpenClawConfig }) =>
         params.listAccountIds(cfg).some((accountId) => {
@@ -237,8 +233,6 @@ export function createChannelApprovalCapability(params: {
   resolveApproveCommandBehavior?: ChannelApprovalCapability["resolveApproveCommandBehavior"];
   /** Optional setup copy for unavailable exec approval paths. */
   describeExecApprovalSetup?: ChannelApprovalCapability["describeExecApprovalSetup"];
-  /** Optional setup copy for unavailable plugin approval paths. */
-  describePluginApprovalSetup?: ChannelApprovalCapability["describePluginApprovalSetup"];
   /** Delivery fallback and DM-route helpers. */
   delivery?: ChannelApprovalCapability["delivery"];
   /** Native runtime hooks for channel-specific approval delivery. */
@@ -247,12 +241,16 @@ export function createChannelApprovalCapability(params: {
   render?: ChannelApprovalCapability["render"];
   /** Native target/capability discovery hooks. */
   native?: ChannelApprovalCapability["native"];
+  /** @deprecated Pass delivery/nativeRuntime/render/native directly. */
+  approvals?: Partial<ChannelApprovalCapabilitySurfaces>;
 }): ChannelApprovalCapability {
+  // Keep the approvals alias for shipped plugin-sdk callers; registry tests track
+  // this compatibility marker until the public deprecation window closes.
   const surfaces: ChannelApprovalCapabilitySurfaces = {
-    delivery: params.delivery,
-    nativeRuntime: params.nativeRuntime,
-    render: params.render,
-    native: params.native,
+    delivery: params.delivery ?? params.approvals?.delivery,
+    nativeRuntime: params.nativeRuntime ?? params.approvals?.nativeRuntime,
+    render: params.render ?? params.approvals?.render,
+    native: params.native ?? params.approvals?.native,
   };
   return {
     authorizeActorAction: params.authorizeActorAction,
@@ -260,7 +258,6 @@ export function createChannelApprovalCapability(params: {
     getExecInitiatingSurfaceState: params.getExecInitiatingSurfaceState,
     resolveApproveCommandBehavior: params.resolveApproveCommandBehavior,
     describeExecApprovalSetup: params.describeExecApprovalSetup,
-    describePluginApprovalSetup: params.describePluginApprovalSetup,
     delivery: surfaces.delivery,
     nativeRuntime: surfaces.nativeRuntime,
     render: surfaces.render,
@@ -281,7 +278,6 @@ export function splitChannelApprovalCapability(capability: ChannelApprovalCapabi
   render: ChannelApprovalCapability["render"];
   native: ChannelApprovalCapability["native"];
   describeExecApprovalSetup: ChannelApprovalCapability["describeExecApprovalSetup"];
-  describePluginApprovalSetup: ChannelApprovalCapability["describePluginApprovalSetup"];
 } {
   return {
     auth: {
@@ -295,7 +291,6 @@ export function splitChannelApprovalCapability(capability: ChannelApprovalCapabi
     render: capability.render,
     native: capability.native,
     describeExecApprovalSetup: capability.describeExecApprovalSetup,
-    describePluginApprovalSetup: capability.describePluginApprovalSetup,
   };
 }
 

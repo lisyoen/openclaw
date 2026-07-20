@@ -92,10 +92,8 @@ function describeBraveRequestUrl(url: URL): {
 
 function resolveBraveApiKey(searchConfig?: SearchConfigRecord): string | undefined {
   return (
-    readConfiguredSecretString(
-      searchConfig?.apiKey,
-      "plugins.entries.brave.config.webSearch.apiKey",
-    ) ?? readProviderEnvValue(["BRAVE_API_KEY"])
+    readConfiguredSecretString(searchConfig?.apiKey, "tools.web.search.apiKey") ??
+    readProviderEnvValue(["BRAVE_API_KEY"])
   );
 }
 

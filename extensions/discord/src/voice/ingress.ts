@@ -11,7 +11,7 @@ import { authorizeDiscordVoiceIngress } from "./access.js";
 import type { VoiceSessionEntry } from "./session.js";
 import type { DiscordVoiceSpeakerContextResolver } from "./speaker-context.js";
 
-const DISCORD_VOICE_MESSAGE_PROVIDER = "discord-voice";
+export const DISCORD_VOICE_MESSAGE_PROVIDER = "discord-voice";
 
 const logger = createSubsystemLogger("discord/voice");
 
@@ -21,7 +21,7 @@ export type DiscordVoiceIngressContext = {
   speakerLabel: string;
 };
 
-type DiscordVoiceAgentTurnResult = {
+export type DiscordVoiceAgentTurnResult = {
   context: DiscordVoiceIngressContext;
   text: string;
 };
@@ -67,7 +67,7 @@ export async function resolveDiscordVoiceIngressContext(params: {
   userId: string;
   cfg: OpenClawConfig;
   discordConfig: DiscordAccountConfig;
-  admissionAllowFrom?: string[];
+  ownerAllowFrom?: string[];
   fetchGuildName: (guildId: string) => Promise<string | undefined>;
   speakerContext: DiscordVoiceSpeakerContextResolver;
 }): Promise<DiscordVoiceIngressContext | null> {
@@ -87,7 +87,7 @@ export async function resolveDiscordVoiceIngressContext(params: {
     channelSlug: entry.channelName ? normalizeDiscordSlug(entry.channelName) : "",
     channelLabel: formatMention({ channelId: entry.channelId }),
     memberRoleIds: speakerIdentity.memberRoleIds,
-    admissionAllowFrom: params.admissionAllowFrom,
+    ownerAllowFrom: params.ownerAllowFrom,
     sender: {
       id: speakerIdentity.id,
       name: speakerIdentity.name,
@@ -113,7 +113,7 @@ export async function runDiscordVoiceAgentTurn(params: {
   runtime: RuntimeEnv;
   context?: DiscordVoiceIngressContext;
   toolsAllow?: string[];
-  admissionAllowFrom?: string[];
+  ownerAllowFrom?: string[];
   fetchGuildName: (guildId: string) => Promise<string | undefined>;
   speakerContext: DiscordVoiceSpeakerContextResolver;
 }): Promise<DiscordVoiceAgentTurnResult | null> {
@@ -124,7 +124,7 @@ export async function runDiscordVoiceAgentTurn(params: {
       userId: params.userId,
       cfg: params.cfg,
       discordConfig: params.discordConfig,
-      admissionAllowFrom: params.admissionAllowFrom,
+      ownerAllowFrom: params.ownerAllowFrom,
       fetchGuildName: params.fetchGuildName,
       speakerContext: params.speakerContext,
     }));
@@ -140,7 +140,6 @@ export async function runDiscordVoiceAgentTurn(params: {
       messageChannel: "discord",
       messageProvider: DISCORD_VOICE_MESSAGE_PROVIDER,
       extraSystemPrompt: context.extraSystemPrompt,
-      senderIsOwner: context.senderIsOwner,
       allowModelOverride: Boolean(voiceModel),
       model: voiceModel,
       toolsAllow: params.toolsAllow,

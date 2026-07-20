@@ -1,8 +1,7 @@
 // Tests model command output, catalog loading, and provider auth status rendering.
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
-import type { ChannelPlugin } from "../../channels/plugins/types.public.js";
+import { testing as cliBackendsTesting } from "../../agents/cli-backends.js";
+import type { ChannelPlugin } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import {
@@ -23,51 +22,10 @@ const modelProviderAuthMocks = vi.hoisted(() => {
   const state = {
     authenticatedProviders: new Set(["anthropic", "google", "openai"]),
     createProviderAuthChecker: vi.fn(),
-    selectedRoute: undefined as
-      | {
-          api: "openai-responses" | "openai-chatgpt-responses";
-          baseUrl: string;
-          authRequirement: "api-key" | "subscription";
-          requestTransportOverrides: "none" | "present";
-        }
-      | undefined,
   };
-  state.createProviderAuthChecker.mockImplementation(() => {
-    type AuthRef = {
-      api?: string | null;
-      baseUrl?: unknown;
-      observedRoutes?: readonly { api?: string | null; baseUrl?: unknown }[];
-    };
-    const hasConflictingRoute = (ref?: AuthRef) => {
-      const routes = ref?.observedRoutes ?? [];
-      return [ref, ...routes].some(
-        (route) =>
-          route?.api === "openai-chatgpt-responses" &&
-          route.baseUrl === "https://api.openai.com/v1",
-      );
-    };
-    const checker = vi.fn((provider: string, ref?: AuthRef) => {
-      return state.authenticatedProviders.has(provider) && !hasConflictingRoute(ref);
-    });
-    return Object.assign(checker, {
-      evaluateModelAuth: vi.fn(async (provider: string, ref?: AuthRef) => {
-        const incompatible = hasConflictingRoute(ref);
-        return {
-          availability: checker(provider, ref),
-          routeResolution: incompatible
-            ? {
-                kind: "incompatible" as const,
-                code: "conflicting-route-facts",
-                message: "Conflicting OpenAI route facts.",
-              }
-            : state.selectedRoute
-              ? { kind: "routes" as const, routes: [state.selectedRoute] as const }
-              : null,
-          ...(state.selectedRoute ? { selectedRoute: state.selectedRoute } : {}),
-        };
-      }),
-    });
-  });
+  state.createProviderAuthChecker.mockImplementation(
+    () => (provider: string) => state.authenticatedProviders.has(provider),
+  );
   return state;
 });
 const normalizeProviderModelIdWithRuntimeMock = vi.hoisted(() => vi.fn());
@@ -113,12 +71,8 @@ function setFastModelsCliBackendDeps(): void {
   });
 }
 
-vi.mock("../../agents/prepared-model-catalog.js", () => ({
-  loadPreparedModelCatalog: modelCatalogMocks.loadModelCatalog,
-  loadPreparedModelCatalogSnapshot: async (...args: unknown[]) => {
-    const entries = await modelCatalogMocks.loadModelCatalog(...args);
-    return { entries, routeVariants: entries };
-  },
+vi.mock("../../agents/model-catalog.js", () => ({
+  loadModelCatalog: modelCatalogMocks.loadModelCatalog,
 }));
 
 vi.mock("../../agents/model-auth-label.js", () => ({
@@ -131,6 +85,7 @@ vi.mock("../../agents/model-provider-auth.js", () => ({
     modelProviderAuthMocks.authenticatedProviders.has(provider),
   getCurrentProviderAuthState: () => null,
   clearCurrentProviderAuthState: () => undefined,
+  warmCurrentProviderAuthState: async () => undefined,
 }));
 
 vi.mock("../../agents/provider-model-normalization.runtime.js", () => ({
@@ -221,7 +176,6 @@ beforeEach(() => {
   normalizeProviderModelIdWithRuntimeMock.mockReset();
   pluginMetadataMocks.snapshot = undefined;
   modelProviderAuthMocks.authenticatedProviders = new Set(["anthropic", "google", "openai"]);
-  modelProviderAuthMocks.selectedRoute = undefined;
   modelProviderAuthMocks.createProviderAuthChecker.mockClear();
   const registry = createTestRegistry([
     ...textSurfaceModelsTestPlugins,
@@ -365,17 +319,12 @@ describe("handleModelsCommand", () => {
   });
 
   it("keeps explicit all browse on the full catalog path", async () => {
-    const params = buildParams("/models openai all");
-    params.workspaceDir = "/tmp/spawned-workspace";
-    await handleModelsCommand(params, true);
+    await handleModelsCommand(buildParams("/models openai all"), true);
 
     expect(modelCatalogMocks.loadModelCatalog.mock.calls[0]?.[0]?.readOnly).toBe(false);
-    expect(modelCatalogMocks.loadModelCatalog.mock.calls[0]?.[0]?.workspaceDir).toBe(
-      "/tmp/spawned-workspace",
-    );
   });
 
-  it("scopes the prepared catalog without passing plugin metadata", async () => {
+  it("reuses the current plugin metadata snapshot for read-only catalog loading", async () => {
     const metadataSnapshot = {
       plugins: [],
       owners: {
@@ -386,34 +335,11 @@ describe("handleModelsCommand", () => {
 
     await handleModelsCommand(buildParams("/models"), true);
 
-    const params = modelCatalogMocks.loadModelCatalog.mock.calls[0]?.[0];
-    expect(params).toMatchObject({ readOnly: true, workspaceDir: "/tmp" });
-    expect(params).not.toHaveProperty("metadataSnapshot");
-  });
-
-  it("loads the selected agent lifecycle catalog", async () => {
-    const cfg = {
-      agents: {
-        defaults: { model: { primary: "anthropic/claude-opus-4-5" } },
-        list: [
-          {
-            id: "worker",
-            agentDir: "/tmp/models-worker-agent",
-            workspace: "/tmp/models-worker-workspace",
-          },
-        ],
-      },
-    } as OpenClawConfig;
-
-    await buildModelsProviderData(cfg, "worker");
-
     expect(modelCatalogMocks.loadModelCatalog).toHaveBeenCalledWith(
       expect.objectContaining({
-        agentDir: "/tmp/models-worker-agent",
+        readOnly: true,
+        metadataSnapshot,
       }),
-    );
-    expect(modelCatalogMocks.loadModelCatalog.mock.calls[0]?.[0]).not.toHaveProperty(
-      "workspaceDir",
     );
   });
 
@@ -432,73 +358,6 @@ describe("handleModelsCommand", () => {
     expect(allListResult?.reply?.text).toContain("Models (openai) — showing 1-2 of 2 (page 1/1)");
     expect(allListResult?.reply?.text).toContain("- openai/gpt-4.1");
     expect(allListResult?.reply?.text).toContain("- openai/gpt-4.1-mini");
-  });
-
-  it("does not offer an OpenAI row with a conflicting API and endpoint", async () => {
-    modelCatalogMocks.loadModelCatalog.mockResolvedValue([
-      {
-        provider: "openai",
-        id: "gpt-5.5",
-        name: "GPT-5.5",
-        api: "openai-chatgpt-responses",
-        baseUrl: "https://api.openai.com/v1",
-      },
-    ]);
-
-    const data = await buildModelsProviderData({
-      agents: { defaults: { model: { primary: "anthropic/claude-opus-4-5" } } },
-    } as OpenClawConfig);
-
-    expect(data.byProvider.has("openai")).toBe(false);
-    const checker = modelProviderAuthMocks.createProviderAuthChecker.mock.results.at(-1)?.value;
-    expect(checker.evaluateModelAuth).toHaveBeenCalledWith(
-      "openai",
-      expect.objectContaining({
-        modelId: "gpt-5.5",
-        observedRoutes: [
-          expect.objectContaining({
-            api: "openai-chatgpt-responses",
-            baseUrl: "https://api.openai.com/v1",
-          }),
-        ],
-      }),
-    );
-  });
-
-  it("uses the selected route's logical model name", async () => {
-    modelProviderAuthMocks.selectedRoute = {
-      api: "openai-chatgpt-responses",
-      baseUrl: "https://chatgpt.com/backend-api/codex",
-      authRequirement: "subscription",
-      requestTransportOverrides: "none",
-    };
-    modelCatalogMocks.loadModelCatalog.mockResolvedValue([
-      {
-        provider: "openai",
-        id: "gpt-5.5",
-        name: "Platform GPT-5.5",
-        api: "openai-responses",
-        baseUrl: "https://api.openai.com/v1",
-      },
-      {
-        provider: "openai",
-        id: "gpt-5.5",
-        name: "ChatGPT GPT-5.5",
-        api: "openai-chatgpt-responses",
-        baseUrl: "https://chatgpt.com/backend-api/codex",
-      },
-    ]);
-
-    const data = await buildModelsProviderData(
-      {
-        agents: { defaults: { model: { primary: "anthropic/claude-opus-4-5" } } },
-      } as OpenClawConfig,
-      undefined,
-      { view: "all" },
-    );
-
-    expect(data.byProvider.get("openai")).toEqual(new Set(["gpt-5.5"]));
-    expect(data.modelNames.get("openai/gpt-5.5")).toBe("ChatGPT GPT-5.5");
   });
 
   it("shows plugin-normalized allowlist models in browse data", async () => {
@@ -879,24 +738,6 @@ describe("handleModelsCommand", () => {
     });
   });
 
-  it("filters nested provider namespaces with the same prefix policy as enforcement", async () => {
-    modelCatalogMocks.loadModelCatalog.mockResolvedValue([
-      { provider: "clawrouter", id: "anthropic/claude-haiku-4-5", name: "Claude Haiku" },
-      { provider: "clawrouter", id: "google/gemini-3.5-flash", name: "Gemini Flash" },
-      { provider: "openai", id: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-    ]);
-    modelProviderAuthMocks.authenticatedProviders = new Set(["clawrouter", "openai"]);
-
-    const data = await buildModelsProviderData({
-      agents: { defaults: { modelPolicy: { allow: ["clawrouter/anthropic/*"] } } },
-    } as OpenClawConfig);
-
-    expect(data.providers).toEqual(["clawrouter"]);
-    expect([...expectDefined(data.byProvider.get("clawrouter"), "clawrouter models")]).toEqual([
-      "anthropic/claude-haiku-4-5",
-    ]);
-  });
-
   it("keeps the telegram provider picker browse-only", async () => {
     modelCatalogMocks.loadModelCatalog.mockResolvedValue([
       { provider: "anthropic", id: "claude-opus-4-5", name: "Claude Opus" },
@@ -1042,14 +883,8 @@ describe("handleModelsCommand", () => {
     const result = await handleModelsCommand(params, true);
 
     expect(result?.reply?.text).toContain("Models (anthropic · 🔑 target-auth) — showing 1-2 of 2");
-    const [authLabelParams] = expectDefined(
-      (
-        modelAuthLabelMocks.resolveModelAuthLabel.mock.calls as unknown as Array<
-          [{ provider?: string; workspaceDir?: string }]
-        >
-      )[0],
-      "(modelAuthLabelMocks.resolveModelAuthLabel.mock.calls as unknown as Array<\n        [{ provider?: string; workspaceDir?: string }]\n      >)[0] test invariant",
-    );
+    const [[authLabelParams]] = modelAuthLabelMocks.resolveModelAuthLabel.mock
+      .calls as unknown as Array<[{ provider?: string; workspaceDir?: string }]>;
     expect(authLabelParams.provider).toBe("anthropic");
     expect(authLabelParams.workspaceDir).toBe("/tmp");
   });
@@ -1097,14 +932,30 @@ describe("handleModelsCommand", () => {
     expect(authCheckerParams?.workspaceDir).toBe("/tmp/spawned-workspace");
   });
 
-  it.each(["/models add", "/models add ollama", "/models add openai gpt-5.5"])(
-    "returns a deprecation message for %s",
-    async (command) => {
-      const result = await handleModelsCommand(buildParams(command), true);
-      expect(result).toEqual({
-        shouldContinue: false,
-        reply: { text: MODELS_ADD_DEPRECATED_TEXT },
-      });
-    },
-  );
+  it("returns a deprecation message for /models add when no provider is given", async () => {
+    const result = await handleModelsCommand(buildParams("/models add"), true);
+
+    expect(result).toEqual({
+      shouldContinue: false,
+      reply: { text: MODELS_ADD_DEPRECATED_TEXT },
+    });
+  });
+
+  it("returns a deprecation message for /models add <provider>", async () => {
+    const result = await handleModelsCommand(buildParams("/models add ollama"), true);
+
+    expect(result).toEqual({
+      shouldContinue: false,
+      reply: { text: MODELS_ADD_DEPRECATED_TEXT },
+    });
+  });
+
+  it("returns a deprecation message for /models add <provider> <modelId>", async () => {
+    const result = await handleModelsCommand(buildParams("/models add openai gpt-5.5"), true);
+
+    expect(result).toEqual({
+      shouldContinue: false,
+      reply: { text: MODELS_ADD_DEPRECATED_TEXT },
+    });
+  });
 });

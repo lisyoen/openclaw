@@ -1,10 +1,6 @@
 // Msteams plugin module implements inbound media behavior.
 import {
-  formatInboundMediaUnavailableText,
-  type MediaPlaceholderTextFact,
-} from "openclaw/plugin-sdk/channel-inbound";
-import {
-  buildMSTeamsGraphMessageUrl,
+  buildMSTeamsGraphMessageUrls,
   downloadMSTeamsAttachments,
   downloadMSTeamsBotFrameworkAttachments,
   downloadMSTeamsGraphMedia,
@@ -15,122 +11,13 @@ import {
   type MSTeamsHtmlAttachmentSummary,
   type MSTeamsInboundMedia,
 } from "../attachments.js";
-import type { MSTeamsAttachmentDownloadLogger } from "../attachments/shared.js";
-import type { MSTeamsRequestDeadline } from "../request-timeout.js";
 import type { MSTeamsTurnContext } from "../sdk-types.js";
 
-export function shouldAttemptMSTeamsGraphMediaFallback(params: {
-  conversationType: string;
-  htmlSummary?: MSTeamsHtmlAttachmentSummary;
-  graphMediaFallback?: boolean;
-}): boolean {
-  const conversationType = params.conversationType.trim().toLowerCase();
-  return (
-    params.graphMediaFallback === true &&
-    (conversationType === "channel" || conversationType === "groupchat") &&
-    (params.htmlSummary?.htmlAttachments ?? 0) > 0
-  );
-}
-
-export function resolveMSTeamsInboundMediaBody(params: {
-  body: string;
-  nativeMedia: readonly MediaPlaceholderTextFact[];
-  materializedMedia: readonly MediaPlaceholderTextFact[];
-}): string {
-  const unavailableCount =
-    params.materializedMedia.filter((media) => !media.path).length +
-    Math.max(0, params.nativeMedia.length - params.materializedMedia.length);
-  if (unavailableCount === 0) {
-    return params.body;
-  }
-  return formatInboundMediaUnavailableText({
-    body: params.body,
-    notice: `[msteams ${unavailableCount > 1 ? `${unavailableCount} attachments` : "attachment"} unavailable]`,
-  });
-}
-
-function hasDefinitiveContentType(media: MSTeamsInboundMedia): boolean {
-  const contentType = media.contentType?.split(";", 1)[0]?.trim().toLowerCase();
-  return Boolean(
-    contentType &&
-    contentType !== "application/octet-stream" &&
-    contentType !== "binary/octet-stream",
-  );
-}
-
-export function mergeMSTeamsMediaFacts(
-  nativeMedia: readonly MSTeamsInboundMedia[],
-  materializedMedia: readonly MSTeamsInboundMedia[],
-  options: { positionallyAligned?: boolean } = {},
-): MSTeamsInboundMedia[] {
-  // Direct downloads share advertised order; Graph/Bot Framework subsets do not.
-  // Fallback results may replace only their matching transport resource identity.
-  const merged = [...nativeMedia];
-  const nativeSlotCount = nativeMedia.length;
-  const nativeIndexBySourceId = new Map<string, number>();
-  nativeMedia.forEach((media, index) => {
-    if (media.sourceId && !nativeIndexBySourceId.has(media.sourceId)) {
-      nativeIndexBySourceId.set(media.sourceId, index);
-    }
-  });
-  for (const [index, materialized] of materializedMedia.entries()) {
-    const sourceIndex = materialized.sourceId
-      ? nativeIndexBySourceId.get(materialized.sourceId)
-      : undefined;
-    const positionalIndex =
-      options.positionallyAligned === false || index >= nativeMedia.length ? undefined : index;
-    const mayUseFallbackOrder = options.positionallyAligned === false;
-    const isEligibleUnresolved = (media: MSTeamsInboundMedia) => !media.path && !media.sourceId;
-    const sameKindUnresolvedIndexes = mayUseFallbackOrder
-      ? merged
-          .slice(0, nativeSlotCount)
-          .flatMap((media, mediaIndex) =>
-            isEligibleUnresolved(media) && media.kind === materialized.kind ? [mediaIndex] : [],
-          )
-      : [];
-    const unresolvedIndexes =
-      sameKindUnresolvedIndexes.length === 0 && mayUseFallbackOrder
-        ? merged
-            .slice(0, nativeSlotCount)
-            .flatMap((media, mediaIndex) => (isEligibleUnresolved(media) ? [mediaIndex] : []))
-        : [];
-    const fallbackIndex =
-      sameKindUnresolvedIndexes.length > 0
-        ? sameKindUnresolvedIndexes[0]
-        : unresolvedIndexes.length === 1
-          ? unresolvedIndexes[0]
-          : undefined;
-    const targetIndex = sourceIndex ?? positionalIndex ?? fallbackIndex;
-    if (targetIndex === undefined) {
-      if (materialized.sourceId) {
-        nativeIndexBySourceId.set(materialized.sourceId, merged.length);
-      }
-      merged.push(materialized);
-    } else {
-      if (materialized.sourceId) {
-        nativeIndexBySourceId.set(materialized.sourceId, targetIndex);
-      }
-      const current = merged[targetIndex];
-      if (materialized.path) {
-        merged[targetIndex] = materialized;
-      } else if (!current?.path) {
-        merged[targetIndex] = {
-          ...current,
-          ...materialized,
-          kind:
-            hasDefinitiveContentType(materialized) || !current?.kind
-              ? materialized.kind
-              : current.kind,
-        };
-      }
-    }
-  }
-  return merged;
-}
-
-function hasMaterializedMedia(media: readonly MSTeamsInboundMedia[]): boolean {
-  return media.some((entry) => Boolean(entry.path));
-}
+type MSTeamsLogger = {
+  debug?: (message: string, meta?: Record<string, unknown>) => void;
+  warn?: (message: string, meta?: Record<string, unknown>) => void;
+  error?: (message: string, meta?: Record<string, unknown>) => void;
+};
 
 export async function resolveMSTeamsInboundMedia(params: {
   attachments: MSTeamsAttachmentLike[];
@@ -142,15 +29,9 @@ export async function resolveMSTeamsInboundMedia(params: {
   conversationType: string;
   conversationId: string;
   conversationMessageId?: string;
-  teamAadGroupId?: string;
-  /** Resolve canonical channel identity only if direct media recovery misses. */
-  resolveTeamAadGroupId?: () => Promise<string | undefined>;
   serviceUrl?: string;
   activity: Pick<MSTeamsTurnContext["activity"], "id" | "replyToId" | "channelData">;
-  log: MSTeamsAttachmentDownloadLogger;
-  deadline?: MSTeamsRequestDeadline;
-  /** Opt into Graph lookup when Teams strips file markers from channel/group HTML. */
-  graphMediaFallback?: boolean;
+  log: MSTeamsLogger;
   /** When true, embeds original filename in stored path for later extraction. */
   preserveFilenames?: boolean;
 }): Promise<MSTeamsInboundMedia[]> {
@@ -163,7 +44,6 @@ export async function resolveMSTeamsInboundMedia(params: {
     conversationType,
     conversationId,
     conversationMessageId,
-    teamAadGroupId,
     serviceUrl,
     activity,
     log,
@@ -177,28 +57,23 @@ export async function resolveMSTeamsInboundMedia(params: {
     allowHosts,
     authAllowHosts: params.authAllowHosts,
     preserveFilenames,
-    deadline: params.deadline,
     logger: log,
   });
 
-  if (!hasMaterializedMedia(mediaList)) {
-    // Explicit attachment markers remain the fallback gate for personal chats.
-    // Channel and group-chat activities can omit them while Graph holds a file.
+  if (mediaList.length === 0) {
+    // Gate the Graph/Bot Framework media fallback on the presence of real
+    // `<attachment id="...">` tags inside any `text/html` attachment. Teams
+    // delivers @mention cards and other chrome as `text/html` attachments
+    // too, so keying off contentType alone produces spurious 404 diagnostics
+    // for every mention-only message and masks real file attachments (#58617).
     const attachmentIds = extractMSTeamsHtmlAttachmentIds(attachments);
     const hasHtmlFileAttachment = attachmentIds.length > 0;
-    const hasChannelOrGroupHtml = shouldAttemptMSTeamsGraphMediaFallback({
-      conversationType,
-      htmlSummary,
-      graphMediaFallback: params.graphMediaFallback,
-    });
-    const shouldFetchGraphMessage = hasHtmlFileAttachment || hasChannelOrGroupHtml;
-    const isBotFrameworkPersonalChat = isBotFrameworkPersonalChatId(conversationId);
 
     // Personal DMs with the bot use Bot Framework conversation IDs (`a:...`
     // or `8:orgid:...`) which Graph's `/chats/{id}` endpoint rejects with
     // "Invalid ThreadId". Fetch media via the Bot Framework v3 attachments
     // endpoint instead, which speaks the same identifier space.
-    if (hasHtmlFileAttachment && isBotFrameworkPersonalChat) {
+    if (hasHtmlFileAttachment && isBotFrameworkPersonalChatId(conversationId)) {
       if (!serviceUrl) {
         log.debug?.("bot framework attachment skipped (missing serviceUrl)", {
           conversationType,
@@ -213,14 +88,10 @@ export async function resolveMSTeamsInboundMedia(params: {
           allowHosts,
           authAllowHosts: params.authAllowHosts,
           preserveFilenames,
-          deadline: params.deadline,
         });
         if (bfMedia.media.length > 0) {
-          mediaList = mergeMSTeamsMediaFacts(mediaList, bfMedia.media, {
-            positionallyAligned: false,
-          });
-        }
-        if (!hasMaterializedMedia(bfMedia.media)) {
+          mediaList = bfMedia.media;
+        } else {
           log.debug?.("bot framework attachments fetch empty", {
             conversationType,
             attachmentCount: bfMedia.attachmentCount ?? attachmentIds.length,
@@ -230,23 +101,19 @@ export async function resolveMSTeamsInboundMedia(params: {
     }
 
     if (
-      shouldFetchGraphMessage &&
-      !hasMaterializedMedia(mediaList) &&
-      !isBotFrameworkPersonalChat
+      hasHtmlFileAttachment &&
+      mediaList.length === 0 &&
+      !isBotFrameworkPersonalChatId(conversationId)
     ) {
-      const graphTeamAadGroupId =
-        conversationType.trim().toLowerCase() === "channel" && !teamAadGroupId
-          ? await params.resolveTeamAadGroupId?.()
-          : teamAadGroupId;
-      const messageUrl = buildMSTeamsGraphMessageUrl({
+      const messageUrls = buildMSTeamsGraphMessageUrls({
         conversationType,
         conversationId,
         messageId: activity.id ?? undefined,
-        threadRootMessageId: conversationMessageId ?? activity.replyToId,
-        teamAadGroupId: graphTeamAadGroupId,
-        channelId: activity.channelData?.channel?.id,
+        replyToId: activity.replyToId ?? undefined,
+        conversationMessageId,
+        channelData: activity.channelData,
       });
-      if (!messageUrl) {
+      if (messageUrls.length === 0) {
         log.debug?.("graph message url unavailable", {
           conversationType,
           hasChannelData: Boolean(activity.channelData),
@@ -254,29 +121,44 @@ export async function resolveMSTeamsInboundMedia(params: {
           replyToId: activity.replyToId ?? undefined,
         });
       } else {
-        const graphMedia = await downloadMSTeamsGraphMedia({
-          messageUrl,
-          tokenProvider,
-          maxBytes,
-          allowHosts,
-          authAllowHosts: params.authAllowHosts,
-          preserveFilenames,
-          deadline: params.deadline,
-          logger: log,
-        });
-        if (graphMedia.media.length > 0) {
-          mediaList = mergeMSTeamsMediaFacts(mediaList, graphMedia.media, {
-            positionallyAligned: false,
-          });
-        }
-        if (!hasMaterializedMedia(mediaList)) {
-          log.debug?.("graph media fetch empty", {
+        const attempts: Array<{
+          url: string;
+          hostedStatus?: number;
+          attachmentStatus?: number;
+          hostedCount?: number;
+          attachmentCount?: number;
+          tokenError?: boolean;
+        }> = [];
+        for (const messageUrl of messageUrls) {
+          const graphMedia = await downloadMSTeamsGraphMedia({
             messageUrl,
+            tokenProvider,
+            maxBytes,
+            allowHosts,
+            authAllowHosts: params.authAllowHosts,
+            preserveFilenames,
+            log,
+            logger: log,
+          });
+          attempts.push({
+            url: messageUrl,
             hostedStatus: graphMedia.hostedStatus,
             attachmentStatus: graphMedia.attachmentStatus,
             hostedCount: graphMedia.hostedCount,
             attachmentCount: graphMedia.attachmentCount,
             tokenError: graphMedia.tokenError,
+          });
+          if (graphMedia.media.length > 0) {
+            mediaList = graphMedia.media;
+            break;
+          }
+          if (graphMedia.tokenError) {
+            break;
+          }
+        }
+        if (mediaList.length === 0) {
+          log.debug?.("graph media fetch empty", {
+            attempts,
             attachmentIdCount: attachmentIds.length,
           });
         }
@@ -284,9 +166,8 @@ export async function resolveMSTeamsInboundMedia(params: {
     }
   }
 
-  const materializedCount = mediaList.filter((media) => Boolean(media.path)).length;
-  if (materializedCount > 0) {
-    log.debug?.("downloaded attachments", { count: materializedCount });
+  if (mediaList.length > 0) {
+    log.debug?.("downloaded attachments", { count: mediaList.length });
   } else if (htmlSummary?.imgTags) {
     log.debug?.("inline images detected but none downloaded", {
       imgTags: htmlSummary.imgTags,

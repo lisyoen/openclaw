@@ -2,11 +2,10 @@
 import { parseAbsoluteTimeMs } from "./parse.js";
 
 /** Structural rejection code for persisted cron jobs that cannot be loaded safely. */
-type InvalidPersistedCronJobReason =
+export type InvalidPersistedCronJobReason =
   | "missing-id"
   | "missing-schedule"
   | "invalid-schedule"
-  | "invalid-trigger"
   | "missing-payload"
   | "invalid-payload";
 
@@ -32,12 +31,7 @@ export function getInvalidPersistedCronJobReason(
   }
   const scheduleRecord = schedule as Record<string, unknown>;
   const scheduleKind = scheduleRecord.kind;
-  if (
-    scheduleKind !== "at" &&
-    scheduleKind !== "every" &&
-    scheduleKind !== "cron" &&
-    scheduleKind !== "on-exit"
-  ) {
+  if (scheduleKind !== "at" && scheduleKind !== "every" && scheduleKind !== "cron") {
     return "invalid-schedule";
   }
   if (scheduleKind === "at") {
@@ -58,39 +52,13 @@ export function getInvalidPersistedCronJobReason(
       return "invalid-schedule";
     }
   }
-  if (scheduleKind === "on-exit") {
-    const command = scheduleRecord.command;
-    if (typeof command !== "string" || command.trim().length === 0) {
-      return "invalid-schedule";
-    }
-  }
-  if ("trigger" in candidate) {
-    const trigger = candidate.trigger;
-    if (!trigger || typeof trigger !== "object" || Array.isArray(trigger)) {
-      return "invalid-trigger";
-    }
-    const script = (trigger as Record<string, unknown>).script;
-    if (
-      typeof script !== "string" ||
-      script.trim().length === 0 ||
-      scheduleKind === "at" ||
-      scheduleKind === "on-exit"
-    ) {
-      return "invalid-trigger";
-    }
-  }
   const payload = candidate.payload;
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return "missing-payload";
   }
   const payloadRecord = payload as Record<string, unknown>;
   const payloadKind = payloadRecord.kind;
-  if (
-    payloadKind !== "systemEvent" &&
-    payloadKind !== "agentTurn" &&
-    payloadKind !== "command" &&
-    payloadKind !== "script"
-  ) {
+  if (payloadKind !== "systemEvent" && payloadKind !== "agentTurn" && payloadKind !== "command") {
     return "invalid-payload";
   }
   if (payloadKind === "systemEvent") {
@@ -112,12 +80,6 @@ export function getInvalidPersistedCronJobReason(
       argv.length === 0 ||
       argv.some((value) => typeof value !== "string" || value.length === 0)
     ) {
-      return "invalid-payload";
-    }
-  }
-  if (payloadKind === "script") {
-    const script = payloadRecord.script;
-    if (typeof script !== "string" || script.trim().length === 0) {
       return "invalid-payload";
     }
   }

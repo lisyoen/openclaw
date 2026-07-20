@@ -1,18 +1,28 @@
 // Msteams plugin module implements doctor behavior.
-import {
-  buildMutableAllowEntryDetector,
-  collectStandardAllowlistLists,
-  createDangerousNameMatchingMutableAllowlistWarningCollector,
-} from "openclaw/plugin-sdk/channel-policy";
+import { createDangerousNameMatchingMutableAllowlistWarningCollector } from "openclaw/plugin-sdk/channel-policy";
 
-const isMSTeamsMutableAllowEntry = buildMutableAllowEntryDetector({
-  prefixes: ["msteams:", "user:"],
-  stableIdPattern: /^[^\s@]+$/,
-});
+function isMSTeamsMutableAllowEntry(raw: string): boolean {
+  const text = raw.trim();
+  if (!text || text === "*") {
+    return false;
+  }
+
+  const withoutPrefix = text.replace(/^(msteams|user):/i, "").trim();
+  return /\s/.test(withoutPrefix) || withoutPrefix.includes("@");
+}
 
 export const collectMSTeamsMutableAllowlistWarnings =
   createDangerousNameMatchingMutableAllowlistWarningCollector({
     channel: "msteams",
     detector: isMSTeamsMutableAllowEntry,
-    collectLists: (scope) => collectStandardAllowlistLists(scope),
+    collectLists: (scope) => [
+      {
+        pathLabel: `${scope.prefix}.allowFrom`,
+        list: scope.account.allowFrom,
+      },
+      {
+        pathLabel: `${scope.prefix}.groupAllowFrom`,
+        list: scope.account.groupAllowFrom,
+      },
+    ],
   });

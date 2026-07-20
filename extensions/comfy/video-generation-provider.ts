@@ -6,9 +6,12 @@ import type {
 } from "openclaw/plugin-sdk/video-generation";
 import {
   DEFAULT_COMFY_MODEL,
+  setComfyFetchGuardForTesting,
   isComfyCapabilityConfigured,
   runComfyWorkflow,
 } from "./workflow-runtime.js";
+
+export { setComfyFetchGuardForTesting };
 
 function toComfyInputImage(inputImage?: VideoGenerationSourceAsset) {
   if (!inputImage) {

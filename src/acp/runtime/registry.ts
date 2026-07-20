@@ -123,3 +123,4 @@ export const testing = {
     return resolveAcpRuntimeRegistryGlobalState();
   },
 };
+export { testing as __testing };

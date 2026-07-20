@@ -38,10 +38,9 @@ describe("secret scanning maintainer script", () => {
     const tempDir = createTempDir("openclaw-secret-scan-");
     const binDir = path.join(tempDir, "bin");
     const ghLog = path.join(tempDir, "gh.log");
-    const ghPath = path.join(binDir, "gh");
     fs.mkdirSync(binDir);
     fs.writeFileSync(
-      ghPath,
+      path.join(binDir, "gh"),
       `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${ghLog}"\nprintf '{}\\n'\n`,
       { mode: 0o755 },
     );
@@ -59,7 +58,6 @@ describe("secret scanning maintainer script", () => {
         encoding: "utf8",
         env: {
           ...process.env,
-          OPENCLAW_GH_BIN: ghPath,
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },
       },

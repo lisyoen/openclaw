@@ -1,9 +1,9 @@
 // Googlechat plugin module implements monitor durable behavior.
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 
-type GoogleChatDurableReplyOptions = {
+export type GoogleChatDurableReplyOptions = {
   to: string;
-  replyToId?: string | null;
+  replyToId?: string;
   threadId?: string;
 };
 
@@ -11,18 +11,14 @@ export function resolveGoogleChatDurableReplyOptions(params: {
   payload: ReplyPayload;
   infoKind: string;
   spaceId: string;
-  hasTypingMessage: boolean;
+  typingMessageName?: string;
 }): GoogleChatDurableReplyOptions | false {
-  if (params.infoKind !== "final" || params.hasTypingMessage) {
+  if (params.infoKind !== "final" || params.typingMessageName) {
     return false;
   }
   const threadId = params.payload.replyToId?.trim() || undefined;
-  if (!threadId) {
-    return { to: params.spaceId, replyToId: null };
-  }
   return {
     to: params.spaceId,
-    replyToId: threadId,
-    threadId,
+    ...(threadId ? { replyToId: threadId, threadId } : {}),
   };
 }

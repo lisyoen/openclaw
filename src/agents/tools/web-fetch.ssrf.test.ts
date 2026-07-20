@@ -1,6 +1,5 @@
 // web_fetch SSRF tests cover URL, DNS, redirect, and proxy policy enforcement
 // before network requests reach fetch or provider fallbacks.
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as ssrf from "../../infra/net/ssrf.js";
 import { type FetchMock, withFetchPreconnect } from "../../test-utils/fetch-mock.js";
@@ -16,7 +15,7 @@ function redirectResponse(location: string): Response {
     ok: false,
     status: 302,
     headers: makeFetchHeaders({ location }),
-    body: { cancel: vi.fn(async () => undefined) },
+    body: { cancel: vi.fn() },
   } as unknown as Response;
 }
 
@@ -45,10 +44,7 @@ function expectRawFetchSuccessDetails(details: unknown) {
 
 function firstFetchUrl(fetchSpy: ReturnType<typeof setMockFetch>): string {
   const input = fetchSpy.mock.calls[0]?.[0];
-  return expectDefined(
-    input instanceof Request ? input.url : input instanceof URL ? input.href : input,
-    "input instanceof Request ? input.url : input instanceof URL ? input.h... test invariant",
-  );
+  return input instanceof Request ? input.url : input instanceof URL ? input.href : input;
 }
 
 function createWebFetchToolForTest(params?: {

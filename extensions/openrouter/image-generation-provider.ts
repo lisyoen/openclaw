@@ -7,16 +7,13 @@ import type {
 import {
   generatedImageAssetFromBase64,
   generatedImageAssetFromDataUrl,
-  resolveInlineImageJsonResponseMaxBytes,
   toImageDataUrl,
 } from "openclaw/plugin-sdk/image-generation";
-import { MAX_IMAGE_BYTES } from "openclaw/plugin-sdk/media-runtime";
 import { isProviderApiKeyConfigured } from "openclaw/plugin-sdk/provider-auth";
 import { resolveApiKeyForProvider } from "openclaw/plugin-sdk/provider-auth-runtime";
 import {
   assertOkOrThrowHttpError,
   postJsonRequest,
-  readProviderJsonResponse,
   resolveProviderHttpRequestConfig,
 } from "openclaw/plugin-sdk/provider-http";
 import { isRecord, normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -25,7 +22,6 @@ import { OPENROUTER_BASE_URL } from "./provider-catalog.js";
 const DEFAULT_MODEL = "google/gemini-3.1-flash-image-preview";
 const DEFAULT_TIMEOUT_MS = 180_000;
 const MAX_IMAGE_RESULTS = 4;
-const MB = 1024 * 1024;
 const SUPPORTED_MODELS = [
   DEFAULT_MODEL,
   "google/gemini-3-pro-image-preview",
@@ -136,7 +132,7 @@ function extractImagesFromPart(
   throwMalformedOpenRouterImageResponse(malformedResponseError);
 }
 
-function extractOpenRouterImagesFromResponse(
+export function extractOpenRouterImagesFromResponse(
   body: unknown,
   options: { malformedResponseError?: string } = {},
 ): GeneratedImageAsset[] {
@@ -215,16 +211,6 @@ function resolveImageCount(count: number | undefined): number {
     return 1;
   }
   return Math.max(1, Math.min(MAX_IMAGE_RESULTS, Math.trunc(count)));
-}
-
-function resolveGeneratedImageMaxBytes(req: {
-  cfg: { agents?: { defaults?: { mediaMaxMb?: number } } };
-}): number {
-  const configured = req.cfg.agents?.defaults?.mediaMaxMb;
-  if (typeof configured === "number" && Number.isFinite(configured) && configured > 0) {
-    return Math.floor(configured * MB);
-  }
-  return MAX_IMAGE_BYTES;
 }
 
 function isGeminiImageModel(model: string): boolean {
@@ -321,7 +307,6 @@ export function buildOpenRouterImageGenerationProvider(): ImageGenerationProvide
           transport: "http",
         });
 
-      const count = resolveImageCount(req.count);
       const { response, release } = await postJsonRequest({
         url: `${baseUrl}/chat/completions`,
         headers,
@@ -329,7 +314,7 @@ export function buildOpenRouterImageGenerationProvider(): ImageGenerationProvide
           model,
           messages: [{ role: "user", content: buildMessageContent(req) }],
           modalities: ["image", "text"],
-          n: count,
+          n: resolveImageCount(req.count),
           ...(Object.keys(imageConfig).length > 0 ? { image_config: imageConfig } : {}),
         },
         timeoutMs: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -341,12 +326,7 @@ export function buildOpenRouterImageGenerationProvider(): ImageGenerationProvide
 
       try {
         await assertOkOrThrowHttpError(response, "OpenRouter image generation failed");
-        const payload = await readProviderJsonResponse(response, "openrouter.image-generation", {
-          maxBytes: resolveInlineImageJsonResponseMaxBytes(
-            count,
-            resolveGeneratedImageMaxBytes(req),
-          ),
-        });
+        const payload = await response.json();
         const images = extractOpenRouterImagesFromResponse(payload, {
           malformedResponseError: OPENROUTER_IMAGE_MALFORMED_RESPONSE,
         });

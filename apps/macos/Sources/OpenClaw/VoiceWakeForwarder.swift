@@ -1,5 +1,4 @@
 import Foundation
-import OpenClawChatUI
 import OSLog
 
 enum VoiceWakeForwarder {
@@ -139,15 +138,22 @@ enum VoiceWakeForwarder {
         return .failure(.rpcFailed(message))
     }
 
+    static func checkConnection() async -> Result<Void, VoiceWakeForwardError> {
+        let status = await GatewayConnection.shared.status()
+        if status.ok { return .success(()) }
+        return .failure(.rpcFailed(status.error ?? "agent rpc unreachable"))
+    }
+
     private static func loadSessionRouteEntry(sessionKey: String) async -> SessionRouteEntry? {
         do {
-            let request = OpenClawChatGatewayRequests.sessionsList(
-                limit: 500,
-                search: nil,
-                archived: false,
-                includeGlobal: false,
+            let data = try await GatewayConnection.shared.request(
+                method: "sessions.list",
+                params: [
+                    "includeGlobal": AnyCodable(false),
+                    "includeUnknown": AnyCodable(false),
+                    "limit": AnyCodable(500),
+                ],
                 timeoutMs: 10000)
-            let data = try await GatewayConnection.shared.request(request)
             let response = try JSONDecoder().decode(SessionListResponse.self, from: data)
             return response.sessions.first {
                 $0.key.trimmingCharacters(in: .whitespacesAndNewlines)

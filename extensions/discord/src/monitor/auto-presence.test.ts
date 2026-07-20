@@ -1,7 +1,10 @@
 // Discord tests cover auto presence plugin behavior.
 import type { AuthProfileStore } from "openclaw/plugin-sdk/provider-auth";
 import { describe, expect, it, vi } from "vitest";
-import { createDiscordAutoPresenceController } from "./auto-presence.js";
+import {
+  createDiscordAutoPresenceController,
+  resolveDiscordAutoPresenceDecision,
+} from "./auto-presence.js";
 
 function createStore(params?: {
   cooldownUntil?: number;
@@ -29,28 +32,24 @@ function createStore(params?: {
 
 function expectExhaustedDecision(params: { failureCounts: Record<string, number> }) {
   const now = Date.now();
-  const updatePresence = vi.fn();
-  const controller = createDiscordAutoPresenceController({
-    accountId: "default",
+  const decision = resolveDiscordAutoPresenceDecision({
     discordConfig: {
       autoPresence: {
         enabled: true,
         exhaustedText: "token exhausted",
       },
     },
-    gateway: { isConnected: true, updatePresence },
-    loadAuthStore: () =>
-      createStore({ cooldownUntil: now + 60_000, failureCounts: params.failureCounts }),
-    now: () => now,
+    authStore: createStore({ cooldownUntil: now + 60_000, failureCounts: params.failureCounts }),
+    gatewayConnected: true,
+    now,
   });
-  controller.runNow();
 
-  expect(updatePresence).toHaveBeenCalledWith(
-    expect.objectContaining({
-      status: "dnd",
-      activities: [expect.objectContaining({ state: "token exhausted" })],
-    }),
-  );
+  if (!decision) {
+    throw new Error("expected an exhausted auto-presence decision");
+  }
+  expect(decision.state).toBe("exhausted");
+  expect(decision.presence.status).toBe("dnd");
+  expect(decision.presence.activities[0]?.state).toBe("token exhausted");
 }
 
 describe("discord auto presence", () => {

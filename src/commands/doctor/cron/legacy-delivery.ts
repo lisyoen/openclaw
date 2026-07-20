@@ -22,7 +22,7 @@ function parseLegacyDeliveryHintsInput(payload: Record<string, unknown>) {
 }
 
 /** Return true when a payload still carries legacy delivery hint fields. */
-function hasLegacyDeliveryHints(payload: Record<string, unknown>) {
+export function hasLegacyDeliveryHints(payload: Record<string, unknown>) {
   const hints = parseLegacyDeliveryHintsInput(payload);
   return (
     hints.deliver !== undefined ||
@@ -35,7 +35,9 @@ function hasLegacyDeliveryHints(payload: Record<string, unknown>) {
 }
 
 /** Build a new delivery object from legacy top-level payload delivery fields. */
-function buildDeliveryFromLegacyPayload(payload: Record<string, unknown>): Record<string, unknown> {
+export function buildDeliveryFromLegacyPayload(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
   const hints = parseLegacyDeliveryHintsInput(payload);
   const mode = hints.deliver === false ? "none" : "announce";
   const next: Record<string, unknown> = { mode };
@@ -55,7 +57,7 @@ function buildDeliveryFromLegacyPayload(payload: Record<string, unknown>): Recor
 }
 
 /** Build a partial delivery patch from legacy payload fields, or null when none exist. */
-function buildDeliveryPatchFromLegacyPayload(payload: Record<string, unknown>) {
+export function buildDeliveryPatchFromLegacyPayload(payload: Record<string, unknown>) {
   const hints = parseLegacyDeliveryHintsInput(payload);
   const next: Record<string, unknown> = {};
   let hasPatch = false;
@@ -95,7 +97,7 @@ function buildDeliveryPatchFromLegacyPayload(payload: Record<string, unknown>) {
 }
 
 /** Merge legacy payload delivery hints into an existing delivery object. */
-function mergeLegacyDeliveryInto(
+export function mergeLegacyDeliveryInto(
   delivery: Record<string, unknown>,
   payload: Record<string, unknown>,
 ) {

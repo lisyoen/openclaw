@@ -4,7 +4,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import pMap from "p-map";
 import { BUNDLED_PLUGIN_PATH_PREFIX } from "./lib/bundled-plugin-paths.mjs";
 import {
   collectModuleReferencesFromSource,
@@ -12,6 +11,7 @@ import {
   resolveRepoSpecifier,
   writeLine,
 } from "./lib/guard-inventory-utils.mjs";
+import { mapWithConcurrency } from "./lib/source-file-scan-cache.mjs";
 import {
   collectTypeScriptFilesFromRoots,
   resolveSourceRoots,
@@ -175,17 +175,13 @@ export async function collectArchitectureSmells() {
       const files = (await collectTypeScriptFilesFromRoots(scanRoots)).toSorted((left, right) =>
         normalizeRepoPath(repoRoot, left).localeCompare(normalizeRepoPath(repoRoot, right)),
       );
-      const entriesByFile = await pMap(
-        files,
-        async (filePath) => {
-          const source = await fs.readFile(filePath, "utf8");
-          const entries = scanPluginSdkExtensionFacadeSmells(source, filePath);
-          entries.push(...scanRuntimeTypeImplementationSmells(source, filePath));
-          entries.push(...scanRuntimeServiceLocatorSmells(source, filePath));
-          return entries;
-        },
-        { concurrency: 32, stopOnError: true },
-      );
+      const entriesByFile = await mapWithConcurrency(files, undefined, async (filePath) => {
+        const source = await fs.readFile(filePath, "utf8");
+        const entries = scanPluginSdkExtensionFacadeSmells(source, filePath);
+        entries.push(...scanRuntimeTypeImplementationSmells(source, filePath));
+        entries.push(...scanRuntimeServiceLocatorSmells(source, filePath));
+        return entries;
+      });
       return entriesByFile.flat().toSorted(compareEntries);
     })();
     try {

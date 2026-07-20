@@ -1,4 +1,3 @@
-import { expectDefined } from "@openclaw/normalization-core";
 // Coordinates native approval delivery routing and notices.
 import {
   normalizeLowercaseStringOrEmpty,
@@ -61,57 +60,37 @@ type RouteNoticeTarget = {
   threadId?: string | number | null;
 };
 
-type ApprovalNativeRouteCoordinatorState = {
-  activeRuntimes: Map<string, ApprovalRouteRuntimeRecord>;
-  pendingNotices: Map<string, PendingApprovalRouteNotice>;
-  runtimeSeq: number;
-  closed: boolean;
-};
-
-function createApprovalNativeRouteCoordinatorState(): ApprovalNativeRouteCoordinatorState {
-  return {
-    activeRuntimes: new Map(),
-    pendingNotices: new Map(),
-    runtimeSeq: 0,
-    closed: false,
-  };
-}
-
-const defaultCoordinatorState = createApprovalNativeRouteCoordinatorState();
+const activeApprovalRouteRuntimes = new Map<string, ApprovalRouteRuntimeRecord>();
+const pendingApprovalRouteNotices = new Map<string, PendingApprovalRouteNotice>();
+let approvalRouteRuntimeSeq = 0;
 const MAX_APPROVAL_ROUTE_NOTICE_TTL_MS = 5 * 60_000;
 
 function normalizeChannel(value?: string | null): string {
   return normalizeLowercaseStringOrEmpty(value);
 }
 
-function clearPendingApprovalRouteNotice(
-  state: ApprovalNativeRouteCoordinatorState,
-  approvalId: string,
-): void {
-  const entry = state.pendingNotices.get(approvalId);
+function clearPendingApprovalRouteNotice(approvalId: string): void {
+  const entry = pendingApprovalRouteNotices.get(approvalId);
   if (!entry) {
     return;
   }
-  state.pendingNotices.delete(approvalId);
+  pendingApprovalRouteNotices.delete(approvalId);
   if (entry.cleanupTimeout) {
     clearTimeout(entry.cleanupTimeout);
   }
 }
 
-function createPendingApprovalRouteNotice(
-  state: ApprovalNativeRouteCoordinatorState,
-  params: {
-    request: ApprovalRequest;
-    approvalKind: ChannelApprovalKind;
-    expectedRuntimeIds?: Iterable<string>;
-  },
-): PendingApprovalRouteNotice {
+function createPendingApprovalRouteNotice(params: {
+  request: ApprovalRequest;
+  approvalKind: ChannelApprovalKind;
+  expectedRuntimeIds?: Iterable<string>;
+}): PendingApprovalRouteNotice {
   const timeoutMs = Math.min(
     Math.max(0, params.request.expiresAtMs - Date.now()),
     MAX_APPROVAL_ROUTE_NOTICE_TTL_MS,
   );
   const cleanupTimeout = setTimeout(() => {
-    clearPendingApprovalRouteNotice(state, params.request.id);
+    clearPendingApprovalRouteNotice(params.request.id);
   }, timeoutMs);
   cleanupTimeout.unref?.();
   return {
@@ -188,7 +167,6 @@ function readAllowedDecisionStrings(request: ApprovalRequest): string[] | undefi
 }
 
 function resolveApprovalRouteNotice(params: {
-  state: ApprovalNativeRouteCoordinatorState;
   approvalKind: ChannelApprovalKind;
   request: ApprovalRequest;
   reports: readonly ApprovalRouteReport[];
@@ -218,8 +196,8 @@ function resolveApprovalRouteNotice(params: {
   if (!deliveredAnyTarget && params.reports.some(hasPlannedNativeTargets)) {
     return {
       requestGateway:
-        params.reports.find((report) => params.state.activeRuntimes.has(report.runtimeId))
-          ?.requestGateway ?? expectDefined(params.reports[0], "reports entry at 0").requestGateway,
+        params.reports.find((report) => activeApprovalRouteRuntimes.has(report.runtimeId))
+          ?.requestGateway ?? params.reports[0].requestGateway,
       target,
       text: resolveApprovalDeliveryFailedNoticeText({
         approvalId: params.request.id,
@@ -276,7 +254,7 @@ function resolveApprovalRouteNotice(params: {
   }
 
   const requestGateway =
-    params.reports.find((report) => params.state.activeRuntimes.has(report.runtimeId))
+    params.reports.find((report) => activeApprovalRouteRuntimes.has(report.runtimeId))
       ?.requestGateway ?? params.reports[0]?.requestGateway;
   if (!requestGateway) {
     return null;
@@ -295,20 +273,9 @@ export function hasActiveApprovalNativeRouteRuntime(params: {
   channel?: string | null;
   accountId?: string | null;
 }): boolean {
-  return hasActiveApprovalNativeRouteRuntimeForState(defaultCoordinatorState, params);
-}
-
-function hasActiveApprovalNativeRouteRuntimeForState(
-  state: ApprovalNativeRouteCoordinatorState,
-  params: {
-    approvalKind: ChannelApprovalKind;
-    channel?: string | null;
-    accountId?: string | null;
-  },
-): boolean {
   const channel = normalizeChannel(params.channel);
   const accountId = normalizeOptionalString(params.accountId);
-  return Array.from(state.activeRuntimes.values()).some((runtime) => {
+  return Array.from(activeApprovalRouteRuntimes.values()).some((runtime) => {
     if (!runtime.handledKinds.has(params.approvalKind)) {
       return false;
     }
@@ -322,11 +289,8 @@ function hasActiveApprovalNativeRouteRuntimeForState(
   });
 }
 
-async function maybeFinalizeApprovalRouteNotice(
-  state: ApprovalNativeRouteCoordinatorState,
-  approvalId: string,
-): Promise<void> {
-  const entry = state.pendingNotices.get(approvalId);
+async function maybeFinalizeApprovalRouteNotice(approvalId: string): Promise<void> {
+  const entry = pendingApprovalRouteNotices.get(approvalId);
   if (!entry || entry.finalized) {
     return;
   }
@@ -340,12 +304,11 @@ async function maybeFinalizeApprovalRouteNotice(
   // Only runtimes observed with the request can block finalization; later runtimes must not delay it.
   const reports = Array.from(entry.reports.values());
   const notice = resolveApprovalRouteNotice({
-    state,
     approvalKind: entry.approvalKind,
     request: entry.request,
     reports,
   });
-  clearPendingApprovalRouteNotice(state, approvalId);
+  clearPendingApprovalRouteNotice(approvalId);
   if (!notice) {
     return;
   }
@@ -372,20 +335,7 @@ export function createApprovalNativeRouteReporter(params: {
   accountId?: string | null;
   requestGateway: GatewayRequestFn;
 }) {
-  return createApprovalNativeRouteReporterForState(defaultCoordinatorState, params);
-}
-
-function createApprovalNativeRouteReporterForState(
-  state: ApprovalNativeRouteCoordinatorState,
-  params: {
-    handledKinds: ReadonlySet<ChannelApprovalKind>;
-    channel?: string;
-    channelLabel?: string;
-    accountId?: string | null;
-    requestGateway: GatewayRequestFn;
-  },
-) {
-  const runtimeId = `native-approval-route:${++state.runtimeSeq}`;
+  const runtimeId = `native-approval-route:${++approvalRouteRuntimeSeq}`;
   let registered = false;
 
   const report = async (payload: {
@@ -394,12 +344,12 @@ function createApprovalNativeRouteReporterForState(
     deliveryPlan: ChannelApprovalNativeDeliveryPlan;
     deliveredTargets: readonly ChannelApprovalNativePlannedTarget[];
   }): Promise<void> => {
-    if (state.closed || !registered || !params.handledKinds.has(payload.approvalKind)) {
+    if (!registered || !params.handledKinds.has(payload.approvalKind)) {
       return;
     }
     const entry =
-      state.pendingNotices.get(payload.request.id) ??
-      createPendingApprovalRouteNotice(state, {
+      pendingApprovalRouteNotices.get(payload.request.id) ??
+      createPendingApprovalRouteNotice({
         request: payload.request,
         approvalKind: payload.approvalKind,
         expectedRuntimeIds: [runtimeId],
@@ -415,32 +365,32 @@ function createApprovalNativeRouteReporterForState(
       deliveredTargets: payload.deliveredTargets,
       requestGateway: params.requestGateway,
     });
-    state.pendingNotices.set(payload.request.id, entry);
-    await maybeFinalizeApprovalRouteNotice(state, payload.request.id);
+    pendingApprovalRouteNotices.set(payload.request.id, entry);
+    await maybeFinalizeApprovalRouteNotice(payload.request.id);
   };
 
   return {
     observeRequest(payload: { approvalKind: ChannelApprovalKind; request: ApprovalRequest }): void {
-      if (state.closed || !registered || !params.handledKinds.has(payload.approvalKind)) {
+      if (!registered || !params.handledKinds.has(payload.approvalKind)) {
         return;
       }
       const entry =
-        state.pendingNotices.get(payload.request.id) ??
-        createPendingApprovalRouteNotice(state, {
+        pendingApprovalRouteNotices.get(payload.request.id) ??
+        createPendingApprovalRouteNotice({
           request: payload.request,
           approvalKind: payload.approvalKind,
-          expectedRuntimeIds: Array.from(state.activeRuntimes.values())
+          expectedRuntimeIds: Array.from(activeApprovalRouteRuntimes.values())
             .filter((runtime) => runtime.handledKinds.has(payload.approvalKind))
             .map((runtime) => runtime.runtimeId),
         });
       entry.expectedRuntimeIds.add(runtimeId);
-      state.pendingNotices.set(payload.request.id, entry);
+      pendingApprovalRouteNotices.set(payload.request.id, entry);
     },
     start(): void {
-      if (state.closed || registered) {
+      if (registered) {
         return;
       }
-      state.activeRuntimes.set(runtimeId, {
+      activeApprovalRouteRuntimes.set(runtimeId, {
         runtimeId,
         handledKinds: params.handledKinds,
         channel: params.channel,
@@ -478,39 +428,24 @@ function createApprovalNativeRouteReporterForState(
         return;
       }
       registered = false;
-      state.activeRuntimes.delete(runtimeId);
-      for (const entry of state.pendingNotices.values()) {
+      activeApprovalRouteRuntimes.delete(runtimeId);
+      for (const entry of pendingApprovalRouteNotices.values()) {
         entry.expectedRuntimeIds.delete(runtimeId);
         if (entry.expectedRuntimeIds.size === 0) {
-          clearPendingApprovalRouteNotice(state, entry.request.id);
+          clearPendingApprovalRouteNotice(entry.request.id);
           continue;
         }
-        await maybeFinalizeApprovalRouteNotice(state, entry.request.id);
+        await maybeFinalizeApprovalRouteNotice(entry.request.id);
       }
     },
   };
 }
 
-export type ApprovalNativeRouteCoordinator = {
-  createReporter: typeof createApprovalNativeRouteReporter;
-  hasActiveRuntime: typeof hasActiveApprovalNativeRouteRuntime;
-  close: () => void;
-};
-
-/** Creates an instance-local route coordinator so Gateway runtimes cannot share account state. */
-export function createApprovalNativeRouteCoordinator(): ApprovalNativeRouteCoordinator {
-  const state = createApprovalNativeRouteCoordinatorState();
-  return {
-    createReporter: (params) => createApprovalNativeRouteReporterForState(state, params),
-    hasActiveRuntime: (params) => hasActiveApprovalNativeRouteRuntimeForState(state, params),
-    close: () => {
-      // Closing retires this Gateway-owned coordinator permanently. Delayed channel
-      // startup must not repopulate routes belonging to the retired instance.
-      state.closed = true;
-      for (const approvalId of Array.from(state.pendingNotices.keys())) {
-        clearPendingApprovalRouteNotice(state, approvalId);
-      }
-      state.activeRuntimes.clear();
-    },
-  };
+/** Clears in-memory native approval route coordination state between tests. */
+export function clearApprovalNativeRouteStateForTest(): void {
+  for (const approvalId of Array.from(pendingApprovalRouteNotices.keys())) {
+    clearPendingApprovalRouteNotice(approvalId);
+  }
+  activeApprovalRouteRuntimes.clear();
+  approvalRouteRuntimeSeq = 0;
 }

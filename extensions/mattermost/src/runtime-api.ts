@@ -36,6 +36,7 @@ export {
   isTrustedProxyAddress,
   listSkillCommandsForAgents,
   loadOutboundMediaFromUrl,
+  loadSessionStore,
   logInboundDrop,
   logTypingFailure,
   migrateBaseNameToDefaultAccount,

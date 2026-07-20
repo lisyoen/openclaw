@@ -4,7 +4,6 @@
  * Resolves whether a session is sandboxed and explains policy blocks before tool execution.
  */
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
-import { sliceUtf16Safe, truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { formatCliCommand } from "../../cli/command-format.js";
 import {
   canonicalizeMainSessionAlias,
@@ -12,7 +11,7 @@ import {
 } from "../../config/sessions/main-session.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
-import { auditSandboxToolPolicyBlock, escapeControlCharsVisible } from "../tool-policy-audit.js";
+import { auditSandboxToolPolicyBlock } from "../tool-policy-audit.js";
 import { resolveSandboxConfigForAgent } from "./config.js";
 import {
   classifyToolAgainstSandboxToolPolicy,
@@ -59,7 +58,6 @@ function resolveComparableSessionKeyForSandbox(params: {
 export function resolveSandboxRuntimeStatus(params: {
   cfg?: OpenClawConfig;
   sessionKey?: string;
-  agentId?: string;
 }): {
   agentId: string;
   sessionKey: string;
@@ -72,7 +70,6 @@ export function resolveSandboxRuntimeStatus(params: {
   const agentId = resolveSessionAgentId({
     sessionKey,
     config: params.cfg,
-    agentId: params.agentId,
   });
   const cfg = params.cfg;
   const sandboxCfg = resolveSandboxConfigForAgent(cfg, agentId);
@@ -95,7 +92,22 @@ export function resolveSandboxRuntimeStatus(params: {
 }
 
 function sanitizeForSingleLineDisplay(value: string): string {
-  return escapeControlCharsVisible(value);
+  return Array.from(value, (char) => {
+    if (char === "\n") {
+      return "\\n";
+    }
+    if (char === "\r") {
+      return "\\r";
+    }
+    if (char === "\t") {
+      return "\\t";
+    }
+    const codePoint = char.codePointAt(0) ?? 0;
+    if (codePoint < 0x20 || codePoint === 0x7f) {
+      return `\\x${codePoint.toString(16).padStart(2, "0")}`;
+    }
+    return char;
+  }).join("");
 }
 
 function hasUnsafeControlChars(value: string): boolean {
@@ -113,7 +125,7 @@ function redactSessionKey(value: string): string {
   if (trimmed.length <= 12) {
     return "(redacted)";
   }
-  return `${sanitizeForSingleLineDisplay(truncateUtf16Safe(trimmed, 6))}…${sanitizeForSingleLineDisplay(sliceUtf16Safe(trimmed, -6))}`;
+  return `${sanitizeForSingleLineDisplay(trimmed.slice(0, 6))}…${sanitizeForSingleLineDisplay(trimmed.slice(-6))}`;
 }
 
 function shellEscapeSingleArg(value: string): string {

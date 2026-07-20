@@ -1,5 +1,4 @@
 // Tlon plugin module implements targets behavior.
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 type TlonTarget =
   | { kind: "dm"; ship: string }
   | { kind: "group"; nest: string; hostShip: string; channelName: string };
@@ -20,8 +19,8 @@ export function parseChannelNest(raw: string): { hostShip: string; channelName: 
   if (!match) {
     return null;
   }
-  const hostShip = normalizeShip(expectDefined(match[1], "channel host capture"));
-  const channelName = expectDefined(match[2], "channel name capture");
+  const hostShip = normalizeShip(match[1]);
+  const channelName = match[2];
   return { hostShip, channelName };
 }
 
@@ -43,12 +42,12 @@ export function parseTlonTarget(raw?: string | null): TlonTarget | null {
 
   const dmPrefix = withoutPrefix.match(/^dm[/:](.+)$/i);
   if (dmPrefix) {
-    return { kind: "dm", ship: normalizeShip(expectDefined(dmPrefix[1], "DM ship capture")) };
+    return { kind: "dm", ship: normalizeShip(dmPrefix[1]) };
   }
 
   const groupPrefix = withoutPrefix.match(/^(group|room)[/:](.+)$/i);
   if (groupPrefix) {
-    const groupTarget = expectDefined(groupPrefix[2], "group target capture").trim();
+    const groupTarget = groupPrefix[2].trim();
     if (groupTarget.startsWith("chat/")) {
       const parsed = parseChannelNest(groupTarget);
       if (!parsed) {
@@ -58,8 +57,8 @@ export function parseTlonTarget(raw?: string | null): TlonTarget | null {
     }
     const parts = groupTarget.split("/");
     if (parts.length === 2) {
-      const hostShip = normalizeShip(expectDefined(parts[0], "two-part group host"));
-      const channelName = expectDefined(parts[1], "two-part group channel");
+      const hostShip = normalizeShip(parts[0]);
+      const channelName = parts[1];
       return {
         kind: "group",
         nest: `chat/${hostShip}/${channelName}`,

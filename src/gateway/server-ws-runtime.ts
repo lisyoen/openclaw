@@ -42,9 +42,6 @@ export function attachGatewayWsHandlers(params: GatewayWsRuntimeParams) {
     logWsControl: params.logWsControl,
     extraHandlers: params.extraHandlers,
     getMethodRegistry: params.getMethodRegistry,
-    ...(params.workerConnectionService
-      ? { workerConnectionService: params.workerConnectionService }
-      : {}),
     broadcast: params.broadcast,
     buildRequestContext: () => params.context,
   });

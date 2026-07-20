@@ -7,16 +7,18 @@ import { describe, expect, it } from "vitest";
 import { buildPluginShapeSummary } from "../inspect-shape.js";
 
 describe("plugin shape compatibility matrix", () => {
-  it("keeps hook-only, plain capability, and hybrid capability shapes explicit", () => {
+  it("keeps legacy hook-only, plain capability, and hybrid capability shapes explicit", () => {
     const { config, registry } = createPluginRegistryFixture();
 
     registerVirtualTestPlugin({
       registry,
       config,
-      id: "hook-only",
-      name: "Hook Only",
+      id: "lca-legacy",
+      name: "LCA Legacy",
       register(api) {
-        api.on("before_prompt_build", () => ({ prependContext: "hook-only" }));
+        api.on("before_agent_start", () => ({
+          prependContext: "legacy",
+        }));
       },
     });
 
@@ -93,30 +95,6 @@ describe("plugin shape compatibility matrix", () => {
       },
     });
 
-    registerVirtualTestPlugin({
-      registry,
-      config,
-      id: "session-catalog-demo",
-      name: "Session Catalog Demo",
-      register(api) {
-        api.registerSessionCatalog({
-          id: "session-catalog-demo",
-          label: "Session Catalog Demo",
-          list: async () => [],
-          read: async ({ hostId, threadId }) => ({ hostId, threadId, items: [] }),
-        });
-      },
-    });
-
-    registerVirtualTestPlugin({
-      registry,
-      config,
-      id: "document-extract-test",
-      name: "Document Extract Test",
-      contracts: { documentExtractors: ["pdf"] },
-      register() {},
-    });
-
     const report = {
       workspaceDir: "/virtual-workspace",
       ...registry.registry,
@@ -133,7 +111,7 @@ describe("plugin shape compatibility matrix", () => {
       })),
     ).toEqual([
       {
-        id: "hook-only",
+        id: "lca-legacy",
         shape: "hook-only",
         capabilityMode: "none",
       },
@@ -152,27 +130,11 @@ describe("plugin shape compatibility matrix", () => {
         shape: "plain-capability",
         capabilityMode: "plain",
       },
-      {
-        id: "session-catalog-demo",
-        shape: "plain-capability",
-        capabilityMode: "plain",
-      },
-      {
-        id: "document-extract-test",
-        shape: "plain-capability",
-        capabilityMode: "plain",
-      },
     ]);
 
+    expect(inspect[0]?.usesLegacyBeforeAgentStart).toBe(true);
     expect(inspect.map((entry) => entry.capabilities.map((capability) => capability.kind))).toEqual(
-      [
-        [],
-        ["text-inference"],
-        ["text-inference", "web-search"],
-        ["channel"],
-        ["session-catalog"],
-        ["document-extractors"],
-      ],
+      [[], ["text-inference"], ["text-inference", "web-search"], ["channel"]],
     );
   });
 });

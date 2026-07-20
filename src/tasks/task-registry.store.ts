@@ -48,7 +48,7 @@ export type TaskRegistryObserverEvent =
       previous: TaskRecord;
     };
 
-type TaskRegistryObservers = {
+export type TaskRegistryObservers = {
   // Observers are incremental/best-effort only. Snapshot persistence belongs to TaskRegistryStore.
   onEvent?: (event: TaskRegistryObserverEvent) => void;
 };

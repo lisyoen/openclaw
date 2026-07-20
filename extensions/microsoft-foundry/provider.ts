@@ -6,7 +6,7 @@ import {
   type ModelProviderConfig,
   type ProviderPlugin,
 } from "openclaw/plugin-sdk/provider-model-shared";
-import { buildProviderStreamFamilyHooks } from "openclaw/plugin-sdk/provider-stream-family";
+import { OPENAI_RESPONSES_STREAM_HOOKS } from "openclaw/plugin-sdk/provider-stream-family";
 import { apiKeyAuthMethod, entraIdAuthMethod } from "./auth.js";
 import { prepareFoundryRuntimeAuth } from "./runtime.js";
 import {
@@ -25,8 +25,7 @@ import {
 
 type FoundryProviderHooks = Pick<ProviderPlugin, "wrapStreamFn">;
 
-const openAIResponsesStreamHooks = buildProviderStreamFamilyHooks("openai-responses-defaults");
-const wrapOpenAIResponsesStreamFn = openAIResponsesStreamHooks.wrapStreamFn;
+const wrapOpenAIResponsesStreamFn = OPENAI_RESPONSES_STREAM_HOOKS.wrapStreamFn;
 
 const wrapMicrosoftFoundryStreamFn: NonNullable<FoundryProviderHooks["wrapStreamFn"]> = (ctx) => {
   if (ctx.model?.api !== "openai-responses") {

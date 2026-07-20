@@ -43,13 +43,13 @@ export type DurableMessageBatchSendParams = Omit<
   previousReceipt?: MessageReceipt;
 };
 
-type DurableMessageSuppressionReason =
+export type DurableMessageSuppressionReason =
   | OutboundPayloadDeliverySuppressionReason
   | "no_visible_result";
 
-type DurableMessageFailureStage = "platform_send" | "queue" | "unknown";
+export type DurableMessageFailureStage = "platform_send" | "queue" | "unknown";
 
-type DurableMessagePayloadDeliveryOutcome =
+export type DurableMessagePayloadDeliveryOutcome =
   | {
       index: number;
       status: "sent";
@@ -104,58 +104,7 @@ export type DurableMessageBatchSendResult =
       payloadOutcomes?: DurableMessagePayloadDeliveryOutcome[];
     };
 
-export type SerializedDurableMessagePayloadOutcome =
-  | { index: number; status: "sent"; resultCount: number }
-  | {
-      index: number;
-      status: "suppressed";
-      reason: DurableMessageSuppressionReason;
-      hookEffect?: {
-        cancelReason?: string;
-        metadata?: Record<string, unknown>;
-      };
-    }
-  | {
-      index: number;
-      status: "failed";
-      error: string;
-      sentBeforeError: boolean;
-      stage: DurableMessageFailureStage;
-    };
-
-export function serializeDurableMessagePayloadOutcomes(
-  outcomes: DurableMessageBatchSendResult["payloadOutcomes"],
-  options?: {
-    /** Internal diagnostics may retain hook metadata; model-facing JSON results must omit it. */
-    includeHookEffect?: boolean;
-  },
-): SerializedDurableMessagePayloadOutcome[] | undefined {
-  if (!outcomes || outcomes.length === 0) {
-    return undefined;
-  }
-  return outcomes.map((outcome): SerializedDurableMessagePayloadOutcome => {
-    if (outcome.status === "sent") {
-      return { index: outcome.index, status: "sent", resultCount: outcome.results.length };
-    }
-    if (outcome.status === "suppressed") {
-      return {
-        index: outcome.index,
-        status: "suppressed",
-        reason: outcome.reason,
-        ...(options?.includeHookEffect === true && outcome.hookEffect
-          ? { hookEffect: outcome.hookEffect }
-          : {}),
-      };
-    }
-    return {
-      index: outcome.index,
-      status: "failed",
-      error: formatErrorMessage(outcome.error),
-      sentBeforeError: outcome.sentBeforeError,
-      stage: outcome.stage,
-    };
-  });
-}
+export type DurableMessageDeliveryOutcome = DurableMessageBatchSendResult;
 
 const neverAbortedSignal = new AbortController().signal;
 

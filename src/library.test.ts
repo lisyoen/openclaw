@@ -1,6 +1,5 @@
 // Tests library entrypoint exports and package boundary behavior.
 import { readFileSync } from "node:fs";
-import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 
 const libraryPath = new URL("./library.ts", import.meta.url);
@@ -20,10 +19,10 @@ function readLibraryModuleImports() {
   const dynamicImportPattern = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
 
   for (const match of sourceText.matchAll(staticImportPattern)) {
-    staticImports.add(expectDefined(match[1], "match[1] test invariant"));
+    staticImports.add(match[1]);
   }
   for (const match of sourceText.matchAll(dynamicImportPattern)) {
-    dynamicImports.add(expectDefined(match[1], "match[1] test invariant"));
+    dynamicImports.add(match[1]);
   }
   return { dynamicImports, staticImports };
 }

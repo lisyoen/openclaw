@@ -57,16 +57,16 @@ function shouldFallbackToPairList(error: unknown): boolean {
   );
 }
 
-async function loadNodes(opts: GatewayCallOptions, signal?: AbortSignal): Promise<NodeListNode[]> {
+async function loadNodes(opts: GatewayCallOptions): Promise<NodeListNode[]> {
   try {
-    const res = await callGatewayTool("node.list", opts, {}, { signal });
+    const res = await callGatewayTool("node.list", opts, {});
     return parseNodeList(res);
   } catch (error) {
     if (!shouldFallbackToPairList(error)) {
       throw error;
     }
     // Older gateways only expose paired-node state; preserve node tools until node.list exists.
-    const res = await callGatewayTool("node.pair.list", opts, {}, { signal });
+    const res = await callGatewayTool("node.pair.list", opts, {});
     const { paired } = parsePairingList(res);
     return paired.map((n) => ({
       nodeId: n.nodeId,
@@ -110,14 +110,14 @@ export function selectDefaultNodeFromList(
   const connected = withCapability.filter((n) => n.connected);
   const candidates = connected.length > 0 ? connected : withCapability;
   if (candidates.length === 1) {
-    return candidates.at(0) ?? null;
+    return candidates[0];
   }
 
   const preferLocalMac = options.preferLocalMac ?? true;
   if (preferLocalMac) {
     const local = candidates.filter(isLocalMacNode);
     if (local.length === 1) {
-      return local.at(0) ?? null;
+      return local[0];
     }
   }
 
@@ -142,11 +142,8 @@ function pickDefaultNode(nodes: NodeListNode[]): NodeListNode | null {
 }
 
 /** Lists Gateway nodes, falling back to paired-node records for older Gateway versions. */
-export async function listNodes(
-  opts: GatewayCallOptions,
-  signal?: AbortSignal,
-): Promise<NodeListNode[]> {
-  return loadNodes(opts, signal);
+export async function listNodes(opts: GatewayCallOptions): Promise<NodeListNode[]> {
+  return loadNodes(opts);
 }
 
 /** Resolves a node id from an already-loaded node list using shared node matching rules. */
@@ -154,11 +151,9 @@ export function resolveNodeIdFromList(
   nodes: NodeListNode[],
   query?: string,
   allowDefault = false,
-  options: { allowCompactDisplayName?: boolean } = {},
 ): string {
   return resolveNodeIdFromNodeList(nodes, query, {
     allowDefault,
-    allowCompactDisplayName: options.allowCompactDisplayName,
     pickDefaultNode,
   });
 }

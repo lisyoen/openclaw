@@ -127,7 +127,7 @@ export function buildOpenGroupPolicyRestrictSendersWarning(params: {
   });
 }
 
-function buildOpenGroupPolicyNoRouteAllowlistWarning(params: {
+export function buildOpenGroupPolicyNoRouteAllowlistWarning(params: {
   surface: string;
   routeAllowlistPath: string;
   routeScope: string;

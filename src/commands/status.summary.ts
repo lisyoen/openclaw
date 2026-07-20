@@ -5,26 +5,16 @@ import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agen
 import { areRuntimeModelRefsEquivalent } from "../agents/model-runtime-aliases.js";
 import { getRuntimeConfig, projectConfigOntoRuntimeSourceSnapshot } from "../config/config.js";
 import { resolveMainSessionKey } from "../config/sessions/main-session.js";
-import {
-  hasSessionActiveAutoModelFallback,
-  hasSessionAutoModelFallbackProvenance,
-} from "../config/sessions/model-override-provenance.js";
+import { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
 import { resolveStorePath } from "../config/sessions/paths.js";
-import { listSessionEntries } from "../config/sessions/session-accessor.js";
+import { readSessionStoreReadOnly } from "../config/sessions/store-read.js";
 import { resolveSessionTotalTokens, type SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.js";
+import { resolveCronJobsStorePath } from "../cron/store.js";
 import { listGatewayAgentsBasic } from "../gateway/agent-list.js";
 import { resolveHeartbeatSummaryForAgent } from "../infra/heartbeat-summary.js";
 import { peekSystemEvents } from "../infra/system-events.js";
-import {
-  listActiveDegradedPlugins,
-  toPublicPluginVerificationDiagnostic,
-} from "../plugins/runtime-degraded-state.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
-import {
-  listActiveDegradedSecretOwners,
-  redactSecretDegradationReason,
-} from "../secrets/runtime-degraded-state.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import {
@@ -95,9 +85,7 @@ const buildFlags = (entry?: SessionEntry): string[] => {
   if (typeof verbose === "string" && verbose.length > 0) {
     flags.push(`verbose:${verbose}`);
   }
-  if (entry?.fastMode === "auto") {
-    flags.push("fast:auto");
-  } else if (typeof entry?.fastMode === "boolean") {
+  if (typeof entry?.fastMode === "boolean") {
     flags.push(entry.fastMode ? "fast" : "fast:off");
   }
   const reasoning = entry?.reasoningLevel;
@@ -148,41 +136,9 @@ function hasUserPinnedModelSelection(entry: SessionEntry | undefined): boolean {
   return !hasSessionAutoModelFallbackProvenance(entry);
 }
 
-function normalizeStatusModelPart(value: unknown): string {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-function resolveTrustedSessionContextTokens(params: {
-  entry: SessionEntry | undefined;
-  provider: string | undefined;
-  model: string | null;
-}): number | undefined {
-  const contextTokens =
-    typeof params.entry?.contextTokens === "number" && params.entry.contextTokens > 0
-      ? params.entry.contextTokens
-      : undefined;
-  if (contextTokens === undefined) {
-    return undefined;
-  }
-  if (hasSessionAutoModelFallbackProvenance(params.entry)) {
-    return contextTokens;
-  }
-  const entryProvider = normalizeStatusModelPart(params.entry?.modelProvider);
-  const entryModel = normalizeStatusModelPart(params.entry?.model);
-  const resolvedProvider = normalizeStatusModelPart(params.provider);
-  const resolvedModel = normalizeStatusModelPart(params.model);
-  if (!entryModel || !resolvedModel || entryModel !== resolvedModel) {
-    return undefined;
-  }
-  if (entryProvider && resolvedProvider && entryProvider !== resolvedProvider) {
-    return undefined;
-  }
-  return contextTokens;
-}
-
 type SessionCandidate = {
   key: string;
-  entry: SessionEntry;
+  entry: SessionEntry | undefined;
   updatedAt: number | null;
 };
 
@@ -190,40 +146,17 @@ function compareSessionCandidatesByUpdatedAt(left: SessionCandidate, right: Sess
   return (right.updatedAt ?? 0) - (left.updatedAt ?? 0);
 }
 
-function selectRecentSessionCandidates(
-  candidates: SessionCandidate[],
-  limit: number,
-): SessionCandidate[] {
-  const selected: SessionCandidate[] = [];
-  for (const candidate of candidates) {
-    const insertAt = selected.findIndex(
-      (selectedCandidate) => compareSessionCandidatesByUpdatedAt(candidate, selectedCandidate) < 0,
-    );
-    if (insertAt >= 0) {
-      selected.splice(insertAt, 0, candidate);
-      if (selected.length > limit) {
-        selected.pop();
-      }
-    } else if (selected.length < limit) {
-      selected.push(candidate);
-    }
-  }
-  return selected;
-}
-
-function listSessionCandidates(storePath: string, agentId?: string) {
+function listSessionCandidates(store: Record<string, SessionEntry | undefined>) {
   return (
-    listSessionEntries({
-      ...(agentId ? { agentId } : {}),
-      storePath,
-    })
+    Object.entries(store)
       // Compatibility aggregate buckets are not real user sessions.
-      .filter(({ sessionKey }) => sessionKey !== "global" && sessionKey !== "unknown")
-      .map(({ sessionKey, entry }) => ({
-        key: sessionKey,
+      .filter(([key]) => key !== "global" && key !== "unknown")
+      .map(([key, entry]) => ({
+        key,
         entry,
         updatedAt: entry?.updatedAt ?? null,
       }))
+      .toSorted(compareSessionCandidatesByUpdatedAt)
   );
 }
 
@@ -264,12 +197,8 @@ export async function getStatusSummary(
     resolveContextTokensForModel,
     resolveSessionRuntimeLabel,
     resolveSessionModelRef,
-    resolveStatusModelComparisonLabel,
-    resolveStatusModelLookupRef,
-    waitForContextWindowCacheLoad,
   } = await loadStatusSummaryRuntimeModule();
   const cfg = options.config ?? getRuntimeConfig();
-  await waitForContextWindowCacheLoad();
   const contextSourceConfig =
     options.sourceConfig !== undefined
       ? options.sourceConfig
@@ -345,10 +274,12 @@ export async function getStatusSummary(
   const mainSessionKey = resolveMainSessionKey(cfg);
   const queuedSystemEvents = peekSystemEvents(mainSessionKey);
   const taskMaintenanceModule = await loadTaskRegistryMaintenanceModule();
-  taskMaintenanceModule.configureTaskRegistryMaintenance();
-  const inspectableTasks = taskMaintenanceModule.reconcileInspectableTasks();
-  const rawTasks = taskMaintenanceModule.getInspectableTaskRegistrySummary(inspectableTasks);
-  const taskAuditFindings = taskMaintenanceModule.getInspectableTaskAuditFindings(inspectableTasks);
+  // Configure maintenance store before reading task summaries so cron-backed tasks are in scope.
+  taskMaintenanceModule.configureTaskRegistryMaintenance({
+    cronStorePath: resolveCronJobsStorePath(cfg.cron?.store),
+  });
+  const rawTasks = taskMaintenanceModule.getInspectableTaskRegistrySummary();
+  const taskAuditFindings = taskMaintenanceModule.getInspectableTaskAuditFindings();
   const now = Date.now();
   const taskAudit = summarizeActionableTaskAuditFindings(taskAuditFindings, { now });
   const taskAuditRetainedLost = summarizeRetainedLostTaskAuditFindings(taskAuditFindings, { now });
@@ -378,15 +309,24 @@ export async function getStatusSummary(
       allowAsyncLoad: false,
     }) ?? DEFAULT_CONTEXT_TOKENS;
 
+  const storeCache = new Map<string, Record<string, SessionEntry | undefined>>();
   const candidateCache = new Map<string, SessionCandidate[]>();
-  const loadSessionCandidates = (storePath: string, agentId?: string) => {
-    const cacheKey = `${storePath}\0${agentId ?? ""}`;
-    const cached = candidateCache.get(cacheKey);
+  const loadStore = (storePath: string) => {
+    const cached = storeCache.get(storePath);
     if (cached) {
       return cached;
     }
-    const candidates = listSessionCandidates(storePath, agentId);
-    candidateCache.set(cacheKey, candidates);
+    const store = readSessionStoreReadOnly(storePath);
+    storeCache.set(storePath, store);
+    return store;
+  };
+  const loadSessionCandidates = (storePath: string) => {
+    const cached = candidateCache.get(storePath);
+    if (cached) {
+      return cached;
+    }
+    const candidates = listSessionCandidates(loadStore(storePath));
+    candidateCache.set(storePath, candidates);
     return candidates;
   };
   const buildSessionRows = async (
@@ -408,52 +348,26 @@ export async function getStatusSummary(
         const configuredSessionModelLabel = `${configuredForSession.provider ?? DEFAULT_PROVIDER}/${configuredSessionModel}`;
         const resolvedModel = resolveSessionModelRef(cfg, entry, opts.agentIdOverride);
         const model = resolvedModel.model ?? configuredSessionModel ?? null;
-        const lookupModel =
-          resolveStatusModelLookupRef({
-            provider: resolvedModel.provider,
-            model,
-            defaultProvider: configuredForSession.provider ?? DEFAULT_PROVIDER,
-          }) ?? resolvedModel;
-        const lookupModelId = lookupModel.model ?? model;
         const modelContext = await resolveStaticModelContext(
-          lookupModel.provider,
-          lookupModelId ?? undefined,
+          resolvedModel.provider,
+          model ?? undefined,
         );
         const selectedModelLabel =
           resolvedModel.provider && model ? `${resolvedModel.provider}/${model}` : model;
-        const configuredSessionModelComparisonLabel = resolveStatusModelComparisonLabel({
-          provider: configuredForSession.provider ?? DEFAULT_PROVIDER,
-          model: configuredSessionModel,
-          defaultProvider: DEFAULT_PROVIDER,
-        });
-        const selectedModelComparisonLabel = resolveStatusModelComparisonLabel({
-          provider: resolvedModel.provider,
-          model,
-          defaultProvider: configuredForSession.provider ?? DEFAULT_PROVIDER,
-        });
         const modelSelectionDiffers =
-          selectedModelComparisonLabel != null &&
-          configuredSessionModelComparisonLabel != null &&
-          selectedModelComparisonLabel !== configuredSessionModelComparisonLabel &&
-          !areRuntimeModelRefsEquivalent(
-            selectedModelComparisonLabel,
-            configuredSessionModelComparisonLabel,
-          ) &&
-          (hasUserPinnedModelSelection(entry) || hasSessionActiveAutoModelFallback(entry));
-        // Session rows show the live selected model and warn for user-pinned
-        // differences as well as runtime fallback selections (#96126).
+          selectedModelLabel != null &&
+          selectedModelLabel !== configuredSessionModelLabel &&
+          !areRuntimeModelRefsEquivalent(selectedModelLabel, configuredSessionModelLabel) &&
+          hasUserPinnedModelSelection(entry);
+        // Session rows show the live selected model but warn only for user-pinned differences.
         const contextTokens =
           resolveContextTokensForModel({
             cfg,
             sourceCfg: contextSourceConfig,
-            provider: lookupModel.provider,
-            model: lookupModelId,
+            provider: resolvedModel.provider,
+            model,
             ...modelContext,
-            contextTokensOverride: resolveTrustedSessionContextTokens({
-              entry,
-              provider: lookupModel.provider,
-              model: lookupModelId,
-            }),
+            contextTokensOverride: entry?.contextTokens,
             fallbackContextTokens: configContextTokens ?? undefined,
             allowAsyncLoad: false,
           }) ?? null;
@@ -469,8 +383,8 @@ export async function getStatusSummary(
         const runtime = resolveSessionRuntimeLabel({
           cfg,
           entry,
-          provider: lookupModel.provider,
-          model: lookupModelId ?? "",
+          provider: resolvedModel.provider,
+          model: model ?? "",
           agentId,
           sessionKey: key,
         });
@@ -501,11 +415,7 @@ export async function getStatusSummary(
           model,
           configuredModel: configuredSessionModelLabel,
           selectedModel: selectedModelLabel,
-          modelSelectionReason: modelSelectionDiffers
-            ? hasUserPinnedModelSelection(entry)
-              ? "session override"
-              : "fallback selected"
-            : null,
+          modelSelectionReason: modelSelectionDiffers ? "session override" : null,
           runtime,
           contextTokens,
           flags: buildFlags(entry),
@@ -513,25 +423,15 @@ export async function getStatusSummary(
       }),
     );
 
-  const storeSources = agentList.agents.map((agent) => ({
-    agentId: agent.id,
-    storePath: resolveStorePath(cfg.session?.store, { agentId: agent.id }),
-  }));
   const paths = new Set<string>();
-  const pathCounts = new Map<string, number>();
-  for (const source of storeSources) {
-    paths.add(source.storePath);
-    pathCounts.set(source.storePath, (pathCounts.get(source.storePath) ?? 0) + 1);
-  }
-
   const byAgent = await Promise.all(
     agentList.agents.map(async (agent) => {
       const storePath = resolveStorePath(cfg.session?.store, { agentId: agent.id });
-      const candidates = loadSessionCandidates(storePath, agent.id);
-      const sessions = await buildSessionRows(
-        selectRecentSessionCandidates(candidates, RECENT_SESSION_LIMIT),
-        { agentIdOverride: agent.id },
-      );
+      paths.add(storePath);
+      const candidates = loadSessionCandidates(storePath);
+      const sessions = await buildSessionRows(candidates.slice(0, RECENT_SESSION_LIMIT), {
+        agentIdOverride: agent.id,
+      });
       return {
         agentId: agent.id,
         path: storePath,
@@ -541,19 +441,10 @@ export async function getStatusSummary(
     }),
   );
 
-  const allSessions = storeSources
-    .filter((source, index, sources) => {
-      return sources.findIndex((candidate) => candidate.storePath === source.storePath) === index;
-    })
-    .flatMap((source) =>
-      loadSessionCandidates(
-        source.storePath,
-        pathCounts.get(source.storePath) === 1 ? source.agentId : undefined,
-      ),
-    );
-  const recent = await buildSessionRows(
-    selectRecentSessionCandidates(allSessions, RECENT_SESSION_LIMIT),
-  );
+  const allSessions = Array.from(paths)
+    .flatMap((storePath) => loadSessionCandidates(storePath))
+    .toSorted((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const recent = await buildSessionRows(allSessions.slice(0, RECENT_SESSION_LIMIT));
   const totalSessions = allSessions.length;
 
   const summary: StatusSummary = {
@@ -572,24 +463,6 @@ export async function getStatusSummary(
     },
     channelSummary,
     queuedSystemEvents,
-    degradedSecretOwners: listActiveDegradedSecretOwners().map(
-      ({ ownerKind, ownerId, state, degradationState, paths: ownerPaths, reason }) => {
-        const redactedReason: string = redactSecretDegradationReason(reason);
-        return {
-          ownerKind,
-          ownerId,
-          state,
-          degradationState: degradationState ?? "cold",
-          paths: ownerPaths,
-          reason: redactedReason,
-        };
-      },
-    ),
-    degradedPlugins: listActiveDegradedPlugins().map(({ pluginId, state, diagnostic }) => ({
-      pluginId,
-      state,
-      diagnostic: toPublicPluginVerificationDiagnostic(diagnostic),
-    })),
     tasks,
     taskAudit,
     ...(taskAuditRetainedLost.count > 0 ? { taskAuditRetainedLost } : {}),

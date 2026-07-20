@@ -18,7 +18,7 @@ function computeRetryDelayMs(retries: FileLockOptions["retries"], attempt: numbe
   );
 }
 
-function computeMinimumRetryWindowMs(retries: FileLockOptions["retries"]): number {
+export function computeMinimumRetryWindowMs(retries: FileLockOptions["retries"]): number {
   let total = 0;
   const attempts = Math.max(1, retries.retries + 1);
   for (let attempt = 0; attempt < attempts - 1; attempt += 1) {

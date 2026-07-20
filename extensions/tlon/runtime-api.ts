@@ -9,6 +9,7 @@ export { createLoggerBackedRuntime } from "./src/logger-runtime.js";
 export {
   fetchWithSsrFGuard,
   isBlockedHostnameOrIp,
+  ssrfPolicyFromAllowPrivateNetwork,
   ssrfPolicyFromDangerouslyAllowPrivateNetwork,
   type LookupFn,
   type SsrFPolicy,

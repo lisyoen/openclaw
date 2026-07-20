@@ -3,6 +3,7 @@
  *
  * These functions perform I/O (filesystem, config reads) to detect security issues.
  */
+import fs from "node:fs/promises";
 import path from "node:path";
 import { clearTimeout as clearNodeTimeout, setTimeout as setNodeTimeout } from "node:timers";
 import {
@@ -20,16 +21,13 @@ import { MANIFEST_KEY } from "../compat/legacy-names.js";
 import type { OpenClawConfig, ConfigFileSnapshot } from "../config/config.js";
 import { collectIncludePathsRecursive } from "../config/includes-scan.js";
 import { resolveOAuthDir } from "../config/paths.js";
-import { readRegularFile, statRegularFile } from "../infra/fs-safe.js";
 import { normalizeAgentId } from "../routing/session-key.js";
-import { getOrCreatePromise } from "../shared/lazy-promise.js";
-import { createLazyRuntimeModule, createLazyRuntimeNamedExport } from "../shared/lazy-runtime.js";
 import type { SkillScanFinding } from "../skills/security/scanner.js";
-import { listInstalledPluginDirs } from "./installed-plugin-dirs.js";
+import { shouldIgnoreInstalledPluginDirName } from "./installed-plugin-dirs.js";
 import { extensionUsesSkippedScannerPath, isPathInside } from "./scan-paths.js";
 import type { ExecFn } from "./windows-acl.js";
 
-type SecurityAuditFinding = {
+export type SecurityAuditFinding = {
   checkId: string;
   severity: "info" | "warn" | "critical";
   title: string;
@@ -37,6 +35,9 @@ type SecurityAuditFinding = {
   remediation?: string;
 };
 
+type CollectPluginsTrustFindingsParams = Parameters<
+  typeof import("./audit-plugins-trust.js").collectPluginsTrustFindings
+>[0];
 type SkillScanSummary = Awaited<
   ReturnType<typeof import("../skills/security/scanner.js").scanDirectoryWithSummary>
 >;
@@ -48,37 +49,111 @@ type ExecDockerRawFn = (
 const DEFAULT_SANDBOX_BROWSER_DOCKER_PROBE_TIMEOUT_MS = 5000;
 
 type CodeSafetySummaryCache = Map<string, Promise<unknown>>;
-const loadSkillsModule = createLazyRuntimeModule(() => import("../skills/loading/workspace.js"));
+let skillsModulePromise: Promise<typeof import("../skills/loading/workspace.js")> | undefined;
+let configModulePromise: Promise<typeof import("../config/config.js")> | undefined;
+let agentScopeModulePromise: Promise<typeof import("../agents/agent-scope.js")> | undefined;
+let agentWorkspaceDirsModulePromise:
+  | Promise<typeof import("../agents/workspace-dirs.js")>
+  | undefined;
+let skillSourceModulePromise: Promise<typeof import("../skills/loading/source.js")> | undefined;
+let sandboxDockerModulePromise: Promise<typeof import("../agents/sandbox/docker.js")> | undefined;
+let sandboxConstantsModulePromise:
+  | Promise<typeof import("../agents/sandbox/constants.js")>
+  | undefined;
+let auditPluginsTrustModulePromise: Promise<typeof import("./audit-plugins-trust.js")> | undefined;
+let auditFsModulePromise: Promise<typeof import("./audit-fs.js")> | undefined;
+let skillScannerModulePromise: Promise<typeof import("../skills/security/scanner.js")> | undefined;
 
-const loadConfigModule = createLazyRuntimeModule(() => import("../config/config.js"));
+function loadSkillsModule() {
+  skillsModulePromise ??= import("../skills/loading/workspace.js");
+  return skillsModulePromise;
+}
 
-const loadAuditFsModule = createLazyRuntimeModule(() => import("./audit-fs.js"));
+function loadConfigModule() {
+  configModulePromise ??= import("../config/config.js");
+  return configModulePromise;
+}
 
-const loadAgentScopeModule = createLazyRuntimeModule(() => import("../agents/agent-scope.js"));
+function loadAuditFsModule() {
+  auditFsModulePromise ??= import("./audit-fs.js");
+  return auditFsModulePromise;
+}
 
-const loadAgentWorkspaceDirsModule = createLazyRuntimeModule(
-  () => import("../agents/workspace-dirs.js"),
-);
+function loadAgentScopeModule() {
+  agentScopeModulePromise ??= import("../agents/agent-scope.js");
+  return agentScopeModulePromise;
+}
 
-const loadSkillSourceModule = createLazyRuntimeModule(() => import("../skills/loading/source.js"));
+function loadAgentWorkspaceDirsModule() {
+  agentWorkspaceDirsModulePromise ??= import("../agents/workspace-dirs.js");
+  return agentWorkspaceDirsModulePromise;
+}
 
-const loadSkillScannerModule = createLazyRuntimeModule(
-  () => import("../skills/security/scanner.js"),
-);
+function loadSkillSourceModule() {
+  skillSourceModulePromise ??= import("../skills/loading/source.js");
+  return skillSourceModulePromise;
+}
 
-const loadExecDockerRaw = createLazyRuntimeNamedExport(
-  () => import("../agents/sandbox/docker.js"),
-  "execDockerRaw",
-) satisfies () => Promise<ExecDockerRawFn>;
+function loadSkillScannerModule() {
+  skillScannerModulePromise ??= import("../skills/security/scanner.js");
+  return skillScannerModulePromise;
+}
 
-const loadSandboxBrowserSecurityHashEpoch = createLazyRuntimeNamedExport(
-  () => import("../agents/sandbox/constants.js"),
-  "SANDBOX_BROWSER_SECURITY_HASH_EPOCH",
-);
+async function loadExecDockerRaw(): Promise<ExecDockerRawFn> {
+  sandboxDockerModulePromise ??= import("../agents/sandbox/docker.js");
+  const { execDockerRaw } = await sandboxDockerModulePromise;
+  return execDockerRaw;
+}
+
+async function loadSandboxBrowserSecurityHashEpoch(): Promise<string> {
+  sandboxConstantsModulePromise ??= import("../agents/sandbox/constants.js");
+  const { SANDBOX_BROWSER_SECURITY_HASH_EPOCH } = await sandboxConstantsModulePromise;
+  return SANDBOX_BROWSER_SECURITY_HASH_EPOCH;
+}
+
+export async function collectPluginsTrustFindings(
+  params: CollectPluginsTrustFindingsParams,
+): Promise<SecurityAuditFinding[]> {
+  auditPluginsTrustModulePromise ??= import("./audit-plugins-trust.js");
+  const { collectPluginsTrustFindings: collect } = await auditPluginsTrustModulePromise;
+  return await collect(params);
+}
 
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
+
+async function safeStat(targetPath: string): Promise<{
+  ok: boolean;
+  isSymlink: boolean;
+  isDir: boolean;
+  mode: number | null;
+  uid: number | null;
+  gid: number | null;
+  error?: string;
+}> {
+  try {
+    const lst = await fs.lstat(targetPath);
+    return {
+      ok: true,
+      isSymlink: lst.isSymbolicLink(),
+      isDir: lst.isDirectory(),
+      mode: typeof lst.mode === "number" ? lst.mode : null,
+      uid: typeof lst.uid === "number" ? lst.uid : null,
+      gid: typeof lst.gid === "number" ? lst.gid : null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      isSymlink: false,
+      isDir: false,
+      mode: null,
+      uid: null,
+      gid: null,
+      error: String(err),
+    };
+  }
+}
 
 function expandTilde(p: string, env: NodeJS.ProcessEnv): string | null {
   if (!p.startsWith("~")) {
@@ -97,29 +172,9 @@ function expandTilde(p: string, env: NodeJS.ProcessEnv): string | null {
   return null;
 }
 
-const MAX_PLUGIN_MANIFEST_BYTES = 1024 * 1024;
-// Skill file audit reads are bounded like other audit reads; matches the
-// workspace loader's DEFAULT_MAX_SKILL_FILE_BYTES so oversized SKILL.md files
-// cannot force an unbounded read during the code-safety scan.
-const MAX_SKILL_AUDIT_FILE_BYTES = 256_000;
-
 async function readPluginManifestExtensions(pluginPath: string): Promise<string[]> {
   const manifestPath = path.join(pluginPath, "package.json");
-  const statResult = await statRegularFile(manifestPath);
-  if (statResult.missing) {
-    return [];
-  }
-  if (statResult.stat.size > MAX_PLUGIN_MANIFEST_BYTES) {
-    throw new Error(
-      `Plugin manifest at ${manifestPath} is too large (${statResult.stat.size} bytes, max ${MAX_PLUGIN_MANIFEST_BYTES})`,
-    );
-  }
-
-  const { buffer } = await readRegularFile({
-    filePath: manifestPath,
-    maxBytes: MAX_PLUGIN_MANIFEST_BYTES,
-  });
-  const raw = buffer.toString("utf-8");
+  const raw = await fs.readFile(manifestPath, "utf-8").catch(() => "");
   if (!raw.trim()) {
     return [];
   }
@@ -158,6 +213,27 @@ function formatCodeSafetyDetails(findings: SkillScanFinding[], rootDir: string):
     .join("\n");
 }
 
+async function listInstalledPluginDirs(params: {
+  stateDir: string;
+  onReadError?: (error: unknown) => void;
+}): Promise<{ extensionsDir: string; pluginDirs: string[] }> {
+  const extensionsDir = path.join(params.stateDir, "extensions");
+  const st = await safeStat(extensionsDir);
+  if (!st.ok || !st.isDir) {
+    return { extensionsDir, pluginDirs: [] };
+  }
+  const entries = await fs.readdir(extensionsDir, { withFileTypes: true }).catch((err: unknown) => {
+    params.onReadError?.(err);
+    return [];
+  });
+  const pluginDirs = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => !shouldIgnoreInstalledPluginDirName(name))
+    .filter(Boolean);
+  return { extensionsDir, pluginDirs };
+}
+
 function buildCodeSafetySummaryCacheKey(params: {
   dirPath: string;
   includeFiles?: string[];
@@ -176,47 +252,23 @@ async function getCodeSafetySummary(params: {
     dirPath: params.dirPath,
     includeFiles: params.includeFiles,
   });
-  const scan = async () => {
+  const cache = params.summaryCache;
+  if (cache) {
+    const hit = cache.get(cacheKey);
+    if (hit) {
+      return (await hit) as SkillScanSummary;
+    }
     const skillScanner = await loadSkillScannerModule();
-    return await skillScanner.scanDirectoryWithSummary(params.dirPath, {
+    const pending = skillScanner.scanDirectoryWithSummary(params.dirPath, {
       includeFiles: params.includeFiles,
     });
-  };
-  return params.summaryCache
-    ? ((await getOrCreatePromise(params.summaryCache, cacheKey, scan)) as SkillScanSummary)
-    : await scan();
-}
-
-async function getSkillCodeSafetySummary(params: {
-  dirPath: string;
-  skillFilePath: string;
-  summaryCache?: CodeSafetySummaryCache;
-}): Promise<SkillScanSummary> {
-  const [summary, skillContent, skillScanner] = await Promise.all([
-    getCodeSafetySummary({
-      dirPath: params.dirPath,
-      summaryCache: params.summaryCache,
-    }),
-    readRegularFile({
-      filePath: params.skillFilePath,
-      maxBytes: MAX_SKILL_AUDIT_FILE_BYTES,
-    }).then(({ buffer }) => buffer.toString("utf-8")),
-    loadSkillScannerModule(),
-  ]);
-  const skillFindings = [
-    ...skillScanner.scanSkillContent(skillContent, params.skillFilePath),
-    ...skillScanner.scanSource(skillContent, params.skillFilePath),
-  ];
-
-  return {
-    ...summary,
-    scannedFiles: summary.scannedFiles + 1,
-    critical:
-      summary.critical + skillFindings.filter((finding) => finding.severity === "critical").length,
-    warn: summary.warn + skillFindings.filter((finding) => finding.severity === "warn").length,
-    info: summary.info + skillFindings.filter((finding) => finding.severity === "info").length,
-    findings: [...summary.findings, ...skillFindings],
-  };
+    cache.set(cacheKey, pending);
+    return await pending;
+  }
+  const skillScanner = await loadSkillScannerModule();
+  return await skillScanner.scanDirectoryWithSummary(params.dirPath, {
+    includeFiles: params.includeFiles,
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -527,7 +579,6 @@ export async function collectIncludeFilePermFindings(params: {
   const includePaths = await collectIncludePathsRecursive({
     configPath,
     parsed: params.configSnapshot.parsed,
-    env: params.env,
   });
   if (includePaths.length === 0) {
     return findings;
@@ -909,10 +960,7 @@ export async function collectInstalledSkillsCodeSafetyFindings(params: {
   const { loadWorkspaceSkillEntries } = await loadSkillsModule();
 
   for (const workspaceDir of workspaceDirs) {
-    const entries = loadWorkspaceSkillEntries(workspaceDir, {
-      config: params.cfg,
-      includeArchived: true,
-    });
+    const entries = loadWorkspaceSkillEntries(workspaceDir, { config: params.cfg });
     for (const entry of entries) {
       if (resolveSkillSource(entry.skill) === "openclaw-bundled") {
         continue;
@@ -929,9 +977,8 @@ export async function collectInstalledSkillsCodeSafetyFindings(params: {
       scannedSkillDirs.add(skillDir);
 
       const skillName = entry.skill.name;
-      const summary = await getSkillCodeSafetySummary({
+      const summary = await getCodeSafetySummary({
         dirPath: skillDir,
-        skillFilePath: entry.skill.filePath,
         summaryCache: params.summaryCache,
       }).catch((err: unknown) => {
         findings.push({
@@ -976,4 +1023,3 @@ export async function collectInstalledSkillsCodeSafetyFindings(params: {
 
   return findings;
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -7,15 +7,15 @@ import {
   select as clackSelect,
   text as clackText,
 } from "@clack/prompts";
-import { readByteStreamWithLimit } from "@openclaw/media-core/read-byte-stream-with-limit";
-import { expectDefined } from "@openclaw/normalization-core";
 import { resolveExpiresAtMsFromDurationMs } from "@openclaw/normalization-core/number-coercion";
 import {
   normalizeOptionalString,
   normalizeStringifiedOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { styleSelectParams } from "../../../packages/terminal-core/src/prompt-select-styled-params.js";
-import { stylePromptMessage } from "../../../packages/terminal-core/src/prompt-style.js";
+import {
+  stylePromptHint,
+  stylePromptMessage,
+} from "../../../packages/terminal-core/src/prompt-style.js";
 import {
   resolveAgentDir,
   resolveAgentWorkspaceDir,
@@ -41,8 +41,6 @@ import { parseDurationMs } from "../../cli/parse-duration.js";
 import { logConfigUpdated } from "../../config/logging.js";
 import { normalizeAgentModelRefForConfig } from "../../config/model-input.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { callGateway } from "../../gateway/call.js";
-import { isRemoteEnvironment } from "../../infra/remote-env.js";
 import {
   applyProviderAuthConfigPatch,
   applyDefaultModel,
@@ -65,26 +63,13 @@ import type {
 import type { RuntimeEnv } from "../../runtime.js";
 import { normalizeSecretInput } from "../../utils/normalize-secret-input.js";
 import { createClackPrompter } from "../../wizard/clack-prompter.js";
-import type { WizardPrompter } from "../../wizard/prompts.js";
 import { validateAnthropicSetupToken } from "../auth-token.js";
 import { repairCodexRuntimePluginInstallForModelSelection } from "../codex-runtime-plugin-install.js";
 import { repairCopilotRuntimePluginInstallForModelSelection } from "../copilot-runtime-plugin-install.js";
+import { isRemoteEnvironment } from "../oauth-env.js";
 import { loadValidConfigOrThrow, resolveKnownAgentId, updateConfig } from "./shared.js";
 
 type UpsertAuthProfileParams = Parameters<typeof upsertAuthProfileWithLock>[0];
-
-// CLI auth writes occur outside the gateway process, which may retain an older runtime snapshot.
-async function refreshRunningGatewayAuthState(): Promise<void> {
-  try {
-    await callGateway({
-      method: "models.authStatus",
-      params: { refresh: true },
-      timeoutMs: 3000,
-    });
-  } catch {
-    // Auth writes must still succeed when no local gateway is running.
-  }
-}
 
 function resolveManualTokenExpiryMs(expiresIn: string | undefined): number | undefined {
   const normalizedExpiresIn = normalizeStringifiedOptionalString(expiresIn);
@@ -129,16 +114,23 @@ const password = async (params: Parameters<typeof clackPassword>[0]) =>
     }),
   );
 const select = async <T>(params: Parameters<typeof clackSelect<T>>[0]) =>
-  guardCancel(await clackSelect(styleSelectParams(params)));
-
-const MODELS_AUTH_STDIN_MAX_BYTES = 1024 * 1024;
+  guardCancel(
+    await clackSelect({
+      ...params,
+      message: stylePromptMessage(params.message),
+      options: params.options.map((opt) =>
+        opt.hint === undefined ? opt : { ...opt, hint: stylePromptHint(opt.hint) },
+      ),
+    }),
+  );
 
 async function readPipedStdin(): Promise<string> {
-  const bytes = await readByteStreamWithLimit(process.stdin, {
-    maxBytes: MODELS_AUTH_STDIN_MAX_BYTES,
-    onOverflow: ({ maxBytes }) => new Error(`Piped auth input exceeds ${maxBytes} bytes.`),
-  });
-  return bytes.toString("utf8");
+  process.stdin.setEncoding("utf8");
+  let input = "";
+  for await (const chunk of process.stdin) {
+    input += String(chunk);
+  }
+  return input;
 }
 
 async function readPastedSecret(params: {
@@ -164,9 +156,7 @@ function resolveDefaultTokenProfileId(provider: string): string {
 
 function normalizeManualAuthProvider(provider: string): string {
   const normalized = normalizeProviderId(provider);
-  return normalized === "openai" || normalized === "codex" || normalized === "openai-codex"
-    ? "openai"
-    : normalized;
+  return normalized === "openai" ? "openai" : normalized;
 }
 
 function isOpenAIProvider(provider: string): boolean {
@@ -280,9 +270,8 @@ function preferSetupAuthProviders(params: {
 async function resolveModelsAuthContext(params?: {
   requestedProvider?: string;
   rawAgentId?: string | null;
-  config?: OpenClawConfig;
 }): Promise<ResolvedModelsAuthContext> {
-  const config = params?.config ?? (await loadValidConfigOrThrow());
+  const config = await loadValidConfigOrThrow();
   const agentId =
     resolveKnownAgentId({ cfg: config, rawAgentId: params?.rawAgentId }) ??
     resolveDefaultAgentId(config);
@@ -369,7 +358,7 @@ function resolveTokenMethodOrThrow(
 async function pickProviderAuthMethod(params: {
   provider: ProviderPlugin;
   requestedMethod?: string;
-  prompter: WizardPrompter;
+  prompter: ReturnType<typeof createClackPrompter>;
 }) {
   const rawRequestedMethod = params.requestedMethod?.trim();
   if (rawRequestedMethod) {
@@ -397,7 +386,7 @@ async function pickProviderAuthMethod(params: {
 async function pickProviderTokenMethod(params: {
   provider: ProviderPlugin;
   requestedMethod?: string;
-  prompter: WizardPrompter;
+  prompter: ReturnType<typeof createClackPrompter>;
 }) {
   const explicitTokenMethod = resolveTokenMethodOrThrow(params.provider, params.requestedMethod);
   if (explicitTokenMethod) {
@@ -432,7 +421,7 @@ async function persistProviderAuthResult(params: {
   config: OpenClawConfig;
   agentDir: string;
   runtime: RuntimeEnv;
-  prompter: WizardPrompter;
+  prompter: ReturnType<typeof createClackPrompter>;
   setDefault?: boolean;
 }) {
   const defaultModel = params.result.defaultModel
@@ -500,8 +489,6 @@ async function persistProviderAuthResult(params: {
     logConfigUpdated(params.runtime);
   }
 
-  await refreshRunningGatewayAuthState();
-
   for (const profile of profiles) {
     params.runtime.log(
       `Auth profile: ${profile.profileId} (${profile.credential.provider}/${credentialMode(profile.credential)})`,
@@ -550,31 +537,26 @@ async function runProviderAuthMethod(params: {
   provider: ProviderPlugin;
   method: ProviderAuthMethod;
   runtime: RuntimeEnv;
-  prompter: WizardPrompter;
+  prompter: ReturnType<typeof createClackPrompter>;
   profileId?: string;
   setDefault?: boolean;
-  env?: NodeJS.ProcessEnv;
-  isRemote?: boolean;
-  openUrl?: (url: string) => Promise<void>;
-}): Promise<{ result: ProviderAuthResult; profiles: ProviderAuthResult["profiles"] }> {
+}) {
   const selectedProviderId = normalizeProviderId(params.provider.id);
   await clearStaleProfileLockouts(selectedProviderId, params.agentDir);
 
   const result = await params.method.run({
     config: params.config,
-    env: params.env ?? process.env,
+    env: process.env,
     agentDir: params.agentDir,
     workspaceDir: params.workspaceDir,
     prompter: params.prompter,
     runtime: params.runtime,
     allowSecretRefPrompt: false,
-    isRemote: params.isRemote ?? isRemoteEnvironment(),
-    openUrl:
-      params.openUrl ??
-      (async (url) => {
-        const { openUrl } = await import("../onboard-helpers.js");
-        await openUrl(url);
-      }),
+    isRemote: isRemoteEnvironment(),
+    openUrl: async (url) => {
+      const { openUrl } = await import("../onboard-helpers.js");
+      await openUrl(url);
+    },
     oauth: {
       createVpsAwareHandlers: (runtimeParams) => createVpsAwareOAuthHandlers(runtimeParams),
     },
@@ -602,8 +584,6 @@ async function runProviderAuthMethod(params: {
     prompter: params.prompter,
     setDefault: params.setDefault,
   });
-
-  return { result, profiles };
 }
 
 /** Runs an interactive provider setup-token auth flow. */
@@ -699,7 +679,7 @@ export async function modelsAuthPasteTokenCommand(
   };
   const tokenInput = await readPastedSecret({
     message: `Paste token for ${provider}`,
-    masked: true,
+    masked: false,
     validate: validateTokenInput,
   });
   const token =
@@ -721,8 +701,6 @@ export async function modelsAuthPasteTokenCommand(
   });
 
   await updateConfig((cfg) => applyAuthProfileConfig(cfg, { profileId, provider, mode: "token" }));
-
-  await refreshRunningGatewayAuthState();
 
   logConfigUpdated(runtime);
   runtime.log(`Auth profile: ${profileId} (${provider}/token)`);
@@ -781,8 +759,6 @@ export async function modelsAuthPasteApiKeyCommand(
   await updateConfig((cfg) =>
     applyAuthProfileConfig(cfg, { profileId, provider, mode: "api_key" }),
   );
-
-  await refreshRunningGatewayAuthState();
 
   logConfigUpdated(runtime);
   runtime.log(`Auth profile: ${profileId} (${provider}/api_key)`);
@@ -917,26 +893,6 @@ type LoginOptions = {
   force?: boolean;
 };
 
-export type ModelsAuthLoginFlowResult = {
-  providerId: string;
-  methodId: string;
-  defaultModel?: string;
-  profiles: Array<{
-    profileId: string;
-    provider: string;
-    mode: "api_key" | "oauth" | "token";
-  }>;
-};
-
-export type ModelsAuthLoginFlowOptions = LoginOptions & {
-  config?: OpenClawConfig;
-  runtime: RuntimeEnv;
-  prompter: WizardPrompter;
-  env?: NodeJS.ProcessEnv;
-  isRemote?: boolean;
-  openUrl?: (url: string) => Promise<void>;
-};
-
 /**
  * Clear stale cooldown/disabled state for all profiles matching a provider.
  * When a user explicitly runs `models auth login`, they intend to fix auth —
@@ -992,7 +948,7 @@ export function resolveLoginProfiles(params: {
   }
 
   const [profile] = params.result.profiles;
-  return [{ ...expectDefined(profile, "auth profile"), profileId: requestedProfileId }];
+  return [{ ...profile, profileId: requestedProfileId }];
 }
 
 function maybeLogOpenAICodexNativeSearchTip(runtime: RuntimeEnv, providerId: string) {
@@ -1004,15 +960,19 @@ function maybeLogOpenAICodexNativeSearchTip(runtime: RuntimeEnv, providerId: str
   );
 }
 
-export async function runModelsAuthLoginFlow(
-  opts: ModelsAuthLoginFlowOptions,
-): Promise<ModelsAuthLoginFlowResult> {
+/** Runs interactive provider auth login and persists returned profiles. */
+export async function modelsAuthLoginCommand(opts: LoginOptions, runtime: RuntimeEnv) {
+  if (!process.stdin.isTTY) {
+    throw new Error(
+      `models auth login requires an interactive TTY. In automation, use ${formatCliCommand("openclaw models auth paste-token --provider <provider>")} when token auth is available.`,
+    );
+  }
+
   const { config, agentDir, workspaceDir, providers } = await resolveModelsAuthContext({
     requestedProvider: opts.provider,
     rawAgentId: opts.agent,
-    config: opts.config,
   });
-  const prompter = opts.prompter;
+  const prompter = createClackPrompter();
   const authProviders = listProvidersWithAuthMethods(providers);
   if (authProviders.length === 0) {
     throw new Error(
@@ -1072,7 +1032,7 @@ export async function runModelsAuthLoginFlow(
       if (!clearedStore) {
         throw new Error("profile store update failed");
       }
-      opts.runtime.log(
+      runtime.log(
         `Removed cached auth profiles for provider "${selectedProvider.id}" (--force). Running fresh auth flow.`,
       );
     } catch (err) {
@@ -1084,44 +1044,16 @@ export async function runModelsAuthLoginFlow(
     }
   }
 
-  const { result, profiles } = await runProviderAuthMethod({
+  await runProviderAuthMethod({
     config,
     agentDir,
     workspaceDir,
     provider: selectedProvider,
     method: chosenMethod,
-    runtime: opts.runtime,
+    runtime,
     prompter,
     profileId: opts.profileId,
     setDefault: opts.setDefault,
-    env: opts.env,
-    isRemote: opts.isRemote,
-    openUrl: opts.openUrl,
   });
-  maybeLogOpenAICodexNativeSearchTip(opts.runtime, selectedProvider.id);
-  return {
-    providerId: selectedProvider.id,
-    methodId: chosenMethod.id,
-    ...(result.defaultModel ? { defaultModel: result.defaultModel } : {}),
-    profiles: profiles.map((profile) => ({
-      profileId: profile.profileId,
-      provider: profile.credential.provider,
-      mode: credentialMode(profile.credential),
-    })),
-  };
+  maybeLogOpenAICodexNativeSearchTip(runtime, selectedProvider.id);
 }
-
-export async function modelsAuthLoginCommand(opts: LoginOptions, runtime: RuntimeEnv) {
-  if (!process.stdin.isTTY) {
-    throw new Error(
-      `models auth login requires an interactive TTY. In automation, use ${formatCliCommand("openclaw models auth paste-token --provider <provider>")} when token auth is available.`,
-    );
-  }
-
-  await runModelsAuthLoginFlow({
-    ...opts,
-    runtime,
-    prompter: createClackPrompter(),
-  });
-}
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

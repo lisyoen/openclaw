@@ -1,7 +1,4 @@
 // Mattermost tests cover monitor.authz plugin behavior.
-import "./monitor-helpers.test-support.js";
-import "./monitor-onchar.test-support.js";
-import "./monitor.channel-kind.test-support.js";
 import { describe, expect, it } from "vitest";
 import type { ResolvedMattermostAccount } from "./accounts.js";
 import {

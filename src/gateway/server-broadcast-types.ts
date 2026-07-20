@@ -8,8 +8,6 @@ type GatewayBroadcastStateVersion = {
 /** Options for gateway websocket broadcasts. */
 export type GatewayBroadcastOpts = {
   dropIfSlow?: boolean;
-  /** Canonical subscription keys for session-scoped delivery. */
-  sessionKeys?: readonly string[];
   stateVersion?: GatewayBroadcastStateVersion;
 };
 
@@ -26,16 +24,4 @@ export type GatewayBroadcastToConnIdsFn = (
   payload: unknown,
   connIds: ReadonlySet<string>,
   opts?: GatewayBroadcastOpts,
-) => void;
-
-/** Current queued outbound bytes for one live gateway connection. */
-export type GatewayBufferedAmountFn = (connId: string) => number | undefined;
-
-export type GatewayPluginEventScope = "operator.read" | "operator.write" | "operator.admin";
-
-/** Broadcasts a namespaced plugin event under an explicit operator scope. */
-export type GatewayPluginEventBroadcastFn = (
-  event: string,
-  payload: unknown,
-  scope: GatewayPluginEventScope,
 ) => void;

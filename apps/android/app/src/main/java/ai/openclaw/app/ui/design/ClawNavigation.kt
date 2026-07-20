@@ -25,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -96,18 +95,15 @@ internal fun ClawBottomNav(
   Box(modifier = modifier.fillMaxWidth().background(ClawTheme.colors.canvas)) {
     Surface(
       modifier = Modifier.fillMaxWidth(),
-      color = ClawTheme.colors.surface.copy(alpha = 0.92f),
-      border = BorderStroke(1.dp, ClawTheme.colors.border.copy(alpha = 0.42f)),
+      color = ClawTheme.colors.surface.copy(alpha = 0.96f),
+      border = BorderStroke(1.dp, ClawTheme.colors.border),
       shape = RoundedCornerShape(topStart = ClawTheme.radii.sheet, topEnd = ClawTheme.radii.sheet),
-      tonalElevation = 2.dp,
-      shadowElevation = 8.dp,
     ) {
       Row(
         modifier =
           Modifier
-            .fillMaxWidth()
             .windowInsetsPadding(safeInsets)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
       ) {
@@ -133,25 +129,18 @@ private fun ClawBottomNavItem(
 ) {
   Surface(
     onClick = onClick,
-    modifier = modifier.heightIn(min = 52.dp),
+    modifier = modifier.heightIn(min = 48.dp),
     shape = RoundedCornerShape(ClawTheme.radii.control),
-    color = if (selected) ClawTheme.colors.surfacePressed.copy(alpha = 0.72f) else Color.Transparent,
-    contentColor = if (selected) ClawTheme.colors.text else ClawTheme.colors.textMuted,
+    color = if (selected) ClawTheme.colors.primary else Color.Transparent,
+    contentColor = if (selected) ClawTheme.colors.primaryText else ClawTheme.colors.textMuted,
   ) {
     Column(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 5.dp),
+      modifier = Modifier.padding(horizontal = 5.dp, vertical = 6.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(2.dp),
+      verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-      Icon(imageVector = item.icon, contentDescription = item.label, modifier = Modifier.size(20.dp))
-      Text(
-        modifier = Modifier.fillMaxWidth(),
-        text = item.label,
-        style = ClawTheme.type.caption,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        textAlign = TextAlign.Center,
-      )
+      Icon(imageVector = item.icon, contentDescription = item.label, modifier = Modifier.size(18.dp))
+      Text(text = item.label, style = ClawTheme.type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
   }
 }

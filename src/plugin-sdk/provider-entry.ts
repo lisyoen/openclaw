@@ -15,11 +15,7 @@ import type {
   UnifiedModelCatalogProviderContext,
   ProviderPluginWizardSetup,
 } from "../plugins/types.js";
-import {
-  copyArrayEntries,
-  isRecordWithoutThrowing,
-  readRecordValue,
-} from "../shared/safe-record.js";
+import { copyArrayEntries, isRecord, readRecordValue } from "../shared/safe-record.js";
 import { definePluginEntry } from "./plugin-entry.js";
 import type {
   OpenClawPluginApi,
@@ -187,13 +183,11 @@ function resolveWizardSetup(params: {
 }
 
 function copyProviderAuthOptions(value: unknown): SingleProviderPluginApiKeyAuthOptions[] {
-  return copyArrayEntries(value).filter(
-    isRecordWithoutThrowing,
-  ) as SingleProviderPluginApiKeyAuthOptions[];
+  return copyArrayEntries(value).filter(isRecord) as SingleProviderPluginApiKeyAuthOptions[];
 }
 
 function copyProviderAuthMethods(value: unknown): ProviderAuthMethod[] {
-  return copyArrayEntries(value).filter(isRecordWithoutThrowing) as ProviderAuthMethod[];
+  return copyArrayEntries(value).filter(isRecord) as ProviderAuthMethod[];
 }
 
 function resolveEnvVars(params: {

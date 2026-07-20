@@ -99,22 +99,34 @@ function canResolveTarget(request: {
   return sessionConversation?.id != null;
 }
 
-function resolveNativeDeliveryState(params: {
-  cfg: OpenClawConfig;
-  accountId?: string | null;
-}): { kind: "enabled" } | { kind: "disabled" } {
-  const enabled = isNativeDeliveryEnabled(params);
-  return enabled ? { kind: "enabled" } : { kind: "disabled" };
-}
-
 function createQQBotApprovalCapability(): ChannelApprovalCapability {
   return createChannelApprovalCapability({
     authorizeActorAction: ({ cfg, accountId, senderId, approvalKind }) =>
       authorizeQQBotApprovalAction({ cfg, accountId, senderId, approvalKind }),
 
-    getActionAvailabilityState: resolveNativeDeliveryState,
+    getActionAvailabilityState: ({
+      cfg,
+      accountId,
+    }: {
+      cfg: OpenClawConfig;
+      accountId?: string | null;
+      action: "approve";
+    }) => {
+      const enabled = isNativeDeliveryEnabled({ cfg, accountId });
+      return enabled ? { kind: "enabled" } : { kind: "disabled" };
+    },
 
-    getExecInitiatingSurfaceState: resolveNativeDeliveryState,
+    getExecInitiatingSurfaceState: ({
+      cfg,
+      accountId,
+    }: {
+      cfg: OpenClawConfig;
+      accountId?: string | null;
+      action: "approve";
+    }) => {
+      const enabled = isNativeDeliveryEnabled({ cfg, accountId });
+      return enabled ? { kind: "enabled" } : { kind: "disabled" };
+    },
 
     describeExecApprovalSetup: ({ accountId }: { accountId?: string | null }) => {
       const prefix =

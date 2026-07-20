@@ -321,12 +321,10 @@ describe("subcommand help cold imports", () => {
   });
 
   it("keeps agents help out of agent action modules", async () => {
-    const { registerAgentsCommands } = await import("./program/register.agent.js");
-    const { registerAgentTurnCommand } = await import("./program/register.agent-turn.js");
+    const { registerAgentCommands } = await import("./program/register.agent.js");
     const program = makeProgram();
 
-    registerAgentTurnCommand(program, { agentChannelOptions: "last|telegram|discord" });
-    registerAgentsCommands(program);
+    registerAgentCommands(program, { agentChannelOptions: "last|telegram|discord" });
     await expectHelpExit(program, ["agents", "--help"]);
 
     expect(loaded.modules).not.toContain("agent-via-gateway-command");

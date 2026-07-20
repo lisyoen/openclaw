@@ -9,10 +9,6 @@ export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   timeoutMessage: string,
-  createError?: () => Error,
 ): Promise<T> {
-  return await withSharedTimeout(promise, timeoutMs, {
-    message: timeoutMessage,
-    ...(createError ? { createError } : {}),
-  });
+  return await withSharedTimeout(promise, timeoutMs, { message: timeoutMessage });
 }

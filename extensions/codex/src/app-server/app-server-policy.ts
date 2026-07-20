@@ -34,9 +34,7 @@ export function resolveCodexAppServerForOpenClawToolPolicy(params: {
     isCodexAppServerPolicyMode(params.env.OPENCLAW_CODEX_APP_SERVER_MODE);
   const explicitApprovalPolicy =
     params.pluginConfig.appServer?.approvalPolicy !== undefined ||
-    isConfiguredCodexAppServerApprovalPolicy(
-      params.env.OPENCLAW_CODEX_APP_SERVER_APPROVAL_POLICY,
-    ) ||
+    isCodexAppServerApprovalPolicy(params.env.OPENCLAW_CODEX_APP_SERVER_APPROVAL_POLICY) ||
     params.appServer.approvalPolicySource === "requirements";
   if (explicitMode || explicitApprovalPolicy) {
     return params.appServer;
@@ -80,9 +78,7 @@ function isCodexAppServerPolicyMode(value: unknown): boolean {
   return value === "guardian" || value === "yolo";
 }
 
-function isConfiguredCodexAppServerApprovalPolicy(value: unknown): boolean {
-  // Keep the retired env alias explicit so policy promotion does not override
-  // the canonical on-request value produced by config normalization.
+function isCodexAppServerApprovalPolicy(value: unknown): boolean {
   return (
     value === "never" || value === "on-request" || value === "on-failure" || value === "untrusted"
   );

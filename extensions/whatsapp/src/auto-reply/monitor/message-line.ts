@@ -6,8 +6,7 @@ import {
   getSenderIdentity,
   type WhatsAppReplyContext,
 } from "../../identity.js";
-import { requireWhatsAppInboundAdmission } from "../../inbound/admission.js";
-import type { AdmittedWebInboundMessage } from "../../inbound/types.js";
+import type { WebInboundMessage } from "../../inbound/types.js";
 import {
   formatInboundEnvelope,
   resolveMessagePrefix,
@@ -23,27 +22,24 @@ function formatReplyTarget(replyTo: WhatsAppReplyContext | null) {
   return `[Replying to ${sender}${idPart}]\n${replyTo.body}\n[/Replying]`;
 }
 
-function formatReplyContext(msg: AdmittedWebInboundMessage) {
+export function formatReplyContext(msg: WebInboundMessage) {
   return formatReplyTarget(getReplyContext(msg));
 }
 
 export function buildInboundLine(params: {
   cfg: OpenClawConfig;
-  msg: AdmittedWebInboundMessage;
+  msg: WebInboundMessage;
   agentId: string;
   previousTimestamp?: number;
   envelope?: EnvelopeFormatOptions;
   visibleReplyTo?: WhatsAppReplyContext | null;
 }) {
   const { cfg, msg, agentId, previousTimestamp, envelope } = params;
-  // WhatsApp inbound prefix: channels.whatsapp.messagePrefix > identity/defaults.
+  // WhatsApp inbound prefix: channels.whatsapp.messagePrefix > legacy messages.messagePrefix > identity/defaults
   const messagePrefix = resolveMessagePrefix(cfg, agentId, {
     configured: cfg.channels?.whatsapp?.messagePrefix,
     hasAllowFrom: (cfg.channels?.whatsapp?.allowFrom?.length ?? 0) > 0,
   });
-  const admission = requireWhatsAppInboundAdmission(msg);
-  const conversationId = admission.conversation.id;
-  const conversationKind = admission.conversation.kind;
   const prefixStr = messagePrefix ? `${messagePrefix} ` : "";
   const replyContext =
     params.visibleReplyTo === undefined
@@ -55,10 +51,10 @@ export function buildInboundLine(params: {
   // Wrap with standardized envelope for the agent.
   return formatInboundEnvelope({
     channel: "WhatsApp",
-    from: conversationKind === "group" ? conversationId : conversationId.replace(/^whatsapp:/, ""),
+    from: msg.chatType === "group" ? msg.from : msg.from?.replace(/^whatsapp:/, ""),
     timestamp: msg.event.timestamp,
     body: baseLine,
-    chatType: conversationKind,
+    chatType: msg.chatType,
     sender: {
       name: sender.name ?? undefined,
       e164: sender.e164 ?? undefined,

@@ -56,7 +56,6 @@ export type StatusOverviewSurface = {
   tailscaleMode: string;
   tailscaleDns?: string | null;
   tailscaleHttpsUrl?: string | null;
-  advertisedControlUiLinks?: { httpUrl: string; wsUrl: string };
   gatewayMode: "local" | "remote";
   remoteUrlMissing: boolean;
   gatewayConnection: StatusGatewayConnection;
@@ -79,7 +78,6 @@ export function buildStatusOverviewSurfaceFromScan(params: {
     | "tailscaleMode"
     | "tailscaleDns"
     | "tailscaleHttpsUrl"
-    | "advertisedControlUiLinks"
     | "gatewayMode"
     | "remoteUrlMissing"
     | "gatewayConnection"
@@ -99,9 +97,6 @@ export function buildStatusOverviewSurfaceFromScan(params: {
     tailscaleMode: params.scan.tailscaleMode,
     tailscaleDns: params.scan.tailscaleDns,
     tailscaleHttpsUrl: params.scan.tailscaleHttpsUrl,
-    ...(params.scan.advertisedControlUiLinks
-      ? { advertisedControlUiLinks: params.scan.advertisedControlUiLinks }
-      : {}),
     gatewayMode: params.scan.gatewayMode,
     remoteUrlMissing: params.scan.remoteUrlMissing,
     gatewayConnection: params.scan.gatewayConnection,
@@ -120,13 +115,7 @@ export function buildStatusOverviewSurfaceFromScan(params: {
 export function buildStatusOverviewSurfaceFromOverview(params: {
   overview: Pick<
     StatusScanOverviewResult,
-    | "cfg"
-    | "update"
-    | "tailscaleMode"
-    | "tailscaleDns"
-    | "tailscaleHttpsUrl"
-    | "advertisedControlUiLinks"
-    | "gatewaySnapshot"
+    "cfg" | "update" | "tailscaleMode" | "tailscaleDns" | "tailscaleHttpsUrl" | "gatewaySnapshot"
   >;
   gatewayService: StatusServiceSummary;
   nodeService: StatusServiceSummary;
@@ -138,9 +127,6 @@ export function buildStatusOverviewSurfaceFromOverview(params: {
     tailscaleMode: params.overview.tailscaleMode,
     tailscaleDns: params.overview.tailscaleDns,
     tailscaleHttpsUrl: params.overview.tailscaleHttpsUrl,
-    ...(params.overview.advertisedControlUiLinks
-      ? { advertisedControlUiLinks: params.overview.advertisedControlUiLinks }
-      : {}),
     gatewayMode: params.overview.gatewaySnapshot.gatewayMode,
     remoteUrlMissing: params.overview.gatewaySnapshot.remoteUrlMissing,
     gatewayConnection: params.overview.gatewaySnapshot.gatewayConnection,
@@ -180,9 +166,6 @@ export function buildStatusOverviewRowsFromSurface(params: {
     tailscaleMode: params.surface.tailscaleMode,
     tailscaleDns: params.surface.tailscaleDns,
     tailscaleHttpsUrl: params.surface.tailscaleHttpsUrl,
-    ...(params.surface.advertisedControlUiLinks
-      ? { advertisedControlUiLinks: params.surface.advertisedControlUiLinks }
-      : {}),
     tailscaleBackendState: params.tailscaleBackendState,
     includeBackendStateWhenOff: params.includeBackendStateWhenOff,
     includeBackendStateWhenOn: params.includeBackendStateWhenOn,

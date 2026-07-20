@@ -1,6 +1,7 @@
 // Voice Call tests cover realtime fast context plugin behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { VoiceCallRealtimeFastContextConfig } from "./config.js";
 
 const mocks = vi.hoisted(() => ({
   resolveRealtimeVoiceFastContextConsult: vi.fn(),
@@ -13,9 +14,6 @@ vi.mock("openclaw/plugin-sdk/realtime-voice", () => ({
 import { resolveRealtimeFastContextConsult } from "./realtime-fast-context.js";
 
 const cfg = {} as OpenClawConfig;
-type VoiceCallRealtimeFastContextConfig = Parameters<
-  typeof resolveRealtimeFastContextConsult
->[0]["config"];
 
 function createFastContextConfig(
   overrides: Partial<VoiceCallRealtimeFastContextConfig> = {},

@@ -3,10 +3,6 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_LABELS = ["duplicate", "close:duplicate", "dedupe:child"];
-// Duplicate PR closure performs multiple sequential gh API reads and writes.
-// Keep enough headroom for GitHub latency while preventing one stalled request
-// from blocking the surrounding workflow job.
-const GH_COMMAND_TIMEOUT_MS = 60_000;
 
 function usage() {
   return `Usage: node scripts/close-duplicate-prs-after-merge.mjs --landed-pr <number> --duplicates <numbers> [--repo owner/repo] [--apply]
@@ -93,13 +89,10 @@ function ghJson(args, runGh) {
   return JSON.parse(runGh(args));
 }
 
-export function defaultRunGh(args, options = {}, params = {}) {
-  const execFileSyncImpl = params.execFileSyncImpl ?? execFileSync;
-  return execFileSyncImpl("gh", args, {
+function defaultRunGh(args, options = {}) {
+  return execFileSync("gh", args, {
     encoding: "utf8",
-    killSignal: "SIGKILL",
     stdio: options.input ? ["pipe", "pipe", "inherit"] : ["ignore", "pipe", "inherit"],
-    timeout: GH_COMMAND_TIMEOUT_MS,
     ...(options.input ? { input: options.input } : {}),
   });
 }
@@ -156,7 +149,7 @@ export function parseUnifiedDiffRanges(diffText) {
 /**
  * Reports whether two PR diffs touch overlapping hunks.
  */
-function hasOverlappingHunks(leftRanges, rightRanges) {
+export function hasOverlappingHunks(leftRanges, rightRanges) {
   for (const [path, left] of leftRanges) {
     const right = rightRanges.get(path) ?? [];
     for (const leftRange of left) {

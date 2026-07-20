@@ -3,14 +3,7 @@ import { createHash } from "node:crypto";
 import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
-import {
-  isPositiveIMessageChatMatch,
-  resolveIMessageChatMatch,
-  type IMessageChatContext,
-} from "./chat-context.js";
 import { getIMessageRuntime } from "./runtime.js";
-
-export type { IMessageChatContext } from "./chat-context.js";
 
 export const IMESSAGE_REPLY_CACHE_NAMESPACE = "imessage.reply-cache";
 export const IMESSAGE_REPLY_CACHE_MAX_ENTRIES = 2000;
@@ -28,6 +21,12 @@ function reportPersistenceFailure(scope: string, err: unknown): void {
   persistenceFailureLogged = true;
   logVerbose(`imessage reply-cache: ${scope} disabled after first failure: ${String(err)}`);
 }
+
+export type IMessageChatContext = {
+  chatGuid?: string;
+  chatIdentifier?: string;
+  chatId?: number;
+};
 
 type IMessageReplyCacheEntry = IMessageChatContext & {
   accountId: string;
@@ -249,8 +248,69 @@ function hasChatScope(ctx?: IMessageChatContext): boolean {
   );
 }
 
+/**
+ * Strip the `iMessage;-;` / `SMS;-;` / `any;-;` service prefix that Messages
+ * uses for direct chats. Different layers report direct DMs in different
+ * forms — imsg's watch emits the bare handle plus an `any;-;…` chat_guid,
+ * the action surface synthesizes `iMessage;-;…` from a phone-number target —
+ * so comparing the raw strings would falsely flag the same chat as a
+ * cross-chat target. Normalize both sides to the bare suffix.
+ */
+function normalizeDirectChatIdentifier(raw: string): string {
+  const trimmed = raw.trim();
+  const lowered = trimmed.toLowerCase();
+  for (const prefix of ["imessage;-;", "sms;-;", "any;-;"]) {
+    if (lowered.startsWith(prefix)) {
+      return trimmed.slice(prefix.length);
+    }
+  }
+  return trimmed;
+}
+
 function isCrossChatMismatch(cached: IMessageReplyCacheEntry, ctx: IMessageChatContext): boolean {
-  return resolveIMessageChatMatch(cached, ctx) === "mismatch";
+  const cachedChatGuid = normalizeOptionalString(cached.chatGuid);
+  const ctxChatGuid = normalizeOptionalString(ctx.chatGuid);
+  if (cachedChatGuid && ctxChatGuid) {
+    if (
+      normalizeDirectChatIdentifier(cachedChatGuid) === normalizeDirectChatIdentifier(ctxChatGuid)
+    ) {
+      return false;
+    }
+    return cachedChatGuid !== ctxChatGuid;
+  }
+  const cachedChatIdentifier = normalizeOptionalString(cached.chatIdentifier);
+  const ctxChatIdentifier = normalizeOptionalString(ctx.chatIdentifier);
+  if (cachedChatIdentifier && ctxChatIdentifier) {
+    if (
+      normalizeDirectChatIdentifier(cachedChatIdentifier) ===
+      normalizeDirectChatIdentifier(ctxChatIdentifier)
+    ) {
+      return false;
+    }
+    return cachedChatIdentifier !== ctxChatIdentifier;
+  }
+  const cachedChatId = typeof cached.chatId === "number" ? cached.chatId : undefined;
+  const ctxChatId = typeof ctx.chatId === "number" ? ctx.chatId : undefined;
+  if (cachedChatId !== undefined && ctxChatId !== undefined) {
+    return cachedChatId !== ctxChatId;
+  }
+  // Cross-format pairing: caller supplied chatIdentifier=iMessage;-;<phone>
+  // and the cache stored chatGuid=any;-;<phone> (or vice versa). Compare via
+  // the direct-DM normalization so we recognize them as the same chat.
+  const cachedFingerprint = cachedChatGuid
+    ? normalizeDirectChatIdentifier(cachedChatGuid)
+    : cachedChatIdentifier
+      ? normalizeDirectChatIdentifier(cachedChatIdentifier)
+      : undefined;
+  const ctxFingerprint = ctxChatGuid
+    ? normalizeDirectChatIdentifier(ctxChatGuid)
+    : ctxChatIdentifier
+      ? normalizeDirectChatIdentifier(ctxChatIdentifier)
+      : undefined;
+  if (cachedFingerprint && ctxFingerprint) {
+    return cachedFingerprint !== ctxFingerprint;
+  }
+  return false;
 }
 
 function describeChatForError(values: IMessageChatContext): string {
@@ -282,7 +342,7 @@ function buildCrossChatError(
 ): Error {
   const remediation =
     inputKind === "short"
-      ? "Use a message ID from the current chat target; MessageSidFull from another chat is rejected."
+      ? "Retry with MessageSidFull to avoid cross-chat reactions/replies landing in the wrong conversation."
       : "Retry with the correct chat target.";
   return new Error(
     `iMessage message id ${describeMessageIdForError(inputId, inputKind)} belongs to a different chat ` +
@@ -380,7 +440,7 @@ export function isKnownFromMeIMessageMessageId(
   if (!cached || cached.isFromMe !== true || cached.accountId !== ctx.accountId) {
     return false;
   }
-  return isPositiveIMessageChatMatch(cached, ctx);
+  return isPositiveChatMatch(cached, ctx);
 }
 
 function buildFromMeError(inputId: string, inputKind: "short" | "uuid"): Error {
@@ -427,7 +487,7 @@ export function findLatestIMessageEntryForChat(
     if (entry.timestamp < cutoff) {
       continue;
     }
-    if (!isPositiveIMessageChatMatch(entry, ctx)) {
+    if (!isPositiveChatMatch(entry, ctx)) {
       continue;
     }
     if (!best || entry.timestamp > best.timestamp) {
@@ -437,51 +497,61 @@ export function findLatestIMessageEntryForChat(
   return best;
 }
 
-export function resolveIMessageCachedResourceBinding(
-  messageId: string,
-  ctx: IMessageChatContext & { accountId: string },
-): "match" | "mismatch" | "unknown" {
-  hydrateFromStoreOnce();
-  const entry = imessageReplyCacheByMessageId.get(messageId.trim());
-  if (!entry) {
-    return "unknown";
+/**
+ * Return true when the cached entry positively matches the caller's chat
+ * context on at least one identifier kind. Unlike `isCrossChatMismatch`,
+ * which returns false for "no overlap," this requires concrete agreement.
+ */
+function isPositiveChatMatch(entry: IMessageReplyCacheEntry, ctx: IMessageChatContext): boolean {
+  const cachedChatGuid = normalizeOptionalString(entry.chatGuid);
+  const ctxChatGuid = normalizeOptionalString(ctx.chatGuid);
+  if (cachedChatGuid && ctxChatGuid && cachedChatGuid === ctxChatGuid) {
+    return true;
   }
-  if (Date.now() - entry.timestamp > REPLY_CACHE_TTL_MS) {
-    return "unknown";
+  const cachedChatIdentifier = normalizeOptionalString(entry.chatIdentifier);
+  const ctxChatIdentifier = normalizeOptionalString(ctx.chatIdentifier);
+  if (cachedChatIdentifier && ctxChatIdentifier && cachedChatIdentifier === ctxChatIdentifier) {
+    return true;
   }
-  if (entry.accountId !== ctx.accountId) {
-    return "mismatch";
+  if (
+    typeof entry.chatId === "number" &&
+    typeof ctx.chatId === "number" &&
+    entry.chatId === ctx.chatId
+  ) {
+    return true;
   }
-  const chatMatch = resolveIMessageChatMatch(entry, ctx);
-  if (chatMatch !== "match") {
-    return chatMatch;
+  // Cross-format: cached chatGuid vs ctx chatIdentifier, etc. Compare via
+  // the direct-DM normalization that strips iMessage;-;/SMS;-;/any;-; .
+  const cachedFingerprint = cachedChatGuid
+    ? normalizeDirectChatIdentifier(cachedChatGuid)
+    : cachedChatIdentifier
+      ? normalizeDirectChatIdentifier(cachedChatIdentifier)
+      : undefined;
+  const ctxFingerprint = ctxChatGuid
+    ? normalizeDirectChatIdentifier(ctxChatGuid)
+    : ctxChatIdentifier
+      ? normalizeDirectChatIdentifier(ctxChatIdentifier)
+      : undefined;
+  if (cachedFingerprint && ctxFingerprint && cachedFingerprint === ctxFingerprint) {
+    return true;
   }
-  return "match";
+  return false;
 }
 
-export function isIMessageCurrentMessageInChat(params: {
-  accountId: string;
-  currentMessageId: string | number;
-  chatContext: IMessageChatContext;
-}): boolean {
-  if (!params.accountId || !hasChatScope(params.chatContext)) {
-    return false;
+export function resetIMessageShortIdState(options: { clearPersistent?: boolean } = {}): void {
+  imessageReplyCacheByMessageId.clear();
+  imessageShortIdToUuid.clear();
+  imessageUuidToShortId.clear();
+  imessageShortIdCounter = 0;
+  hydrated = false;
+  persistenceFailureLogged = false;
+  if (options.clearPersistent === false) {
+    return;
   }
-  const currentMessageId = normalizeOptionalString(String(params.currentMessageId));
-  if (!currentMessageId) {
-    return false;
+  try {
+    openReplyCacheStore().clear();
+    openReplyCacheCounterStore().clear();
+  } catch {
+    // best-effort
   }
-  hydrateFromStoreOnce();
-  const fullMessageId = /^\d+$/.test(currentMessageId)
-    ? imessageShortIdToUuid.get(currentMessageId)
-    : currentMessageId;
-  if (!fullMessageId) {
-    return false;
-  }
-  return (
-    resolveIMessageCachedResourceBinding(fullMessageId, {
-      ...params.chatContext,
-      accountId: params.accountId,
-    }) === "match"
-  );
 }

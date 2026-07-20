@@ -1,6 +1,6 @@
 // Discord plugin module implements gateway supervisor behavior.
 import type { EventEmitter } from "node:events";
-import { createSubsystemLogger, danger } from "openclaw/plugin-sdk/runtime-env";
+import { danger } from "openclaw/plugin-sdk/runtime-env";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { formatErrorMessage } from "openclaw/plugin-sdk/ssrf-runtime";
 
@@ -41,37 +41,6 @@ export type DiscordGatewaySupervisor = {
 
 type GatewaySupervisorPhase = "active" | "buffering" | "disposed" | "teardown";
 
-const discordGatewayLog = createSubsystemLogger("discord/gateway");
-const discordGatewayLateErrorGuards = new WeakMap<EventEmitter, (err: unknown) => void>();
-
-function removeDiscordGatewayLateErrorGuard(emitter: EventEmitter): void {
-  const guard = discordGatewayLateErrorGuards.get(emitter);
-  if (!guard) {
-    return;
-  }
-  emitter.off("error", guard);
-  discordGatewayLateErrorGuards.delete(emitter);
-}
-
-function ensureDiscordGatewayLateErrorGuard(emitter: EventEmitter): void {
-  if (emitter.listenerCount("error") > 0) {
-    return;
-  }
-  const seenMessages = new Set<string>();
-  // Keep the emitter safe after its supervisor is gone without retaining the disposed runtime.
-  // A module-owned logger preserves one diagnostic per distinct late error until the next start.
-  const guard = (err: unknown) => {
-    const message = formatDiscordGatewayErrorMessage(err);
-    if (seenMessages.has(message)) {
-      return;
-    }
-    seenMessages.add(message);
-    discordGatewayLog.error(`suppressed late gateway error after dispose: ${message}`);
-  };
-  discordGatewayLateErrorGuards.set(emitter, guard);
-  emitter.on("error", guard);
-}
-
 function readFirstStackFrame(err: Error): string | undefined {
   const stack = err.stack;
   if (!stack) {
@@ -101,7 +70,7 @@ function formatDiscordGatewayErrorMessage(err: unknown): string {
   return detail;
 }
 
-function classifyDiscordGatewayEvent(params: {
+export function classifyDiscordGatewayEvent(params: {
   err: unknown;
   isDisallowedIntentsError: (err: unknown) => boolean;
 }): DiscordGatewayEvent {
@@ -200,7 +169,6 @@ export function createDiscordGatewaySupervisor(params: {
         pending.push(event);
     }
   };
-  removeDiscordGatewayLateErrorGuard(emitter);
   emitter.on("error", onGatewayError);
 
   return {
@@ -230,8 +198,6 @@ export function createDiscordGatewaySupervisor(params: {
       if (phase === "disposed") {
         return;
       }
-      emitter.off("error", onGatewayError);
-      ensureDiscordGatewayLateErrorGuard(emitter);
       lifecycleHandler = undefined;
       phase = "disposed";
       pending.length = 0;

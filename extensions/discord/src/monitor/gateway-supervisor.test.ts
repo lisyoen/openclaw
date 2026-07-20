@@ -1,21 +1,10 @@
 // Discord tests cover gateway supervisor plugin behavior.
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-
-const { gatewayLogError } = vi.hoisted(() => ({ gatewayLogError: vi.fn() }));
-
-vi.mock("openclaw/plugin-sdk/runtime-env", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/runtime-env")>();
-  return {
-    ...actual,
-    createSubsystemLogger: () => ({ error: gatewayLogError }),
-  };
-});
-
 import {
+  classifyDiscordGatewayEvent,
   DiscordGatewayLifecycleError,
   createDiscordGatewaySupervisor,
-  type DiscordGatewayEvent,
 } from "./gateway-supervisor.js";
 
 function firstErrorArg(runtime: { error: ReturnType<typeof vi.fn> }): unknown {
@@ -28,44 +17,24 @@ function firstErrorArg(runtime: { error: ReturnType<typeof vi.fn> }): unknown {
 }
 
 describe("classifyDiscordGatewayEvent", () => {
-  function captureGatewayEvent(params: {
-    error: Error;
-    isDisallowedIntentsError?: (err: unknown) => boolean;
-  }): DiscordGatewayEvent {
-    const emitter = new EventEmitter();
-    const supervisor = createDiscordGatewaySupervisor({
-      gateway: { emitter },
-      isDisallowedIntentsError: params.isDisallowedIntentsError ?? (() => false),
-      runtime: { error: vi.fn() } as never,
-    });
-    emitter.emit("error", params.error);
-    let captured: DiscordGatewayEvent | undefined;
-    supervisor.drainPending((event) => {
-      captured = event;
-      return "continue";
-    });
-    supervisor.dispose();
-    if (!captured) {
-      throw new Error("expected a gateway event");
-    }
-    return captured;
-  }
-
   it("maps current gateway errors onto domain events", () => {
     const transientTypeError = new TypeError();
     transientTypeError.stack = "TypeError\n    at gatewayCrash (discord-gateway.js:12:34)";
-    const reconnectEvent = captureGatewayEvent({
-      error: new Error("Max reconnect attempts (0) reached after close code 1006"),
+    const reconnectEvent = classifyDiscordGatewayEvent({
+      err: new Error("Max reconnect attempts (0) reached after close code 1006"),
+      isDisallowedIntentsError: () => false,
     });
-    const fatalEvent = captureGatewayEvent({
-      error: new Error("Fatal gateway close code: 4000"),
+    const fatalEvent = classifyDiscordGatewayEvent({
+      err: new Error("Fatal gateway close code: 4000"),
+      isDisallowedIntentsError: () => false,
     });
-    const disallowedEvent = captureGatewayEvent({
-      error: new Error("Fatal gateway close code: 4014"),
+    const disallowedEvent = classifyDiscordGatewayEvent({
+      err: new Error("Fatal gateway close code: 4014"),
       isDisallowedIntentsError: (err) => String(err).includes("4014"),
     });
-    const transientEvent = captureGatewayEvent({
-      error: transientTypeError,
+    const transientEvent = classifyDiscordGatewayEvent({
+      err: transientTypeError,
+      isDisallowedIntentsError: () => false,
     });
 
     expect(reconnectEvent.type).toBe("reconnect-exhausted");
@@ -80,8 +49,9 @@ describe("classifyDiscordGatewayEvent", () => {
   it("wraps fatal lifecycle stops with discord-specific context", () => {
     const transientTypeError = new TypeError();
     transientTypeError.stack = "TypeError\n    at gatewayCrash (discord-gateway.js:12:34)";
-    const event = captureGatewayEvent({
-      error: transientTypeError,
+    const event = classifyDiscordGatewayEvent({
+      err: transientTypeError,
+      isDisallowedIntentsError: () => false,
     });
 
     const wrapped = new DiscordGatewayLifecycleError(event);
@@ -145,29 +115,44 @@ describe("createDiscordGatewaySupervisor", () => {
     supervisor.dispose();
   });
 
-  it("keeps a single late error guard after repeated dispose", () => {
+  it("keeps suppressing late gateway errors after dispose", () => {
     const emitter = new EventEmitter();
-    gatewayLogError.mockClear();
+    const runtime = { error: vi.fn() };
+    const supervisor = createDiscordGatewaySupervisor({
+      gateway: { emitter },
+      isDisallowedIntentsError: () => false,
+      runtime: runtime as never,
+    });
 
-    for (let index = 0; index < 3; index += 1) {
-      const supervisor = createDiscordGatewaySupervisor({
-        gateway: { emitter },
-        isDisallowedIntentsError: () => false,
-        runtime: { error: vi.fn() } as never,
-      });
+    supervisor.dispose();
 
-      expect(emitter.listenerCount("error")).toBe(1);
-      supervisor.dispose();
-      expect(emitter.listenerCount("error")).toBe(1);
-      const error = new Error(`late gateway error ${index}`);
-      expect(() => emitter.emit("error", error)).not.toThrow();
-      emitter.emit("error", error);
-    }
+    emitter.emit("error", new Error("Max reconnect attempts (0) reached after close code 1005"));
+    expect(runtime.error).toHaveBeenCalledTimes(1);
+    expect(String(firstErrorArg(runtime))).toContain(
+      "suppressed late gateway reconnect-exhausted error after dispose",
+    );
+  });
 
-    expect(emitter.listenerCount("error")).toBe(1);
-    expect(gatewayLogError).toHaveBeenCalledTimes(3);
-    expect(gatewayLogError).toHaveBeenLastCalledWith(
-      "suppressed late gateway error after dispose: Error: late gateway error 2",
+  it("dedupes identical late gateway errors after dispose", () => {
+    const emitter = new EventEmitter();
+    const runtime = { error: vi.fn() };
+    const supervisor = createDiscordGatewaySupervisor({
+      gateway: { emitter },
+      isDisallowedIntentsError: () => false,
+      runtime: runtime as never,
+    });
+
+    supervisor.dispose();
+    const first = new TypeError();
+    first.stack = "TypeError\n    at gatewayCrash (discord-gateway.js:12:34)";
+    const second = new TypeError();
+    second.stack = "TypeError\n    at gatewayCrash (discord-gateway.js:12:34)";
+    emitter.emit("error", first);
+    emitter.emit("error", second);
+
+    expect(runtime.error).toHaveBeenCalledTimes(1);
+    expect(String(firstErrorArg(runtime))).toContain(
+      "suppressed late gateway fatal error after dispose: TypeError @ gatewayCrash (discord-gateway.js:12:34)",
     );
   });
 });

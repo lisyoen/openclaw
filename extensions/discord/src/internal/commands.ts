@@ -8,8 +8,8 @@ import {
 import type { BaseMessageInteractiveComponent } from "./components.js";
 import type { AutocompleteInteraction, CommandInteraction } from "./interactions.js";
 
-type ConditionalCommandOption = (interaction: unknown) => boolean;
-type CommandOption = Record<string, unknown> & {
+export type ConditionalCommandOption = (interaction: unknown) => boolean;
+export type CommandOption = Record<string, unknown> & {
   name: string;
   description?: string;
   type: ApplicationCommandOptionType;
@@ -143,6 +143,9 @@ export abstract class Command extends BaseCommand {
     throw new Error(
       `The ${(interaction as { rawData?: { data?: { name?: string } } }).rawData?.data?.name ?? this.name} command does not support autocomplete`,
     );
+  }
+  async preCheck(interaction: unknown): Promise<unknown> {
+    return Boolean(interaction) || true;
   }
   serializeOptions() {
     return this.options?.map((option) => {

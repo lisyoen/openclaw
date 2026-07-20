@@ -110,13 +110,9 @@ function visitDiagnosticPayload(
     }
 
     if (shouldRedactImageData(record)) {
-      const imageData = record.data;
-      if (typeof imageData !== "string") {
-        return out;
-      }
       out.data = REDACTED_IMAGE_DATA;
-      out.bytes = estimateBase64DecodedBytes(imageData);
-      out.sha256 = digestBase64Payload(imageData);
+      out.bytes = estimateBase64DecodedBytes(record.data);
+      out.sha256 = digestBase64Payload(record.data);
     }
     return out;
   };

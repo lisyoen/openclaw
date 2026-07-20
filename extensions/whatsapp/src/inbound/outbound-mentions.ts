@@ -63,13 +63,9 @@ function normalizeKnownUserJid(value: string): string | null {
   const trimmed = value.replace(/^whatsapp:/i, "").trim();
   const jidMatch = trimmed.match(KNOWN_USER_JID_RE);
   if (jidMatch) {
-    const user = jidMatch[1];
-    const rawDomain = jidMatch[2];
-    if (!user || !rawDomain) {
-      return null;
-    }
-    const domain = rawDomain.toLowerCase() === "c.us" ? "s.whatsapp.net" : rawDomain.toLowerCase();
-    return `${user}@${domain}`;
+    const domain =
+      jidMatch[2].toLowerCase() === "c.us" ? "s.whatsapp.net" : jidMatch[2].toLowerCase();
+    return `${jidMatch[1]}@${domain}`;
   }
   const digits = trimmed.startsWith("+")
     ? trimmed.replace(/\D/g, "")
@@ -85,9 +81,7 @@ function extractKnownJidParts(value: string): { user: string; domain: string } |
     return null;
   }
   const match = normalized.match(/^(\d+)@(.+)$/);
-  const user = match?.[1];
-  const domain = match?.[2];
-  return user && domain ? { user, domain } : null;
+  return match ? { user: match[1], domain: match[2] } : null;
 }
 
 function extractPhoneDigits(value: string | null | undefined): string | null {
@@ -222,11 +216,7 @@ export function resolveWhatsAppOutboundMentions(params: {
     if (shouldSkipMentionAt(params.text, start, start + token.length, codeRanges)) {
       continue;
     }
-    const rawDigits = match[1];
-    if (!rawDigits) {
-      continue;
-    }
-    const digits = rawDigits.replace(/\D/g, "");
+    const digits = match[1].replace(/\D/g, "");
     const target = token.startsWith("@+")
       ? (byPhone.get(digits) ?? byLid.get(digits))
       : (byLid.get(digits) ?? byPhone.get(digits));

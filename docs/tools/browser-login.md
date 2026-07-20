@@ -8,50 +8,44 @@ title: "Browser login"
 
 ## Manual login (recommended)
 
-When a site requires login, sign in manually in the host browser's `openclaw`
-profile. Do not give the model your credentials: automated logins often
-trigger anti-bot defenses and can lock the account.
+When a site requires login, **sign in manually** in the **host** browser profile (the openclaw browser).
 
-Use the host browser (manual login) for both reading (search/threads) and
-posting on X/Twitter and other bot-sensitive sites. Sandboxed browser sessions
-are more likely to trigger bot detection.
+Do **not** give the model your credentials. Automated logins often trigger anti-bot defenses and can lock the account.
 
 Back to the main browser docs: [Browser](/tools/browser).
 
 ## Which Chrome profile is used?
 
-OpenClaw controls a dedicated Chrome profile named `openclaw` (orange-tinted
-UI), separate from your daily browser profile.
+OpenClaw controls a **dedicated Chrome profile** (named `openclaw`, orange-tinted UI). This is separate from your daily browser profile.
 
 For agent browser tool calls:
 
-- Default choice: the agent uses its isolated `openclaw` browser.
-- Use `profile="user"` only when existing logged-in sessions matter and you
-  are at the computer to click/approve any attach prompt.
-- If you have multiple user-browser profiles, specify the profile explicitly
-  instead of guessing.
+- Default choice: the agent should use its isolated `openclaw` browser.
+- Use `profile="user"` only when existing logged-in sessions matter and the user is at the computer to click/approve any attach prompt.
+- If you have multiple user-browser profiles, specify the profile explicitly instead of guessing.
 
-Two ways to access the `openclaw` profile:
+Two easy ways to access it:
 
-1. Ask the agent to open the browser, then log in yourself.
-2. Open it via CLI:
+1. **Ask the agent to open the browser** and then log in yourself.
+2. **Open it via CLI**:
 
 ```bash
 openclaw browser start
 openclaw browser open https://x.com
 ```
 
-For a non-default profile, put `--browser-profile <name>` before the
-subcommand (default is `openclaw`):
+If you have multiple profiles, pass `--browser-profile <name>` (the default is `openclaw`).
 
-```bash
-openclaw browser --browser-profile <name> open https://x.com
-```
+## X/Twitter: recommended flow
 
-## Sandboxing: allow host browser access
+- **Read/search/threads:** use the **host** browser (manual login).
+- **Post updates:** use the **host** browser (manual login).
 
-If the agent is sandboxed, its `browser` tool calls default to the sandbox
-browser, not the host. To let the agent target the host browser instead:
+## Sandboxing + host browser access
+
+Sandboxed browser sessions are **more likely** to trigger bot detection. For X/Twitter (and other strict sites), prefer the **host** browser.
+
+If the agent is sandboxed, the browser tool defaults to the sandbox. To allow host control:
 
 ```json5
 {
@@ -68,16 +62,13 @@ browser, not the host. To let the agent target the host browser instead:
 }
 ```
 
-CLI invocations always target the host browser, never the sandbox, so you can
-open the host browser yourself regardless of this setting:
+Then open the host browser yourself (CLI invocations always run against the host browser):
 
 ```bash
-openclaw browser --browser-profile openclaw open https://x.com
+openclaw browser open https://x.com --browser-profile openclaw
 ```
 
-Once `sandbox.browser.allowHostControl: true` is set, the agent's `browser`
-tool calls can target the host too. Alternatively, disable sandboxing for the
-agent that posts updates.
+The agent's `browser` tool calls can then target the host once `sandbox.browser.allowHostControl: true` is set. Alternatively, disable sandboxing for the agent that posts updates.
 
 ## Related
 

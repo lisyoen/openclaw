@@ -4,7 +4,7 @@ import path from "node:path";
 import { tryReadJsonSync } from "../infra/json-files.js";
 import { listBundledPluginMetadata } from "./bundled-plugin-metadata.js";
 
-const NON_PACKAGED_RUNTIME_SIDECAR_PLUGIN_DIRS = new Set(["qa-channel", "qa-lab"]);
+const NON_PACKAGED_RUNTIME_SIDECAR_PLUGIN_DIRS = new Set(["qa-channel", "qa-lab", "qa-matrix"]);
 
 function buildBundledDistArtifactPath(dirName: string, artifact: string): string {
   return ["dist", "extensions", dirName, artifact].join("/");
@@ -37,7 +37,9 @@ function collectRootPackageExcludedRuntimeSidecarPluginDirs(rootDir: string): Se
 }
 
 /** Collects bundled runtime sidecar paths that should ship with the root package. */
-function collectBundledRuntimeSidecarPaths(params?: { rootDir?: string }): readonly string[] {
+export function collectBundledRuntimeSidecarPaths(params?: {
+  rootDir?: string;
+}): readonly string[] {
   const rootDir = params?.rootDir ?? process.cwd();
   const excludedRuntimeSidecarPluginDirs = new Set([
     ...NON_PACKAGED_RUNTIME_SIDECAR_PLUGIN_DIRS,
@@ -67,11 +69,7 @@ export async function writeBundledRuntimeSidecarPathBaseline(params: {
     "lib",
     "bundled-runtime-sidecar-paths.json",
   );
-  const expectedJson = `${JSON.stringify(
-    collectBundledRuntimeSidecarPaths({ rootDir: params.repoRoot }),
-    null,
-    2,
-  )}\n`;
+  const expectedJson = `${JSON.stringify(collectBundledRuntimeSidecarPaths(), null, 2)}\n`;
   const currentJson = fs.existsSync(jsonPath) ? fs.readFileSync(jsonPath, "utf8") : "";
   const changed = currentJson !== expectedJson;
 

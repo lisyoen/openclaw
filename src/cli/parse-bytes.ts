@@ -52,8 +52,7 @@ export function parseByteSize(raw: string, opts?: BytesParseOptions): number {
   }
 
   const bytes = Math.round(value * multiplier);
-  // Validate the rounded byte count; fractional inputs may safely round back into range.
-  if (!Number.isSafeInteger(bytes)) {
+  if (!Number.isFinite(bytes)) {
     throw invalidByteSize(raw);
   }
   return bytes;

@@ -1,5 +1,5 @@
 /** Tests secrets plan normalization, target validation, and ref conversion. */
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   INVALID_EXEC_SECRET_REF_IDS,
   VALID_EXEC_SECRET_REF_IDS,
@@ -10,7 +10,6 @@ import {
   TALK_TEST_PROVIDER_ID,
 } from "../test-utils/talk-test-provider.js";
 import { isSecretsApplyPlan, resolveValidatedPlanTarget } from "./plan.js";
-import { resolveConfigSecretTargetByPath } from "./target-registry.js";
 
 type ValidatedPlanTarget = NonNullable<ReturnType<typeof resolveValidatedPlanTarget>>;
 
@@ -24,10 +23,6 @@ function requireValidatedPlanTarget(
 }
 
 describe("secrets plan validation", () => {
-  beforeAll(() => {
-    resolveConfigSecretTargetByPath(["channels", "telegram", "botToken"]);
-  });
-
   it("accepts legacy provider target types", () => {
     const resolved = resolveValidatedPlanTarget({
       type: "models.providers.apiKey",
@@ -79,16 +74,6 @@ describe("secrets plan validation", () => {
       pathSegments: ["channels", "telegram", "webhookSecret"],
     });
     expect(resolved).toBeNull();
-  });
-
-  it("rejects path-like channel ids without throwing", () => {
-    expect(
-      resolveValidatedPlanTarget({
-        type: "channels.foo/bar.token",
-        path: "channels.foo/bar.token",
-        pathSegments: ["channels", "foo/bar", "token"],
-      }),
-    ).toBeNull();
   });
 
   it("validates plan files with non-legacy target types", () => {

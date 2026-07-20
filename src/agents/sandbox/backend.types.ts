@@ -37,7 +37,6 @@ export type CreateSandboxBackendParams = {
   agentWorkspaceDir: string;
   skillsWorkspaceDir?: string;
   cfg: SandboxConfig;
-  requireCurrentConfig?: boolean;
 };
 
 /** Factory that creates a backend handle for a sandbox session. */
@@ -65,4 +64,9 @@ export type RegisteredSandboxBackend = {
 };
 
 export type { SandboxBackendHandle, SandboxBackendId } from "./backend-handle.types.js";
-export type { SandboxBackendWorkdirValidation } from "./backend-handle.types.js";
+export type {
+  SandboxBackendCommandParams,
+  SandboxBackendCommandResult,
+  SandboxBackendExecSpec,
+  SandboxFsBridgeContext,
+} from "./backend-handle.types.js";

@@ -7,7 +7,6 @@ import {
   coerceStatusIssueAccountId,
   readStatusIssueFields,
 } from "openclaw/plugin-sdk/extension-shared";
-import { standardDmPolicyOpenIssue } from "openclaw/plugin-sdk/status-helpers";
 
 const ZALO_STATUS_FIELDS = ["accountId", "enabled", "configured", "dmPolicy"] as const;
 
@@ -26,14 +25,13 @@ export function collectZaloStatusIssues(accounts: ChannelAccountSnapshot[]): Cha
     }
 
     if (account.dmPolicy === "open") {
-      issues.push(
-        standardDmPolicyOpenIssue({
-          channel: "zalo",
-          accountId,
-          channelLabel: "Zalo",
-          configPath: "channels.zalo",
-        }),
-      );
+      issues.push({
+        channel: "zalo",
+        accountId,
+        kind: "config",
+        message: 'Zalo dmPolicy is "open", allowing any user to message the bot without pairing.',
+        fix: 'Set channels.zalo.dmPolicy to "pairing" or "allowlist" to restrict access.',
+      });
     }
   }
   return issues;

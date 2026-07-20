@@ -1,6 +1,10 @@
 // Xai tests cover stt plugin behavior.
 import { describe, expect, it, vi } from "vitest";
-import { buildXaiMediaUnderstandingProvider } from "./stt.js";
+import {
+  buildXaiMediaUnderstandingProvider,
+  transcribeXaiAudio,
+  XAI_DEFAULT_STT_MODEL,
+} from "./stt.js";
 
 const { postTranscriptionRequestMock } = vi.hoisted(() => ({
   postTranscriptionRequestMock: vi.fn(
@@ -49,20 +53,19 @@ vi.mock("openclaw/plugin-sdk/provider-http", async (importOriginal) => {
 
 describe("xai stt", () => {
   it("posts audio files to the xAI STT endpoint", async () => {
-    const provider = buildXaiMediaUnderstandingProvider();
-    const result = await provider.transcribeAudio?.({
+    const result = await transcribeXaiAudio({
       buffer: Buffer.from("audio-bytes"),
       fileName: "sample.wav",
       mime: "audio/wav",
       apiKey: "xai-key",
       baseUrl: "https://api.x.ai/v1/",
-      model: "grok-4.3",
+      model: XAI_DEFAULT_STT_MODEL,
       language: "en",
       prompt: "ignored provider hint",
       timeoutMs: 10_000,
     });
 
-    expect(result).toEqual({ text: "hello from audio" });
+    expect(result).toEqual({ text: "hello from audio", model: XAI_DEFAULT_STT_MODEL });
     const call = requireLastPostTranscriptionCall();
     expect(call.url).toBe("https://api.x.ai/v1/stt");
     expect(call.timeoutMs).toBe(10_000);
@@ -70,7 +73,7 @@ describe("xai stt", () => {
     expect(call.headers.get("authorization")).toBe("Bearer xai-key");
     expect(call.body).toBeInstanceOf(FormData);
     const form = call.body as FormData;
-    expect(form.get("model")).toBeNull();
+    expect(form.get("model")).toBe(XAI_DEFAULT_STT_MODEL);
     expect(form.get("language")).toBe("en");
     expect(form.get("prompt")).toBeNull();
     expect(form.get("file")).toBeInstanceOf(Blob);
@@ -80,7 +83,7 @@ describe("xai stt", () => {
     const provider = buildXaiMediaUnderstandingProvider();
     expect(provider.id).toBe("xai");
     expect(provider.capabilities).toEqual(["audio"]);
-    expect(provider.defaultModels).toBeUndefined();
+    expect(provider.defaultModels).toEqual({ audio: XAI_DEFAULT_STT_MODEL });
     expect(provider.autoPriority).toEqual({ audio: 25 });
   });
 
@@ -95,7 +98,7 @@ describe("xai stt", () => {
       mime: "audio/wav",
       apiKey: "core-resolved-bearer",
       baseUrl: "https://api.x.ai/v1/",
-      model: "grok-4.3",
+      model: XAI_DEFAULT_STT_MODEL,
       timeoutMs: 10_000,
     });
     const call = requireLastPostTranscriptionCall();

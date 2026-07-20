@@ -12,6 +12,7 @@ type InboundDebouncerParams<T> = {
   onFlush?: (items: T[]) => Promise<void>;
   onError?: (err: unknown, items: T[]) => void;
 };
+type UnknownMock = Mock<(...args: unknown[]) => unknown>;
 type AsyncUnknownMock = Mock<(...args: unknown[]) => Promise<unknown>>;
 type FeishuDispatchReplyCounts = {
   final: number;
@@ -28,22 +29,20 @@ type FeishuDispatchReplyMock = Mock<
   (args: {
     ctx: FeishuDispatchReplyContext;
     dispatcher: FeishuDispatchReplyDispatcher;
-    replyOptions?: {
-      turnAdoptionLifecycle?: {
-        onAdopted: () => void | Promise<void>;
-      };
-    };
   }) => Promise<{ queuedFinal: boolean; counts: FeishuDispatchReplyCounts }>
 >;
-type RuntimeReplyDispatcher = NonNullable<
-  Parameters<PluginRuntime["channel"]["reply"]["withReplyDispatcher"]>[0]["dispatcher"]
->;
 type FeishuLifecycleReplyDispatcher = {
-  dispatcherOptions: Record<string, never>;
-  delivery: {
-    deliver: AsyncUnknownMock;
+  dispatcher: {
+    sendToolResult: UnknownMock;
+    sendBlockReply: UnknownMock;
+    sendFinalReply: AsyncUnknownMock;
+    waitForIdle: AsyncUnknownMock;
+    getQueuedCounts: UnknownMock;
+    getFailedCounts: UnknownMock;
+    markComplete: UnknownMock;
   };
   replyOptions: Record<string, never>;
+  markDispatchIdle: UnknownMock;
   ensureNoVisibleReplyFallback: AsyncUnknownMock;
 };
 
@@ -67,9 +66,17 @@ const FEISHU_PREFETCHED_BOT_OPEN_ID_SOURCE = {
 
 export function createFeishuLifecycleReplyDispatcher(): FeishuLifecycleReplyDispatcher {
   return {
-    dispatcherOptions: {},
-    delivery: { deliver: vi.fn(async () => {}) },
+    dispatcher: {
+      sendToolResult: vi.fn(() => false),
+      sendBlockReply: vi.fn(() => false),
+      sendFinalReply: vi.fn(async () => true),
+      waitForIdle: vi.fn(async () => {}),
+      getQueuedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 0 })),
+      getFailedCounts: vi.fn(() => ({ tool: 0, block: 0, final: 0 })),
+      markComplete: vi.fn(),
+    },
     replyOptions: {},
+    markDispatchIdle: vi.fn(),
     ensureNoVisibleReplyFallback: vi.fn(async () => false),
   };
 }
@@ -93,6 +100,7 @@ function createImmediateInboundDebounce() {
 
 function installFeishuLifecycleRuntime(params: {
   resolveAgentRoute: PluginRuntime["channel"]["routing"]["resolveAgentRoute"];
+  finalizeInboundContext: PluginRuntime["channel"]["reply"]["finalizeInboundContext"];
   dispatchReplyFromConfig: PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"];
   withReplyDispatcher: PluginRuntime["channel"]["reply"]["withReplyDispatcher"];
   resolveStorePath: PluginRuntime["channel"]["session"]["resolveStorePath"];
@@ -116,41 +124,7 @@ function installFeishuLifecycleRuntime(params: {
       reply: {
         resolveEnvelopeFormatOptions: vi.fn(() => ({})),
         formatAgentEnvelope: vi.fn((value: { body: string }) => value.body),
-        dispatchReplyWithBufferedBlockDispatcher: async ({
-          cfg,
-          ctx,
-          dispatcherOptions,
-          replyOptions,
-        }) => {
-          // ReplyDispatcher enqueue methods are synchronous; settlement owns async delivery.
-          const pendingDeliveries: Promise<unknown>[] = [];
-          const dispatcher: RuntimeReplyDispatcher = {
-            sendToolResult: () => false,
-            sendBlockReply: () => false,
-            sendFinalReply: (payload) => {
-              pendingDeliveries.push(
-                Promise.resolve(dispatcherOptions.deliver(payload, { kind: "final" })),
-              );
-              return true;
-            },
-            waitForIdle: async () => {
-              await Promise.all(pendingDeliveries);
-            },
-            getQueuedCounts: () => ({ tool: 0, block: 0, final: 0 }),
-            getFailedCounts: () => ({ tool: 0, block: 0, final: 0 }),
-            markComplete: () => {},
-          };
-          return await params.withReplyDispatcher({
-            dispatcher,
-            run: () =>
-              params.dispatchReplyFromConfig({
-                cfg,
-                ctx: ctx as Parameters<typeof params.dispatchReplyFromConfig>[0]["ctx"],
-                dispatcher,
-                replyOptions,
-              }),
-          });
-        },
+        finalizeInboundContext: params.finalizeInboundContext,
         dispatchReplyFromConfig: params.dispatchReplyFromConfig,
         withReplyDispatcher: params.withReplyDispatcher,
       },
@@ -179,6 +153,7 @@ function installFeishuLifecycleRuntime(params: {
 
 export function installFeishuLifecycleReplyRuntime(params: {
   resolveAgentRouteMock: unknown;
+  finalizeInboundContextMock: unknown;
   dispatchReplyFromConfigMock: unknown;
   withReplyDispatcherMock: unknown;
   storePath: string;
@@ -186,6 +161,8 @@ export function installFeishuLifecycleReplyRuntime(params: {
   return installFeishuLifecycleRuntime({
     resolveAgentRoute:
       params.resolveAgentRouteMock as PluginRuntime["channel"]["routing"]["resolveAgentRoute"],
+    finalizeInboundContext:
+      params.finalizeInboundContextMock as PluginRuntime["channel"]["reply"]["finalizeInboundContext"],
     dispatchReplyFromConfig:
       params.dispatchReplyFromConfigMock as PluginRuntime["channel"]["reply"]["dispatchReplyFromConfig"],
     withReplyDispatcher:
@@ -199,19 +176,16 @@ export function mockFeishuReplyOnceDispatch(params: {
   replyText: string;
   shouldSendFinalReply?: (ctx: unknown) => boolean;
 }) {
-  params.dispatchReplyFromConfigMock.mockImplementation(
-    async ({ ctx, dispatcher, replyOptions }) => {
-      await replyOptions?.turnAdoptionLifecycle?.onAdopted();
-      const shouldSendFinalReply = params.shouldSendFinalReply?.(ctx) ?? true;
-      if (shouldSendFinalReply && typeof dispatcher?.sendFinalReply === "function") {
-        await dispatcher.sendFinalReply({ text: params.replyText });
-      }
-      return {
-        queuedFinal: false,
-        counts: { final: shouldSendFinalReply ? 1 : 0 },
-      };
-    },
-  );
+  params.dispatchReplyFromConfigMock.mockImplementation(async ({ ctx, dispatcher }) => {
+    const shouldSendFinalReply = params.shouldSendFinalReply?.(ctx) ?? true;
+    if (shouldSendFinalReply && typeof dispatcher?.sendFinalReply === "function") {
+      await dispatcher.sendFinalReply({ text: params.replyText });
+    }
+    return {
+      queuedFinal: false,
+      counts: { final: shouldSendFinalReply ? 1 : 0 },
+    };
+  });
 }
 
 export function createFeishuLifecycleConfig(params: {
@@ -431,10 +405,10 @@ export async function expectFeishuReplyPipelineDedupedAfterPostSendFailure(param
 export function expectFeishuReplyDispatcherSentFinalReplyOnce(params: {
   createFeishuReplyDispatcherMock: ReturnType<typeof vi.fn>;
 }) {
-  const delivery = params.createFeishuReplyDispatcherMock.mock.results[0]?.value.delivery as {
-    deliver: ReturnType<typeof vi.fn>;
+  const dispatcher = params.createFeishuReplyDispatcherMock.mock.results[0]?.value.dispatcher as {
+    sendFinalReply: ReturnType<typeof vi.fn>;
   };
-  expect(delivery.deliver).toHaveBeenCalledTimes(1);
+  expect(dispatcher.sendFinalReply).toHaveBeenCalledTimes(1);
 }
 
 async function loadMonitorSingleAccount() {

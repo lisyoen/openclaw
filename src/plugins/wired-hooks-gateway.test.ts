@@ -1,16 +1,14 @@
 /**
- * Test: Gateway and cron lifecycle hook wiring.
+ * Test: gateway_start & gateway_stop hook wiring (server.impl.ts)
  *
  * Since startGatewayServer is heavily integrated, we test the hook runner
  * calls at the unit level by verifying the hook runner functions exist
  * and validating the integration pattern.
  */
 import { describe, expect, it, vi } from "vitest";
-import { createHookRunnerWithRegistry } from "./hooks.test-fixtures.js";
+import { createHookRunnerWithRegistry } from "./hooks.test-helpers.js";
 import type {
   PluginHookCronChangedEvent,
-  PluginHookCronReconciledContext,
-  PluginHookCronReconciledEvent,
   PluginHookGatewayContext,
   PluginHookGatewayStartEvent,
   PluginHookGatewayStopEvent,
@@ -48,10 +46,6 @@ describe("gateway hook runner methods", () => {
     workspaceDir: "/tmp/openclaw-workspace",
     getCron: () => undefined,
   };
-  const cronReconciledCtx: PluginHookCronReconciledContext = {
-    ...gatewayCtx,
-    abortSignal: new AbortController().signal,
-  };
 
   it.each([
     {
@@ -82,41 +76,6 @@ describe("gateway hook runner methods", () => {
         agentId: "main",
         sessionTarget: "main",
         state: { nextRunAtMs: 123 },
-      },
-    };
-
-    await runner.runCronChanged(event, gatewayCtx);
-
-    expect(handler).toHaveBeenCalledWith(event, gatewayCtx);
-  });
-
-  it.each([
-    { reason: "startup", enabled: true },
-    { reason: "reload", enabled: false },
-  ] as const)("runCronReconciled forwards $reason state", async ({ reason, enabled }) => {
-    const handler = vi.fn();
-    const { runner } = createHookRunnerWithRegistry([{ hookName: "cron_reconciled", handler }]);
-    const event: PluginHookCronReconciledEvent = { reason, enabled };
-
-    await runner.runCronReconciled(event, cronReconciledCtx);
-
-    expect(handler).toHaveBeenCalledWith(event, cronReconciledCtx);
-  });
-
-  it("runCronChanged passes scheduled events with the durable wake snapshot", async () => {
-    const handler = vi.fn();
-    const { runner } = createHookRunnerWithRegistry([{ hookName: "cron_changed", handler }]);
-    const event: PluginHookCronChangedEvent = {
-      action: "scheduled",
-      jobId: "job-scheduled",
-      nextRunAtMs: 456,
-      sessionTarget: "session:ops",
-      agentId: "reporter",
-      job: {
-        id: "job-scheduled",
-        agentId: "reporter",
-        sessionTarget: "session:ops",
-        state: { nextRunAtMs: 456 },
       },
     };
 
@@ -181,12 +140,10 @@ describe("gateway hook runner methods", () => {
   it("hasHooks returns true for registered gateway hooks", () => {
     const { runner } = createHookRunnerWithRegistry([
       { hookName: "gateway_start", handler: vi.fn() },
-      { hookName: "cron_reconciled", handler: vi.fn() },
       { hookName: "cron_changed", handler: vi.fn() },
     ]);
 
     expect(runner.hasHooks("gateway_start")).toBe(true);
-    expect(runner.hasHooks("cron_reconciled")).toBe(true);
     expect(runner.hasHooks("cron_changed")).toBe(true);
     expect(runner.hasHooks("gateway_stop")).toBe(false);
   });

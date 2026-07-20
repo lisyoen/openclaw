@@ -4,17 +4,17 @@ import type { ReplyPayload } from "../types.js";
 import type { TypingSignaler } from "./typing-mode.js";
 
 const hoisted = vi.hoisted(() => {
-  const loadSessionEntryMock = vi.fn();
-  return { loadSessionEntryMock };
+  const loadSessionStoreMock = vi.fn();
+  return { loadSessionStoreMock };
 });
 
-vi.mock("../../config/sessions/session-accessor.js", async () => {
-  const actual = await vi.importActual<typeof import("../../config/sessions/session-accessor.js")>(
-    "../../config/sessions/session-accessor.js",
+vi.mock("../../config/sessions.js", async () => {
+  const actual = await vi.importActual<typeof import("../../config/sessions.js")>(
+    "../../config/sessions.js",
   );
   return {
     ...actual,
-    loadSessionEntry: (...args: unknown[]) => hoisted.loadSessionEntryMock(...args),
+    loadSessionStore: (...args: unknown[]) => hoisted.loadSessionStoreMock(...args),
   };
 });
 
@@ -28,7 +28,7 @@ const {
 describe("agent runner helpers", () => {
   beforeEach(() => {
     vi.useRealTimers();
-    hoisted.loadSessionEntryMock.mockReset();
+    hoisted.loadSessionStoreMock.mockReset();
   });
 
   it("detects audio payloads from mediaUrl/mediaUrls", () => {
@@ -45,7 +45,9 @@ describe("agent runner helpers", () => {
   });
 
   it("uses session verbose level when present", () => {
-    hoisted.loadSessionEntryMock.mockReturnValue({ verboseLevel: "full" });
+    hoisted.loadSessionStoreMock.mockReturnValue({
+      "agent:main:main": { verboseLevel: "full" },
+    });
     const shouldEmitResult = createShouldEmitToolResult({
       sessionKey: "agent:main:main",
       storePath: "/tmp/store.json",
@@ -58,9 +60,7 @@ describe("agent runner helpers", () => {
     });
     expect(shouldEmitResult()).toBe(true);
     expect(shouldEmitOutput()).toBe(true);
-    expect(hoisted.loadSessionEntryMock).toHaveBeenCalledWith({
-      sessionKey: "agent:main:main",
-      storePath: "/tmp/store.json",
+    expect(hoisted.loadSessionStoreMock).toHaveBeenCalledWith("/tmp/store.json", {
       clone: false,
     });
   });
@@ -68,7 +68,9 @@ describe("agent runner helpers", () => {
   it("caches session verbose reads briefly while still refreshing live changes", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
-    hoisted.loadSessionEntryMock.mockReturnValue({ verboseLevel: "full" });
+    hoisted.loadSessionStoreMock.mockReturnValue({
+      "agent:main:main": { verboseLevel: "full" },
+    });
     const shouldEmitOutput = createShouldEmitToolOutput({
       sessionKey: "agent:main:main",
       storePath: "/tmp/store.json",
@@ -76,17 +78,19 @@ describe("agent runner helpers", () => {
     });
 
     expect(shouldEmitOutput()).toBe(true);
-    hoisted.loadSessionEntryMock.mockReturnValue({ verboseLevel: "off" });
+    hoisted.loadSessionStoreMock.mockReturnValue({
+      "agent:main:main": { verboseLevel: "off" },
+    });
     expect(shouldEmitOutput()).toBe(true);
-    expect(hoisted.loadSessionEntryMock).toHaveBeenCalledOnce();
+    expect(hoisted.loadSessionStoreMock).toHaveBeenCalledOnce();
 
     vi.setSystemTime(1_251);
     expect(shouldEmitOutput()).toBe(false);
-    expect(hoisted.loadSessionEntryMock).toHaveBeenCalledTimes(2);
+    expect(hoisted.loadSessionStoreMock).toHaveBeenCalledTimes(2);
   });
 
   it("falls back when store read fails or session value is invalid", () => {
-    hoisted.loadSessionEntryMock.mockImplementation(() => {
+    hoisted.loadSessionStoreMock.mockImplementation(() => {
       throw new Error("boom");
     });
     const fallbackOn = createShouldEmitToolResult({
@@ -96,8 +100,10 @@ describe("agent runner helpers", () => {
     });
     expect(fallbackOn()).toBe(true);
 
-    hoisted.loadSessionEntryMock.mockClear();
-    hoisted.loadSessionEntryMock.mockReturnValue({ verboseLevel: "weird" });
+    hoisted.loadSessionStoreMock.mockClear();
+    hoisted.loadSessionStoreMock.mockReturnValue({
+      "agent:main:main": { verboseLevel: "weird" },
+    });
     const fallbackFull = createShouldEmitToolOutput({
       sessionKey: "agent:main:main",
       storePath: "/tmp/store.json",

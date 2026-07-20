@@ -34,7 +34,7 @@ import {
   getSlackExecApprovalApprovers,
   isSlackExecApprovalClientEnabled,
 } from "./exec-approvals.js";
-import { canonicalizeSlackApiTargetId, parseSlackTarget } from "./target-parsing.js";
+import { parseSlackTarget } from "./targets.js";
 
 export type SlackApprovalKind = "exec" | "plugin";
 export type SlackNativeApprovalRequest = ExecApprovalRequest | PluginApprovalRequest;
@@ -56,21 +56,15 @@ const DEFAULT_APPROVAL_FORWARDING_MODE: ApprovalForwardingMode = "session";
 const SLACK_DM_CHANNEL_ID_RE = /^D[A-Z0-9]{8,}$/i;
 const SLACK_USER_ID_RE = /^[UW][A-Z0-9]{8,}$/i;
 
-function resolveSlackApprovalKind(request: SlackNativeApprovalRequest): SlackApprovalKind {
-  const isExec = "command" in request.request;
-  const isPlugin = "title" in request.request && "description" in request.request;
-  if (isExec === isPlugin) {
-    throw new Error("Slack approval request payload does not identify exactly one owner");
-  }
-  return isExec ? "exec" : "plugin";
+export function resolveSlackApprovalKind(request: SlackNativeApprovalRequest): SlackApprovalKind {
+  return request.id.startsWith("plugin:") ? "plugin" : "exec";
 }
 
 function isSlackApprovalTransportEnabled(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
 }): boolean {
-  const account = resolveSlackAccount(params);
-  return account.config.enterpriseOrgInstall !== true && isSlackPluginAccountConfigured(account);
+  return isSlackPluginAccountConfigured(resolveSlackAccount(params));
 }
 
 function resolveSlackNativeApprovalConfig(params: {
@@ -157,14 +151,14 @@ export function resolveSlackFallbackOriginTarget(
   if (!sessionTarget) {
     return null;
   }
-  const parsed = parseSlackTarget(sessionTarget.id, {
+  const parsed = parseSlackTarget(sessionTarget.id.toUpperCase(), {
     defaultKind: "channel",
   });
   if (!parsed) {
     return null;
   }
   return {
-    to: `${parsed.kind}:${canonicalizeSlackApiTargetId(parsed.kind, parsed.id)}`,
+    to: `${parsed.kind}:${parsed.id}`,
     threadId: sessionTarget.threadId,
   };
 }
@@ -375,7 +369,7 @@ export function shouldHandleSlackPluginViaForwardingSession(params: {
   });
 }
 
-function isSlackNativeApprovalClientEnabled(params: {
+export function isSlackNativeApprovalClientEnabled(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
   approvalKind: SlackApprovalKind;

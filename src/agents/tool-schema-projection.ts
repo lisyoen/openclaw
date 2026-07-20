@@ -1,4 +1,4 @@
-import { projectRuntimeToolInputSchema } from "@openclaw/ai/internal/openai";
+import { projectRuntimeToolInputSchema } from "./tool-schema-json-projection.js";
 /**
  * Projects agent tool schemas into JSON-safe runtime shapes and diagnostics.
  * Provider/runtime dispatch uses this module to drop incompatible tools before
@@ -6,11 +6,11 @@ import { projectRuntimeToolInputSchema } from "@openclaw/ai/internal/openai";
  */
 import type { AnyAgentTool } from "./tools/common.js";
 
-export { projectRuntimeToolInputSchema } from "@openclaw/ai/internal/openai";
+export { projectRuntimeToolInputSchema } from "./tool-schema-json-projection.js";
 export type {
   RuntimeToolInputSchemaJson,
   RuntimeToolInputSchemaProjection,
-} from "@openclaw/ai/internal/openai";
+} from "./tool-schema-json-projection.js";
 
 /** Diagnostic for one incompatible runtime tool schema. */
 export type RuntimeToolSchemaDiagnostic = {
@@ -20,7 +20,7 @@ export type RuntimeToolSchemaDiagnostic = {
 };
 
 /** Runtime tool list split into compatible tools and schema diagnostics. */
-type RuntimeToolSchemaInspection<TTool extends Pick<AnyAgentTool, "name" | "parameters">> = {
+export type RuntimeToolSchemaInspection<TTool extends Pick<AnyAgentTool, "name" | "parameters">> = {
   readonly tools: readonly TTool[];
   readonly diagnostics: readonly RuntimeToolSchemaDiagnostic[];
 };
@@ -38,12 +38,9 @@ type RuntimeToolEntryRead<TTool extends Pick<AnyAgentTool, "name" | "parameters"
 
 type ToolSchemaInspectionMode = "runtime" | "provider-normalizable";
 
-function unreadableRuntimeToolEntry<
-  TTool extends Pick<AnyAgentTool, "name" | "parameters"> = Pick<
-    AnyAgentTool,
-    "name" | "parameters"
-  >,
->(toolIndex: number): RuntimeToolEntryRead<TTool> {
+function unreadableRuntimeToolEntry(
+  toolIndex: number,
+): RuntimeToolEntryRead<Pick<AnyAgentTool, "name" | "parameters">> {
   return {
     ok: false,
     diagnostic: {
@@ -61,19 +58,14 @@ function readRuntimeToolEntries<TTool extends Pick<AnyAgentTool, "name" | "param
   try {
     length = tools.length;
   } catch {
-    return [unreadableRuntimeToolEntry<TTool>(0)];
+    return [unreadableRuntimeToolEntry(0) as RuntimeToolEntryRead<TTool>];
   }
   const entries: RuntimeToolEntryRead<TTool>[] = [];
   for (let toolIndex = 0; toolIndex < length; toolIndex += 1) {
     try {
-      const tool = tools.at(toolIndex);
-      entries.push(
-        tool === undefined
-          ? unreadableRuntimeToolEntry<TTool>(toolIndex)
-          : { ok: true, tool, toolIndex },
-      );
+      entries.push({ ok: true, tool: tools[toolIndex], toolIndex });
     } catch {
-      entries.push(unreadableRuntimeToolEntry<TTool>(toolIndex));
+      entries.push(unreadableRuntimeToolEntry(toolIndex) as RuntimeToolEntryRead<TTool>);
     }
   }
   return entries;

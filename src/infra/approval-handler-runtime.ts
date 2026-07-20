@@ -27,7 +27,6 @@ import {
   buildExpiredApprovalView,
   buildPendingApprovalView,
   buildResolvedApprovalView,
-  resolveApprovalRequestKind,
 } from "./approval-view-model.js";
 import type {
   ExpiredApprovalView,
@@ -317,7 +316,6 @@ type ChannelApprovalHandlerRuntimeSpec<TRequest extends ApprovalRequest> = {
   channelLabel?: string;
   accountId?: string | null;
   nativeAdapter?: ChannelApprovalNativeAdapter | null;
-  /** @deprecated Trusted compatibility override; omit to derive ownership from the payload. */
   resolveApprovalKind?: (request: TRequest) => ChannelApprovalKind;
   isConfigured: () => boolean;
   shouldHandle: (request: TRequest) => boolean;
@@ -420,9 +418,7 @@ export function createChannelApprovalHandler<
     channelLabel: adapter.runtime.channelLabel,
     accountId: adapter.runtime.accountId,
     nativeAdapter: adapter.runtime.nativeAdapter,
-    ...(adapter.runtime.resolveApprovalKind
-      ? { resolveApprovalKind: adapter.runtime.resolveApprovalKind }
-      : {}),
+    resolveApprovalKind: adapter.runtime.resolveApprovalKind,
     isConfigured: adapter.runtime.isConfigured,
     shouldHandle: adapter.runtime.shouldHandle,
     nowMs: adapter.runtime.nowMs,
@@ -458,7 +454,10 @@ export async function createChannelApprovalHandlerFromCapability(params: {
   const log = createSubsystemLogger(params.label);
   const activeEntries = new Map<string, ActiveApprovalEntries>();
   let stopped = false;
-  const resolveApprovalKind = nativeRuntime.resolveApprovalKind ?? resolveApprovalRequestKind;
+  const resolveApprovalKind =
+    nativeRuntime.resolveApprovalKind ??
+    ((request: ApprovalRequest) =>
+      request.id.startsWith("plugin:") ? "plugin" : ("exec" as const));
   const baseContext: ChannelApprovalCapabilityHandlerContext = {
     cfg: params.cfg,
     accountId: params.accountId,
@@ -476,18 +475,10 @@ export async function createChannelApprovalHandlerFromCapability(params: {
       gatewayUrl: params.gatewayUrl,
       eventKinds: nativeRuntime.eventKinds,
       nativeAdapter: params.capability?.native as ChannelApprovalNativeAdapter | null,
-      ...(nativeRuntime.resolveApprovalKind
-        ? { resolveApprovalKind: nativeRuntime.resolveApprovalKind }
-        : {}),
+      resolveApprovalKind,
       isConfigured: () => nativeRuntime.availability.isConfigured(baseContext),
-      shouldHandle: (request) => {
-        const approvalKind = resolveApprovalKind(request);
-        return nativeRuntime.availability.shouldHandle({
-          ...baseContext,
-          request,
-          approvalKind,
-        });
-      },
+      shouldHandle: (request) =>
+        nativeRuntime.availability.shouldHandle({ ...baseContext, request }),
       nowMs: params.nowMs,
     },
     content: {
@@ -645,7 +636,6 @@ export async function createChannelApprovalHandlerFromCapability(params: {
       },
       finalizeResolved: async ({ request, resolved, entries }) => {
         const resolvedEntries = consumeActiveWrappedEntries(activeEntries, request.id, entries);
-        const approvalKind = resolveApprovalKind(request);
         const view = buildResolvedApprovalView(request, resolved);
         await finalizeWrappedEntries({
           entries: resolvedEntries,
@@ -659,7 +649,7 @@ export async function createChannelApprovalHandlerFromCapability(params: {
                 entry: wrapped.entry,
                 binding: wrapped.binding,
                 request,
-                approvalKind,
+                approvalKind: resolveApprovalKind(request),
               });
             }
             const result = await nativeRuntime.presentation.buildResolvedResult({
@@ -681,7 +671,6 @@ export async function createChannelApprovalHandlerFromCapability(params: {
       },
       finalizeExpired: async ({ request, entries }) => {
         const expiredEntries = consumeActiveWrappedEntries(activeEntries, request.id, entries);
-        const approvalKind = resolveApprovalKind(request);
         const view = buildExpiredApprovalView(request);
         await finalizeWrappedEntries({
           entries: expiredEntries,
@@ -695,7 +684,7 @@ export async function createChannelApprovalHandlerFromCapability(params: {
                 entry: wrapped.entry,
                 binding: wrapped.binding,
                 request,
-                approvalKind,
+                approvalKind: resolveApprovalKind(request),
               });
             }
             const result = await nativeRuntime.presentation.buildExpiredResult({
@@ -735,4 +724,3 @@ export async function createChannelApprovalHandlerFromCapability(params: {
     },
   });
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

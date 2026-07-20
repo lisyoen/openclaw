@@ -80,7 +80,7 @@ actor CameraCaptureService {
 
         session.startRunning()
         defer { session.stopRunning() }
-        try await CameraCapturePipelineSupport.warmUpCaptureSession()
+        await CameraCapturePipelineSupport.warmUpCaptureSession()
         await self.waitForExposureAndWhiteBalance(device: device)
         await self.sleepDelayMs(delayMs)
 
@@ -124,11 +124,10 @@ actor CameraCaptureService {
         }
 
         let prepared = try await CameraCapturePipelineSupport.prepareWarmMovieSession(
-            options: CameraMovieSessionOptions(
-                preferFrontCamera: facing == .front,
-                deviceId: deviceId,
-                includeAudio: includeAudio,
-                durationMs: durationMs),
+            preferFrontCamera: facing == .front,
+            deviceId: deviceId,
+            includeAudio: includeAudio,
+            durationMs: durationMs,
             pickCamera: { preferFrontCamera, deviceId in
                 Self.pickCamera(facing: preferFrontCamera ? .front : .back, deviceId: deviceId)
             },

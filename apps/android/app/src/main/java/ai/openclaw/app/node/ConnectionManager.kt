@@ -3,6 +3,7 @@ package ai.openclaw.app.node
 import ai.openclaw.app.BuildConfig
 import ai.openclaw.app.LocationMode
 import ai.openclaw.app.SecurePrefs
+import ai.openclaw.app.VoiceWakeMode
 import ai.openclaw.app.gateway.GatewayClientInfo
 import ai.openclaw.app.gateway.GatewayConnectOptions
 import ai.openclaw.app.gateway.GatewayEndpoint
@@ -18,6 +19,7 @@ class ConnectionManager(
   private val prefs: SecurePrefs,
   private val cameraEnabled: () -> Boolean,
   private val locationMode: () -> LocationMode,
+  private val voiceWakeMode: () -> VoiceWakeMode,
   private val motionActivityAvailable: () -> Boolean,
   private val motionPedometerAvailable: () -> Boolean,
   private val sendSmsAvailable: () -> Boolean,
@@ -25,42 +27,11 @@ class ConnectionManager(
   private val smsSearchPossible: () -> Boolean,
   private val callLogAvailable: () -> Boolean,
   private val photosAvailable: () -> Boolean,
+  private val hasRecordAudioPermission: () -> Boolean,
   private val installedAppsSharingEnabled: () -> Boolean,
-  private val voiceWakeAvailable: () -> Boolean,
-  private val inlineWidgetsAvailable: () -> Boolean,
-  private val manualTls: (GatewayEndpoint) -> Boolean,
+  private val manualTls: () -> Boolean,
 ) {
   companion object {
-    internal val legacyOperatorScopes: List<String> =
-      listOf(
-        "operator.approvals",
-        "operator.read",
-        "operator.write",
-      )
-
-    internal val nativeClientOperatorScopes: List<String> =
-      listOf(
-        // admin matches iOS fresh token/password connects and is required for
-        // sessions.patch (model switching); stored tokens keep their granted scopes.
-        "operator.admin",
-        "operator.approvals",
-        "operator.questions",
-        "operator.read",
-        "operator.talk.secrets",
-        "operator.write",
-      )
-
-    internal const val INLINE_WIDGETS_CLIENT_CAPABILITY = "inline-widgets"
-
-    internal fun operatorScopesForStoredDeviceToken(storedScopes: List<String>): List<String> {
-      val normalized =
-        storedScopes
-          .map { it.trim() }
-          .filter { it.isNotEmpty() }
-          .distinct()
-      return normalized.ifEmpty { legacyOperatorScopes }
-    }
-
     /**
      * Decide whether a discovered/manual endpoint must use pinned TLS or can stay local cleartext.
      */
@@ -142,11 +113,11 @@ class ConnectionManager(
       smsSearchPossible = smsSearchPossible(),
       callLogAvailable = callLogAvailable(),
       photosAvailable = photosAvailable(),
+      voiceWakeEnabled = voiceWakeMode() != VoiceWakeMode.Off && hasRecordAudioPermission(),
       motionActivityAvailable = motionActivityAvailable(),
       motionPedometerAvailable = motionPedometerAvailable(),
       installedAppsSharingEnabled = installedAppsSharingEnabled(),
       debugBuild = BuildConfig.DEBUG,
-      voiceWakeEnabled = prefs.voiceWakeEnabled.value && voiceWakeAvailable(),
     )
 
   /** Builds the gateway-advertised node.invoke command list from current permission and feature state. */
@@ -216,13 +187,16 @@ class ConnectionManager(
     )
 
   /** Connect options for the Android operator session that drives approvals and UI actions. */
-  fun buildOperatorConnectOptions(
-    scopes: List<String> = nativeClientOperatorScopes,
-  ): GatewayConnectOptions =
+  fun buildOperatorConnectOptions(): GatewayConnectOptions =
     GatewayConnectOptions(
       role = "operator",
-      scopes = scopes,
-      caps = if (inlineWidgetsAvailable()) listOf(INLINE_WIDGETS_CLIENT_CAPABILITY) else emptyList(),
+      scopes =
+        listOf(
+          "operator.approvals",
+          "operator.read",
+          "operator.write",
+        ),
+      caps = emptyList(),
       commands = emptyList(),
       permissions = emptyMap(),
       client = buildClientInfo(clientId = "openclaw-android", clientMode = "ui"),
@@ -232,6 +206,6 @@ class ConnectionManager(
   /** Resolves persisted TLS pin policy for a concrete gateway endpoint. */
   fun resolveTlsParams(endpoint: GatewayEndpoint): GatewayTlsParams? {
     val stored = prefs.loadGatewayTlsFingerprint(endpoint.stableId)
-    return resolveTlsParamsForEndpoint(endpoint, storedFingerprint = stored, manualTlsEnabled = manualTls(endpoint))
+    return resolveTlsParamsForEndpoint(endpoint, storedFingerprint = stored, manualTlsEnabled = manualTls())
   }
 }

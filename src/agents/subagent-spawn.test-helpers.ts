@@ -3,7 +3,6 @@
 import os from "node:os";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { expect, vi } from "vitest";
-import { resolveLeastPrivilegeOperatorScopesForMethod } from "../gateway/method-scopes.js";
 import type { SubagentLifecycleHookRunner } from "../plugins/hooks.js";
 
 type MockFn = (...args: unknown[]) => unknown;
@@ -16,7 +15,7 @@ type HookRunner = Pick<SubagentLifecycleHookRunner, "hasHooks"> &
   Partial<
     Pick<
       SubagentLifecycleHookRunner,
-      "runSubagentSpawning" | "runSubagentSpawned" | "runSubagentProgress" | "runSubagentEnded"
+      "runSubagentSpawning" | "runSubagentSpawned" | "runSubagentEnded"
     >
   >;
 type SubagentSpawnModuleForTest = Awaited<typeof import("./subagent-spawn.js")> & {
@@ -133,17 +132,13 @@ export async function loadSubagentSpawnModuleForTest(params: {
   hasInProcessGatewayContextMock?: MockFn;
   getRuntimeConfig?: () => Record<string, unknown>;
   loadSessionStoreMock?: MockFn;
-  loadPreparedModelCatalogMock?: MockFn;
   ensureContextEnginesInitializedMock?: MockFn;
   updateSessionStoreMock?: MockFn;
-  forkSessionEntryFromParentMock?: MockFn;
   forkSessionFromParentMock?: MockFn;
   resolveContextEngineMock?: MockFn;
   resolveParentForkDecisionMock?: MockFn;
+  pruneLegacyStoreKeysMock?: MockFn;
   registerSubagentRunMock?: MockFn;
-  startQueuedSubagentRunMock?: MockFn;
-  settleFailedQueuedSubagentLaunchMock?: MockFn;
-  completeCollectorLaunchCleanupMock?: MockFn;
   emitSessionLifecycleEventMock?: MockFn;
   hookRunner?: HookRunner;
   resolveAgentConfig?: (cfg: Record<string, unknown>, agentId: string) => unknown;
@@ -151,7 +146,6 @@ export async function loadSubagentSpawnModuleForTest(params: {
   resolveSubagentSpawnModelSelection?: () => string | undefined;
   getSubagentDepthFromSessionStore?: (sessionKey: string, opts?: unknown) => number;
   countActiveRunsForSession?: (sessionKey: string) => number;
-  listSwarmRunsForGroup?: (groupId: string) => unknown[];
   resolveSandboxRuntimeStatus?: (params: {
     cfg?: Record<string, unknown>;
     sessionKey?: string;
@@ -221,36 +215,6 @@ export async function loadSubagentSpawnModuleForTest(params: {
       params.dispatchGatewayMethodInProcessMock?.(...args),
     hasInProcessGatewayContext: () => Boolean(params.hasInProcessGatewayContextMock?.()),
     buildSubagentSystemPrompt: () => "system-prompt",
-    forkSessionEntryFromParent:
-      params.forkSessionEntryFromParentMock ??
-      (async () => {
-        const fork = (
-          params.forkSessionFromParentMock
-            ? await params.forkSessionFromParentMock()
-            : { sessionId: "forked-session-id", sessionFile: "/tmp/forked-session.jsonl" }
-        ) as { sessionId: string; sessionFile: string } | null;
-        if (!fork) {
-          return { status: "failed" };
-        }
-        return {
-          status: "forked",
-          fork,
-          parentEntry: {
-            sessionId: "parent-session-id",
-            sessionFile: "/tmp/parent-session.jsonl",
-            updatedAt: Date.now(),
-          },
-          sessionEntry: {
-            sessionId: fork.sessionId,
-            sessionFile: fork.sessionFile,
-            forkedFromParent: true,
-          },
-          decision: {
-            status: "fork",
-            maxTokens: 100_000,
-          },
-        };
-      }),
     forkSessionFromParent:
       params.forkSessionFromParentMock ??
       (async () => ({ sessionId: "forked-session-id", sessionFile: "/tmp/forked-session.jsonl" })),
@@ -266,10 +230,6 @@ export async function loadSubagentSpawnModuleForTest(params: {
     getRuntimeConfig: () =>
       params.getRuntimeConfig?.() ??
       createSubagentSpawnTestConfig(params.workspaceDir ?? os.tmpdir()),
-    loadPreparedModelCatalog: (...args: unknown[]) =>
-      params.loadPreparedModelCatalogMock?.(...args) ?? [],
-    loadSessionEntry: (scope: { storePath?: string; sessionKey: string }) =>
-      ((params.loadSessionStoreMock?.(scope.storePath) ?? {}) as SessionStore)[scope.sessionKey],
     loadSessionStore: params.loadSessionStoreMock ?? (() => ({})),
     ensureContextEnginesInitialized:
       params.ensureContextEnginesInitializedMock ?? (() => undefined),
@@ -312,29 +272,9 @@ export async function loadSubagentSpawnModuleForTest(params: {
         await mutator(store);
         return store;
       }),
-    // Real scope resolver: spawn's admin-tier pinning depends on params-aware
-    // sessions.patch policy, so a stub here would hide policy regressions.
-    resolveLeastPrivilegeOperatorScopesForMethod,
-    upsertSessionEntry: async (
-      scope: { storePath?: string; sessionKey: string },
-      patch: Record<string, unknown>,
-    ) => {
-      const updateSessionStore =
-        params.updateSessionStoreMock ??
-        (async (_storePath: string, mutator: SessionStoreMutator) => {
-          const store: SessionStore = {};
-          await mutator(store);
-          return store;
-        });
-      let updated: Record<string, unknown> | undefined;
-      const storePath =
-        scope.storePath ?? params.sessionStorePath ?? "/tmp/subagent-spawn-model-session.json";
-      await updateSessionStore(storePath, (store: SessionStore) => {
-        updated = Object.assign({}, store[scope.sessionKey], patch);
-        store[scope.sessionKey] = updated;
-      });
-      return updated ?? null;
-    },
+    isAdminOnlyMethod: (method: string) =>
+      method === "sessions.patch" || method === "sessions.delete",
+    pruneLegacyStoreKeys: (...args: unknown[]) => params.pruneLegacyStoreKeysMock?.(...args),
     getSessionBindingService:
       params.getSessionBindingService ??
       (() => ({
@@ -388,15 +328,10 @@ export async function loadSubagentSpawnModuleForTest(params: {
   }));
 
   vi.doMock("./subagent-registry.js", () => ({
-    completeCollectorLaunchCleanup: params.completeCollectorLaunchCleanupMock ?? vi.fn(),
     countActiveRunsForSession: params.countActiveRunsForSession ?? (() => 0),
-    listSwarmRunsForGroup: params.listSwarmRunsForGroup ?? vi.fn(() => []),
     registerSubagentRun:
       params.registerSubagentRunMock ?? vi.fn((_record: Record<string, unknown>) => undefined),
     resetSubagentRegistryForTests,
-    settleFailedQueuedSubagentLaunch:
-      params.settleFailedQueuedSubagentLaunchMock ?? vi.fn(() => true),
-    startQueuedSubagentRun: params.startQueuedSubagentRunMock ?? vi.fn(() => true),
   }));
 
   const subagentSpawnModule = await import("./subagent-spawn.js");

@@ -42,10 +42,18 @@ function readNumberField(record: Record<string, unknown> | undefined, key: strin
   return typeof value === "number" ? value : undefined;
 }
 
+export {
+  resolvePayloadMediaUrls,
+  sendPayloadMediaSequence,
+  sendPayloadMediaSequenceAndFinalize,
+  sendPayloadMediaSequenceOrFallback,
+  sendTextMediaPayload,
+} from "openclaw/plugin-sdk/reply-payload";
+
 /**
  * Resolves an account-scoped channel media byte limit.
  */
-function resolveScopedChannelMediaMaxBytes(params: {
+export function resolveScopedChannelMediaMaxBytes(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
   resolveChannelLimitMb: (params: { cfg: OpenClawConfig; accountId: string }) => number | undefined;

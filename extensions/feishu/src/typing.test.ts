@@ -1,10 +1,6 @@
 // Feishu tests cover typing plugin behavior.
 import { describe, expect, it } from "vitest";
-import {
-  FeishuBackoffError,
-  getBackoffCodeFromResponse,
-  isFeishuBackoffError,
-} from "./typing-backoff.js";
+import { isFeishuBackoffError, getBackoffCodeFromResponse, FeishuBackoffError } from "./typing.js";
 
 describe("isFeishuBackoffError", () => {
   it("returns true for HTTP 429 (AxiosError shape)", () => {

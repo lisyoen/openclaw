@@ -1,7 +1,7 @@
 /**
  * Tool loop-detection config resolver.
  * Overlays per-agent loop detection settings on global tool defaults while
- * preserving the per-agent enabled override.
+ * preserving nested detector and post-compaction guard fields.
  */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
@@ -25,5 +25,16 @@ export function resolveToolLoopDetectionConfig(params: {
     return agent;
   }
 
-  return { enabled: agent.enabled ?? global.enabled };
+  return {
+    ...global,
+    ...agent,
+    detectors: {
+      ...global.detectors,
+      ...agent.detectors,
+    },
+    postCompactionGuard: {
+      ...global.postCompactionGuard,
+      ...agent.postCompactionGuard,
+    },
+  };
 }

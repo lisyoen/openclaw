@@ -10,10 +10,10 @@ import { isWSL } from "../../infra/wsl.js";
 import { defaultRuntime } from "../../runtime.js";
 
 /** Gateway service action emitted by lifecycle commands. */
-type DaemonAction = "install" | "uninstall" | "start" | "stop" | "restart";
+export type DaemonAction = "install" | "uninstall" | "start" | "stop" | "restart";
 
 /** Stable hint category for machine-readable daemon command output. */
-type DaemonHintKind =
+export type DaemonHintKind =
   | "install"
   | "container-restart"
   | "container-foreground"
@@ -23,13 +23,13 @@ type DaemonHintKind =
   | "generic";
 
 /** Classified daemon recovery hint item. */
-type DaemonHintItem = {
+export type DaemonHintItem = {
   kind: DaemonHintKind;
   text: string;
 };
 
 /** Machine-readable response shape for service lifecycle commands. */
-type DaemonActionResponse = {
+export type DaemonActionResponse = {
   ok: boolean;
   action: DaemonAction;
   result?: string;
@@ -80,7 +80,7 @@ function classifyDaemonHintText(text: string): DaemonHintKind {
 }
 
 /** Classify plain-text hints for JSON daemon responses. */
-function buildDaemonHintItems(hints: string[] | undefined): DaemonHintItem[] | undefined {
+export function buildDaemonHintItems(hints: string[] | undefined): DaemonHintItem[] | undefined {
   if (!hints?.length) {
     return undefined;
   }
@@ -95,70 +95,6 @@ export function buildDaemonServiceSnapshot(service: GatewayService, loaded: bool
     loadedText: service.loadedText,
     notLoadedText: service.notLoadedText,
   };
-}
-
-type DaemonEmit = (payload: Omit<DaemonActionResponse, "action">) => void;
-
-/** Emit a lifecycle result and mirror its message to text output. */
-function emitDaemonActionMessage(params: {
-  json: boolean;
-  emit: DaemonEmit;
-  payload: Omit<DaemonActionResponse, "action">;
-}): void {
-  params.emit(params.payload);
-  if (!params.json && params.payload.message) {
-    defaultRuntime.log(params.payload.message);
-  }
-}
-
-/** Emit the no-op success returned when a service is already running. */
-export function emitDaemonAlreadyRunning(params: {
-  serviceNoun: string;
-  service: GatewayService;
-  pid?: number;
-  json: boolean;
-  warnings: string[];
-  emit: DaemonEmit;
-}): void {
-  const message =
-    params.pid === undefined
-      ? `${params.serviceNoun} service already running.`
-      : `${params.serviceNoun} service already running (pid ${params.pid}).`;
-  emitDaemonActionMessage({
-    json: params.json,
-    emit: params.emit,
-    payload: {
-      ok: true,
-      result: "already-running",
-      message,
-      service: buildDaemonServiceSnapshot(params.service, true),
-      warnings: params.warnings.length ? params.warnings : undefined,
-    },
-  });
-}
-
-/** Emit a service-manager restart that has been accepted but not completed. */
-export function emitDaemonScheduledRestart(params: {
-  json: boolean;
-  emit: DaemonEmit;
-  result: string;
-  message: string;
-  service: GatewayService;
-  loaded: boolean;
-  warnings: string[];
-}): true {
-  emitDaemonActionMessage({
-    json: params.json,
-    emit: params.emit,
-    payload: {
-      ok: true,
-      result: params.result,
-      message: params.message,
-      service: buildDaemonServiceSnapshot(params.service, params.loaded),
-      warnings: params.warnings.length ? params.warnings : undefined,
-    },
-  });
-  return true;
 }
 
 /** Writable sink used when JSON output should suppress service command stdout. */

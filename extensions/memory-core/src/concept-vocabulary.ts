@@ -209,6 +209,7 @@ const LANGUAGE_STOP_WORDS = {
     "할",
     "해",
     "했다",
+    "했다",
   ],
   pathNoise: [
     "cjs",
@@ -295,7 +296,7 @@ function containsLetterOrNumber(value: string): boolean {
   return LETTER_OR_NUMBER_RE.test(value);
 }
 
-function classifyConceptTagScript(tag: string): ConceptTagScriptFamily {
+export function classifyConceptTagScript(tag: string): ConceptTagScriptFamily {
   const normalized = tag.normalize("NFKC");
   const hasLatin = LATIN_RE.test(normalized);
   const hasCjk =
@@ -330,7 +331,7 @@ function isKanaOnlyToken(value: string): boolean {
   );
 }
 
-function normalizeConceptToken(rawToken: string, fromGlossary = false): string | null {
+function normalizeConceptToken(rawToken: string): string | null {
   const normalized = normalizeLowercaseStringOrEmpty(
     rawToken
       .normalize("NFKC")
@@ -348,9 +349,7 @@ function normalizeConceptToken(rawToken: string, fromGlossary = false): string |
     return null;
   }
   const script = classifyConceptTagScript(normalized);
-  // Glossary entries are an explicit allowlist of short technical terms (e.g. "kv", "s3"); they
-  // bypass the per-script minimum length that would otherwise discard them.
-  if (!fromGlossary && normalized.length < minimumTokenLengthForScript(script)) {
+  if (normalized.length < minimumTokenLengthForScript(script)) {
     return null;
   }
   if (isKanaOnlyToken(normalized) && normalized.length < 3) {
@@ -362,43 +361,14 @@ function normalizeConceptToken(rawToken: string, fromGlossary = false): string |
   return normalized;
 }
 
-// Only entries shorter than their script's minimum token length rely on the glossary bypass, and
-// only those need whole-word matching so they don't fire inside longer words ("kv" in "mkv"). Longer
-// entries keep substring containment (the shipped behavior, e.g. "backup" tagging inside "backups").
-// Precomputed so derive() does not reclassify on every call.
-const GLOSSARY_ENTRIES = PROTECTED_GLOSSARY.map((entry) => ({
-  entry,
-  wholeWord: entry.length < minimumTokenLengthForScript(classifyConceptTagScript(entry)),
-}));
-
-function isAlphanumericAt(source: string, index: number): boolean {
-  const ch = source[index];
-  return ch !== undefined && LETTER_OR_NUMBER_RE.test(ch);
-}
-
-// True when `entry` occurs as a delimiter-bounded token, not inside a longer word. Keeps short
-// glossary entries like "kv"/"s3" from firing inside "mkv"/"css3" once they bypass the length gate.
-function includesStandaloneTerm(source: string, entry: string): boolean {
-  let from = source.indexOf(entry);
-  while (from !== -1) {
-    if (!isAlphanumericAt(source, from - 1) && !isAlphanumericAt(source, from + entry.length)) {
-      return true;
-    }
-    from = source.indexOf(entry, from + 1);
-  }
-  return false;
-}
-
 function collectGlossaryMatches(source: string): string[] {
   const normalizedSource = normalizeLowercaseStringOrEmpty(source.normalize("NFKC"));
   const matches: string[] = [];
-  for (const { entry, wholeWord } of GLOSSARY_ENTRIES) {
-    const present = wholeWord
-      ? includesStandaloneTerm(normalizedSource, entry)
-      : normalizedSource.includes(entry);
-    if (present) {
-      matches.push(entry);
+  for (const entry of PROTECTED_GLOSSARY) {
+    if (!normalizedSource.includes(entry)) {
+      continue;
     }
+    matches.push(entry);
   }
   return matches;
 }
@@ -416,13 +386,8 @@ function collectSegmentTokens(source: string): string[] {
   return source.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 }
 
-function pushNormalizedTag(
-  tags: string[],
-  rawToken: string,
-  limit: number,
-  fromGlossary = false,
-): void {
-  const normalized = normalizeConceptToken(rawToken, fromGlossary);
+function pushNormalizedTag(tags: string[], rawToken: string, limit: number): void {
+  const normalized = normalizeConceptToken(rawToken);
   if (!normalized || tags.includes(normalized)) {
     return;
   }
@@ -446,17 +411,14 @@ export function deriveConceptTags(params: {
   }
 
   const tags: string[] = [];
-  const tokenSources: Array<{ tokens: string[]; fromGlossary: boolean }> = [
-    { tokens: collectGlossaryMatches(source), fromGlossary: true },
-    { tokens: collectCompoundTokens(source), fromGlossary: false },
-    { tokens: collectSegmentTokens(source), fromGlossary: false },
-  ];
-  for (const { tokens, fromGlossary } of tokenSources) {
-    for (const rawToken of tokens) {
-      pushNormalizedTag(tags, rawToken, limit, fromGlossary);
-      if (tags.length >= limit) {
-        return tags;
-      }
+  for (const rawToken of [
+    ...collectGlossaryMatches(source),
+    ...collectCompoundTokens(source),
+    ...collectSegmentTokens(source),
+  ]) {
+    pushNormalizedTag(tags, rawToken, limit);
+    if (tags.length >= limit) {
+      break;
     }
   }
   return tags;

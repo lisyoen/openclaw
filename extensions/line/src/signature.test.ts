@@ -25,7 +25,11 @@ describe("validateLineSignature", () => {
     const spy = vi.spyOn(crypto, "timingSafeEqual");
 
     expect(validateLineSignature(body, "short", secret)).toBe(false);
-    expect(validateLineSignature(body, "x".repeat(sign(body, secret).length), secret)).toBe(false);
-    expect(spy).not.toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    const [left, right] = spy.mock.calls[0] ?? [];
+    expect(left).toBeInstanceOf(Buffer);
+    expect(right).toBeInstanceOf(Buffer);
+    expect(left?.byteLength).toBe(right?.byteLength);
   });
 });

@@ -1,7 +1,6 @@
 // Xai plugin module implements web search shared behavior.
 import { readProviderJsonObjectResponse } from "openclaw/plugin-sdk/provider-http";
 import { postTrustedWebToolsJson, wrapWebContent } from "openclaw/plugin-sdk/provider-web-search";
-import { XAI_DEFAULT_MODEL_ID } from "../model-definitions.js";
 import { normalizeXaiModelId } from "../model-id.js";
 import {
   buildXaiResponsesToolBody,
@@ -13,7 +12,7 @@ import type { XaiWebSearchResponse } from "./web-search-response.types.js";
 export { extractXaiWebSearchContent } from "./responses-tool-shared.js";
 export type { XaiWebSearchResponse } from "./web-search-response.types.js";
 
-const XAI_DEFAULT_WEB_SEARCH_MODEL = XAI_DEFAULT_MODEL_ID;
+const XAI_DEFAULT_WEB_SEARCH_MODEL = "grok-4-1-fast";
 
 type XaiWebSearchConfig = Record<string, unknown> & {
   baseUrl?: unknown;
@@ -81,7 +80,7 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-function wrapXaiWebSearchError(error: unknown, timeoutSeconds: number): never {
+export function wrapXaiWebSearchError(error: unknown, timeoutSeconds: number): never {
   if (isAbortError(error)) {
     throw new Error(
       `xAI web search timed out after ${timeoutSeconds}s. Increase tools.web.search.timeoutSeconds if queries are complex.`,
@@ -108,7 +107,6 @@ export async function requestXaiWebSearch(params: {
         model: params.model,
         inputText: params.query,
         tools: [{ type: "web_search" }],
-        reasoningEffort: params.model === XAI_DEFAULT_WEB_SEARCH_MODEL ? "low" : undefined,
       }),
       errorLabel: "xAI",
     },

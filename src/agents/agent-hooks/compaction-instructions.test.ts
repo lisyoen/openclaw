@@ -1,11 +1,10 @@
 /** Tests compaction instruction defaults, precedence, and split-turn composition. */
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_COMPACTION_INSTRUCTIONS,
   resolveCompactionInstructions,
   composeSplitTurnInstructions,
 } from "./compaction-instructions.js";
-
-const DEFAULT_COMPACTION_INSTRUCTIONS = resolveCompactionInstructions(undefined, undefined);
 
 describe("DEFAULT_COMPACTION_INSTRUCTIONS", () => {
   it("is a non-empty string", () => {

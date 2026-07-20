@@ -18,7 +18,13 @@ import {
   resetSkillsRefreshStateForTest,
   setSkillsChangeListenerErrorHandler,
 } from "./refresh-state.js";
-export { registerSkillsChangeListener } from "./refresh-state.js";
+export {
+  bumpSkillsSnapshotVersion,
+  getSkillsSnapshotVersion,
+  registerSkillsChangeListener,
+  shouldRefreshSnapshotForVersion,
+  type SkillsChangeEvent,
+} from "./refresh-state.js";
 
 type SkillsPathWatchState = {
   watcher: FSWatcher;
@@ -74,7 +80,7 @@ setSkillsChangeListenerErrorHandler((err) => {
   log.warn(`skills change listener failed: ${String(err)}`);
 });
 
-const DEFAULT_SKILLS_WATCH_IGNORED: RegExp[] = [
+export const DEFAULT_SKILLS_WATCH_IGNORED: RegExp[] = [
   /(^|[\\/])\.git([\\/]|$)/,
   /(^|[\\/])node_modules([\\/]|$)/,
   /(^|[\\/])dist([\\/]|$)/,
@@ -374,7 +380,7 @@ function isPathInsideAnyRoot(roots: readonly string[], child: string): boolean {
   return roots.some((root) => isPathInside(root, child));
 }
 
-function shouldIgnoreSkillsWatchPath(
+export function shouldIgnoreSkillsWatchPath(
   watchPath: string,
   stats?: { isDirectory?: () => boolean; isSymbolicLink?: () => boolean },
   options: { usePolling?: boolean } = {},
@@ -554,7 +560,11 @@ function createSkillsPathWatcher(target: WatchTarget, debounceMs: number): Skill
       .then(() => schedule(changedPath));
   };
 
-  watcher.on("all", (_event, changedPath) => schedule(changedPath));
+  watcher.on("addDir", (p) => schedule(p));
+  watcher.on("add", (p) => schedule(p));
+  watcher.on("change", (p) => schedule(p));
+  watcher.on("unlink", (p) => schedule(p));
+  watcher.on("unlinkDir", (p) => schedule(p));
   watcher.on("raw", (_eventName, rawPath, details) => {
     const rawPathText = rawPathToString(rawPath);
     if (!rawPathText) {
@@ -712,7 +722,7 @@ export function ensureSkillsWatcher(params: { workspaceDir: string; config?: Ope
   evictIdleWorkspaceWatchStates(now);
 }
 
-async function resetSkillsRefreshForTest(): Promise<void> {
+export async function resetSkillsRefreshForTest(): Promise<void> {
   resetSkillsRefreshStateForTest();
 
   const active = Array.from(pathWatchers.values());
@@ -732,10 +742,4 @@ async function resetSkillsRefreshForTest(): Promise<void> {
       }
     }),
   );
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.skillsRefreshTestApi")] = {
-    resetSkillsRefreshForTest,
-  };
 }

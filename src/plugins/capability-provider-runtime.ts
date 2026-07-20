@@ -17,13 +17,13 @@ import {
   hasManifestContractValue,
   isManifestPluginAvailableForControlPlane,
   loadManifestContractSnapshot,
+  listAvailableManifestContractValues,
 } from "./manifest-contract-eligibility.js";
 import {
   resolveConfigScopedRuntimeCacheValue,
   type ConfigScopedRuntimeCache,
 } from "./plugin-cache-primitives.js";
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
-import { normalizeCapabilityProviderId } from "./provider-registry-shared.js";
 import type { PluginRegistry } from "./registry-types.js";
 
 type CapabilityProviderRegistryKey =
@@ -96,6 +96,10 @@ function shouldSkipCapabilityResolution(params: {
   );
 }
 
+function uniqueSorted(values: Iterable<string>): string[] {
+  return sortUniqueStrings(values);
+}
+
 /** Loads the manifest snapshot used to resolve capability-provider ownership. */
 export function loadCapabilityManifestSnapshot(params: {
   cfg?: OpenClawConfig;
@@ -123,7 +127,7 @@ function resolveCapabilityPluginIds(params: {
     }),
   );
   return {
-    runtimePluginIds: sortUniqueStrings(
+    runtimePluginIds: uniqueSorted(
       contractPlugins
         .filter((plugin) =>
           isManifestPluginAvailableForControlPlane({
@@ -134,7 +138,7 @@ function resolveCapabilityPluginIds(params: {
         )
         .map((plugin) => plugin.id),
     ),
-    bundledCompatPluginIds: sortUniqueStrings(
+    bundledCompatPluginIds: uniqueSorted(
       contractPlugins.filter((plugin) => plugin.origin === "bundled").map((plugin) => plugin.id),
     ),
   };
@@ -147,6 +151,33 @@ function resolveBundledCapabilityCompatPluginIds(params: {
   providerId?: string;
 }): string[] {
   return resolveCapabilityPluginIds(params).bundledCompatPluginIds;
+}
+
+export function resolveManifestCapabilityProviderIds(params: {
+  key: CapabilityProviderRegistryKey;
+  cfg?: OpenClawConfig;
+  workspaceDir?: string;
+}): string[] {
+  const contractKey = CAPABILITY_CONTRACT_KEY[params.key];
+  return listAvailableManifestContractValues({
+    snapshot: loadCapabilityManifestSnapshot(params),
+    contract: contractKey,
+    config: params.cfg,
+  });
+}
+
+export function resolveBundledCapabilityProviderIds(params: {
+  key: CapabilityProviderRegistryKey;
+  cfg?: OpenClawConfig;
+  workspaceDir?: string;
+}): string[] {
+  const contractKey = CAPABILITY_CONTRACT_KEY[params.key];
+  const snapshot = loadCapabilityManifestSnapshot(params);
+  return uniqueSorted(
+    snapshot.plugins.flatMap((plugin) =>
+      plugin.origin === "bundled" ? (plugin.contracts?.[contractKey] ?? []) : [],
+    ),
+  );
 }
 
 function resolveCapabilityProviderConfig(params: {
@@ -192,30 +223,11 @@ function findProviderById<K extends CapabilityProviderRegistryKey>(
   entries: PluginRegistry[K],
   providerId: string,
 ): CapabilityProviderForKey<K> | undefined {
-  const normalizedProviderId = normalizeCapabilityProviderId(providerId);
-  if (!normalizedProviderId) {
-    return undefined;
-  }
   const providerEntries = entries as unknown as Array<{
-    provider: CapabilityProviderForKey<K> & { id?: unknown; aliases?: unknown };
+    provider: CapabilityProviderForKey<K> & { id?: unknown };
   }>;
   for (const entry of providerEntries) {
-    if (
-      typeof entry.provider.id === "string" &&
-      normalizeCapabilityProviderId(entry.provider.id) === normalizedProviderId
-    ) {
-      return entry.provider;
-    }
-  }
-  for (const entry of providerEntries) {
-    const aliases = Array.isArray(entry.provider.aliases) ? entry.provider.aliases : [];
-    if (
-      aliases.some(
-        (alias) =>
-          typeof alias === "string" &&
-          normalizeCapabilityProviderId(alias) === normalizedProviderId,
-      )
-    ) {
+    if (entry.provider.id === providerId) {
       return entry.provider;
     }
   }
@@ -452,8 +464,8 @@ function resolveRequestedCapabilityPluginIds(params: {
   }
   return runtimePluginIds.size > 0
     ? {
-        runtimePluginIds: sortUniqueStrings(runtimePluginIds),
-        bundledCompatPluginIds: sortUniqueStrings(bundledCompatPluginIds),
+        runtimePluginIds: uniqueSorted(runtimePluginIds),
+        bundledCompatPluginIds: uniqueSorted(bundledCompatPluginIds),
       }
     : undefined;
 }
@@ -515,19 +527,13 @@ export function resolvePluginCapabilityProvider<K extends CapabilityProviderRegi
     return activeProvider;
   }
 
-  let pluginIds = resolveCapabilityPluginIds({
+  const pluginIds = resolveCapabilityPluginIds({
     key: params.key,
     cfg: params.cfg,
     providerId: params.providerId,
   });
   if (pluginIds.runtimePluginIds.length === 0) {
-    // Manifest contracts index canonical provider ids, while runtime providers
-    // may expose aliases. Fall back to the capability owners so a configured
-    // alias can still resolve when its provider is absent from the active registry.
-    pluginIds = resolveCapabilityPluginIds({ key: params.key, cfg: params.cfg });
-    if (pluginIds.runtimePluginIds.length === 0) {
-      return undefined;
-    }
+    return undefined;
   }
 
   const compatConfig = resolveCapabilityProviderConfig({

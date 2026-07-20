@@ -3,7 +3,6 @@ import {
   createAllowFromSection,
   createStandardChannelSetupStatus,
   DEFAULT_ACCOUNT_ID,
-  defineTokenCredential,
   hasConfiguredSecretInput,
   patchChannelConfigForAccount,
   setSetupChannelEnabled,
@@ -51,10 +50,8 @@ export const telegramSetupWizard: ChannelSetupWizard = {
     credentialValues,
   }),
   credentials: [
-    defineTokenCredential({
+    {
       inputKey: "token",
-      configKey: "botToken",
-      configuredFields: ["botToken", "tokenFile"],
       providerHint: channel,
       credentialLabel: t("wizard.telegram.botToken"),
       preferredEnvVar: "TELEGRAM_BOT_TOKEN",
@@ -64,16 +61,22 @@ export const telegramSetupWizard: ChannelSetupWizard = {
       keepPrompt: t("wizard.telegram.tokenKeepPrompt"),
       inputPrompt: t("wizard.telegram.tokenInputPrompt"),
       allowEnv: ({ accountId }) => accountId === DEFAULT_ACCOUNT_ID,
-      resolveAccount: ({ cfg, accountId }) => resolveTelegramAccount({ cfg, accountId }),
-      hasConfiguredValue: (account) =>
-        hasConfiguredSecretInput(account.config.botToken) ||
-        Boolean(account.config.tokenFile?.trim()),
-      resolvedValue: (account) => normalizeOptionalString(account.token),
-      envValue: ({ accountId }) =>
-        accountId === DEFAULT_ACCOUNT_ID
-          ? normalizeOptionalString(process.env.TELEGRAM_BOT_TOKEN)
-          : undefined,
-    }),
+      inspect: ({ cfg, accountId }) => {
+        const resolved = resolveTelegramAccount({ cfg, accountId });
+        const hasConfiguredBotToken = hasConfiguredSecretInput(resolved.config.botToken);
+        const hasConfiguredValue =
+          hasConfiguredBotToken || Boolean(resolved.config.tokenFile?.trim());
+        return {
+          accountConfigured: Boolean(resolved.token) || hasConfiguredValue,
+          hasConfiguredValue,
+          resolvedValue: normalizeOptionalString(resolved.token),
+          envValue:
+            accountId === DEFAULT_ACCOUNT_ID
+              ? normalizeOptionalString(process.env.TELEGRAM_BOT_TOKEN)
+              : undefined,
+        };
+      },
+    },
   ],
   allowFrom: createAllowFromSection({
     helpTitle: t("wizard.telegram.userIdTitle"),

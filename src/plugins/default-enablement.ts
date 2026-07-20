@@ -1,5 +1,5 @@
 /** Manifest fields that control default plugin enablement. */
-type PluginDefaultEnablement = {
+export type PluginDefaultEnablement = {
   enabledByDefault?: boolean;
   enabledByDefaultOnPlatforms?: readonly string[];
 };

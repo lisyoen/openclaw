@@ -11,7 +11,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import { readRegularFileSync } from "openclaw/plugin-sdk/security-runtime";
 import { formatErrorMessage } from "./format.js";
 import { debugLog, debugError, debugWarn } from "./log.js";
@@ -35,7 +34,7 @@ function loadSilkWasm(): Promise<SilkWasm | null> {
 }
 
 /** Wrap raw PCM s16le data into a standard WAV file. */
-function pcmToWav(
+export function pcmToWav(
   pcmData: Uint8Array,
   sampleRate: number,
   channels = 1,
@@ -70,7 +69,7 @@ function pcmToWav(
 }
 
 /** Strip the AMR header that may be present in QQ voice payloads. */
-function stripAmrHeader(buf: Buffer): Buffer {
+export function stripAmrHeader(buf: Buffer): Buffer {
   const AMR_HEADER = Buffer.from("#!AMR\n");
   if (buf.length > 6 && buf.subarray(0, 6).equals(AMR_HEADER)) {
     return buf.subarray(6);
@@ -91,13 +90,19 @@ export async function convertSilkToWav(
   }
 
   const strippedBuf = stripAmrHeader(fileBuf);
+  const rawData = new Uint8Array(
+    strippedBuf.buffer,
+    strippedBuf.byteOffset,
+    strippedBuf.byteLength,
+  );
+
   const silk = await loadSilkWasm();
-  if (!silk || !silk.isSilk(strippedBuf)) {
+  if (!silk || !silk.isSilk(rawData)) {
     return null;
   }
 
   const sampleRate = 24000;
-  const result = await silk.decode(strippedBuf, sampleRate);
+  const result = await silk.decode(rawData, sampleRate);
   const wavBuffer = pcmToWav(result.data, sampleRate);
 
   const dir = outputDir || path.dirname(inputPath);
@@ -113,11 +118,7 @@ export async function convertSilkToWav(
 
 /** Check whether an attachment is a voice file (by MIME type or extension). */
 export function isVoiceAttachment(att: { content_type?: string; filename?: string }): boolean {
-  // MIME types are case-insensitive (RFC 2045) and relays may emit mixed-case
-  // values; the bare "voice" platform sentinel gets the same treatment.
-  // Compare lowercased like the extension check below.
-  const contentType = normalizeLowercase(att.content_type);
-  if (contentType === "voice" || contentType.startsWith("audio/")) {
+  if (att.content_type === "voice" || att.content_type?.startsWith("audio/")) {
     return true;
   }
   const ext = att.filename ? normalizeLowercase(path.extname(att.filename)) : "";
@@ -211,9 +212,25 @@ export async function audioFileToSilkBase64(
     return buf.toString("base64");
   }
 
-  const stripped = stripAmrHeader(buf);
-  const silk = await loadSilkWasm();
-  if (silk?.isSilk(buf) || silk?.isSilk(stripped)) {
+  if ([".slk", ".slac"].includes(ext)) {
+    const stripped = stripAmrHeader(buf);
+    const raw = new Uint8Array(stripped.buffer, stripped.byteOffset, stripped.byteLength);
+    const silk = await loadSilkWasm();
+    if (silk?.isSilk(raw)) {
+      debugLog(`[audio-convert] SILK file, direct use: ${filePath} (${buf.length} bytes)`);
+      return buf.toString("base64");
+    }
+  }
+
+  const rawCheck = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  const strippedCheck = stripAmrHeader(buf);
+  const strippedRaw = new Uint8Array(
+    strippedCheck.buffer,
+    strippedCheck.byteOffset,
+    strippedCheck.byteLength,
+  );
+  const silkForCheck = await loadSilkWasm();
+  if (silkForCheck?.isSilk(rawCheck) || silkForCheck?.isSilk(strippedRaw)) {
     debugLog(`[audio-convert] SILK detected by header: ${filePath} (${buf.length} bytes)`);
     return buf.toString("base64");
   }
@@ -223,14 +240,15 @@ export async function audioFileToSilkBase64(
   debugLog(`[audio-convert] fallback: trying WASM decoders for ${ext}`);
 
   if (ext === ".pcm") {
-    const silkBuffer = await pcmToSilk(buf, targetRate);
+    const pcmBuf = Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
+    const { silkBuffer } = await pcmToSilk(pcmBuf, targetRate);
     return silkBuffer.toString("base64");
   }
 
   if (ext === ".wav" || (buf.length >= 4 && buf.toString("ascii", 0, 4) === "RIFF")) {
     const wavInfo = parseWavFallback(buf);
     if (wavInfo) {
-      const silkBuffer = await pcmToSilk(wavInfo, targetRate);
+      const { silkBuffer } = await pcmToSilk(wavInfo, targetRate);
       return silkBuffer.toString("base64");
     }
   }
@@ -238,7 +256,7 @@ export async function audioFileToSilkBase64(
   if (ext === ".mp3" || ext === ".mpeg") {
     const pcmBuf = await wasmDecodeMp3ToPCM(buf, targetRate);
     if (pcmBuf) {
-      const silkBuffer = await pcmToSilk(pcmBuf, targetRate);
+      const { silkBuffer } = await pcmToSilk(pcmBuf, targetRate);
       debugLog(`[audio-convert] WASM: MP3 → SILK done (${silkBuffer.length} bytes)`);
       return silkBuffer.toString("base64");
     }
@@ -333,13 +351,20 @@ export async function waitForFile(
 }
 
 /** Encode PCM s16le data into SILK format. */
-async function pcmToSilk(pcmBuffer: Buffer, sampleRate: number): Promise<Buffer> {
+async function pcmToSilk(
+  pcmBuffer: Buffer,
+  sampleRate: number,
+): Promise<{ silkBuffer: Buffer; duration: number }> {
   const silk = await loadSilkWasm();
   if (!silk) {
     throw new Error("silk-wasm is not available; cannot encode PCM to SILK");
   }
-  const result = await silk.encode(pcmBuffer, sampleRate);
-  return Buffer.from(result.data.buffer, result.data.byteOffset, result.data.byteLength);
+  const pcmData = new Uint8Array(pcmBuffer.buffer, pcmBuffer.byteOffset, pcmBuffer.byteLength);
+  const result = await silk.encode(pcmData, sampleRate);
+  return {
+    silkBuffer: Buffer.from(result.data.buffer, result.data.byteOffset, result.data.byteLength),
+    duration: result.duration,
+  };
 }
 
 /** Decode MP3 to PCM via mpg123-decoder WASM. */
@@ -366,14 +391,14 @@ async function wasmDecodeMp3ToPCM(buf: Buffer, targetRate: number): Promise<Buff
 
     let floatMono: Float32Array;
     if (decoded.channelData.length === 1) {
-      floatMono = expectDefined(decoded.channelData.at(0), "single decoded MP3 channel");
+      floatMono = decoded.channelData[0];
     } else {
       floatMono = new Float32Array(decoded.samplesDecoded);
       const channels = decoded.channelData.length;
       for (let i = 0; i < decoded.samplesDecoded; i++) {
         let sum = 0;
-        for (const channel of decoded.channelData) {
-          sum += expectDefined(channel.at(i), "decoded MP3 channel sample");
+        for (let ch = 0; ch < channels; ch++) {
+          sum += decoded.channelData[ch][i];
         }
         floatMono[i] = sum / channels;
       }
@@ -382,8 +407,7 @@ async function wasmDecodeMp3ToPCM(buf: Buffer, targetRate: number): Promise<Buff
     const s16 = new Uint8Array(floatMono.length * 2);
     const view = new DataView(s16.buffer);
     for (let i = 0; i < floatMono.length; i++) {
-      const sample = expectDefined(floatMono.at(i), "mono MP3 sample index");
-      const clamped = Math.max(-1, Math.min(1, sample));
+      const clamped = Math.max(-1, Math.min(1, floatMono[i]));
       const val = clamped < 0 ? clamped * 32768 : clamped * 32767;
       view.setInt16(i * 2, Math.round(val), true);
     }
@@ -419,7 +443,7 @@ async function wasmDecodeMp3ToPCM(buf: Buffer, targetRate: number): Promise<Buff
 }
 
 /** Parse a standard PCM WAV and extract mono 24 kHz PCM data. */
-function parseWavFallback(buf: Buffer): Buffer | null {
+export function parseWavFallback(buf: Buffer): Buffer | null {
   if (buf.length < 44) {
     return null;
   }

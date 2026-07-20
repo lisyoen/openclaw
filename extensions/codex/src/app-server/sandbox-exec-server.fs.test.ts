@@ -1,7 +1,9 @@
 // Codex tests cover sandbox exec server.fs plugin behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sandboxExecServerRegistry } from "./sandbox-exec-server-registry.js";
-import { ensureCodexSandboxExecServerEnvironment } from "./sandbox-exec-server.js";
+import {
+  closeCodexSandboxExecServersForTests,
+  ensureCodexSandboxExecServerEnvironment,
+} from "./sandbox-exec-server.js";
 import {
   codexFsSandboxContext,
   createClient,
@@ -15,7 +17,7 @@ import {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await sandboxExecServerRegistry.closeAll();
+  await closeCodexSandboxExecServersForTests();
 });
 
 describe("OpenClaw Codex sandbox exec-server filesystem", () => {
@@ -32,11 +34,11 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
     socket.send(JSON.stringify({ method: "initialized" }));
 
     await rpc(socket, "fs/writeFile", {
-      path: "file:///workspace/note.txt",
+      path: "/workspace/note.txt",
       dataBase64: Buffer.from("hello").toString("base64"),
     });
     await rpc(socket, "fs/writeFile", {
-      path: "file:///workspace/%65mpty.txt",
+      path: "/workspace/empty.txt",
       dataBase64: "",
     });
 
@@ -71,7 +73,7 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
 
     await expect(
       rpc(socket, "fs/writeFile", {
-        path: "file:///workspace/missing/note.txt",
+        path: "/workspace/missing/note.txt",
         dataBase64: Buffer.from("hello").toString("base64"),
       }),
     ).rejects.toThrow("parent directory not found");
@@ -94,7 +96,7 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
 
     await expect(
       rpc(socket, "fs/writeFile", {
-        path: "file:///workspace/read-only.txt",
+        path: "/workspace/read-only.txt",
         dataBase64: Buffer.from("blocked").toString("base64"),
         sandbox: codexFsSandboxContext({
           entries: [{ path: specialPath("root"), access: "read" }],
@@ -102,12 +104,12 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
       }),
     ).rejects.toThrow("Codex fs sandbox denied write access");
     await rpc(socket, "fs/writeFile", {
-      path: "file:///workspace/allowed.txt",
+      path: "/workspace/allowed.txt",
       dataBase64: Buffer.from("allowed").toString("base64"),
       sandbox: codexFsSandboxContext({
         entries: [
           { path: specialPath("root"), access: "read" },
-          { path: { type: "path", path: "file:///workspace" }, access: "write" },
+          { path: specialPath("project_roots"), access: "write" },
         ],
       }),
     });
@@ -143,14 +145,14 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
 
     await expect(
       rpc(socket, "fs/writeFile", {
-        path: "file:///workspace/.git/config",
+        path: "/workspace/.git/config",
         dataBase64: Buffer.from("blocked").toString("base64"),
         sandbox: workspacePolicy,
       }),
     ).rejects.toThrow("Codex fs sandbox denied write access");
     await expect(
       rpc(socket, "fs/remove", {
-        path: "file:///workspace",
+        path: "/workspace",
         recursive: true,
         force: true,
         sandbox: workspacePolicy,
@@ -185,13 +187,13 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
 
     await expect(
       rpc(socket, "fs/readFile", {
-        path: "file:///workspace/private/secret.txt",
+        path: "/workspace/private/secret.txt",
         sandbox: policy,
       }),
     ).rejects.toThrow("Codex fs sandbox denied read access");
     await expect(
       rpc(socket, "fs/readFile", {
-        path: "file:///workspace/key.pem",
+        path: "/workspace/key.pem",
         sandbox: codexFsSandboxContext({
           entries: [
             { path: specialPath("root"), access: "read" },
@@ -203,7 +205,7 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
     ).rejects.toThrow("Codex fs sandbox denied read access");
     await expect(
       rpc(socket, "fs/readFile", {
-        path: "file:///workspace/KEY.PEM",
+        path: "/workspace/KEY.PEM",
         sandbox: codexFsSandboxContext({
           entries: [
             { path: specialPath("root"), access: "read" },
@@ -214,13 +216,13 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
       }),
     ).rejects.toThrow("Codex fs sandbox denied read access");
     await rpc(socket, "fs/writeFile", {
-      path: "file:///workspace/private/nested/allowed.txt",
+      path: "/workspace/private/nested/allowed.txt",
       dataBase64: Buffer.from("ok").toString("base64"),
       sandbox: policy,
     });
     await expect(
       rpc(socket, "fs/remove", {
-        path: "file:///workspace/private",
+        path: "/workspace/private",
         recursive: true,
         force: true,
         sandbox: policy,
@@ -246,7 +248,7 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
     socket.send(JSON.stringify({ method: "initialized" }));
 
     await rpc(socket, "fs/writeFile", {
-      path: "file:///workspace/allowed.txt",
+      path: "/workspace/allowed.txt",
       dataBase64: Buffer.from("ok").toString("base64"),
       sandbox: codexFsSandboxContext({
         entries: [
@@ -279,7 +281,7 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
 
     await expect(
       rpc(socket, "fs/readFile", {
-        path: "file:///workspace/key.pem",
+        path: "/workspace/key.pem",
         sandbox: codexFsSandboxContext({
           entries: [
             { path: specialPath("root"), access: "read" },
@@ -315,7 +317,7 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
 
     await expect(
       rpc(socket, "fs/remove", {
-        path: "file:///workspace/src",
+        path: "/workspace/src",
         recursive: true,
         force: true,
         sandbox: policy,
@@ -367,8 +369,8 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
     socket.send(JSON.stringify({ method: "initialized" }));
 
     await rpc(socket, "fs/copy", {
-      sourcePath: "file:///workspace/source-dir",
-      destinationPath: "file:///workspace/destination-dir",
+      sourcePath: "/workspace/source-dir",
+      destinationPath: "/workspace/destination-dir",
       recursive: true,
     });
 
@@ -414,8 +416,8 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
 
     await expect(
       rpc(socket, "fs/copy", {
-        sourcePath: "file:///workspace/source-dir",
-        destinationPath: "file:///workspace/source-dir/backup",
+        sourcePath: "/workspace/source-dir",
+        destinationPath: "/workspace/source-dir/backup",
         recursive: true,
       }),
     ).rejects.toThrow("Cannot recursively copy a directory into itself");
@@ -435,9 +437,9 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
     await rpc(socket, "initialize", { clientName: "test" });
     socket.send(JSON.stringify({ method: "initialized" }));
 
-    await expect(
-      rpc(socket, "fs/getMetadata", { path: "file:///workspace/missing" }),
-    ).rejects.toThrow("file not found");
+    await expect(rpc(socket, "fs/getMetadata", { path: "/workspace/missing" })).rejects.toThrow(
+      "file not found",
+    );
     socket.close();
   });
 
@@ -460,9 +462,9 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
     await rpc(socket, "initialize", { clientName: "test" });
     socket.send(JSON.stringify({ method: "initialized" }));
 
-    await expect(
-      rpc(socket, "fs/readFile", { path: "file:///workspace/huge.bin" }),
-    ).rejects.toThrow("file is too large to read through Codex sandbox exec-server");
+    await expect(rpc(socket, "fs/readFile", { path: "/workspace/huge.bin" })).rejects.toThrow(
+      "file is too large to read through Codex sandbox exec-server",
+    );
 
     expect(readFile).not.toHaveBeenCalled();
     socket.close();
@@ -486,14 +488,14 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
 
     await expect(
       rpc(socket, "fs/createDirectory", {
-        path: "file:///workspace/missing/child",
+        path: "/workspace/missing/child",
         recursive: false,
       }),
     ).rejects.toThrow("parent directory not found");
     expect(mkdirp).not.toHaveBeenCalled();
 
     await rpc(socket, "fs/createDirectory", {
-      path: "file:///workspace/existing/child",
+      path: "/workspace/existing/child",
       recursive: false,
     });
     expect(mkdirp).toHaveBeenCalledWith({ filePath: "/workspace/existing/child" });
@@ -517,7 +519,7 @@ describe("OpenClaw Codex sandbox exec-server filesystem", () => {
 
     await expect(
       rpc(socket, "fs/writeFile", {
-        path: "file:///outside/note.txt",
+        path: "/outside/note.txt",
         dataBase64: Buffer.from("no").toString("base64"),
       }),
     ).rejects.toThrow("sandbox denied write outside workspace");

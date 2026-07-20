@@ -9,18 +9,10 @@ import {
 } from "openclaw/plugin-sdk/account-resolution";
 import { safeParseJsonWithSchema, safeParseWithSchema } from "openclaw/plugin-sdk/extension-shared";
 import { mergePairLoopGuardConfig } from "openclaw/plugin-sdk/pair-loop-guard-runtime";
-import { tryReadSecretFileSync } from "openclaw/plugin-sdk/secret-file-runtime";
 import { isSecretRef } from "openclaw/plugin-sdk/secret-input";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { resolveUserPath } from "openclaw/plugin-sdk/text-utility-runtime";
 import { z } from "zod";
-import { MAX_GOOGLE_CHAT_SERVICE_ACCOUNT_FILE_BYTES } from "./google-auth-limits.js";
 import type { GoogleChatAccountConfig } from "./types.config.js";
-
-type CredentialUnavailableDiagnostic = Extract<
-  ReturnType<typeof tryReadSecretFileSync>,
-  { status: "configured_unavailable" }
->["diagnostic"];
 
 type GoogleChatCredentialSource = "file" | "inline" | "env" | "none";
 
@@ -32,8 +24,6 @@ export type ResolvedGoogleChatAccount = {
   credentialSource: GoogleChatCredentialSource;
   credentials?: Record<string, unknown>;
   credentialsFile?: string;
-  tokenStatus?: "available" | "configured_unavailable" | "missing";
-  credentialDiagnostics?: CredentialUnavailableDiagnostic[];
 };
 
 export type GoogleChatConfigAccessorAccount = {
@@ -125,13 +115,11 @@ function resolveCredentialsFromConfig(params: {
   credentials?: Record<string, unknown>;
   credentialsFile?: string;
   source: GoogleChatCredentialSource;
-  status: "available" | "configured_unavailable" | "missing";
-  diagnostic?: CredentialUnavailableDiagnostic;
 } {
   const { account, accountId } = params;
   const inline = parseServiceAccount(account.serviceAccount);
   if (inline) {
-    return { credentials: inline, source: "inline", status: "available" };
+    return { credentials: inline, source: "inline" };
   }
 
   if (isSecretRef(account.serviceAccount)) {
@@ -148,58 +136,22 @@ function resolveCredentialsFromConfig(params: {
 
   const file = normalizeOptionalString(account.serviceAccountFile);
   if (file) {
-    const resolvedFile = resolveUserPath(file);
-    const result = tryReadSecretFileSync(
-      resolvedFile,
-      "Google Chat service account file",
-      {
-        maxBytes: MAX_GOOGLE_CHAT_SERVICE_ACCOUNT_FILE_BYTES,
-        rejectHardlinks: false,
-        rejectSymlink: false,
-      },
-      { configPath: `channels.googlechat.accounts.${accountId}.serviceAccountFile` },
-    );
-    return result.status === "available"
-      ? { credentialsFile: file, source: "file", status: "available" }
-      : {
-          credentialsFile: file,
-          source: "file",
-          status: "configured_unavailable",
-          diagnostic: result.diagnostic,
-        };
+    return { credentialsFile: file, source: "file" };
   }
 
   if (accountId === DEFAULT_ACCOUNT_ID) {
     const envJson = process.env[ENV_SERVICE_ACCOUNT];
     const envInline = parseServiceAccount(envJson);
     if (envInline) {
-      return { credentials: envInline, source: "env", status: "available" };
+      return { credentials: envInline, source: "env" };
     }
     const envFile = normalizeOptionalString(process.env[ENV_SERVICE_ACCOUNT_FILE]);
     if (envFile) {
-      const resolvedEnvFile = resolveUserPath(envFile);
-      const result = tryReadSecretFileSync(
-        resolvedEnvFile,
-        "Google Chat service account file",
-        {
-          maxBytes: MAX_GOOGLE_CHAT_SERVICE_ACCOUNT_FILE_BYTES,
-          rejectHardlinks: false,
-          rejectSymlink: false,
-        },
-        { configPath: `env.${ENV_SERVICE_ACCOUNT_FILE}` },
-      );
-      return result.status === "available"
-        ? { credentialsFile: envFile, source: "env", status: "available" }
-        : {
-            credentialsFile: envFile,
-            source: "env",
-            status: "configured_unavailable",
-            diagnostic: result.diagnostic,
-          };
+      return { credentialsFile: envFile, source: "env" };
     }
   }
 
-  return { source: "none", status: "missing" };
+  return { source: "none" };
 }
 
 export function resolveGoogleChatAccount(params: {
@@ -223,8 +175,6 @@ export function resolveGoogleChatAccount(params: {
     credentialSource: credentials.source,
     credentials: credentials.credentials,
     credentialsFile: credentials.credentialsFile,
-    tokenStatus: credentials.status,
-    ...(credentials.diagnostic ? { credentialDiagnostics: [credentials.diagnostic] } : {}),
   };
 }
 

@@ -1,4 +1,3 @@
-import { expectDefined } from "@openclaw/normalization-core";
 /** Command authorization helpers for owner and allowlist checks. */
 import {
   normalizeOptionalLowercaseString,
@@ -49,8 +48,11 @@ type ProviderAllowFromResolution = {
 };
 
 type OwnerAuthorizationState = {
-  commandOwnerCandidates: string[];
+  allowAll: boolean;
+  ownerAllowAll: boolean;
+  ownerCandidatesForCommands: string[];
   explicitOwners: string[];
+  ownerList: string[];
 };
 
 function resolveProviderFromContext(
@@ -95,8 +97,8 @@ function resolveProviderFromContext(
   const inferred = inferredProviders.candidates;
   if (inferred.length === 1) {
     return {
-      providerId: expectDefined(inferred[0], "inferred entry at 0").providerId,
-      hadResolutionError: expectDefined(inferred[0], "inferred entry at 0").hadResolutionError,
+      providerId: inferred[0].providerId,
+      hadResolutionError: inferred[0].hadResolutionError,
     };
   }
   return {
@@ -397,7 +399,7 @@ function resolveOwnerAuthorizationState(params: {
   const allowAll =
     !params.hadResolutionError &&
     (params.allowFromList.length === 0 || hasWildcardAllowFrom(params.allowFromList));
-  const channelCommandOwners = resolveOwnerCandidatesForCommands({
+  const ownerCandidatesForCommands = resolveOwnerCandidatesForCommands({
     plugin: params.plugin,
     cfg: params.cfg,
     accountId: params.accountId,
@@ -405,22 +407,26 @@ function resolveOwnerAuthorizationState(params: {
     allowAll,
     allowFromList: params.allowFromList,
   });
-  const explicitOwners = Array.from(new Set(stripWildcardAllowFrom(configOwnerAllowFromList)));
-  const contextCommandOwners = stripWildcardAllowFrom(contextOwnerAllowFromList);
-  // Channel and context lists can authorize commands within one transport, but only the global
-  // owner list grants owner-only command and action authority.
-  const commandOwnerCandidates = Array.from(
+  const ownerAllowAll = hasWildcardAllowFrom(configOwnerAllowFromList);
+  const explicitOwners = stripWildcardAllowFrom(configOwnerAllowFromList);
+  const explicitOverrides = stripWildcardAllowFrom(contextOwnerAllowFromList);
+  const ownerList = Array.from(
     new Set(
       explicitOwners.length > 0
         ? explicitOwners
-        : contextCommandOwners.length > 0
-          ? contextCommandOwners
-          : channelCommandOwners,
+        : ownerAllowAll
+          ? []
+          : explicitOverrides.length > 0
+            ? explicitOverrides
+            : ownerCandidatesForCommands,
     ),
   );
   return {
-    commandOwnerCandidates,
+    allowAll,
+    ownerAllowAll,
+    ownerCandidatesForCommands,
     explicitOwners,
+    ownerList,
   };
 }
 
@@ -652,13 +658,15 @@ export function resolveCommandAuthorization(params: {
     from,
     chatType: ctx.ChatType,
   });
-  const matchedSender = ownerState.explicitOwners.length
-    ? senderCandidates.find((candidate) => ownerState.explicitOwners.includes(candidate))
+  const matchedSender = ownerState.ownerList.length
+    ? senderCandidates.find((candidate) => ownerState.ownerList.includes(candidate))
     : undefined;
-  const matchedCommandOwner = ownerState.commandOwnerCandidates.length
-    ? senderCandidates.find((candidate) => ownerState.commandOwnerCandidates.includes(candidate))
+  const matchedCommandOwner = ownerState.ownerCandidatesForCommands.length
+    ? senderCandidates.find((candidate) =>
+        ownerState.ownerCandidatesForCommands.includes(candidate),
+      )
     : undefined;
-  const senderId = matchedSender ?? matchedCommandOwner ?? senderCandidates[0];
+  const senderId = matchedSender ?? senderCandidates[0];
 
   const enforceOwner = Boolean(plugin?.commands?.enforceOwnerForCommands);
   const senderIsOwnerByIdentity = Boolean(matchedSender);
@@ -666,14 +674,16 @@ export function resolveCommandAuthorization(params: {
     isInternalMessageChannel(ctx.Provider) &&
     Array.isArray(ctx.GatewayClientScopes) &&
     ctx.GatewayClientScopes.includes("operator.admin");
-  const ownerAllowlistConfigured = ownerState.explicitOwners.length > 0;
-  const senderIsOwner = senderIsOwnerByIdentity || senderIsOwnerByScope;
+  const ownerAllowlistConfigured = ownerState.ownerAllowAll || ownerState.explicitOwners.length > 0;
+  const senderIsOwner = senderIsOwnerByIdentity || senderIsOwnerByScope || ownerState.ownerAllowAll;
   const requireOwner = enforceOwner || ownerAllowlistConfigured;
   const isOwnerForCommands = !requireOwner
     ? true
-    : ownerAllowlistConfigured
-      ? senderIsOwner
-      : senderIsOwnerByScope || Boolean(matchedCommandOwner);
+    : ownerState.ownerAllowAll
+      ? true
+      : ownerAllowlistConfigured
+        ? senderIsOwner
+        : senderIsOwnerByScope || Boolean(matchedCommandOwner);
   const nativeCommandAuthorized =
     commandAuthorized && isNativeCommandTurn(resolveCommandTurnContext(ctx)) && !requireOwner;
   const isAuthorizedSender = resolveCommandSenderAuthorization({
@@ -689,7 +699,7 @@ export function resolveCommandAuthorization(params: {
 
   return {
     providerId,
-    ownerList: ownerState.explicitOwners,
+    ownerList: ownerState.ownerList,
     senderId: senderId || undefined,
     senderIsOwner,
     isAuthorizedSender,

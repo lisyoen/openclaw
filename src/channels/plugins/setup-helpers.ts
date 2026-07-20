@@ -1,4 +1,3 @@
-import { expectDefined } from "@openclaw/normalization-core";
 /**
  * Channel setup config mutation helpers.
  *
@@ -425,9 +424,7 @@ function moveSingleAccountKeysIntoAccount(params: {
 }): OpenClawConfig {
   const nextAccount: Record<string, unknown> = { ...params.baseAccount };
   for (const key of params.keysToMove) {
-    if (!(key in nextAccount)) {
-      nextAccount[key] = cloneIfObject(params.channel[key]);
-    }
+    nextAccount[key] = cloneIfObject(params.channel[key]);
   }
   const nextChannel: ChannelSectionRecord = { ...params.channel };
   for (const key of params.keysToMove) {
@@ -489,9 +486,7 @@ function resolveSingleAccountPromotionTarget(params: { channel: ChannelSectionBa
     );
   }
   const namedAccounts = Object.keys(accounts).filter(Boolean);
-  return namedAccounts.length === 1
-    ? expectDefined(namedAccounts[0], "named accounts entry at 0")
-    : DEFAULT_ACCOUNT_ID;
+  return namedAccounts.length === 1 ? namedAccounts[0] : DEFAULT_ACCOUNT_ID;
 }
 
 /**

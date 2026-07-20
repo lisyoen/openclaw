@@ -29,7 +29,6 @@ describe("embedded acpx plugin config", () => {
     expect(resolved.permissionMode).toBe("approve-reads");
     expect(resolved.nonInteractivePermissions).toBe("fail");
     expect(resolved.timeoutSeconds).toBe(120);
-    expect(resolved.probeAgent).toBeUndefined();
     expect(resolved.agents).toStrictEqual({});
   });
 
@@ -42,6 +41,17 @@ describe("embedded acpx plugin config", () => {
     });
 
     expect(resolved.timeoutSeconds).toBe(300);
+  });
+
+  it("keeps explicit probeAgent config", () => {
+    const resolved = resolveAcpxPluginConfig({
+      rawConfig: {
+        probeAgent: "claude",
+      },
+      workspaceDir: "/tmp/openclaw-acpx",
+    });
+
+    expect(resolved.probeAgent).toBe("claude");
   });
 
   it("accepts agent command overrides", () => {
@@ -117,7 +127,16 @@ describe("embedded acpx plugin config", () => {
     });
   });
 
-  it("carries an explicit probeAgent through to the resolved plugin config, trimmed", () => {
+  it("leaves probeAgent undefined by default so the runtime picks its built-in probe agent", () => {
+    const resolved = resolveAcpxPluginConfig({
+      rawConfig: undefined,
+      workspaceDir: "/tmp/openclaw-acpx",
+    });
+
+    expect(resolved.probeAgent).toBeUndefined();
+  });
+
+  it("carries an explicit probeAgent through to the resolved plugin config, trimmed and lowercased", () => {
     const resolved = resolveAcpxPluginConfig({
       rawConfig: {
         probeAgent: "  OpenCode  ",
@@ -125,7 +144,7 @@ describe("embedded acpx plugin config", () => {
       workspaceDir: "/tmp/openclaw-acpx",
     });
 
-    expect(resolved.probeAgent).toBe("OpenCode");
+    expect(resolved.probeAgent).toBe("opencode");
   });
 
   it("rejects an empty probeAgent string", () => {
@@ -225,16 +244,6 @@ describe("embedded acpx plugin config", () => {
         queueOwnerTtlSeconds: {
           type: "number",
           minimum: 0,
-        },
-        piSessionCatalog: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            enabled: {
-              type: "boolean",
-              default: true,
-            },
-          },
         },
         probeAgent: {
           type: "string",

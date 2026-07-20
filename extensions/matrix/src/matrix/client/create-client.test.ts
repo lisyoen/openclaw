@@ -34,6 +34,7 @@ describe("createMatrixClient", () => {
     storagePath: "/tmp/openclaw-matrix-create-client-test/storage.json",
     recoveryKeyPath: "/tmp/openclaw-matrix-create-client-test/recovery.key",
     idbSnapshotPath: "/tmp/openclaw-matrix-create-client-test/idb.snapshot",
+    metaPath: "/tmp/openclaw-matrix-create-client-test/storage-meta.json",
     accountKey: "default",
     tokenHash: "token-hash",
   };

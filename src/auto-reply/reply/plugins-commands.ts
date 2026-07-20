@@ -5,10 +5,10 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 
 /** Parsed `/plugins` command variants accepted by auto-reply command handling. */
-type PluginsCommand =
+export type PluginsCommand =
   | { action: "list" }
   | { action: "inspect"; name?: string }
-  | { action: "install"; force: boolean; spec: string }
+  | { action: "install"; spec: string }
   | { action: "enable"; name: string }
   | { action: "disable"; name: string }
   | { action: "error"; message: string };
@@ -43,18 +43,13 @@ export function parsePluginsCommand(raw: string): PluginsCommand | null {
   }
 
   if (action === "install" || action === "add") {
-    const force = rest.at(-1) === "--force";
-    const specParts = force ? rest.slice(0, -1) : rest;
-    const hasMisplacedForce = specParts.includes("--force");
-    const spec = specParts.join(" ").trim();
-    if (!spec || hasMisplacedForce) {
+    if (!name) {
       return {
         action: "error",
-        message:
-          "Usage: /plugins install <path|archive|npm-spec|npm-pack:path|git:repo|clawhub:pkg> [--force]",
+        message: "Usage: /plugins install <path|archive|npm-spec|git:repo|clawhub:pkg>",
       };
     }
-    return { action: "install", force, spec };
+    return { action: "install", spec: name };
   }
 
   if (action === "enable" || action === "disable") {

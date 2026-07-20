@@ -1,4 +1,3 @@
-export function resolveWatchLockPath(cwd: string, args?: string[]): string;
 export function runWatchMain(params?: {
   spawn?: (
     cmd: string,
@@ -31,16 +30,9 @@ export function runWatchMain(params?: {
     };
   }>;
   watchPaths?: string[];
-  pathClassifier?: {
-    refreshGeneratedPluginAssetPaths(): void;
-    isRestartRelevantRunNodePath(repoPath: unknown): boolean;
-  };
   process?: NodeJS.Process;
   cwd?: string;
   args?: string[];
   env?: NodeJS.ProcessEnv;
   now?: () => number;
-  lockDisabled?: boolean;
-  killProcessTree?: (pid: number, signal: NodeJS.Signals) => void;
-  signalProcess?: (pid: number, signal: NodeJS.Signals) => void;
 }): Promise<number>;

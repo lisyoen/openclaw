@@ -29,7 +29,7 @@ describe("gateway server boundary", () => {
       expect.stringContaining("gateway.server-impl-import"),
     );
 
-    await mod.resetPreparedModelCatalogForTest();
+    await mod.resetModelCatalogCacheForTest();
 
     expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining("gateway.server-impl-import"));
   });

@@ -9,7 +9,6 @@ import {
   MIGRATION_REASON_TARGET_EXISTS,
 } from "openclaw/plugin-sdk/migration";
 import type { MigrationItem } from "openclaw/plugin-sdk/plugin-entry";
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { exists, readText, sanitizeName } from "./helpers.js";
 import type { ClaudeSource } from "./source.js";
 import type { PlannedTargets } from "./targets.js";
@@ -154,7 +153,7 @@ function generatedCommandSkillContent(params: {
   return [
     "---",
     `name: ${params.skillName}`,
-    `description: ${JSON.stringify(truncateUtf16Safe(description, 180))}`,
+    `description: ${JSON.stringify(description.slice(0, 180))}`,
     "disable-model-invocation: true",
     "---",
     "",

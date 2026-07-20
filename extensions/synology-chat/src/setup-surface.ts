@@ -4,7 +4,6 @@ import {
   createSetupTranslator,
   createStandardChannelSetupStatus,
   DEFAULT_ACCOUNT_ID,
-  defineTokenCredential,
   formatDocsLink,
   mergeAllowFromEntries,
   normalizeAccountId,
@@ -214,9 +213,8 @@ export const synologyChatSetupWizard: ChannelSetupWizard = {
     lines: SYNOLOGY_SETUP_HELP_LINES,
   },
   credentials: [
-    defineTokenCredential({
+    {
       inputKey: "token",
-      configKey: "token",
       providerHint: channel,
       credentialLabel: "outgoing webhook token",
       preferredEnvVar: "SYNOLOGY_CHAT_TOKEN",
@@ -226,29 +224,35 @@ export const synologyChatSetupWizard: ChannelSetupWizard = {
       keepPrompt: t("wizard.synologyChat.tokenKeep"),
       inputPrompt: t("wizard.synologyChat.tokenInput"),
       allowEnv: ({ accountId }) => accountId === DEFAULT_ACCOUNT_ID,
-      resolveAccount: ({ cfg, accountId }) => ({
-        config: getRawAccountConfig(cfg, accountId),
-        resolved: resolveAccount(cfg, accountId),
-        configured: isSynologyChatConfigured(cfg, accountId),
-      }),
-      accountConfigured: (account) => account.configured,
-      hasConfiguredValue: (account) => Boolean(normalizeOptionalString(account.config.token)),
-      resolvedValue: (account) => normalizeOptionalString(account.resolved.token),
-      envValue: ({ accountId }) =>
-        accountId === DEFAULT_ACCOUNT_ID
-          ? normalizeOptionalString(process.env.SYNOLOGY_CHAT_TOKEN)
-          : undefined,
-      patchAccount: ({ cfg, accountId, patch, clearFields }) =>
+      inspect: ({ cfg, accountId }) => {
+        const account = resolveAccount(cfg, accountId);
+        const raw = getRawAccountConfig(cfg, accountId);
+        return {
+          accountConfigured: isSynologyChatConfigured(cfg, accountId),
+          hasConfiguredValue: Boolean(normalizeOptionalString(raw.token)),
+          resolvedValue: normalizeOptionalString(account.token),
+          envValue:
+            accountId === DEFAULT_ACCOUNT_ID
+              ? normalizeOptionalString(process.env.SYNOLOGY_CHAT_TOKEN)
+              : undefined,
+        };
+      },
+      applyUseEnv: async ({ cfg, accountId }) =>
         patchSynologyChatAccountConfig({
           cfg,
           accountId,
           enabled: true,
-          clearFields,
-          patch,
+          clearFields: ["token"],
+          patch: {},
         }),
-      useEnv: { clearFields: ["token"] },
-      set: { value: "resolved" },
-    }),
+      applySet: async ({ cfg, accountId, resolvedValue }) =>
+        patchSynologyChatAccountConfig({
+          cfg,
+          accountId,
+          enabled: true,
+          patch: { token: resolvedValue },
+        }),
+    },
   ],
   textInputs: [
     {

@@ -48,7 +48,7 @@ export function buildGoogleProvider(): ProviderPlugin {
         providerId: "google",
         methodId: "api-key",
         label: "Google Gemini API key",
-        hint: "Free API key from aistudio.google.com/apikey",
+        hint: "AI Studio / Gemini API key",
         optionKey: "geminiApiKey",
         flagName: "--gemini-api-key",
         envVar: "GEMINI_API_KEY",

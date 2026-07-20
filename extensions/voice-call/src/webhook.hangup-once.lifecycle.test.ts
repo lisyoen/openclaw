@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { VoiceCallConfigSchema, type VoiceCallConfig } from "./config.js";
 import { CallManager } from "./manager.js";
 import { createTestStorePath, FakeProvider } from "./manager.test-harness.js";
-import { setVoiceCallStateRuntime } from "./runtime-state.js";
+import { flushPendingCallRecordWritesForTest } from "./manager/store.js";
+import { clearVoiceCallStateRuntime, setVoiceCallStateRuntime } from "./runtime-state.js";
 import type { WebhookContext, WebhookParseOptions } from "./types.js";
 import { VoiceCallWebhookServer } from "./webhook.js";
 
@@ -24,11 +25,6 @@ function installStateRuntime(): void {
       openChannelIngressQueue: (() => {
         throw new Error(
           "openChannelIngressQueue is not used by voice-call webhook lifecycle tests",
-        );
-      }) as never,
-      openChannelIngressDrain: (() => {
-        throw new Error(
-          "openChannelIngressDrain is not used by voice-call webhook lifecycle tests",
         );
       }) as never,
     },
@@ -153,6 +149,7 @@ describe("Voice-call webhook hangup-once lifecycle", () => {
   });
 
   afterEach(() => {
+    clearVoiceCallStateRuntime();
     resetPluginStateStoreForTests();
   });
 
@@ -187,6 +184,7 @@ describe("Voice-call webhook hangup-once lifecycle", () => {
     } finally {
       await firstServer.stop();
     }
+    await flushPendingCallRecordWritesForTest();
     expect(firstProvider.hangupCalls).toHaveLength(1);
 
     const secondProvider = new RejectInboundReplayProvider("plivo");

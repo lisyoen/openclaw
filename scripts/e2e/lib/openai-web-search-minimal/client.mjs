@@ -1,7 +1,6 @@
 // Client script for minimal OpenAI web-search E2E scenarios.
 import { readdirSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { readTcpPortEnv } from "../env-limits.mjs";
 
 async function loadCallGateway() {
   const candidates = readdirSync("/app/dist")
@@ -25,20 +24,12 @@ function readExpectedRawSchemaError() {
   return process.env.RAW_SCHEMA_ERROR?.trim() || DEFAULT_RAW_SCHEMA_ERROR;
 }
 
-function resolveGatewayPort(env = process.env) {
-  const portText = env.PORT;
-  if (!portText) {
-    throw new Error("missing PORT");
-  }
-  return readTcpPortEnv("PORT", portText, env);
-}
-
 async function gatewayAgent(params) {
+  const port = process.env.PORT;
   const token = process.env.OPENCLAW_GATEWAY_TOKEN;
-  if (!token) {
+  if (!port || !token) {
     throw new Error("missing PORT/OPENCLAW_GATEWAY_TOKEN");
   }
-  const port = resolveGatewayPort();
 
   try {
     const callGateway = await loadCallGateway();
@@ -195,7 +186,6 @@ export const testing = {
   DEFAULT_RAW_SCHEMA_ERROR,
   SUCCESS_MARKER,
   extractSuccessReplyTexts,
-  resolveGatewayPort,
   validateSuccessResult,
   validateRejectResult,
 };

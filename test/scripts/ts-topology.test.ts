@@ -1,5 +1,4 @@
 // Ts Topology tests cover ts topology script behavior.
-import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyzeTopology, filterRecordsForReport } from "../../scripts/lib/ts-topology/analyze.js";
@@ -47,17 +46,6 @@ function requireRecordByExport(exportName: string) {
 }
 
 describe("ts-topology", () => {
-  it("runs the CLI entrypoint when invoked from a filesystem path", () => {
-    const scriptPath = path.resolve("scripts/ts-topology.ts");
-    const result = spawnSync(process.execPath, ["--import", "tsx", scriptPath, "--help"], {
-      encoding: "utf8",
-    });
-
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Usage: ts-topology");
-  });
-
   it("collapses canonical symbols exported by multiple public subpaths", () => {
     const sharedThing = requireRecordByExport("sharedThing");
 
@@ -164,9 +152,7 @@ describe("ts-topology", () => {
   });
 
   it("renders stable text summaries for the public-surface report", () => {
-    expect(
-      renderTextReport({ ...publicSurfaceEnvelope, limit: 3 } as typeof publicSurfaceEnvelope, 3),
-    ).toMatchInlineSnapshot(`
+    expect(renderTextReport({ ...publicSurfaceEnvelope, limit: 3 }, 3)).toMatchInlineSnapshot(`
       "Scope: custom
       Public exports analyzed: 6
       Production-used exports: 3

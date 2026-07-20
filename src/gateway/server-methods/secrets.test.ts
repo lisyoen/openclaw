@@ -1,17 +1,7 @@
 /**
  * Tests for gateway secret resolution and redacted secret method responses.
  */
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
-
-// Handler tests only need the registry verdicts they exercise. Dedicated
-// target-registry tests own bundled plugin discovery and compilation.
-vi.mock("../../secrets/target-registry.js", () => ({
-  isKnownCoreSecretTargetId: (value: unknown) => value === "talk.providers.*.apiKey",
-  isKnownSecretTargetId: () => false,
-}));
-
 import {
   TALK_TEST_PROVIDER_API_KEY_PATH,
   TALK_TEST_PROVIDER_API_KEY_PATH_SEGMENTS,
@@ -22,10 +12,7 @@ async function invokeSecretsReload(params: {
   handlers: ReturnType<typeof createSecretsHandlers>;
   respond: ReturnType<typeof vi.fn>;
 }) {
-  await expectDefined(
-    params.handlers["secrets.reload"],
-    'params.handlers["secrets.reload"] test invariant',
-  )({
+  await params.handlers["secrets.reload"]({
     req: { type: "req", id: "1", method: "secrets.reload" },
     params: {},
     client: null,
@@ -45,10 +32,7 @@ async function invokeSecretsResolve(params: {
   allowedPaths?: unknown;
   forcedActivePaths?: unknown;
 }) {
-  await expectDefined(
-    params.handlers["secrets.resolve"],
-    'params.handlers["secrets.resolve"] test invariant',
-  )({
+  await params.handlers["secrets.resolve"]({
     req: { type: "req", id: "1", method: "secrets.resolve" },
     params: {
       commandName: params.commandName,

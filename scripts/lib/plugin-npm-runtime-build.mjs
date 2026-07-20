@@ -22,7 +22,7 @@ function readJsonFile(filePath) {
 }
 
 /** Return whether a plugin package publishes through an artifact release workflow. */
-function isPublishablePluginPackage(packageJson) {
+export function isPublishablePluginPackage(packageJson) {
   return (
     packageJson.openclaw?.release?.publishToNpm === true ||
     packageJson.openclaw?.release?.publishToClawHub === true
@@ -37,17 +37,9 @@ function isTypeScriptEntry(entry) {
   return /\.(?:c|m)?ts$/u.test(entry);
 }
 
-function resolveRuntimeBuildFormat(packageJson) {
-  return packageJson.openclaw?.build?.runtimeFormat === "cjs" ? "cjs" : "esm";
-}
-
-function runtimeBuildExtension(runtimeFormat) {
-  return runtimeFormat === "cjs" ? ".cjs" : ".js";
-}
-
-function toPackageRuntimeEntry(entry, runtimeFormat = "esm") {
+function toPackageRuntimeEntry(entry) {
   const normalized = normalizePackageEntry(entry).replace(/^\.\//u, "");
-  return `./dist/${normalized.replace(/\.[^.]+$/u, runtimeBuildExtension(runtimeFormat))}`;
+  return `./dist/${normalized.replace(/\.[^.]+$/u, ".js")}`;
 }
 
 function collectExternalDependencyNames(packageJson) {
@@ -104,10 +96,7 @@ function packageRelativePathExists(packageDir, relativePath) {
   return fs.existsSync(path.join(packageDir, relativePath));
 }
 
-/**
- * List extension package dirs whose package metadata enables artifact publishing.
- * @internal Shared repository-script contract.
- */
+/** List extension package dirs whose package metadata enables artifact publishing. */
 export function listPublishablePluginPackageDirs(params = {}) {
   const repoRoot = path.resolve(params.repoRoot ?? ".");
   const extensionsRoot = path.join(repoRoot, "extensions");
@@ -126,43 +115,13 @@ export function listPublishablePluginPackageDirs(params = {}) {
 
 /** List package-local runtime output files expected from a runtime build plan. */
 export function listPluginNpmRuntimeBuildOutputs(plan) {
-  const extension = runtimeBuildExtension(plan.runtimeFormat);
   return Object.keys(plan.entry)
-    .map((entryKey) => `./dist/${entryKey}${extension}`)
+    .map((entryKey) => `./dist/${entryKey}.js`)
     .toSorted((left, right) => left.localeCompare(right));
 }
 
-function rewriteCommonJsRuntimeSpecifiers(plan) {
-  if (plan.runtimeFormat !== "cjs") {
-    return;
-  }
-  const specifierRewrites = new Map(
-    plan.runtimeBuildOutputs.map((output) => {
-      const cjsSpecifier = output.replace(/^\.\/dist\//u, "./");
-      return [cjsSpecifier.replace(/\.cjs$/u, ".js"), cjsSpecifier];
-    }),
-  );
-
-  for (const output of plan.runtimeBuildOutputs) {
-    const outputPath = path.join(plan.packageDir, output.replace(/^\.\//u, ""));
-    let text = fs.readFileSync(outputPath, "utf8");
-    const original = text;
-    // Source entries stay .js for the root bundled build; package-local CJS
-    // artifacts must point at their generated .cjs sidecars instead.
-    for (const [fromSpecifier, toSpecifier] of specifierRewrites) {
-      text = text.replaceAll(
-        `specifier: ${JSON.stringify(fromSpecifier)}`,
-        `specifier: ${JSON.stringify(toSpecifier)}`,
-      );
-    }
-    if (text !== original) {
-      fs.writeFileSync(outputPath, text, "utf8");
-    }
-  }
-}
-
 /** Resolve package `files` entries needed for runtime build outputs and plugin metadata. */
-function resolvePluginNpmRuntimePackageFiles(plan) {
+export function resolvePluginNpmRuntimePackageFiles(plan) {
   const merged = new Set(
     Array.isArray(plan.packageJson.files)
       ? plan.packageJson.files.filter((entry) => typeof entry === "string")
@@ -208,7 +167,7 @@ function resolveOpenClawPeerRange(packageJson, rootPackageJson) {
 }
 
 /** Resolve package peer dependency metadata for the OpenClaw plugin API. */
-function resolvePluginNpmRuntimePackagePeerMetadata(plan) {
+export function resolvePluginNpmRuntimePackagePeerMetadata(plan) {
   const openclawPeerRange = resolveOpenClawPeerRange(plan.packageJson, plan.rootPackageJson);
   if (!openclawPeerRange) {
     throw new Error(
@@ -250,7 +209,6 @@ export function resolvePluginNpmRuntimeBuildPlan(params) {
     return null;
   }
 
-  const runtimeFormat = resolveRuntimeBuildFormat(packageJson);
   const packageEntries = collectPluginSourceEntries(packageJson).map(normalizePackageEntry);
   const requiresRuntimeBuild = packageEntries.some(isTypeScriptEntry);
   if (!requiresRuntimeBuild) {
@@ -280,16 +238,15 @@ export function resolvePluginNpmRuntimeBuildPlan(params) {
     sourceEntries,
     entry,
     outDir: path.join(packageDir, "dist"),
-    runtimeFormat,
     runtimeExtensions: (Array.isArray(packageJson.openclaw?.extensions)
       ? packageJson.openclaw.extensions
       : []
     )
       .map(normalizePackageEntry)
       .filter(Boolean)
-      .map((runtimeEntry) => toPackageRuntimeEntry(runtimeEntry, runtimeFormat)),
+      .map(toPackageRuntimeEntry),
     runtimeSetupEntry: normalizePackageEntry(packageJson.openclaw?.setupEntry)
-      ? toPackageRuntimeEntry(packageJson.openclaw.setupEntry, runtimeFormat)
+      ? toPackageRuntimeEntry(packageJson.openclaw.setupEntry)
       : undefined,
   };
   return {
@@ -300,10 +257,7 @@ export function resolvePluginNpmRuntimeBuildPlan(params) {
   };
 }
 
-/**
- * Build package-local runtime files and static assets for one plugin package.
- * @internal Shared repository-script contract.
- */
+/** Build package-local runtime files and static assets for one plugin package. */
 export async function buildPluginNpmRuntime(params) {
   const plan = resolvePluginNpmRuntimeBuildPlan(params);
   if (!plan) {
@@ -320,13 +274,11 @@ export async function buildPluginNpmRuntime(params) {
     },
     entry: plan.entry,
     env,
-    fixedExtension: plan.runtimeFormat === "cjs",
-    format: plan.runtimeFormat,
+    fixedExtension: false,
     logLevel: params.logLevel ?? "info",
     outDir: plan.outDir,
     platform: "node",
   });
-  rewriteCommonJsRuntimeSpecifiers(plan);
   const assetBuildCommand = runPackageAssetBuild(plan);
   const missingStaticAssets = listMissingPackageStaticAssetSources(plan);
   if (missingStaticAssets.length > 0) {
@@ -345,39 +297,22 @@ export async function buildPluginNpmRuntime(params) {
   };
 }
 
-function usage() {
-  return "usage: node scripts/lib/plugin-npm-runtime-build.mjs <package-dir>";
-}
-
 function readPackageDirArg(argv) {
-  const args = argv[0] === "--" ? argv.slice(1) : argv;
-  const packageDir = args[0];
-  if (packageDir === "--help" || packageDir === "-h") {
-    return { help: true, packageDir: "" };
+  const packageDir = argv[0];
+  if (!packageDir || packageDir.startsWith("--")) {
+    throw new Error("usage: node scripts/lib/plugin-npm-runtime-build.mjs <package-dir>");
   }
-  if (!packageDir || packageDir.startsWith("-")) {
-    throw new Error(usage());
-  }
-  const extraArg = args[1];
-  if (extraArg) {
-    throw new Error(`unexpected plugin npm runtime build argument: ${extraArg}`);
-  }
-  return { packageDir };
+  return packageDir;
 }
 
-/** @internal Directly tested script implementation detail. */
 export function parseArgs(argv) {
-  return readPackageDirArg(argv);
+  const packageDir = readPackageDirArg(argv);
+  return { packageDir };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
-    const args = parseArgs(process.argv.slice(2));
-    if (args.help) {
-      console.log(usage());
-      process.exit(0);
-    }
-    const { packageDir } = args;
+    const { packageDir } = parseArgs(process.argv.slice(2));
     const result = await buildPluginNpmRuntime({ packageDir });
     if (result) {
       console.error(

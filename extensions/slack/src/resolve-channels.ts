@@ -1,9 +1,11 @@
 // Slack plugin module implements resolve channels behavior.
 import type { WebClient } from "@slack/web-api";
-import { resolveDirectoryAllowlistEntries } from "openclaw/plugin-sdk/directory-runtime";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { createSlackLookupClient } from "./client.js";
-import { collectSlackCursorPages } from "./cursor-pages.js";
+import { createSlackWebClient } from "./client.js";
+import {
+  collectSlackCursorItems,
+  resolveSlackAllowlistEntries,
+} from "./resolve-allowlist-common.js";
 
 export type SlackChannelLookup = {
   id: string;
@@ -18,6 +20,16 @@ export type SlackChannelResolution = {
   id?: string;
   name?: string;
   archived?: boolean;
+};
+
+type SlackListResponse = {
+  channels?: Array<{
+    id?: string;
+    name?: string;
+    is_archived?: boolean;
+    is_private?: boolean;
+  }>;
+  response_metadata?: { next_cursor?: string };
 };
 
 function parseSlackChannelMention(raw: string): { id?: string; name?: string } {
@@ -40,14 +52,14 @@ function parseSlackChannelMention(raw: string): { id?: string; name?: string } {
 }
 
 async function listSlackChannels(client: WebClient): Promise<SlackChannelLookup[]> {
-  return collectSlackCursorPages({
-    fetchPage: (cursor) =>
-      client.conversations.list({
+  return collectSlackCursorItems({
+    fetchPage: async (cursor) =>
+      (await client.conversations.list({
         types: "public_channel,private_channel",
         exclude_archived: false,
         limit: 1000,
         cursor,
-      }),
+      })) as SlackListResponse,
     collectPageItems: (res) =>
       (res.channels ?? [])
         .map((channel) => {
@@ -69,7 +81,7 @@ async function listSlackChannels(client: WebClient): Promise<SlackChannelLookup[
 
 function resolveByName(
   name: string,
-  channels: readonly SlackChannelLookup[],
+  channels: SlackChannelLookup[],
 ): SlackChannelLookup | undefined {
   const target = normalizeLowercaseStringOrEmpty(name);
   if (!target) {
@@ -90,21 +102,9 @@ export async function resolveSlackChannelAllowlist(params: {
   entries: string[];
   client?: WebClient;
 }): Promise<SlackChannelResolution[]> {
-  const parsedEntries = params.entries.map((input) => ({
-    input,
-    parsed: parseSlackChannelMention(input),
-  }));
-  if (parsedEntries.every((entry) => Boolean(entry.parsed.id))) {
-    return parsedEntries.map(({ input, parsed }) => ({
-      input,
-      resolved: true,
-      id: parsed.id,
-      name: parsed.name,
-    }));
-  }
-  const client = params.client ?? createSlackLookupClient(params.token);
+  const client = params.client ?? createSlackWebClient(params.token);
   const channels = await listSlackChannels(client);
-  return resolveDirectoryAllowlistEntries<
+  return resolveSlackAllowlistEntries<
     { id?: string; name?: string },
     SlackChannelLookup,
     SlackChannelResolution

@@ -56,9 +56,7 @@ async function expectSyncedSkillConfinement(params: {
 }
 
 beforeAll(async () => {
-  fixtureRoot = await fs.realpath(
-    await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skills-sync-suite-")),
-  );
+  fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-skills-sync-suite-"));
   syncSourceTemplateDir = await createCaseDir("source-template");
   await writeSkill({
     dir: path.join(syncSourceTemplateDir, ".extra", "demo-skill"),
@@ -121,22 +119,13 @@ describe("buildWorkspaceSkillsPrompt", () => {
       "export {}",
     );
 
-    const skillUsagePaths = await syncSkillsToWorkspace({
+    await syncSkillsToWorkspace({
       sourceWorkspaceDir: sourceWorkspace,
       targetWorkspaceDir: targetWorkspace,
       config: { skills: { load: { extraDirs: [extraDir] } } },
       bundledSkillsDir: bundledDir,
       managedSkillsDir: managedDir,
     });
-
-    expect(skillUsagePaths).toEqual([
-      {
-        readPath: path.join(targetWorkspace, "skills", "demo-skill", "SKILL.md"),
-        skillFile: path.join(workspaceSkillDir, "SKILL.md"),
-        skillName: "demo-skill",
-        skillSource: "workspace",
-      },
-    ]);
 
     const prompt = buildPrompt(targetWorkspace, {
       bundledSkillsDir: path.join(targetWorkspace, ".bundled"),

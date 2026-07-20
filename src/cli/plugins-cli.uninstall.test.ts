@@ -185,20 +185,6 @@ describe("plugins cli uninstall", () => {
         entries: {},
       },
     });
-    expect(replaceConfigFile).toHaveBeenCalledWith({
-      baseHash: "mock",
-      nextConfig: {
-        plugins: {
-          entries: {},
-        },
-      },
-      writeOptions: {
-        allowConfigSizeDrop: true,
-        auditOrigin: "plugin-install",
-        afterWrite: { mode: "restart", reason: "plugin source changed" },
-        unsetPaths: [["plugins", "installs"]],
-      },
-    });
     expect(refreshPluginRegistry).toHaveBeenCalledWith({
       config: {
         plugins: {

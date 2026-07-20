@@ -34,6 +34,10 @@ function parseEnvFlags(raw?: string): ParsedEnvFlags {
   };
 }
 
+function uniqueFlags(flags: string[]): string[] {
+  return normalizeUniqueStringEntriesLower(flags);
+}
+
 /** Resolves enabled diagnostic flags from config plus `OPENCLAW_DIAGNOSTICS` overrides. */
 export function resolveDiagnosticFlags(
   cfg?: OpenClawConfig,
@@ -44,7 +48,7 @@ export function resolveDiagnosticFlags(
   if (envFlags.disablesAll) {
     return [];
   }
-  return normalizeUniqueStringEntriesLower([...configFlags, ...envFlags.flags]);
+  return uniqueFlags([...configFlags, ...envFlags.flags]);
 }
 
 /** Matches one diagnostic flag against exact, wildcard, and namespace-enabled flags. */

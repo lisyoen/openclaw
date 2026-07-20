@@ -37,9 +37,6 @@ describe("runPluginsListCommand", () => {
     vi.doMock("../plugins/status.js", () => {
       throw new Error("plugins list JSON must use the snapshot status module");
     });
-    vi.doMock("./plugins-command-helpers.js", () => {
-      throw new Error("plugins list JSON must not import plugin command helpers");
-    });
     vi.doMock("../plugins/status-snapshot.js", () => ({
       buildPluginRegistrySnapshotReport: () => ({
         workspaceDir: "/workspace",

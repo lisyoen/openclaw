@@ -55,23 +55,23 @@ describe("emitSubagentEndedHookOnce", () => {
 
   it("treats timing differences as different only after both outcomes have timing", () => {
     expect(
-      mod.shouldUpdateRunOutcome(
+      mod.runOutcomesEqual(
         { status: "timeout", startedAt: 1_000, endedAt: 2_000, elapsedMs: 1_000 },
         { status: "timeout", startedAt: 1_000, endedAt: 2_500, elapsedMs: 1_500 },
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
-      mod.shouldUpdateRunOutcome(
+      mod.runOutcomesEqual(
         { status: "error", error: "boom", startedAt: 1_000, endedAt: 2_000, elapsedMs: 1_000 },
         { status: "error", error: "boom", startedAt: 1_000, endedAt: 2_000, elapsedMs: 1_000 },
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
-      mod.shouldUpdateRunOutcome(
+      mod.runOutcomesEqual(
         { status: "ok", startedAt: 1_000, endedAt: 2_000, elapsedMs: 1_000 },
         { status: "ok" },
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       mod.shouldUpdateRunOutcome(
         { status: "ok" },

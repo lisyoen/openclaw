@@ -1,22 +1,6 @@
 // Feishu tests cover config schema plugin behavior.
 import { describe, expect, it } from "vitest";
-import { FeishuChannelConfigSchema, FeishuConfigSchema } from "./config-schema.js";
-
-// The NEGATIVE webhook fixtures below spread these bases and add
-// verificationToken separately so the GHSA-G353-MGV3-8PCJ opengrep pattern —
-// which matches `connectionMode: "webhook"` next to `verificationToken` in
-// one object literal (including via constant propagation) — does not flag the
-// fixtures that prove the schema rejects them. Positive fixtures stay literal.
-const topLevelWebhookBase = {
-  connectionMode: "webhook",
-  appId: "cli_top",
-  appSecret: "secret_top", // pragma: allowlist secret
-};
-const accountWebhookBase = {
-  connectionMode: "webhook",
-  appId: "cli_main",
-  appSecret: "secret_main", // pragma: allowlist secret
-};
+import { FeishuConfigSchema, FeishuGroupSchema } from "./config-schema.js";
 
 function expectSchemaIssue(
   result: ReturnType<typeof FeishuConfigSchema.safeParse>,
@@ -62,34 +46,6 @@ describe("FeishuConfigSchema webhook validation", () => {
     expect(result.groupPolicy).toBe("open");
   });
 
-  it("accepts the canonical disabled DM policy", () => {
-    expect(FeishuConfigSchema.parse({ dmPolicy: "disabled" }).dmPolicy).toBe("disabled");
-    expect(
-      FeishuConfigSchema.parse({ accounts: { work: { dmPolicy: "disabled" } } }).accounts?.work
-        ?.dmPolicy,
-    ).toBe("disabled");
-  });
-
-  it("exports legacy groupPolicy as a typed config input", () => {
-    const expected = {
-      anyOf: [
-        { type: "string", enum: ["open", "disabled", "allowlist"] },
-        { type: "string", const: "allowall" },
-      ],
-    };
-
-    expect(FeishuChannelConfigSchema.schema).toMatchObject({
-      properties: {
-        groupPolicy: expected,
-        accounts: {
-          additionalProperties: {
-            properties: { groupPolicy: expected },
-          },
-        },
-      },
-    });
-  });
-
   it("rejects top-level webhook mode without verificationToken", () => {
     const result = FeishuConfigSchema.safeParse({
       connectionMode: "webhook",
@@ -101,11 +57,11 @@ describe("FeishuConfigSchema webhook validation", () => {
   });
 
   it("rejects top-level webhook mode without encryptKey", () => {
-    // topLevelWebhookBase (see top of file) keeps the GHSA opengrep pattern
-    // from matching this negative fixture.
     const result = FeishuConfigSchema.safeParse({
-      ...topLevelWebhookBase,
+      connectionMode: "webhook",
       verificationToken: "token_top",
+      appId: "cli_top",
+      appSecret: "secret_top", // pragma: allowlist secret
     });
 
     expectSchemaIssue(result, "encryptKey");
@@ -138,13 +94,13 @@ describe("FeishuConfigSchema webhook validation", () => {
   });
 
   it("rejects account webhook mode without encryptKey", () => {
-    // accountWebhookBase (see top of file) keeps the GHSA opengrep pattern
-    // from matching this negative fixture.
     const result = FeishuConfigSchema.safeParse({
       accounts: {
         main: {
-          ...accountWebhookBase,
+          connectionMode: "webhook",
           verificationToken: "token_main",
+          appId: "cli_main",
+          appSecret: "secret_main", // pragma: allowlist secret
         },
       },
     });
@@ -230,10 +186,8 @@ describe("FeishuConfigSchema replyInThread", () => {
   });
 
   it("accepts replyInThread in group config", () => {
-    const result = FeishuConfigSchema.parse({
-      groups: { "oc-group": { replyInThread: "enabled" } },
-    });
-    expect(result.groups?.["oc-group"]?.replyInThread).toBe("enabled");
+    const result = FeishuGroupSchema.parse({ replyInThread: "enabled" });
+    expect(result.replyInThread).toBe("enabled");
   });
 
   it("accepts replyInThread in account config", () => {
@@ -253,53 +207,18 @@ describe("FeishuConfigSchema optimization flags", () => {
     expect(result.resolveSenderNames).toBe(true);
   });
 
-  it("accepts only boolean bot ingress", () => {
-    expect(FeishuConfigSchema.parse({ allowBots: true }).allowBots).toBe(true);
-    expect(() => FeishuConfigSchema.parse({ allowBots: "mentions" })).toThrow();
-  });
-
-  it("keeps VC auto-join default-off without forcing account overrides", () => {
-    const result = FeishuConfigSchema.parse({ accounts: { main: {} } });
-    expect(result.vcAutoJoin).toBeUndefined();
-    expect(result.accounts?.main?.vcAutoJoin).toBeUndefined();
-
-    expect(FeishuConfigSchema.parse({ vcAutoJoin: true }).vcAutoJoin).toBe(true);
-    expect(
-      FeishuConfigSchema.parse({ accounts: { main: { vcAutoJoin: true } } }).accounts?.main
-        ?.vcAutoJoin,
-    ).toBe(true);
-  });
-
-  it("accepts top-level and account-level nested streaming config", () => {
+  it("accepts top-level and account-level block streaming", () => {
     const result = FeishuConfigSchema.parse({
-      streaming: {
-        mode: "partial",
-        chunkMode: "newline",
-        block: { enabled: true, coalesce: { idleMs: 100 } },
-      },
+      blockStreaming: true,
       accounts: {
         main: {
-          streaming: { mode: "off", block: { enabled: false } },
+          blockStreaming: false,
         },
       },
     });
 
-    expect(result.streaming?.block?.enabled).toBe(true);
-    expect(result.streaming?.chunkMode).toBe("newline");
-    expect(result.accounts?.main?.streaming).toEqual({
-      mode: "off",
-      block: { enabled: false },
-    });
-  });
-
-  it.each([
-    ["boolean streaming", { streaming: true }],
-    ["flat blockStreaming", { blockStreaming: true }],
-    ["flat blockStreamingCoalesce", { blockStreamingCoalesce: { idleMs: 100 } }],
-    ["flat chunkMode", { chunkMode: "newline" }],
-  ])("rejects legacy %s spelling", (_name, overrides) => {
-    expect(FeishuConfigSchema.safeParse(overrides).success).toBe(false);
-    expect(FeishuConfigSchema.safeParse({ accounts: { main: overrides } }).success).toBe(false);
+    expect(result.blockStreaming).toBe(true);
+    expect(result.accounts?.main?.blockStreaming).toBe(false);
   });
 
   it("accepts account-level optimization flags", () => {

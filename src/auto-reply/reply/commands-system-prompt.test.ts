@@ -70,7 +70,7 @@ vi.mock("../../agents/agent-tools.js", () => ({
   createOpenClawCodingTools: createOpenClawCodingToolsMock,
 }));
 
-vi.mock("../../tts/tts-settings.js", () => ({
+vi.mock("../../tts/tts.js", () => ({
   buildTtsSystemPromptHint: vi.fn(() => undefined),
 }));
 

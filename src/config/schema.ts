@@ -15,7 +15,9 @@ import {
 } from "./schema.shared.js";
 import { applyDerivedTags } from "./schema.tags.js";
 
-type ConfigSchema = Record<string, unknown>;
+export type { ConfigUiHint, ConfigUiHints } from "./schema.hints.js";
+
+export type ConfigSchema = Record<string, unknown>;
 
 type JsonSchemaNode = Record<string, unknown>;
 
@@ -106,7 +108,7 @@ export type ConfigSchemaResponse = {
   generatedAt: string;
 };
 
-type ConfigSchemaLookupChild = {
+export type ConfigSchemaLookupChild = {
   key: string;
   path: string;
   type?: string | string[];
@@ -117,17 +119,17 @@ type ConfigSchemaLookupChild = {
   hintPath?: string;
 };
 
-type ConfigSchemaReloadKind = "restart" | "hot" | "none";
+export type ConfigSchemaReloadKind = "restart" | "hot" | "none";
 
-type ConfigSchemaReloadMetadata = {
+export type ConfigSchemaReloadMetadata = {
   kind: ConfigSchemaReloadKind;
 };
 
-type ConfigSchemaReloadMetadataResolver = (
+export type ConfigSchemaReloadMetadataResolver = (
   path: string,
 ) => ConfigSchemaReloadMetadata | null | undefined;
 
-type ConfigSchemaLookupResult = {
+export type ConfigSchemaLookupResult = {
   path: string;
   schema: JsonSchemaNode;
   reloadKind?: ConfigSchemaReloadKind;
@@ -843,4 +845,3 @@ export function lookupConfigSchema(
     ),
   };
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

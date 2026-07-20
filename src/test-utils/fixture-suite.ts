@@ -10,10 +10,7 @@ export function createFixtureSuite(rootPrefix: string) {
 
   return {
     async setup(): Promise<void> {
-      // Canonicalize: macOS tmpdir sits behind a symlink (/var -> /private/var)
-      // and production realpaths state/session paths, so symlinked roots break
-      // path-equality assertions.
-      fixtureRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), rootPrefix)));
+      fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), rootPrefix));
     },
     async cleanup(): Promise<void> {
       if (!fixtureRoot) {

@@ -3,7 +3,7 @@
  *
  * Watches git metadata and exposes current branch/repository state without blocking rendering.
  */
-import { spawnSync } from "node:child_process";
+import { type ExecFileException, execFile, spawnSync } from "node:child_process";
 import {
   existsSync,
   type FSWatcher,
@@ -13,7 +13,6 @@ import {
   watchFile,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { runExec } from "../../process/exec.js";
 import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.js";
 
 type GitPaths = {
@@ -82,24 +81,33 @@ function resolveBranchWithGitSync(repoDir: string): string | null {
 }
 
 /** Ask git for the current branch asynchronously. Returns null on detached HEAD or if git is unavailable. */
-async function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
-  try {
-    const { stdout } = await runExec(
+function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
+  return new Promise((resolvePromise) => {
+    execFile(
       "git",
       ["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"],
-      { cwd: repoDir, logOutput: false },
+      {
+        cwd: repoDir,
+        encoding: "utf8",
+      },
+      (error: ExecFileException | null, stdout: string) => {
+        if (error) {
+          resolvePromise(null);
+          return;
+        }
+        const branch = stdout.trim();
+        resolvePromise(branch || null);
+      },
     );
-    return stdout.trim() || null;
-  } catch {
-    return null;
-  }
+  });
 }
 
 /**
  * Provides git branch and extension statuses - data not otherwise accessible to extensions.
  * Token stats, model info available via ctx.sessionManager and ctx.model.
  */
-class FooterDataProvider {
+export class FooterDataProvider {
+  private cwd: string;
   private static readonly WATCH_DEBOUNCE_MS = 500;
 
   private extensionStatuses = new Map<string, string>();
@@ -118,6 +126,7 @@ class FooterDataProvider {
   private disposed = false;
 
   constructor(cwd: string) {
+    this.cwd = cwd;
     this.gitPaths = findGitPaths(cwd);
     this.setupGitWatcher();
   }
@@ -150,6 +159,11 @@ class FooterDataProvider {
     }
   }
 
+  /** Internal: clear extension statuses */
+  clearExtensionStatuses(): void {
+    this.extensionStatuses.clear();
+  }
+
   /** Number of unique providers with available models (for footer display) */
   getAvailableProviderCount(): number {
     return this.availableProviderCount;
@@ -158,6 +172,23 @@ class FooterDataProvider {
   /** Internal: update available provider count */
   setAvailableProviderCount(count: number): void {
     this.availableProviderCount = count;
+  }
+
+  setCwd(cwd: string): void {
+    if (this.cwd === cwd) {
+      return;
+    }
+
+    this.cwd = cwd;
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    this.clearGitWatchers();
+    this.cachedBranch = undefined;
+    this.gitPaths = findGitPaths(cwd);
+    this.setupGitWatcher();
+    this.notifyBranchChange();
   }
 
   /** Internal: cleanup */

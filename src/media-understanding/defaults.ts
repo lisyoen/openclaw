@@ -2,7 +2,6 @@
 // metadata, and capability declarations.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
-import { providerSupportsCapability } from "../../packages/media-understanding-common/src/provider-supports.js";
 import { resolveRuntimeConfigCacheKey } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { buildMediaUnderstandingManifestMetadataRegistry } from "./manifest-metadata.js";
@@ -10,6 +9,7 @@ import {
   normalizeMediaExecutionProviderId,
   normalizeMediaProviderId,
 } from "./provider-registry.js";
+import { providerSupportsCapability } from "./provider-supports.js";
 import type { MediaUnderstandingCapability, MediaUnderstandingProvider } from "./types.js";
 export {
   CLI_OUTPUT_MAX_BUFFER,

@@ -5,13 +5,12 @@
  */
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
-import { resolveResponsePrefixTemplate } from "../../auto-reply/reply/response-prefix-template.js";
 import {
   resolveSourceReplyDeliveryMode,
   type SourceReplyDeliveryModeContext,
 } from "../../auto-reply/reply/source-reply-delivery-mode.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getLoadedChannelPluginForRead } from "../plugins/registry-loaded.js";
+import { getLoadedChannelPluginForRead } from "../plugins/registry-loaded-read.js";
 import { normalizeAnyChannelId } from "../registry-normalize.js";
 import {
   createReplyPrefixContext,
@@ -47,8 +46,6 @@ export function resolveChannelSourceReplyDeliveryMode(params: {
 
 /** Reply pipeline options shared by core channel turns and plugin SDK callers. */
 export type ChannelReplyPipeline = ReplyPrefixOptions & {
-  /** Resolves a response prefix against the pipeline's live selected-model context. */
-  resolveResponsePrefix?: () => string | undefined;
   /** Optional typing lifecycle callbacks for reply generation. */
   typingCallbacks?: TypingCallbacks;
   /** Optional payload transform applied before channel delivery. */
@@ -103,19 +100,13 @@ export function createChannelReplyPipeline(
             accountId: params.accountId,
           }) ?? payload
       : undefined;
-  const prefixOptions = createReplyPrefixOptions({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    channel: params.channel,
-    accountId: params.accountId,
-  });
   return {
-    ...prefixOptions,
-    resolveResponsePrefix: () =>
-      resolveResponsePrefixTemplate(
-        prefixOptions.responsePrefix,
-        prefixOptions.responsePrefixContextProvider(),
-      ),
+    ...createReplyPrefixOptions({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      channel: params.channel,
+      accountId: params.accountId,
+    }),
     ...(transformReplyPayload ? { transformReplyPayload } : {}),
     ...(params.typingCallbacks
       ? { typingCallbacks: params.typingCallbacks }

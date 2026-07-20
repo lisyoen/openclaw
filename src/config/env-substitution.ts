@@ -101,7 +101,7 @@ function substituteString(
   const chunks: string[] = [];
 
   for (let i = 0; i < value.length; i += 1) {
-    const char = value.charAt(i);
+    const char = value[i];
     if (char !== "$") {
       chunks.push(char);
       continue;

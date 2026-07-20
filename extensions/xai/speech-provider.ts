@@ -13,20 +13,17 @@ import {
   type SpeechProviderPlugin,
   type SpeechSynthesisTarget,
 } from "openclaw/plugin-sdk/speech";
-import { resolveSpeechProviderApiKey } from "openclaw/plugin-sdk/speech-core";
 import {
   asFiniteNumberInRange,
   normalizeLowercaseStringOrEmpty,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
   isValidXaiTtsVoice,
-  listXaiTtsVoices,
   normalizeXaiLanguageCode,
   normalizeXaiTtsBaseUrl,
   XAI_BASE_URL,
-  XAI_TTS_FALLBACK_VOICES,
+  XAI_TTS_VOICES,
   xaiTTS,
-  xaiTTSStream,
 } from "./tts.js";
 
 const XAI_SPEECH_RESPONSE_FORMATS = ["mp3", "wav", "pcm", "mulaw", "alaw"] as const;
@@ -65,15 +62,13 @@ function normalizeXaiSpeechResponseFormat(value: unknown): XaiSpeechResponseForm
 }
 
 function resolveSpeechResponseFormat(
-  target: SpeechSynthesisTarget,
+  _target: SpeechSynthesisTarget,
   configuredFormat?: XaiSpeechResponseFormat,
 ): XaiSpeechResponseFormat {
-  // Voice-note consumers may transcode without raw codec/rate metadata.
-  // Keep streamed output and buffered fallback self-describing.
-  if (target === "voice-note") {
-    return "mp3";
+  if (configuredFormat) {
+    return configuredFormat;
   }
-  return configuredFormat ?? "mp3";
+  return "mp3";
 }
 
 function responseFormatToFileExtension(
@@ -137,10 +132,6 @@ function readXaiOverrides(overrides: SpeechProviderOverrides | undefined): XaiTt
   };
 }
 
-function resolveDirectXaiAudioApiKey(configApiKey?: string): string | undefined {
-  return resolveSpeechProviderApiKey(configApiKey, process.env.XAI_API_KEY);
-}
-
 function resolveGeneratedAudioMaxBytes(req: {
   cfg: { agents?: { defaults?: { mediaMaxMb?: number } } };
 }): number {
@@ -156,6 +147,8 @@ function parseDirectiveToken(ctx: SpeechDirectiveTokenParseContext): {
   overrides?: SpeechProviderOverrides;
   warnings?: string[];
 } {
+  const providerConfig = ctx.providerConfig as Record<string, unknown> | undefined;
+  const baseUrl = trimToUndefined(providerConfig?.baseUrl);
   switch (ctx.key) {
     case "voice":
     case "voice_id":
@@ -165,7 +158,7 @@ function parseDirectiveToken(ctx: SpeechDirectiveTokenParseContext): {
       if (!ctx.policy.allowVoice) {
         return { handled: true };
       }
-      if (!isValidXaiTtsVoice(ctx.value)) {
+      if (!isValidXaiTtsVoice(ctx.value, baseUrl)) {
         return { handled: true, warnings: [`invalid xAI voice "${ctx.value}"`] };
       }
       return { handled: true, overrides: { voiceId: ctx.value } };
@@ -180,7 +173,7 @@ export function buildXaiSpeechProvider(): SpeechProviderPlugin {
     label: "xAI",
     autoSelectOrder: 25,
     models: [],
-    voices: XAI_TTS_FALLBACK_VOICES,
+    voices: XAI_TTS_VOICES,
     resolveConfig: ({ rawConfig }) => normalizeXaiProviderConfig(rawConfig),
     parseDirectiveToken,
     resolveTalkConfig: ({ baseTtsConfig, talkProviderConfig }) => {
@@ -232,20 +225,9 @@ export function buildXaiSpeechProvider(): SpeechProviderPlugin {
         ? {}
         : { speed: normalizeXaiSpeechSpeed(params.speed) }),
     }),
-    listVoices: async (req) => {
-      const config = readXaiProviderConfig(req.providerConfig ?? {});
-      const directApiKey = trimToUndefined(req.apiKey) ?? config.apiKey;
-      const apiKey = await resolveOptionalXaiAudioApiKey(directApiKey, req.cfg);
-      if (!apiKey) {
-        return XAI_TTS_FALLBACK_VOICES.map((voice) => ({ id: voice, name: voice }));
-      }
-      return await listXaiTtsVoices({
-        apiKey,
-        baseUrl: normalizeXaiTtsBaseUrl(trimToUndefined(req.baseUrl) ?? config.baseUrl),
-      });
-    },
+    listVoices: async () => XAI_TTS_VOICES.map((voice) => ({ id: voice, name: voice })),
     isConfigured: ({ providerConfig, cfg }) =>
-      Boolean(resolveDirectXaiAudioApiKey(readXaiProviderConfig(providerConfig).apiKey)) ||
+      Boolean(readXaiProviderConfig(providerConfig).apiKey || process.env.XAI_API_KEY) ||
       isProviderAuthProfileConfigured({ provider: "xai", cfg }),
     synthesize: async (req) => {
       const config = readXaiProviderConfig(req.providerConfig);
@@ -268,30 +250,6 @@ export function buildXaiSpeechProvider(): SpeechProviderPlugin {
         outputFormat: responseFormat,
         fileExtension: responseFormatToFileExtension(responseFormat),
         voiceCompatible: false,
-      };
-    },
-    streamSynthesize: async (req) => {
-      const config = readXaiProviderConfig(req.providerConfig);
-      const overrides = readXaiOverrides(req.providerOverrides);
-      const responseFormat = resolveSpeechResponseFormat(req.target, config.responseFormat);
-      const apiKey = await resolveXaiAudioApiKey(config.apiKey, req.cfg);
-      const stream = await xaiTTSStream({
-        text: req.text,
-        apiKey,
-        baseUrl: config.baseUrl,
-        voiceId: overrides.voiceId ?? config.voiceId,
-        language: overrides.language ?? config.language,
-        speed: overrides.speed ?? config.speed,
-        responseFormat,
-        timeoutMs: req.timeoutMs,
-        maxBytes: resolveGeneratedAudioMaxBytes(req),
-      });
-      return {
-        audioStream: stream.audioStream,
-        outputFormat: responseFormat,
-        fileExtension: responseFormatToFileExtension(responseFormat),
-        voiceCompatible: false,
-        release: stream.release,
       };
     },
     synthesizeTelephony: async (req) => {
@@ -320,28 +278,18 @@ export function buildXaiSpeechProvider(): SpeechProviderPlugin {
 // 1. Configured `messages.tts.providers.xai.apiKey` (or talk equivalent)
 // 2. `XAI_API_KEY` env var
 // 3. xAI OAuth auth profile (cfg-scoped)
-async function resolveOptionalXaiAudioApiKey(
-  configApiKey: string | undefined,
-  cfg?: OpenClawConfig,
-): Promise<string | undefined> {
-  const direct = resolveDirectXaiAudioApiKey(configApiKey);
-  if (direct) {
-    return direct;
-  }
-  if (!cfg) {
-    return undefined;
-  }
-  const auth = await resolveApiKeyForProvider({ provider: "xai", cfg });
-  return trimToUndefined(auth?.apiKey);
-}
-
 async function resolveXaiAudioApiKey(
   configApiKey: string | undefined,
   cfg: OpenClawConfig,
 ): Promise<string> {
-  const apiKey = await resolveOptionalXaiAudioApiKey(configApiKey, cfg);
-  if (apiKey) {
-    return apiKey;
+  const direct = trimToUndefined(configApiKey) ?? trimToUndefined(process.env.XAI_API_KEY);
+  if (direct) {
+    return direct;
+  }
+  const auth = await resolveApiKeyForProvider({ provider: "xai", cfg });
+  const oauthKey = trimToUndefined(auth?.apiKey);
+  if (oauthKey) {
+    return oauthKey;
   }
   throw new Error(
     "xAI credentials missing for TTS. Sign in with `openclaw onboard --auth-choice xai-oauth`, or run `openclaw onboard --auth-choice xai-api-key`, or set XAI_API_KEY.",

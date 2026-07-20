@@ -15,13 +15,7 @@ import { DEFAULT_CONTEXT_TOKENS } from "../agents/defaults.js";
 import { resolveRuntimePolicySessionKey } from "../auto-reply/reply/runtime-policy-session-key.js";
 import { normalizeChatType } from "../channels/chat-type.js";
 import { getRuntimeConfig } from "../config/config.js";
-import { resolveSessionTotalTokens } from "../config/sessions.js";
-import { listSessionEntries } from "../config/sessions/session-accessor.js";
-import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
-import {
-  formatSqliteSessionFileMarker,
-  parseSqliteSessionFileMarker,
-} from "../config/sessions/sqlite-marker.js";
+import { loadSessionStore, resolveSessionTotalTokens } from "../config/sessions.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveStoredSessionKeyForAgentStore } from "../gateway/session-store-key.js";
@@ -234,24 +228,9 @@ function formatRuntimeCell(runtimeLabel: string, rich: boolean): string {
   return rich ? theme.info(label) : label;
 }
 
-function resolveSessionStoreDisplayPath(target: { agentId: string; storePath: string }): string {
-  return resolveSqliteTargetFromSessionStorePath(target.storePath, {
-    agentId: target.agentId,
-  }).path;
-}
-
 function toJsonSessionRow(row: SessionRow): Omit<SessionRow, "runtimeLabel"> {
   const { runtimeLabel, ...jsonRow } = row;
   void runtimeLabel;
-  const marker = parseSqliteSessionFileMarker(jsonRow.sessionFile);
-  if (marker) {
-    jsonRow.sessionFile = formatSqliteSessionFileMarker({
-      ...marker,
-      storePath: resolveSqliteTargetFromSessionStorePath(marker.storePath, {
-        agentId: marker.agentId,
-      }).path,
-    });
-  }
   return jsonRow;
 }
 
@@ -381,16 +360,17 @@ export async function sessionsCommand(
   }
 
   const allRows = targets.flatMap((target) => {
-    return listSessionEntries({ agentId: target.agentId, storePath: target.storePath })
-      .filter(({ entry }) => {
+    const store = loadSessionStore(target.storePath);
+    return Object.entries(store)
+      .filter(([, entry]) => {
         if (activeMinutes === undefined) {
           return true;
         }
         const updatedAt = entry?.updatedAt;
         return typeof updatedAt === "number" && Date.now() - updatedAt <= activeMinutes * 60_000;
       })
-      .map(({ sessionKey, entry }) => {
-        const row = toSessionDisplayRow(sessionKey, entry);
+      .map(([key, entry]) => {
+        const row = toSessionDisplayRow(key, entry);
         const agentId = parseAgentSessionKey(row.key)?.agentId ?? target.agentId;
         const acpSessionKey = resolveStoredSessionKeyForAgentStore({
           cfg,
@@ -412,7 +392,6 @@ export async function sessionsCommand(
         const agentRuntime = resolveModelAgentRuntimeMetadata({
           cfg,
           agentId,
-          sessionEntry: entry,
           provider: modelRef.provider,
           model: modelRef.model,
           sessionKey: acpSessionKey,
@@ -423,7 +402,7 @@ export async function sessionsCommand(
           agentId,
           acpRuntime,
           agentRuntime,
-          kind: classifySessionKind(row.key, entry),
+          kind: classifySessionKind(row.key, store[row.key]),
           runtimePolicySessionKey: resolveDisplayRuntimePolicySessionKey({
             cfg,
             key: row.key,
@@ -449,11 +428,11 @@ export async function sessionsCommand(
     const multi = targets.length > 1;
     const aggregate = aggregateAgents || multi;
     writeRuntimeJson(runtime, {
-      path: aggregate || !targets[0] ? null : resolveSessionStoreDisplayPath(targets[0]),
+      path: aggregate ? null : (targets[0]?.storePath ?? null),
       stores: aggregate
         ? targets.map((target) => ({
             agentId: target.agentId,
-            path: resolveSessionStoreDisplayPath(target),
+            path: target.storePath,
           }))
         : undefined,
       allAgents: aggregateAgents ? true : undefined,
@@ -496,9 +475,8 @@ export async function sessionsCommand(
     return;
   }
 
-  const primaryTarget = targets[0];
-  if (primaryTarget && targets.length === 1 && !aggregateAgents) {
-    runtime.log(info(`Session store: ${resolveSessionStoreDisplayPath(primaryTarget)}`));
+  if (targets.length === 1 && !aggregateAgents) {
+    runtime.log(info(`Session store: ${targets[0]?.storePath}`));
   } else {
     runtime.log(
       info(`Session stores: ${targets.length} (${targets.map((t) => t.agentId).join(", ")})`),
@@ -568,11 +546,7 @@ export async function sessionsCommand(
   }
 }
 
-const testing = {
+export const testing = {
   parseSessionsLimit,
 } as const;
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.sessionsCommandTestApi")] =
-    testing;
-}
+export { testing as __testing };

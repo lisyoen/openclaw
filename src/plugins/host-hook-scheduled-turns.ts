@@ -139,7 +139,7 @@ function resolvePluginSessionTurnTag(value: unknown): {
   return { tag, invalid: false };
 }
 
-function buildPluginSchedulerCronName(params: {
+export function buildPluginSchedulerCronName(params: {
   pluginId: string;
   sessionKey: string;
   tag?: string;

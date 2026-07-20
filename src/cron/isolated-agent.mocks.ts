@@ -1,8 +1,9 @@
 /** Shared Vitest module mocks for isolated-agent cron tests. */
-// Isolated turns lazily consume this process-stable runtime after agent execution. Load it during
-// suite setup so first-test timings cover cron behavior rather than module initialization.
-import "../utils/usage-format.js";
 import { vi } from "vitest";
+import {
+  makeIsolatedAgentJobFixture,
+  makeIsolatedAgentParamsFixture,
+} from "./isolated-agent/job-fixtures.js";
 
 vi.mock("../agents/embedded-agent.js", () => ({
   abortEmbeddedAgentRun: vi.fn().mockReturnValue(false),
@@ -10,8 +11,8 @@ vi.mock("../agents/embedded-agent.js", () => ({
   resolveEmbeddedSessionLane: (key: string) => `session:${key.trim() || "main"}`,
 }));
 
-vi.mock("../agents/prepared-model-catalog.js", () => ({
-  loadPreparedModelCatalog: vi.fn(),
+vi.mock("../agents/model-catalog.js", () => ({
+  loadModelCatalog: vi.fn(),
 }));
 
 vi.mock("../agents/model-selection.js", async () => {
@@ -35,3 +36,6 @@ vi.mock("../plugins/runtime-plugins.runtime.js", () => ({
 vi.mock("../gateway/call.js", () => ({
   callGateway: vi.fn(),
 }));
+
+export const makeIsolatedAgentJob = makeIsolatedAgentJobFixture;
+export const makeIsolatedAgentParams = makeIsolatedAgentParamsFixture;

@@ -7,6 +7,9 @@ export function createAutoReplyReplyVitestConfig(env?: Record<string, string | u
     dir: "src/auto-reply",
     env,
     name: "auto-reply-reply",
+    sequence: {
+      groupOrder: 1,
+    },
   });
 }
 

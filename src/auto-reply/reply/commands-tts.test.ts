@@ -249,22 +249,6 @@ describe("handleTtsCommands status fallback reporting", () => {
     expect(reply.text).toContain("TTS status");
   });
 
-  it("keeps base status fields in display order", async () => {
-    const reply = expectReply(await handleTtsCommands(buildTtsParams("/tts status"), true));
-
-    expect(reply.text).toBe(
-      [
-        "📊 TTS status",
-        "State: ✅ enabled",
-        "Chat override: default",
-        `Provider: ${PRIMARY_TTS_PROVIDER} (✅ configured)`,
-        "Persona: none",
-        "Text limit: 1500 chars",
-        "Auto-summary: on",
-      ].join("\n"),
-    );
-  });
-
   it("resolves status config for the active agent", async () => {
     const cfg = {
       agents: { list: [{ id: "reader", tts: { provider: "elevenlabs" } }] },
@@ -380,7 +364,7 @@ describe("handleTtsCommands status fallback reporting", () => {
 
     const beforeTtsRead = Date.now();
     const result = await handleTtsCommands(
-      buildTtsParams("/tts read latest", {}, undefined, { sessionEntry, sessionStore }),
+      buildTtsParams("/tts latest", {}, undefined, { sessionEntry, sessionStore }),
       true,
     );
 

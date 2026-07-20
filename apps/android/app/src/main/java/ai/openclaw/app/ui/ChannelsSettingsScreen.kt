@@ -3,7 +3,6 @@ package ai.openclaw.app.ui
 import ai.openclaw.app.GatewayChannelSummary
 import ai.openclaw.app.GatewayChannelsSummary
 import ai.openclaw.app.MainViewModel
-import ai.openclaw.app.i18n.nativeString
 import ai.openclaw.app.ui.design.ClawDetailRow
 import ai.openclaw.app.ui.design.ClawListPanel
 import ai.openclaw.app.ui.design.ClawPanel
@@ -12,7 +11,6 @@ import ai.openclaw.app.ui.design.ClawStatus
 import ai.openclaw.app.ui.design.ClawStatusPill
 import ai.openclaw.app.ui.design.ClawTextBadge
 import ai.openclaw.app.ui.design.ClawTheme
-import ai.openclaw.app.uppercaseFirstGraphemeOrNull
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -46,23 +44,23 @@ internal fun ChannelsSettingsScreen(
   }
 
   SettingsDetailFrame(
-    title = nativeString("Channels"),
-    subtitle = nativeString("Messaging surfaces connected to this gateway."),
+    title = "Channels",
+    subtitle = "Messaging surfaces connected to this gateway.",
     icon = Icons.Default.Notifications,
     onBack = onBack,
   ) {
     SettingsMetricPanel(
       rows =
         listOf(
-          SettingsMetric(nativeString("Channels"), channels.size.toString()),
-          SettingsMetric(nativeString("Connected"), channels.count { it.connected }.toString()),
-          SettingsMetric(nativeString("Configured"), channels.count { it.configured }.toString()),
-          SettingsMetric(nativeString("Issues"), channels.count { it.error != null }.toString()),
+          SettingsMetric("Channels", channels.size.toString()),
+          SettingsMetric("Connected", channels.count { it.connected }.toString()),
+          SettingsMetric("Configured", channels.count { it.configured }.toString()),
+          SettingsMetric("Issues", channels.count { it.error != null }.toString()),
         ),
     )
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       ClawSecondaryButton(
-        text = if (refreshing) nativeString("Refreshing") else nativeString("Refresh"),
+        text = if (refreshing) "Refreshing" else "Refresh",
         onClick = viewModel::refreshChannels,
         enabled = isConnected && !refreshing,
         modifier = Modifier.weight(1f),
@@ -83,13 +81,13 @@ internal fun ChannelsSettingsScreen(
     when {
       !isConnected ->
         ClawPanel {
-          Text(text = nativeString("Connect the gateway to load channels."), style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)
+          Text(text = "Connect the gateway to load channels.", style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)
         }
       channels.isEmpty() ->
         ClawPanel {
           Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(text = nativeString("No channels found."), style = ClawTheme.type.section, color = ClawTheme.colors.text)
-            Text(text = nativeString("Telegram, WhatsApp, email, and other channels appear here after setup."), style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)
+            Text(text = "No channels found.", style = ClawTheme.type.section, color = ClawTheme.colors.text)
+            Text(text = "Telegram, WhatsApp, email, and other channels appear here after setup.", style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)
           }
         }
       else -> ChannelsPanel(channels = channels)
@@ -118,29 +116,29 @@ private fun channelSubtitle(channel: GatewayChannelSummary): String {
   val accounts =
     when (channel.accountCount) {
       0 -> null
-      1 -> nativeString("1 account")
-      else -> nativeString("\${channel.accountCount} accounts", channel.accountCount)
+      1 -> "1 account"
+      else -> "${channel.accountCount} accounts"
     }
   val lifecycle =
     when {
-      channel.connected -> nativeString("Connected")
-      channel.running -> nativeString("Running")
-      channel.linked -> nativeString("Linked")
-      channel.configured -> nativeString("Configured")
-      channel.enabled -> nativeString("Enabled")
-      else -> nativeString("Off")
+      channel.connected -> "Connected"
+      channel.running -> "Running"
+      channel.linked -> "Linked"
+      channel.configured -> "Configured"
+      channel.enabled -> "Enabled"
+      else -> "Off"
     }
   return listOfNotNull(accounts, lifecycle, channel.error).joinToString(" · ")
 }
 
 private fun channelStatusText(channel: GatewayChannelSummary): String =
   when {
-    channel.error != null -> nativeString("Issue")
-    channel.connected -> nativeString("Connected")
-    channel.running -> nativeString("Running")
-    channel.linked || channel.configured -> nativeString("Ready")
-    channel.enabled -> nativeString("Setup")
-    else -> nativeString("Off")
+    channel.error != null -> "Issue"
+    channel.connected -> "Connected"
+    channel.running -> "Running"
+    channel.linked || channel.configured -> "Ready"
+    channel.enabled -> "Setup"
+    else -> "Off"
   }
 
 private fun channelStatus(channel: GatewayChannelSummary): ClawStatus =
@@ -157,9 +155,9 @@ private fun channelBadge(label: String): String =
     .split(' ', '-', '_')
     .filter { it.isNotBlank() }
     .take(2)
-    .mapNotNull { it.uppercaseFirstGraphemeOrNull() }
+    .mapNotNull { it.firstOrNull()?.uppercaseChar()?.toString() }
     .joinToString("")
     .ifBlank { "C" }
 
 /** Chooses the first gateway warning or a generic partial-scan message. */
-private fun channelsWarningText(summary: GatewayChannelsSummary): String = summary.warnings.firstOrNull()?.takeIf { it.isNotBlank() } ?: nativeString("Some channel status checks did not complete.")
+private fun channelsWarningText(summary: GatewayChannelsSummary): String = summary.warnings.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Some channel status checks did not complete."

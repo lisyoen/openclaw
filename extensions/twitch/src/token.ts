@@ -16,7 +16,7 @@ import {
 } from "openclaw/plugin-sdk/account-resolution";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 
-type TwitchTokenSource = "env" | "config" | "none";
+export type TwitchTokenSource = "env" | "config" | "none";
 
 export type TwitchTokenResolution = {
   token: string;

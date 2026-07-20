@@ -22,12 +22,7 @@ From URL `https://xxx.feishu.cn/wiki/ABC123def` → `token` = `ABC123def`
 { "action": "spaces" }
 ```
 
-Returns one page of accessible wiki spaces plus `has_more` and `page_token`.
-Continue with the returned `page_token` while `has_more` is true:
-
-```json
-{ "action": "spaces", "page_token": "next-page-token" }
-```
+Returns all accessible wiki spaces.
 
 ### List Nodes
 
@@ -40,10 +35,6 @@ With parent:
 ```json
 { "action": "nodes", "space_id": "7xxx", "parent_node_token": "wikcnXXX" }
 ```
-
-Returns one page of nodes plus `has_more` and `page_token`. Continue with the
-same `space_id` and `parent_node_token`, adding the returned `page_token`, while
-`has_more` is true. Both list actions accept optional `page_size` from 1 to 50.
 
 ### Get Node Details
 

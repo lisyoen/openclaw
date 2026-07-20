@@ -2,7 +2,9 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 
 /** Result of reading package.json openclaw.compat.pluginApi metadata. */
-type PackagePluginApiRangeResult = { ok: true; range?: string } | { ok: false; error: string };
+export type PackagePluginApiRangeResult =
+  | { ok: true; range?: string }
+  | { ok: false; error: string };
 
 /** Resolves the plugin API compatibility range declared by package metadata. */
 export function resolvePackagePluginApiRange(

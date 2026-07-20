@@ -6,6 +6,7 @@ import type { TelegramChatDetails, TelegramGetChat } from "./bot/types.js";
 import { collectTelegramStatusIssues } from "./status-issues.js";
 import {
   buildTelegramStatusReactionVariants,
+  extractTelegramAllowedEmojiReactions,
   isTelegramSupportedReactionEmoji,
   resolveTelegramAllowedEmojiReactions,
   resolveTelegramReactionVariant,
@@ -346,44 +347,36 @@ describe("isTelegramSupportedReactionEmoji", () => {
   });
 });
 
-describe("resolveTelegramAllowedEmojiReactions", () => {
-  it("assumes no restriction when chat does not include available_reactions", async () => {
-    const result = await resolveTelegramAllowedEmojiReactions({
-      chat: { id: 1 } satisfies TelegramChatDetails,
-      chatId: 1,
-    });
+describe("extractTelegramAllowedEmojiReactions", () => {
+  it("returns undefined when chat does not include available_reactions", () => {
+    const result = extractTelegramAllowedEmojiReactions({ id: 1 } satisfies TelegramChatDetails);
+    expect(result).toBeUndefined();
+  });
+
+  it("returns null when available_reactions is omitted/null", () => {
+    const result = extractTelegramAllowedEmojiReactions({
+      available_reactions: null,
+    } satisfies TelegramChatDetails);
     expect(result).toBeNull();
   });
 
-  it("returns null when available_reactions is omitted/null", async () => {
-    const result = await resolveTelegramAllowedEmojiReactions({
-      chat: { available_reactions: null } satisfies TelegramChatDetails,
-      chatId: 1,
-    });
-    expect(result).toBeNull();
-  });
-
-  it("extracts emoji reactions only", async () => {
-    const result = await resolveTelegramAllowedEmojiReactions({
-      chat: {
-        available_reactions: [
-          { type: "emoji", emoji: "👍" },
-          { type: "custom_emoji", custom_emoji_id: "abc" },
-          { type: "emoji", emoji: "🔥" },
-        ],
-      } satisfies TelegramChatDetails,
-      chatId: 1,
-    });
+  it("extracts emoji reactions only", () => {
+    const result = extractTelegramAllowedEmojiReactions({
+      available_reactions: [
+        { type: "emoji", emoji: "👍" },
+        { type: "custom_emoji", custom_emoji_id: "abc" },
+        { type: "emoji", emoji: "🔥" },
+      ],
+    } satisfies TelegramChatDetails);
     expect(result ? Array.from(result).toSorted() : null).toEqual(["👍", "🔥"]);
   });
 
-  it("treats malformed available_reactions payloads as an empty allowlist instead of throwing", async () => {
-    await expect(
-      resolveTelegramAllowedEmojiReactions({
-        chat: { available_reactions: { type: "emoji", emoji: "👍" } } as never,
-        chatId: 1,
-      }),
-    ).resolves.toEqual(new Set<string>());
+  it("treats malformed available_reactions payloads as an empty allowlist instead of throwing", () => {
+    expect(
+      extractTelegramAllowedEmojiReactions({
+        available_reactions: { type: "emoji", emoji: "👍" },
+      } as never),
+    ).toEqual(new Set<string>());
   });
 });
 

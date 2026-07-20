@@ -1,5 +1,4 @@
 // CLI startup context, banner/log presentation, and bootstrap orchestration.
-import type { ConfigFileSnapshot } from "../config/types.js";
 import { routeLogsToStderr } from "../logging/console.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { resolveCliArgvInvocation } from "./argv-invocation.js";
@@ -16,7 +15,6 @@ const hasVersionFlag = (argv: readonly string[]) =>
 
 export function resolveCliExecutionStartupContext(params: {
   argv: string[];
-  protocolCommandPath?: string[];
   jsonOutputMode: boolean;
   env?: NodeJS.ProcessEnv;
   routeMode?: boolean;
@@ -30,7 +28,6 @@ export function resolveCliExecutionStartupContext(params: {
     startupPolicy: resolveCliStartupPolicy({
       argv: params.argv,
       commandPath,
-      protocolCommandPath: params.protocolCommandPath,
       jsonOutputMode: params.jsonOutputMode,
       env: params.env,
       routeMode: params.routeMode,
@@ -45,7 +42,7 @@ export async function applyCliExecutionStartupPresentation(params: {
   showBanner?: boolean;
   version?: string;
 }) {
-  // Machine-readable commands must route diagnostics away before startup can print.
+  // JSON-mode commands must keep stdout machine-readable; route diagnostics away first.
   if (params.startupPolicy.suppressDoctorStdout && params.routeLogsToStderrOnSuppress !== false) {
     routeLogsToStderr();
   }
@@ -68,26 +65,16 @@ export async function ensureCliExecutionBootstrap(params: {
   commandPath: string[];
   startupPolicy: CliStartupPolicy;
   allowInvalid?: boolean;
-  beforeStateMigrations?: (snapshot?: ConfigFileSnapshot) => Promise<boolean>;
   loadPlugins?: boolean;
   skipConfigGuard?: boolean;
-  skipPristineCoreStateMigrations?: boolean;
-  skipPristineStartupStateMigrations?: boolean;
 }) {
   await ensureCliCommandBootstrap({
     runtime: params.runtime,
     commandPath: params.commandPath,
     suppressDoctorStdout: params.startupPolicy.suppressDoctorStdout,
     allowInvalid: params.allowInvalid,
-    ...(params.beforeStateMigrations
-      ? { beforeStateMigrations: params.beforeStateMigrations }
-      : {}),
     loadPlugins: params.loadPlugins ?? params.startupPolicy.loadPlugins,
     pluginRegistry: params.startupPolicy.pluginRegistry,
     skipConfigGuard: params.skipConfigGuard ?? params.startupPolicy.skipConfigGuard,
-    ...(params.skipPristineStartupStateMigrations
-      ? { skipPristineStartupStateMigrations: true }
-      : {}),
-    ...(params.skipPristineCoreStateMigrations ? { skipPristineCoreStateMigrations: true } : {}),
   });
 }

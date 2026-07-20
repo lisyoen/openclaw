@@ -18,7 +18,7 @@ import type { ChannelId } from "./types.public.js";
 /**
  * Normalized conversation facts used to match configured channel bindings.
  */
-type ConfiguredBindingConversation = ConversationRef;
+export type ConfiguredBindingConversation = ConversationRef;
 
 /**
  * Channel id used by configured binding rules.

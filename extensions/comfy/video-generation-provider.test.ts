@@ -7,8 +7,10 @@ import {
   mockComfyProviderApiKey,
   parseComfyJsonBody,
 } from "./test-helpers.js";
-import { setComfyFetchGuardForTesting } from "./test-support.js";
-import { buildComfyVideoGenerationProvider } from "./video-generation-provider.js";
+import {
+  setComfyFetchGuardForTesting,
+  buildComfyVideoGenerationProvider,
+} from "./video-generation-provider.js";
 
 const { fetchWithSsrFGuardMock } = vi.hoisted(() => ({
   fetchWithSsrFGuardMock: vi.fn(),

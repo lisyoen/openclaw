@@ -1,5 +1,8 @@
 // Synology Chat plugin module implements approval auth behavior.
-import { createChannelApprovalAuth } from "openclaw/plugin-sdk/approval-auth-runtime";
+import {
+  createResolvedApproverActionAuthAdapter,
+  resolveApprovalApprovers,
+} from "openclaw/plugin-sdk/approval-auth-runtime";
 import { resolveAccount } from "./accounts.js";
 
 function normalizeSynologyChatApproverId(value: string | number): string | undefined {
@@ -7,11 +10,14 @@ function normalizeSynologyChatApproverId(value: string | number): string | undef
   return /^\d+$/.test(trimmed) ? trimmed : undefined;
 }
 
-export const synologyChatApprovalAuth = createChannelApprovalAuth({
+export const synologyChatApprovalAuth = createResolvedApproverActionAuthAdapter({
   channelLabel: "Synology Chat",
-  resolveInputs: ({ cfg, accountId }) => {
+  resolveApprovers: ({ cfg, accountId }) => {
     const account = resolveAccount(cfg ?? {}, accountId);
-    return { allowFrom: account.allowedUserIds };
+    return resolveApprovalApprovers({
+      allowFrom: account.allowedUserIds,
+      normalizeApprover: normalizeSynologyChatApproverId,
+    });
   },
-  normalizeApprover: normalizeSynologyChatApproverId,
-}).approvalAuth;
+  normalizeSenderId: (value) => normalizeSynologyChatApproverId(value),
+});

@@ -10,16 +10,11 @@ import {
   resetGlobalHookRunner,
 } from "../plugins/hook-runner-global.js";
 import { loadOpenClawPlugins } from "../plugins/loader.js";
-import { deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import { guardSessionManager } from "./session-tool-result-guard-wrapper.js";
-
-type ToolResultMessage = Extract<AgentMessage, { role: "toolResult" }>;
-type PersistedToolResultMessage = ToolResultMessage & { details: Record<string, unknown> };
 
 const EMPTY_PLUGIN_SCHEMA = { type: "object", additionalProperties: false, properties: {} };
 const originalBundledPluginsDir = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
 const originalConfigPath = process.env.OPENCLAW_CONFIG_PATH;
-const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
 let tempDirs: string[] = [];
 
 function writeTempPlugin(params: { dir: string; id: string; body: string }): string {
@@ -56,25 +51,7 @@ function appendToolCallAndResult(sm: ReturnType<typeof SessionManager.inMemory>)
     isError: false,
     content: [{ type: "text", text: "ok" }],
     details: { big: "x".repeat(10_000) },
-  } as ToolResultMessage);
-}
-
-function appendToolResultWithTail(
-  sm: ReturnType<typeof SessionManager.inMemory>,
-  tail: string,
-): void {
-  const appendMessage = sm.appendMessage.bind(sm) as unknown as (message: AgentMessage) => void;
-  appendMessage({
-    role: "assistant",
-    content: [{ type: "toolCall", id: "call_1", name: "exec", arguments: {} }],
-  } as AgentMessage);
-  appendMessage({
-    role: "toolResult",
-    toolCallId: "call_1",
-    isError: false,
-    content: [{ type: "text", text: "visible output stays small" }],
-    details: { status: "completed", tail },
-  } as ToolResultMessage);
+  } as any);
 }
 
 function getPersistedToolResult(sm: ReturnType<typeof SessionManager.inMemory>) {
@@ -83,39 +60,15 @@ function getPersistedToolResult(sm: ReturnType<typeof SessionManager.inMemory>) 
     .filter((e) => e.type === "message")
     .map((e) => (e as { message: AgentMessage }).message);
 
-  return messages.find((message): message is ToolResultMessage => message.role === "toolResult");
+  return messages.find((m) => (m as any).role === "toolResult") as any;
 }
 
-function hasRecordDetails(message: ToolResultMessage): message is PersistedToolResultMessage {
-  return (
-    typeof message.details === "object" &&
-    message.details !== null &&
-    !Array.isArray(message.details)
-  );
-}
-
-function requirePersistedToolResultMessage(sm: ReturnType<typeof SessionManager.inMemory>) {
+function requirePersistedToolResult(sm: ReturnType<typeof SessionManager.inMemory>) {
   const toolResult = getPersistedToolResult(sm);
   if (!toolResult) {
     throw new Error("expected persisted toolResult message");
   }
   return toolResult;
-}
-
-function requirePersistedToolResult(sm: ReturnType<typeof SessionManager.inMemory>) {
-  const toolResult = requirePersistedToolResultMessage(sm);
-  if (!hasRecordDetails(toolResult)) {
-    throw new Error("expected persisted toolResult message with object details");
-  }
-  return toolResult;
-}
-
-function requireToolResultText(message: ToolResultMessage): string {
-  const text = message.content.find((block) => block.type === "text")?.text;
-  if (text === undefined) {
-    throw new Error("expected persisted toolResult text content");
-  }
-  return text;
 }
 
 function initializeTempPlugin(params: { tmpPrefix: string; id: string; body: string }) {
@@ -141,7 +94,8 @@ function initializeTempPlugin(params: { tmpPrefix: string; id: string; body: str
 
 function expectPersistedToolResultTextCapped(sm: ReturnType<typeof SessionManager.inMemory>) {
   const toolResult = requirePersistedToolResult(sm);
-  const text = requireToolResultText(toolResult);
+  const text = toolResult.content.find((block: { type: string }) => block.type === "text")?.text;
+  expect(typeof text).toBe("string");
   expect(text.length).toBeLessThanOrEqual(120);
   expect(text).toContain("truncated");
 }
@@ -149,7 +103,7 @@ function expectPersistedToolResultTextCapped(sm: ReturnType<typeof SessionManage
 function expectPersistedToolResultDetailsCapped(sm: ReturnType<typeof SessionManager.inMemory>) {
   // Large details are summarized before persistence to keep transcript files bounded.
   const toolResult = requirePersistedToolResult(sm);
-  const details = toolResult.details;
+  const details = toolResult.details as Record<string, unknown>;
   expect(details.persistedDetailsTruncated).toBe(true);
   expect(details.aggregated).toBeUndefined();
   expect(Buffer.byteLength(JSON.stringify(details), "utf-8")).toBeLessThan(8_192);
@@ -163,9 +117,9 @@ afterEach(() => {
     process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = originalBundledPluginsDir;
   }
   if (originalConfigPath === undefined) {
-    deleteTestEnvValue("OPENCLAW_CONFIG_PATH");
+    delete process.env.OPENCLAW_CONFIG_PATH;
   } else {
-    setTestEnvValue("OPENCLAW_CONFIG_PATH", originalConfigPath);
+    process.env.OPENCLAW_CONFIG_PATH = originalConfigPath;
   }
   for (const dir of tempDirs) {
     fs.rmSync(dir, { force: true, recursive: true });
@@ -210,7 +164,7 @@ describe("tool_result_persist hook", () => {
         error: null,
         payload: "x".repeat(10_000),
       },
-    } as ToolResultMessage);
+    } as any);
 
     const details = requirePersistedToolResult(sm).details;
     expect(details.persistedDetailsTruncated).toBe(true);
@@ -255,11 +209,11 @@ describe("tool_result_persist hook", () => {
           items: [`curl --token ${tokenValue} https://example.test`],
         },
       },
-    } as ToolResultMessage);
+    } as any);
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult.details);
-    expect(requireToolResultText(toolResult)).toBe("visible output stays small");
+    expect(toolResult.content[0]?.text).toBe("visible output stays small");
     expect(serialized).toContain("GITHUB_TOKEN=");
     expect(serialized).toContain("Bearer");
     expect(serialized).toContain("…");
@@ -294,7 +248,7 @@ describe("tool_result_persist hook", () => {
       details: {
         diagnostic: customSecret,
       },
-    } as ToolResultMessage);
+    } as any);
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult);
@@ -305,10 +259,9 @@ describe("tool_result_persist hook", () => {
   it("keeps sensitive parent keys when custom value patterns match the key probe", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-redact-config-"));
     tempDirs.push(tempDir);
-    const configPath = path.join(tempDir, "openclaw.json");
-    setTestEnvValue("OPENCLAW_CONFIG_PATH", configPath);
+    process.env.OPENCLAW_CONFIG_PATH = path.join(tempDir, "openclaw.json");
     fs.writeFileSync(
-      configPath,
+      process.env.OPENCLAW_CONFIG_PATH,
       JSON.stringify({ logging: { redactPatterns: ["/[a-z0-9]{30,}/g"] } }),
       "utf-8",
     );
@@ -329,7 +282,7 @@ describe("tool_result_persist hook", () => {
       details: {
         token: { value: "shortsecret" },
       },
-    } as ToolResultMessage);
+    } as any);
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult.details);
@@ -361,7 +314,7 @@ describe("tool_result_persist hook", () => {
         [`https://example.test/callback?token=${tokenValue}`]: "ok",
         deepDetails,
       },
-    } as ToolResultMessage);
+    } as any);
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult.details);
@@ -401,40 +354,16 @@ describe("tool_result_persist hook", () => {
           },
         ],
       },
-    } as ToolResultMessage);
+    } as any);
 
-    const toolResult = requirePersistedToolResult(sm);
-    expect(requireToolResultText(toolResult)).toBe("visible output stays small");
+    const toolResult = getPersistedToolResult(sm);
+    expect(toolResult.content[0]?.text).toBe("visible output stays small");
     expectPersistedToolResultDetailsCapped(sm);
-  });
-
-  const redactedScanBoundaryTail = () => {
-    const placeholders = Array.from({ length: 5 }, () => `ghp_${"a".repeat(140)}`).join(" ");
-    return `${placeholders}${"x".repeat(1_999 - placeholders.length)}😀${"z".repeat(9_000)}`;
-  };
-
-  it.each([
-    {
-      name: "retained-prefix surrogate boundary",
-      tail: `${"a".repeat(1_487)}😀${"b".repeat(9_000)}`,
-    },
-    { name: "redaction-scan surrogate boundary", tail: redactedScanBoundaryTail() },
-    { name: "ASCII negative control", tail: "a".repeat(10_000) },
-  ])("keeps $name well formed", ({ tail }) => {
-    const sm = guardSessionManager(SessionManager.inMemory(), {
-      agentId: "main",
-      sessionKey: "main",
-    });
-    appendToolResultWithTail(sm, tail);
-
-    const persistedTail = requirePersistedToolResult(sm).details.tail as string;
-    expect(persistedTail).toContain("boundary overlap omitted");
-    expect(persistedTail).not.toMatch(LONE_SURROGATE_RE);
   });
 
   it("redacts summarized oversized toolResult details before persistence", () => {
     const tokenValue = "abcdefghijklmnopqrstuvwx1234567890";
-    const boundaryGhToken = `ghp_${"a".repeat(36)}`;
+    const boundaryGhToken = "ghp_1234567890abcdefghij1234567890abcdef";
     const leadingTailToken = "a".repeat(5_000);
     const omittedTailToken = "b".repeat(5_000);
     const sm = guardSessionManager(SessionManager.inMemory(), {
@@ -469,11 +398,11 @@ describe("tool_result_persist hook", () => {
           },
         ],
       },
-    } as ToolResultMessage);
+    } as any);
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult.details);
-    expect(requireToolResultText(toolResult)).toBe("visible output stays small");
+    expect(toolResult.content[0]?.text).toBe("visible output stays small");
     expect(toolResult.details.persistedDetailsTruncated).toBe(true);
     expect(serialized).toContain("token=***");
     expect(serialized).toContain("partial secret span omitted");
@@ -506,13 +435,6 @@ describe("tool_result_persist hook", () => {
         cwd: "/tmp/".concat("workspace/".repeat(400)),
         name: "oversized fallback command ".repeat(200),
         fullOutputPath: "/tmp/".concat("output/".repeat(400)),
-        spilledChars: 2_000_000,
-        spillTruncated: true,
-        spill: {
-          path: "/tmp/web-fetch-output",
-          chars: 2_000_000,
-          truncated: true,
-        },
         aggregated: "x".repeat(120_000),
         tail: "tail ".repeat(800),
         sessions: Array.from({ length: 10 }, (_, i) => ({
@@ -521,21 +443,14 @@ describe("tool_result_persist hook", () => {
           command: `node script-${i}.js ${"x".repeat(6_000)}`,
         })),
       },
-    } as ToolResultMessage);
+    } as any);
 
     const toolResult = requirePersistedToolResult(sm);
     const details = toolResult.details;
     const serialized = JSON.stringify(details);
     expect(details.persistedDetailsTruncated).toBe(true);
     expect(details.finalDetailsTruncated).toBe(true);
-    expect(details.status).toMatchObject({ token: "***" });
-    expect(details.spilledChars).toBe(2_000_000);
-    expect(details.spillTruncated).toBe(true);
-    expect(details.spill).toEqual({
-      path: "/tmp/web-fetch-output",
-      chars: 2_000_000,
-      truncated: true,
-    });
+    expect(details.status?.token).toBe("***");
     expect(serialized).not.toContain(tokenValue);
   });
 
@@ -567,7 +482,7 @@ describe("tool_result_persist hook", () => {
         aggregated: "x".repeat(120_000),
         tail,
       },
-    } as ToolResultMessage);
+    } as any);
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult.details);
@@ -597,7 +512,7 @@ describe("tool_result_persist hook", () => {
         status: "completed",
         tail: `${"x".repeat(1_000)}{"token":"${longSecret}${"z".repeat(1_000)}`,
       },
-    } as ToolResultMessage);
+    } as any);
 
     const toolResult = requirePersistedToolResult(sm);
     const serialized = JSON.stringify(toolResult.details);
@@ -642,13 +557,13 @@ describe("tool_result_persist hook", () => {
         isError: false,
         content: [{ type: "text", text: "visible output stays small" }],
         details: oversizedDetails,
-      } as ToolResultMessage);
+      } as any);
     } finally {
       stringifySpy.mockRestore();
     }
 
-    const toolResult = requirePersistedToolResult(sm);
-    expect(requireToolResultText(toolResult)).toBe("visible output stays small");
+    const toolResult = getPersistedToolResult(sm);
+    expect(toolResult.content[0]?.text).toBe("visible output stays small");
     expectPersistedToolResultDetailsCapped(sm);
     expect(stringifySpy).not.toHaveBeenCalledWith(oversizedDetails);
   });
@@ -692,14 +607,14 @@ describe("tool_result_persist hook", () => {
         isError: false,
         content: [{ type: "text", text: "visible output stays small" }],
         details: wideDetails,
-      } as ToolResultMessage);
+      } as any);
     } finally {
       entriesSpy.mockRestore();
       keysSpy.mockRestore();
     }
 
-    const toolResult = requirePersistedToolResult(sm);
-    const details = toolResult.details;
+    const toolResult = getPersistedToolResult(sm);
+    const details = toolResult.details as Record<string, unknown>;
     expect(details.persistedDetailsTruncated).toBe(true);
     expect(details.originalDetailKeys).toContain("status");
     expect(details.originalDetailKeys).toContain("sessionId");
@@ -742,10 +657,10 @@ describe("tool_result_persist hook", () => {
           tail: "z".repeat(10_000),
         })),
       },
-    } as ToolResultMessage);
+    } as any);
 
-    const toolResult = requirePersistedToolResult(sm);
-    const details = toolResult.details;
+    const toolResult = getPersistedToolResult(sm);
+    const details = toolResult.details as Record<string, unknown>;
     expect(details.persistedDetailsTruncated).toBe(true);
     expect(details.finalDetailsTruncated).toBe(true);
     expect(details.aggregated).toBeUndefined();
@@ -801,7 +716,7 @@ describe("tool_result_persist hook", () => {
     });
 
     appendToolCallAndResult(sm);
-    const toolResult = requirePersistedToolResultMessage(sm);
+    const toolResult = requirePersistedToolResult(sm);
 
     // Hook registration should preserve a valid toolResult message shape.
     expect(toolResult.role).toBe("toolResult");

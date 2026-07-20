@@ -12,7 +12,6 @@ describe("checkTwitchAccessControl", () => {
   };
 
   const mockMessage: TwitchChatMessage = {
-    id: "message-1",
     username: "testuser",
     userId: "123456",
     message: "hello bot",

@@ -3,35 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.js";
 import {
   buildReferenceInputCapabilityFailure,
+  mergeVideoGenerationProviderCapabilities,
   resolveProviderWithModelCapabilities,
 } from "./capability-overlays.js";
-import type { VideoGenerationProvider, VideoGenerationProviderCapabilities } from "./types.js";
-
-async function resolveCapabilitiesWithOverlay(
-  base: VideoGenerationProviderCapabilities,
-  overlay: VideoGenerationProviderCapabilities,
-): Promise<VideoGenerationProviderCapabilities> {
-  const provider: VideoGenerationProvider = {
-    id: "video-plugin",
-    capabilities: base,
-    resolveModelCapabilities: async () => overlay,
-    async generateVideo() {
-      throw new Error("should not be called");
-    },
-  };
-  const resolved = await resolveProviderWithModelCapabilities({
-    provider,
-    providerId: "video-plugin",
-    model: "model",
-    cfg: {} as OpenClawConfig,
-    log: { debug: vi.fn() },
-  });
-  return resolved.capabilities;
-}
+import type { VideoGenerationProvider } from "./types.js";
 
 describe("video-generation capability overlays", () => {
-  it("lets explicit false and zero values narrow base capabilities", async () => {
-    const merged = await resolveCapabilitiesWithOverlay(
+  it("lets explicit false and zero values narrow base capabilities", () => {
+    const merged = mergeVideoGenerationProviderCapabilities(
       {
         providerOptions: { seed: "number" },
         generate: {
@@ -67,8 +46,8 @@ describe("video-generation capability overlays", () => {
     });
   });
 
-  it("keeps base values when overlay leaves fields undefined", async () => {
-    const merged = await resolveCapabilitiesWithOverlay(
+  it("keeps base values when overlay leaves fields undefined", () => {
+    const merged = mergeVideoGenerationProviderCapabilities(
       {
         providerOptions: { seed: "number" },
         generate: {
@@ -97,8 +76,8 @@ describe("video-generation capability overlays", () => {
     });
   });
 
-  it("lets explicit empty providerOptions overlays clear inherited declarations", async () => {
-    const merged = await resolveCapabilitiesWithOverlay(
+  it("lets explicit empty providerOptions overlays clear inherited declarations", () => {
+    const merged = mergeVideoGenerationProviderCapabilities(
       {
         providerOptions: { seed: "number" },
         generate: {

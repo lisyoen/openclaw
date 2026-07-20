@@ -22,6 +22,8 @@ import {
   type ModelRegistry as AgentModelRegistry,
 } from "./sessions/index.js";
 
+export { AuthStorage, ModelRegistry };
+
 type ProviderRuntimeModelLike = Model & {
   contextTokens?: number;
 };
@@ -39,11 +41,7 @@ type DiscoverModelsOptions = {
 };
 
 /** Applies plugin model normalization and transport hooks to discovered agent models. */
-export function normalizeDiscoveredAgentModel<T>(
-  value: T,
-  agentDir: string,
-  options?: Pick<DiscoverModelsOptions, "config" | "workspaceDir">,
-): T {
+export function normalizeDiscoveredAgentModel<T>(value: T, agentDir: string): T {
   if (!isRecord(value)) {
     return value;
   }
@@ -55,15 +53,10 @@ export function normalizeDiscoveredAgentModel<T>(
     return value;
   }
   const model = value as unknown as DiscoveredProviderRuntimeModelLike;
-  const runtimeContext = {
-    ...(options?.config !== undefined ? { config: options.config } : {}),
-    ...(options?.workspaceDir !== undefined ? { workspaceDir: options.workspaceDir } : {}),
-  };
   const pluginNormalized =
     normalizeProviderResolvedModelWithPlugin({
       provider: model.provider,
       modelId: model.id,
-      ...runtimeContext,
       context: {
         provider: model.provider,
         modelId: model.id,
@@ -75,7 +68,6 @@ export function normalizeDiscoveredAgentModel<T>(
     applyProviderResolvedTransportWithPlugin({
       provider: model.provider,
       modelId: model.id,
-      ...runtimeContext,
       context: {
         provider: model.provider,
         modelId: model.id,
@@ -122,15 +114,19 @@ function createOpenClawModelRegistry(
   const shouldNormalize = options?.normalizeModels !== false;
   const findCache = new Map<string, Model | undefined>();
   const normalizeEntry = (entry: Model) =>
-    shouldNormalize ? normalizeDiscoveredAgentModel(entry, agentDir, options) : entry;
+    shouldNormalize ? normalizeDiscoveredAgentModel(entry, agentDir) : entry;
 
   registry.getAll = () => {
     const entries = getAll().filter((entry: Model) => matchesProviderFilter(entry));
-    return shouldNormalize ? entries.map(normalizeEntry) : entries;
+    return shouldNormalize
+      ? entries.map((entry: Model) => normalizeDiscoveredAgentModel(entry, agentDir))
+      : entries;
   };
   registry.getAvailable = () => {
     const entries = getAvailable().filter((entry: Model) => matchesProviderFilter(entry));
-    return shouldNormalize ? entries.map(normalizeEntry) : entries;
+    return shouldNormalize
+      ? entries.map((entry: Model) => normalizeDiscoveredAgentModel(entry, agentDir))
+      : entries;
   };
   registry.find = (provider: string, modelId: string) => {
     const normalizedProvider = normalizeProviderId(provider);
@@ -176,3 +172,9 @@ export function discoverModels(
     options,
   );
 }
+
+export {
+  addEnvBackedAgentCredentials,
+  resolveAgentCredentialsForDiscovery,
+  type DiscoverAuthStorageOptions,
+} from "./agent-auth-discovery.js";

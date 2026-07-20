@@ -21,12 +21,11 @@ type HandshakeConnectAuth = {
   deviceToken?: string;
   password?: string;
   approvalRuntimeToken?: string;
-  agentRuntimeIdentityToken?: string;
 };
 
-type DeviceTokenCandidateSource = "explicit-device-token" | "shared-token-fallback";
+export type DeviceTokenCandidateSource = "explicit-device-token" | "shared-token-fallback";
 
-type ConnectAuthState = {
+export type ConnectAuthState = {
   authResult: GatewayAuthResult;
   authOk: boolean;
   authMethod: GatewayAuthResult["method"];
@@ -49,7 +48,7 @@ type VerifyDeviceTokenResult = {
 };
 type VerifyBootstrapTokenResult = { ok: boolean; reason?: string };
 
-type ConnectAuthDecision = {
+export type ConnectAuthDecision = {
   authResult: GatewayAuthResult;
   authOk: boolean;
   authMethod: GatewayAuthResult["method"];

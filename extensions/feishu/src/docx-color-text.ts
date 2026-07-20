@@ -89,9 +89,6 @@ function parseColorMarkup(content: string): Segment[] {
       // Tagged segment
       const tagStr = normalizeLowercaseStringOrEmpty(match[1]);
       const text = match[2];
-      if (text === undefined) {
-        continue;
-      }
       const tags = tagStr.split(/\s+/);
 
       const segment: Segment = { text };

@@ -8,7 +8,12 @@ import {
 } from "discord-api-types/v10";
 import { describe, expect, it, vi } from "vitest";
 import { Container, TextDisplay } from "./components.js";
-import { ModalInteraction, createInteraction, type RawInteraction } from "./interactions.js";
+import {
+  BaseInteraction,
+  ModalInteraction,
+  createInteraction,
+  type RawInteraction,
+} from "./interactions.js";
 import { Message } from "./structures.js";
 import {
   attachRestMock,
@@ -24,7 +29,7 @@ describe("BaseInteraction", () => {
     const patch = vi.fn(async () => undefined);
     const client = createInternalTestClient();
     attachRestMock(client, { patch, post });
-    const interaction = createInteraction(
+    const interaction = new BaseInteraction(
       client,
       createInternalInteractionPayload({ id: "interaction1", token: "token1" }),
     );
@@ -47,7 +52,7 @@ describe("BaseInteraction", () => {
     const post = vi.fn(async () => undefined);
     const client = createInternalTestClient();
     attachRestMock(client, { post });
-    const interaction = createInteraction(
+    const interaction = new BaseInteraction(
       client,
       createInternalInteractionPayload({ id: "interaction1", token: "token1" }),
     );
@@ -80,7 +85,7 @@ describe("BaseInteraction", () => {
     const patch = vi.fn(async () => undefined);
     const client = createInternalTestClient();
     attachRestMock(client, { patch, post });
-    const interaction = createInteraction(
+    const interaction = new BaseInteraction(
       client,
       createInternalInteractionPayload({ id: "interaction1", token: "token1" }),
     );
@@ -194,7 +199,7 @@ describe("BaseInteraction", () => {
     const post = vi.fn(async () => undefined);
     const client = createInternalTestClient();
     attachRestMock(client, { get, post });
-    const interaction = createInteraction(
+    const interaction = new BaseInteraction(
       client,
       createInternalInteractionPayload({ id: "interaction1", token: "token1" }),
     );

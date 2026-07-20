@@ -55,7 +55,7 @@ export type ChannelSetupWizardStatus = {
 };
 
 /** Snapshot of one credential before prompting or reusing existing config. */
-type ChannelSetupWizardCredentialState = {
+export type ChannelSetupWizardCredentialState = {
   accountConfigured: boolean;
   hasConfiguredValue: boolean;
   resolvedValue?: string;
@@ -65,7 +65,7 @@ type ChannelSetupWizardCredentialState = {
 export type ChannelSetupWizardCredentialValues = Partial<Record<string, string>>;
 
 /** Optional explanatory note shown when its owning step is reached. */
-type ChannelSetupWizardNote = {
+export type ChannelSetupWizardNote = {
   title: string;
   lines: string[];
   shouldShow?: (params: {
@@ -76,7 +76,7 @@ type ChannelSetupWizardNote = {
 };
 
 /** Lets a wizard configure an account entirely from existing environment. */
-type ChannelSetupWizardEnvShortcut = {
+export type ChannelSetupWizardEnvShortcut = {
   prompt: string;
   preferredEnvVar?: string;
   isAvailable: (params: { cfg: OpenClawConfig; accountId: string }) => boolean;
@@ -176,7 +176,7 @@ export type ChannelSetupWizardAllowFromEntry = {
 };
 
 /** Channel-specific resolver for user-entered allowlist targets. */
-type ChannelSetupWizardAllowFrom = {
+export type ChannelSetupWizardAllowFrom = {
   helpTitle?: string;
   helpLines?: string[];
   credentialInputKey?: keyof ChannelSetupInput;
@@ -199,7 +199,7 @@ type ChannelSetupWizardAllowFrom = {
 };
 
 /** Declarative group/DM access policy step used by interactive setup. */
-type ChannelSetupWizardGroupAccess = {
+export type ChannelSetupWizardGroupAccess = {
   label: string;
   placeholder: string;
   helpTitle?: string;
@@ -228,7 +228,7 @@ type ChannelSetupWizardGroupAccess = {
 };
 
 /** Optional pre-step hook for deriving helper config or credential values. */
-type ChannelSetupWizardPrepare = (params: {
+export type ChannelSetupWizardPrepare = (params: {
   cfg: OpenClawConfig;
   accountId: string;
   credentialValues: ChannelSetupWizardCredentialValues;
@@ -247,7 +247,7 @@ type ChannelSetupWizardPrepare = (params: {
     } | void>;
 
 /** Optional post-step hook for final validation, writes, or post prompts. */
-type ChannelSetupWizardFinalize = (params: {
+export type ChannelSetupWizardFinalize = (params: {
   cfg: OpenClawConfig;
   accountId: string;
   credentialValues: ChannelSetupWizardCredentialValues;
@@ -302,10 +302,7 @@ export type ChannelSetupWizard = {
 /** Runtime options for selecting and configuring one or more channels. */
 export type SetupChannelsOptions = {
   allowDisable?: boolean;
-  allowIMessageInstall?: boolean;
   allowSignalInstall?: boolean;
-  /** Revalidate host authority immediately before an installer or other durable effect. */
-  beforePersistentEffect?: () => Promise<void>;
   onSelection?: (selection: ChannelId[]) => void;
   onPostWriteHook?: (hook: ChannelOnboardingPostWriteHook) => void;
   accountIds?: Partial<Record<ChannelId, string>>;
@@ -314,12 +311,6 @@ export type SetupChannelsOptions = {
   promptAccountIds?: boolean;
   forceAllowFromChannels?: ChannelId[];
   deferStatusUntilSelection?: boolean;
-  /**
-   * The controlling client finishes device linking itself after config is
-   * written (e.g. Control UI renders the WhatsApp QR via web.login.*), so
-   * setup surfaces must skip terminal-interactive login/link prompts.
-   */
-  deferDeviceLinkToClient?: boolean;
   skipStatusNote?: boolean;
   skipDmPolicyPrompt?: boolean;
   skipConfirm?: boolean;
@@ -355,7 +346,7 @@ export type ChannelSetupStatusContext = {
 };
 
 /** Shared context for applying setup changes for a selected channel. */
-type ChannelSetupConfigureContext = {
+export type ChannelSetupConfigureContext = {
   cfg: OpenClawConfig;
   runtime: RuntimeEnv;
   prompter: WizardPrompter;
@@ -366,7 +357,7 @@ type ChannelSetupConfigureContext = {
 };
 
 /** Context passed after setup has written config to disk. */
-type ChannelOnboardingPostWriteContext = {
+export type ChannelOnboardingPostWriteContext = {
   previousCfg: OpenClawConfig;
   cfg: OpenClawConfig;
   accountId: string;
@@ -387,7 +378,7 @@ export type ChannelSetupResult = {
 
 export type ChannelSetupConfiguredResult = ChannelSetupResult | "skip";
 
-type ChannelSetupInteractiveContext = ChannelSetupConfigureContext & {
+export type ChannelSetupInteractiveContext = ChannelSetupConfigureContext & {
   configured: boolean;
   label: string;
 };

@@ -3,24 +3,23 @@ import { defineCommandDescriptorCatalog } from "./command-descriptor-utils.js";
 import type { NamedCommandDescriptor } from "./command-group-descriptors.js";
 
 /** Descriptor shape for root commands owned by the core CLI. */
-type CoreCliCommandDescriptor = NamedCommandDescriptor;
+export type CoreCliCommandDescriptor = NamedCommandDescriptor;
 
 const coreCliCommandCatalog = defineCommandDescriptorCatalog([
   {
-    name: "setup",
-    description: "Chat with OpenClaw; onboard when setup is incomplete",
+    name: "crestodian",
+    description: "Open the interactive setup and repair assistant",
     hasSubcommands: false,
   },
   {
-    name: "crestodian", // hidden alias
-    description: "Deprecated: use openclaw setup",
+    name: "setup",
+    description: "Initialize local config and an agent workspace",
     hasSubcommands: false,
-    hidden: true,
   },
   {
     name: "onboard",
-    description: "Guided setup for auth, models, Gateway, workspace, channels, and skills",
-    hasSubcommands: true,
+    description: "Interactive onboarding for gateway, workspace, and skills",
+    hasSubcommands: false,
   },
   {
     name: "configure",
@@ -30,12 +29,12 @@ const coreCliCommandCatalog = defineCommandDescriptorCatalog([
   {
     name: "config",
     description:
-      "Non-interactive config helpers (get/set/patch/unset/file/schema/validate). Run without subcommand for guided setup.",
+      "Non-interactive config helpers (get/set/unset/file/validate). Default: starts guided setup.",
     hasSubcommands: true,
   },
   {
     name: "backup",
-    description: "Create and verify backup archives and SQLite snapshots",
+    description: "Create and verify local backup archives for OpenClaw state",
     hasSubcommands: true,
   },
   {
@@ -45,7 +44,7 @@ const coreCliCommandCatalog = defineCommandDescriptorCatalog([
   },
   {
     name: "doctor",
-    description: "Health checks + quick fixes for the gateway and channels",
+    description: "Diagnose and repair config, Gateway, plugin, and channel problems",
     hasSubcommands: false,
   },
   {
@@ -65,12 +64,12 @@ const coreCliCommandCatalog = defineCommandDescriptorCatalog([
   },
   {
     name: "message",
-    description: "Send, read, and manage messages and channel actions",
+    description: "Send, read, and manage channel messages",
     hasSubcommands: true,
   },
   {
     name: "mcp",
-    description: "Manage OpenClaw mcp.servers config and channel bridge",
+    description: "Manage OpenClaw MCP config and channel bridge",
     hasSubcommands: true,
     parentDefaultHelp: true,
   },
@@ -81,27 +80,22 @@ const coreCliCommandCatalog = defineCommandDescriptorCatalog([
   },
   {
     name: "agent",
-    description: "Run an agent turn via the Gateway (use --local for embedded)",
+    description: "Run one agent turn via the Gateway",
     hasSubcommands: false,
   },
   {
     name: "agents",
-    description: "Manage isolated agents (workspaces + auth + routing)",
+    description: "Manage isolated agents (workspaces, auth, routing)",
     hasSubcommands: true,
   },
   {
     name: "status",
-    description: "Show channel health and recent session recipients",
+    description: "Show Gateway, channel, model, and recent-session status",
     hasSubcommands: false,
   },
   {
     name: "health",
-    description: "Fetch health from the running gateway",
-    hasSubcommands: false,
-  },
-  {
-    name: "audit",
-    description: "Inspect metadata-only run, tool, and message lifecycle records",
+    description: "Fetch detailed health from the running Gateway",
     hasSubcommands: false,
   },
   {
@@ -116,7 +110,7 @@ const coreCliCommandCatalog = defineCommandDescriptorCatalog([
   },
   {
     name: "tasks",
-    description: "Inspect durable background tasks and TaskFlow state",
+    description: "Inspect durable background tasks and flows",
     hasSubcommands: true,
   },
 ] as const satisfies ReadonlyArray<CoreCliCommandDescriptor>);

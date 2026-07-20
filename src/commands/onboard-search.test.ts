@@ -96,19 +96,7 @@ function createSearchProviderEntry(id: string): PluginWebSearchProviderEntry {
       >;
       entries[metadata.pluginId] = { ...entries[metadata.pluginId], enabled: true };
       next.plugins = { ...next.plugins, entries };
-      if (id !== "firecrawl" || next.tools?.web?.fetch?.provider) {
-        return next;
-      }
-      return {
-        ...next,
-        tools: {
-          ...next.tools,
-          web: {
-            ...next.tools?.web,
-            fetch: { provider: "firecrawl" },
-          },
-        },
-      };
+      return next;
     },
   };
   if (id === "kimi") {
@@ -403,7 +391,7 @@ describe("setupSearch", () => {
       });
       const result = await setupSearch(cfg, runtime, prompter);
       expect(result.tools?.web?.search?.provider).toBe("brave");
-      expect(result.tools?.web?.search?.enabled).toBe(false);
+      expect(result.tools?.web?.search?.enabled).toBeUndefined();
       const missingNote = notes.find((n) => n.message.includes("No Brave Search API key stored"));
       expect(missingNote?.message).toContain("No Brave Search API key stored");
     } finally {
@@ -411,30 +399,6 @@ describe("setupSearch", () => {
         delete process.env.BRAVE_API_KEY;
       } else {
         process.env.BRAVE_API_KEY = original;
-      }
-    }
-  });
-
-  it("keeps keyless Firecrawl fetch configured when search setup has no key", async () => {
-    const original = process.env.FIRECRAWL_API_KEY;
-    delete process.env.FIRECRAWL_API_KEY;
-    try {
-      const { prompter } = createPrompter({
-        selectValue: "firecrawl",
-        textValue: "",
-      });
-
-      const result = await setupSearch({}, runtime, prompter);
-
-      expect(result.tools?.web?.search?.provider).toBe("firecrawl");
-      expect(result.tools?.web?.search?.enabled).toBe(false);
-      expect(result.tools?.web?.fetch?.provider).toBe("firecrawl");
-      expect(result.plugins?.entries?.firecrawl?.enabled).toBe(true);
-    } finally {
-      if (original === undefined) {
-        delete process.env.FIRECRAWL_API_KEY;
-      } else {
-        process.env.FIRECRAWL_API_KEY = original;
       }
     }
   });
@@ -517,7 +481,7 @@ describe("setupSearch", () => {
       });
       expect(prompter.text).toHaveBeenCalled();
       expect(result.tools?.web?.search?.provider).toBe("grok");
-      expect(result.tools?.web?.search?.enabled).toBe(false);
+      expect(result.tools?.web?.search?.enabled).toBeUndefined();
     } finally {
       if (original === undefined) {
         delete process.env.XAI_API_KEY;

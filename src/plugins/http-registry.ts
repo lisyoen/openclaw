@@ -6,7 +6,7 @@ import { findOverlappingPluginHttpRoute } from "./http-route-overlap.js";
 import type { PluginHttpRouteRegistration, PluginRegistry } from "./registry.js";
 import { requireActivePluginHttpRouteRegistry } from "./runtime.js";
 
-type PluginHttpRouteHandler = (
+export type PluginHttpRouteHandler = (
   req: IncomingMessage,
   res: ServerResponse,
 ) => Promise<boolean | void> | boolean | void;

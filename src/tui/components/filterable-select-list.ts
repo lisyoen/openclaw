@@ -1,21 +1,24 @@
 // Filterable select list component supports filtered keyboard selection.
 import type { Component } from "@earendil-works/pi-tui";
 import {
-  fuzzyFilter,
   Input,
   matchesKey,
   type SelectItem,
   SelectList,
   type SelectListTheme,
 } from "@earendil-works/pi-tui";
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import chalk from "chalk";
+import { fuzzyFilterLower, prepareSearchItems } from "./fuzzy-filter.js";
 
 export interface FilterableSelectItem extends SelectItem {
   /** Additional searchable fields beyond label */
   searchText?: string;
+  /** Pre-computed lowercase search text (label + description + searchText) for filtering */
+  searchTextLower?: string;
 }
 
-interface FilterableSelectListTheme extends SelectListTheme {
+export interface FilterableSelectListTheme extends SelectListTheme {
   filterLabel: (text: string) => string;
 }
 
@@ -35,7 +38,7 @@ export class FilterableSelectList implements Component {
   onCancel?: () => void;
 
   constructor(items: FilterableSelectItem[], maxVisible: number, theme: FilterableSelectListTheme) {
-    this.allItems = items;
+    this.allItems = prepareSearchItems(items);
     this.maxVisible = maxVisible;
     this.theme = theme;
     this.input = new Input();
@@ -43,13 +46,12 @@ export class FilterableSelectList implements Component {
   }
 
   private applyFilter(): void {
-    if (!this.filterText.trim()) {
+    const queryLower = normalizeLowercaseStringOrEmpty(this.filterText);
+    if (!queryLower.trim()) {
       this.selectList = new SelectList(this.allItems, this.maxVisible, this.theme);
       return;
     }
-    const filtered = fuzzyFilter(this.allItems, this.filterText, (item) =>
-      [item.label, item.description, item.searchText].filter(Boolean).join(" "),
-    );
+    const filtered = fuzzyFilterLower(this.allItems, queryLower);
     this.selectList = new SelectList(filtered, this.maxVisible, this.theme);
   }
 

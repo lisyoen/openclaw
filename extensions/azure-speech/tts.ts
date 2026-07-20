@@ -2,10 +2,7 @@
  * Azure Speech REST helpers. They normalize endpoints, build SSML, list voices,
  * and synthesize speech with response-size and SSRF guards.
  */
-import {
-  assertOkOrThrowProviderError,
-  readProviderJsonResponse,
-} from "openclaw/plugin-sdk/provider-http";
+import { assertOkOrThrowProviderError } from "openclaw/plugin-sdk/provider-http";
 import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
 import type { SpeechVoiceOption } from "openclaw/plugin-sdk/speech-core";
 import { trimToUndefined } from "openclaw/plugin-sdk/speech-core";
@@ -25,9 +22,6 @@ export const DEFAULT_AZURE_SPEECH_VOICE_NOTE_FORMAT = "ogg-24khz-16bit-mono-opus
 /** Default telephony output format. */
 export const DEFAULT_AZURE_SPEECH_TELEPHONY_FORMAT = "raw-8khz-8bit-mono-mulaw";
 const DEFAULT_AZURE_SPEECH_MAX_BYTES = 16 * 1024 * 1024;
-// Voice discovery should fail boundedly instead of waiting forever when the
-// Azure Speech voices endpoint accepts the connection but never responds.
-const DEFAULT_AZURE_SPEECH_VOICE_LIST_TIMEOUT_MS = 30_000;
 
 type AzureSpeechVoiceEntry = {
   ShortName?: string;
@@ -79,7 +73,11 @@ function escapeXmlAttr(value: string): string {
 }
 
 /** Build escaped SSML for one Azure Speech synthesis request. */
-function buildAzureSpeechSsml(params: { text: string; voice: string; lang?: string }): string {
+export function buildAzureSpeechSsml(params: {
+  text: string;
+  voice: string;
+  lang?: string;
+}): string {
   const lang = trimToUndefined(params.lang) ?? DEFAULT_AZURE_SPEECH_LANG;
   return (
     `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" ` +
@@ -155,17 +153,14 @@ export async function listAzureSpeechVoices(params: {
         "Ocp-Apim-Subscription-Key": params.apiKey,
       },
     },
-    timeoutMs: params.timeoutMs ?? DEFAULT_AZURE_SPEECH_VOICE_LIST_TIMEOUT_MS,
+    timeoutMs: params.timeoutMs,
     policy: ssrfPolicyFromHttpBaseUrlAllowedHostname(url),
     auditContext: "azure-speech.voices",
   });
 
   try {
     await assertOkOrThrowProviderError(response, "Azure Speech voices API error");
-    const voices = await readProviderJsonResponse<AzureSpeechVoiceEntry[]>(
-      response,
-      "azure-speech.voices",
-    );
+    const voices = (await response.json()) as AzureSpeechVoiceEntry[];
     return Array.isArray(voices)
       ? voices
           .filter((voice) => !isDeprecatedVoice(voice))

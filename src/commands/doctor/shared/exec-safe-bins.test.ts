@@ -36,7 +36,7 @@ describe("doctor exec safe bin helpers", () => {
         bin: "jq",
         kind: "riskySemantics",
         warning:
-          "jq can read environment data and load jq code from modules or startup files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
+          "jq supports broad jq programs and builtins (for example `env`), so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
       },
     ]);
   });
@@ -50,13 +50,7 @@ describe("doctor exec safe bin helpers", () => {
           bin: "jq",
           kind: "riskySemantics",
           warning:
-            "jq can read environment data and load jq code from modules or startup files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
-        },
-        {
-          scopePath: "tools.exec",
-          bin: "myfilter",
-          kind: "missingProfile",
-          isInterpreter: false,
+            "jq supports broad jq programs and builtins (for example `env`), so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
         },
       ],
       doctorFixCommand: "openclaw doctor --fix",
@@ -64,93 +58,28 @@ describe("doctor exec safe bin helpers", () => {
 
     expect(warnings).toEqual([
       "- tools.exec.safeBins includes interpreter/runtime 'node' without profile.",
-      "- tools.exec.safeBins entry 'myfilter' is missing safeBinProfiles.myfilter.",
-      "- agents.list.runner.tools.exec.safeBins includes 'jq': jq can read environment data and load jq code from modules or startup files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
+      "- agents.list.runner.tools.exec.safeBins includes 'jq': jq supports broad jq programs and builtins (for example `env`), so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
       '- Run "openclaw doctor --fix" to scaffold missing custom safeBinProfiles entries.',
     ]);
   });
 
-  it("omits doctor fix hint when no custom safeBin profiles can be scaffolded", () => {
-    const warnings = collectExecSafeBinCoverageWarnings({
-      hits: [
-        {
-          scopePath: "tools.exec",
-          bin: "jq",
-          kind: "riskySemantics",
-          warning:
-            "jq can read environment data and load jq code from modules or startup files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
-        },
-      ],
-      doctorFixCommand: "openclaw doctor --fix",
-    });
-
-    expect(warnings).toEqual([
-      "- tools.exec.safeBins includes 'jq': jq can read environment data and load jq code from modules or startup files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
-    ]);
-  });
-
-  it("scaffolds custom safeBin profiles but warns on interpreters and risky bins", () => {
+  it("scaffolds custom safeBin profiles but warns on interpreters", () => {
     const result = maybeRepairExecSafeBinProfiles({
       tools: {
         exec: {
-          safeBins: ["node", "jq", "myfilter"],
+          safeBins: ["node", "jq"],
         },
       },
     } as OpenClawConfig);
 
     expect(result.changes).toEqual([
-      "- tools.exec.safeBinProfiles.myfilter: added scaffold profile {} (review and tighten flags/positionals).",
+      "- tools.exec.safeBinProfiles.jq: added scaffold profile {} (review and tighten flags/positionals).",
     ]);
     expect(result.warnings).toEqual([
-      "- tools.exec.safeBins includes 'jq': jq can read environment data and load jq code from modules or startup files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
+      "- tools.exec.safeBins includes 'jq': jq supports broad jq programs and builtins (for example `env`), so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
       "- tools.exec.safeBins includes interpreter/runtime 'node' without profile; remove it from safeBins or use explicit allowlist entries.",
     ]);
-    expect(result.config.tools?.exec?.safeBinProfiles).toEqual({ myfilter: {} });
-  });
-
-  it("does not scaffold normalized risky safeBins from path-like entries", () => {
-    const hits = scanExecSafeBinCoverage({
-      tools: {
-        exec: {
-          safeBins: ["/usr/local/bin/jq", "sed.exe", "myfilter"],
-        },
-      },
-    } as OpenClawConfig);
-
-    expect(hits).toEqual([
-      { scopePath: "tools.exec", bin: "myfilter", kind: "missingProfile", isInterpreter: false },
-      {
-        scopePath: "tools.exec",
-        bin: "jq",
-        kind: "riskySemantics",
-        warning:
-          "jq can read environment data and load jq code from modules or startup files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
-      },
-      {
-        scopePath: "tools.exec",
-        bin: "sed",
-        kind: "riskySemantics",
-        warning:
-          "sed scripts can execute commands and write files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
-      },
-    ]);
-
-    const result = maybeRepairExecSafeBinProfiles({
-      tools: {
-        exec: {
-          safeBins: ["/usr/local/bin/jq", "sed.exe", "myfilter"],
-        },
-      },
-    } as OpenClawConfig);
-
-    expect(result.changes).toEqual([
-      "- tools.exec.safeBinProfiles.myfilter: added scaffold profile {} (review and tighten flags/positionals).",
-    ]);
-    expect(result.warnings).toEqual([
-      "- tools.exec.safeBins includes 'jq': jq can read environment data and load jq code from modules or startup files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
-      "- tools.exec.safeBins includes 'sed': sed scripts can execute commands and write files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
-    ]);
-    expect(result.config.tools?.exec?.safeBinProfiles).toEqual({ myfilter: {} });
+    expect(result.config.tools?.exec?.safeBinProfiles).toEqual({ jq: {} });
   });
 
   it("warns on awk-family safeBins instead of scaffolding them", () => {
@@ -166,8 +95,10 @@ describe("doctor exec safe bin helpers", () => {
     expect(result.warnings).toEqual([
       "- tools.exec.safeBins includes 'awk': awk-family interpreters can execute commands, access ENVIRON, and write files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
       "- tools.exec.safeBins includes 'sed': sed scripts can execute commands and write files, so prefer explicit allowlist entries or approval-gated runs instead of safeBins.",
+      "- tools.exec.safeBins includes interpreter/runtime 'awk' without profile; remove it from safeBins or use explicit allowlist entries.",
+      "- tools.exec.safeBins includes interpreter/runtime 'sed' without profile; remove it from safeBins or use explicit allowlist entries.",
     ]);
-    expect(result.config.tools?.exec?.safeBinProfiles).toBeUndefined();
+    expect(result.config.tools?.exec?.safeBinProfiles).toStrictEqual({});
   });
 
   it("warns on busybox/toybox safeBins instead of scaffolding them", () => {

@@ -17,7 +17,7 @@ const SKIP_VALUE = "__skip__";
 
 // Official plugin onboarding lists generic official plugins not already
 // configured and installs the selected ones through the trusted install flow.
-type OfficialPluginOnboardingInstallEntry = {
+export type OfficialPluginOnboardingInstallEntry = {
   pluginId: string;
   label: string;
   description?: string;
@@ -37,9 +37,7 @@ function isGenericOfficialPluginEntry(entry: { source?: string; kind?: string })
     Boolean(manifest?.plugin?.id) &&
     !manifest?.channel &&
     (manifest?.providers?.length ?? 0) === 0 &&
-    (manifest?.webSearchProviders?.length ?? 0) === 0 &&
-    // Migration owners have their own setup flow; listing them here duplicates install prompts.
-    (manifest?.contracts?.migrationProviders?.length ?? 0) === 0
+    (manifest?.webSearchProviders?.length ?? 0) === 0
   );
 }
 
@@ -61,7 +59,11 @@ function formatInstallHint(install: PluginPackageInstall): string {
   return "install source";
 }
 
-function resolveOfficialPluginOnboardingInstallEntries(params: {
+export const testing = {
+  formatInstallHint,
+};
+
+export function resolveOfficialPluginOnboardingInstallEntries(params: {
   config: OpenClawConfig;
 }): OfficialPluginOnboardingInstallEntry[] {
   const entries: OfficialPluginOnboardingInstallEntry[] = [];
@@ -134,3 +136,4 @@ export async function setupOfficialPluginInstalls(params: {
   }
   return next;
 }
+export { testing as __testing };

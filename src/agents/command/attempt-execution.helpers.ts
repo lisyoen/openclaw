@@ -5,7 +5,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import {
   isSilentReplyPrefixText,
   isSilentReplyText,
@@ -13,11 +12,7 @@ import {
   startsWithSilentToken,
   stripLeadingSilentToken,
 } from "../../auto-reply/tokens.js";
-import {
-  isToolCallBlock,
-  resolveToolUseId,
-  type ToolContentBlock,
-} from "../../chat/tool-content.js";
+import { resolveToolUseId, type ToolContentBlock } from "../../chat/tool-content.js";
 import {
   type ClaudeCliFallbackSeed,
   readClaudeCliFallbackSeed,
@@ -93,7 +88,7 @@ export async function sessionFileHasContent(sessionFile: string | undefined): Pr
 }
 
 /** Resolves the expected Claude CLI transcript JSONL path for a session. */
-function claudeCliSessionTranscriptPath(params: {
+export function claudeCliSessionTranscriptPath(params: {
   sessionId: string | undefined;
   workspaceDir: string | undefined;
   homeDir?: string;
@@ -325,7 +320,7 @@ function extractFallbackTurnText(message: FallbackTurnLikeMessage): string {
     // Tool calls: render as a compact "(tool: name)" hint so the fallback
     // model sees the conversation flow without the full tool argument blob,
     // which is rarely useful out of context and chews through char budget.
-    if (isToolCallBlock(rec) && typeof rec.name === "string") {
+    if (rec.type === "tool_use" && typeof rec.name === "string") {
       parts.push(`(tool call: ${rec.name})`);
       continue;
     }
@@ -383,7 +378,7 @@ function formatFallbackTurns(
  * Returns an empty string when neither a summary nor any usable turn fits in
  * the budget; callers can treat that as "no context to seed".
  */
-function formatClaudeCliFallbackPrelude(
+export function formatClaudeCliFallbackPrelude(
   seed: ClaudeCliFallbackSeed,
   options?: { charBudget?: number },
 ): string {
@@ -403,7 +398,7 @@ function formatClaudeCliFallbackPrelude(
       // Truncate the summary at a word boundary if it's huge; clearly mark
       // the truncation so the fallback model treats the prelude as a hint,
       // not exhaustive state.
-      const slice = truncateUtf16Safe(seed.summaryText, Math.max(0, remaining - 64));
+      const slice = seed.summaryText.slice(0, Math.max(0, remaining - 64));
       const lastBreak = slice.lastIndexOf(" ");
       const trimmed = lastBreak > 0 ? slice.slice(0, lastBreak).trimEnd() : slice.trimEnd();
       sections.push(`\nSummary of earlier conversation (truncated):\n${trimmed} …`);
@@ -539,10 +534,4 @@ export function createAcpVisibleTextAccumulator() {
       return visibleText;
     },
   };
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for("openclaw.attemptExecutionHelpersTestApi")
-  ] = { claudeCliSessionTranscriptPath, formatClaudeCliFallbackPrelude };
 }

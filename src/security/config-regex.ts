@@ -12,7 +12,7 @@ export type ConfigRegexRejectReason = Exclude<SafeRegexRejectReason, "empty">;
  * Result for one config regex pattern.
  * Empty patterns return null from the compiler; invalid or unsafe patterns return a rejected shape.
  */
-type CompiledConfigRegex =
+export type CompiledConfigRegex =
   | {
       regex: RegExp;
       pattern: string;

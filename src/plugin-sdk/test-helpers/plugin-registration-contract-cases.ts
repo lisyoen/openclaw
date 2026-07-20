@@ -66,7 +66,7 @@ export const pluginRegistrationContractCases = {
   firecrawl: {
     pluginId: "firecrawl",
     webFetchProviderIds: ["firecrawl"],
-    webSearchProviderIds: ["firecrawl", "firecrawl-free"],
+    webSearchProviderIds: ["firecrawl"],
     toolNames: ["firecrawl_search", "firecrawl_scrape"],
   },
   google: {
@@ -127,8 +127,8 @@ export const pluginRegistrationContractCases = {
       choiceId: "kimi-code-api-key",
       choiceLabel: "Kimi Code API key (subscription)",
       groupId: "moonshot",
-      groupLabel: "Moonshot AI (Kimi)",
-      groupHint: "Kimi Code membership · https://www.kimi.com/membership/pricing",
+      groupLabel: "Moonshot AI (Kimi K2.6)",
+      groupHint: "Kimi K2.6",
     },
   },
   nvidia: {
@@ -205,8 +205,9 @@ export const pluginRegistrationContractCases = {
       "qwencloud",
       "modelstudio",
       "dashscope",
-      "qwen-token-plan",
-      "bailian-token-plan",
+      "qwen-oauth",
+      "qwen-portal",
+      "qwen-cli",
     ],
     mediaUnderstandingProviderIds: ["qwen"],
     videoGenerationProviderIds: ["qwen"],

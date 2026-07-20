@@ -12,6 +12,8 @@ import {
   MODEL_AVAILABILITY_UNAVAILABLE_CODE,
   shouldFallbackToAuthHeuristics,
 } from "./list.errors.js";
+import { toModelRow as toModelRowBase } from "./list.model-row.js";
+import type { ModelRow } from "./list.types.js";
 import { modelKey } from "./shared.js";
 
 function createAvailabilityUnavailableError(message: string): Error {
@@ -69,7 +71,6 @@ function loadAvailableModels(
         ? !shouldSuppressBuiltInModelFromManifest({
             provider: model.provider,
             id: model.id,
-            baseUrl: model.baseUrl,
             config: cfg,
           })
         : !shouldSuppressBuiltInModel({
@@ -88,8 +89,6 @@ function loadAvailableModels(
 export async function loadModelRegistry(
   cfg: OpenClawConfig,
   opts?: {
-    agentId?: string;
-    agentDir?: string;
     providerFilter?: string;
     normalizeModels?: boolean;
     loadAvailability?: boolean;
@@ -97,11 +96,8 @@ export async function loadModelRegistry(
   },
 ) {
   const runtimeSuppression = opts?.normalizeModels !== false;
-  const skipDiscovery = opts?.loadAvailability === false;
-  const { config: runtimeConfig, registry } = await loadAgentModelRegistry(cfg, {
-    ...(opts?.agentId ? { agentId: opts.agentId } : {}),
-    ...(opts?.agentDir ? { agentDir: opts.agentDir } : {}),
-    skipCredentials: skipDiscovery,
+  const { registry } = loadAgentModelRegistry(cfg, {
+    skipCredentials: opts?.loadAvailability === false,
     workspaceDir: opts?.workspaceDir,
     providerFilter: opts?.providerFilter,
     normalizeModels: opts?.normalizeModels,
@@ -112,13 +108,12 @@ export async function loadModelRegistry(
           provider: model.provider,
           id: model.id,
           baseUrl: model.baseUrl,
-          config: runtimeConfig,
+          config: cfg,
         })
       : !shouldSuppressBuiltInModelFromManifest({
           provider: model.provider,
           id: model.id,
-          baseUrl: model.baseUrl,
-          config: runtimeConfig,
+          config: cfg,
         }),
   );
   let availableKeys: Set<string> | undefined;
@@ -126,7 +121,7 @@ export async function loadModelRegistry(
 
   if (opts?.loadAvailability !== false) {
     try {
-      const availableModels = loadAvailableModels(registry, runtimeConfig, { runtimeSuppression });
+      const availableModels = loadAvailableModels(registry, cfg, { runtimeSuppression });
       availableKeys = new Set(availableModels.map((model) => modelKey(model.provider, model.id)));
     } catch (err) {
       if (!shouldFallbackToAuthHeuristics(err)) {
@@ -142,4 +137,9 @@ export async function loadModelRegistry(
     }
   }
   return { registry, models, availableKeys, availabilityErrorMessage };
+}
+
+/** Compatibility wrapper around the shared model-row builder. */
+export function toModelRow(params: Parameters<typeof toModelRowBase>[0]): ModelRow {
+  return toModelRowBase(params);
 }

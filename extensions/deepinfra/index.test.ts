@@ -3,14 +3,14 @@ import {
   createCapturedPluginRegistration,
   registerSingleProviderPlugin,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
-import { clearLiveCatalogCacheForTests } from "openclaw/plugin-sdk/provider-catalog-live-runtime";
 import type { ProviderCatalogContext } from "openclaw/plugin-sdk/provider-catalog-shared";
 import { describe, expect, it, vi } from "vitest";
 import deepinfraPlugin from "./index.js";
-import { DEEPINFRA_MODEL_CATALOG } from "./provider-models.js";
-
-const DEEPINFRA_MODELS_URL =
-  "https://api.deepinfra.com/v1/openai/models?sort_by=openclaw&filter=with_meta";
+import {
+  DEEPINFRA_MODEL_CATALOG,
+  DEEPINFRA_MODELS_URL,
+  resetDeepInfraModelCacheForTest,
+} from "./provider-models.js";
 
 function buildSyntheticDeepInfraEntries(count: number) {
   return Array.from({ length: count }, (_unused, index) => ({
@@ -49,14 +49,6 @@ function makeAgentModelEntry(id = "profile/live-model") {
   };
 }
 
-function jsonResponse(payload: unknown, init: ResponseInit = {}): Response {
-  return new Response(JSON.stringify(payload), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
-}
-
 async function withLiveDiscoveryTestEnv(
   mockFetch: ReturnType<typeof vi.fn>,
   runAssertions: () => Promise<void>,
@@ -83,7 +75,7 @@ async function withLiveDiscoveryTestEnv(
 
 describe("deepinfra augmentModelCatalog", () => {
   it("returns the discovered (static under VITEST) catalog when nothing is configured", async () => {
-    clearLiveCatalogCacheForTests();
+    resetDeepInfraModelCacheForTest();
     const provider = await registerSingleProviderPlugin(deepinfraPlugin);
 
     const entries = (await provider.augmentModelCatalog?.({ entries: [] } as never)) ?? [];
@@ -97,7 +89,7 @@ describe("deepinfra augmentModelCatalog", () => {
   });
 
   it("preserves configured entries and appends discovered entries that are not already configured", async () => {
-    clearLiveCatalogCacheForTests();
+    resetDeepInfraModelCacheForTest();
     const provider = await registerSingleProviderPlugin(deepinfraPlugin);
 
     const entries =
@@ -129,10 +121,11 @@ describe("deepinfra augmentModelCatalog", () => {
   });
 
   it("uses config-backed API keys to enable live model catalog augmentation", async () => {
-    clearLiveCatalogCacheForTests();
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue(jsonResponse({ data: [makeAgentModelEntry("config/live-model")] }));
+    resetDeepInfraModelCacheForTest();
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [makeAgentModelEntry("config/live-model")] }),
+    });
     const provider = await registerSingleProviderPlugin(deepinfraPlugin);
 
     await withLiveDiscoveryTestEnv(mockFetch, async () => {
@@ -157,10 +150,11 @@ describe("deepinfra augmentModelCatalog", () => {
   });
 
   it("still runs live discovery when ctx.entries includes custom DeepInfra rows", async () => {
-    clearLiveCatalogCacheForTests();
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue(jsonResponse({ data: [makeAgentModelEntry("custom/live-model")] }));
+    resetDeepInfraModelCacheForTest();
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [makeAgentModelEntry("custom/live-model")] }),
+    });
     const provider = await registerSingleProviderPlugin(deepinfraPlugin);
 
     const seededDeepInfraCount = DEEPINFRA_MODEL_CATALOG.length + 5;
@@ -205,7 +199,7 @@ describe("deepinfra augmentModelCatalog", () => {
   });
 
   it("still fetches when ctx.entries has exactly the static catalog length (static-fallback case)", async () => {
-    clearLiveCatalogCacheForTests();
+    resetDeepInfraModelCacheForTest();
     const provider = await registerSingleProviderPlugin(deepinfraPlugin);
 
     const entries =
@@ -235,8 +229,11 @@ describe("deepinfra capability registration", () => {
   });
 
   it("uses profile-resolved API keys for live text catalog discovery", async () => {
-    clearLiveCatalogCacheForTests();
-    const mockFetch = vi.fn().mockResolvedValue(jsonResponse({ data: [makeAgentModelEntry()] }));
+    resetDeepInfraModelCacheForTest();
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [makeAgentModelEntry()] }),
+    });
     const captured = createCapturedPluginRegistration();
     deepinfraPlugin.register(captured.api);
     const provider = captured.providers[0];

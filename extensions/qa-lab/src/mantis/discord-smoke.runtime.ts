@@ -3,11 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
-import { readSecretFileSync } from "openclaw/plugin-sdk/secret-file-runtime";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { ensureRepoBoundDirectory, resolveRepoRelativeOutputDir } from "../cli-paths.js";
-import { isTruthyOptIn, trimToValue } from "../mantis-options.runtime.js";
 
 export type MantisDiscordSmokeOptions = {
   channelId?: string;
@@ -25,7 +22,7 @@ export type MantisDiscordSmokeOptions = {
   tokenFileEnv?: string;
 };
 
-type MantisDiscordSmokeResult = {
+export type MantisDiscordSmokeResult = {
   outputDir: string;
   reportPath: string;
   summaryPath: string;
@@ -102,8 +99,16 @@ const DEFAULT_MANTIS_TOKEN_FILE_ENV = "OPENCLAW_QA_DISCORD_MANTIS_BOT_TOKEN_FILE
 const DEFAULT_GUILD_ID_ENV = "OPENCLAW_QA_DISCORD_GUILD_ID";
 const DEFAULT_CHANNEL_ID_ENV = "OPENCLAW_QA_DISCORD_CHANNEL_ID";
 const QA_REDACT_PUBLIC_METADATA_ENV = "OPENCLAW_QA_REDACT_PUBLIC_METADATA";
-const DISCORD_API_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
-const MANTIS_DISCORD_TOKEN_FILE_MAX_BYTES = 4 * 1024;
+
+function trimToValue(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function isTruthyOptIn(value: string | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
 
 function assertDiscordSnowflake(value: string, label: string) {
   if (!/^\d{17,20}$/u.test(value)) {
@@ -112,10 +117,11 @@ function assertDiscordSnowflake(value: string, label: string) {
 }
 
 async function readTokenFile(filePath: string) {
-  return readSecretFileSync(filePath, "Mantis Discord token", {
-    maxBytes: MANTIS_DISCORD_TOKEN_FILE_MAX_BYTES,
-    rejectHardlinks: false,
-  });
+  const token = trimToValue(await fs.readFile(filePath, "utf8"));
+  if (!token) {
+    throw new Error(`Mantis Discord token file is empty: ${filePath}`);
+  }
+  return token;
 }
 
 async function resolveMantisDiscordToken(opts: MantisDiscordSmokeOptions) {
@@ -204,11 +210,7 @@ async function callDiscordApi<T>(params: {
     auditContext: "qa-lab-mantis-discord-smoke",
   });
   try {
-    const buffer = await readResponseWithLimit(response, DISCORD_API_RESPONSE_MAX_BYTES, {
-      onOverflow: ({ maxBytes }) =>
-        new Error(`Discord API ${params.path} response exceeds ${maxBytes} bytes`),
-    });
-    const text = buffer.toString("utf8");
+    const text = await response.text();
     const payload = text.trim() ? (JSON.parse(text) as unknown) : undefined;
     params.apiCalls.push({
       label: params.label,

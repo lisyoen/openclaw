@@ -4,12 +4,17 @@ import { buildProgram } from "./program.js";
 import {
   configureCommand,
   ensureConfigReady,
-  runSystemAgentWithInference,
+  installBaseProgramMocks,
+  installSmokeProgramMocks,
+  runCrestodian,
   runTui,
   runtime,
   setupCommand,
   setupWizardCommand,
 } from "./program.test-mocks.js";
+
+installBaseProgramMocks();
+installSmokeProgramMocks();
 
 vi.mock("./config-cli.js", () => ({
   registerConfigCli: (program: {
@@ -44,7 +49,7 @@ describe("cli program (smoke)", () => {
     program = createProgram();
     vi.clearAllMocks();
     runTui.mockResolvedValue(undefined);
-    runSystemAgentWithInference.mockResolvedValue(undefined);
+    runCrestodian.mockResolvedValue(undefined);
     ensureConfigReady.mockResolvedValue(undefined);
   });
 
@@ -64,9 +69,9 @@ describe("cli program (smoke)", () => {
     expect(options?.forceProcessExitOnReturn).toBe(true);
   });
 
-  it("runs setup one-shot requests", async () => {
-    await runProgram(["setup", "--message", "status"]);
-    const options = firstMockArg(runSystemAgentWithInference) as {
+  it("runs crestodian one-shot requests", async () => {
+    await runProgram(["crestodian", "--message", "status"]);
+    const options = firstMockArg(runCrestodian) as {
       message?: string;
       yes?: boolean;
       json?: boolean;
@@ -74,7 +79,6 @@ describe("cli program (smoke)", () => {
     expect(options?.message).toBe("status");
     expect(options?.yes).toBe(false);
     expect(options?.json).toBe(false);
-    expect(runSystemAgentWithInference).toHaveBeenCalledWith(options, runtime);
   });
 
   it("warns and ignores invalid tui timeout override", async () => {

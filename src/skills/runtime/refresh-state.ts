@@ -1,5 +1,5 @@
 // Skill refresh state types describe change notifications emitted by runtime reloads.
-type SkillsChangeEvent = {
+export type SkillsChangeEvent = {
   workspaceDir?: string;
   reason: "watch" | "watch-targets" | "manual" | "remote-node" | "config-change" | "workshop";
   changedPath?: string;
@@ -7,8 +7,7 @@ type SkillsChangeEvent = {
 
 const listeners = new Set<(event: SkillsChangeEvent) => void>();
 const workspaceVersions = new Map<string, number>();
-const INITIAL_SKILLS_SNAPSHOT_VERSION = Date.now();
-let globalVersion = INITIAL_SKILLS_SNAPSHOT_VERSION;
+let globalVersion = 0;
 let listenerErrorHandler: ((err: unknown) => void) | undefined;
 
 function bumpVersion(current: number): number {
@@ -86,6 +85,6 @@ export function shouldRefreshSnapshotForVersion(
 export function resetSkillsRefreshStateForTest(): void {
   listeners.clear();
   workspaceVersions.clear();
-  globalVersion = INITIAL_SKILLS_SNAPSHOT_VERSION;
+  globalVersion = 0;
   listenerErrorHandler = undefined;
 }

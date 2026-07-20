@@ -1,9 +1,9 @@
 // Telegram plugin module implements allowed updates behavior.
 import { API_CONSTANTS } from "grammy";
 
-type TelegramUpdateType = (typeof API_CONSTANTS.ALL_UPDATE_TYPES)[number];
+export type TelegramUpdateType = (typeof API_CONSTANTS.ALL_UPDATE_TYPES)[number];
 
-const DEFAULT_TELEGRAM_UPDATE_TYPES: ReadonlyArray<TelegramUpdateType> =
+export const DEFAULT_TELEGRAM_UPDATE_TYPES: ReadonlyArray<TelegramUpdateType> =
   API_CONSTANTS.DEFAULT_UPDATE_TYPES;
 
 export function resolveTelegramAllowedUpdates(): ReadonlyArray<TelegramUpdateType> {

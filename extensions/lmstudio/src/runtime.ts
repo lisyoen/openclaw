@@ -71,20 +71,19 @@ function shouldSuppressResolvedRuntimeApiKeyForHeaderAuth(
   return /^profile:|^(?:shell )?env(?::|$)/.test(source);
 }
 
-export async function resolveLmstudioConfiguredApiKeyForProvider(params: {
-  providerId: string;
+export async function resolveLmstudioConfiguredApiKey(params: {
   config?: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
   path?: string;
   allowUnresolved?: boolean;
 }): Promise<string | undefined> {
-  const providerConfig = params.config?.models?.providers?.[params.providerId];
+  const providerConfig = params.config?.models?.providers?.[LMSTUDIO_PROVIDER_ID];
   const apiKeyInput = providerConfig?.apiKey;
   if (apiKeyInput === undefined || apiKeyInput === null) {
     return undefined;
   }
 
-  const path = params.path ?? `models.providers.${params.providerId}.apiKey`;
+  const path = params.path ?? "models.providers.lmstudio.apiKey";
   const env = params.env ?? process.env;
   const directApiKey = normalizeOptionalSecretInput(apiKeyInput);
   if (directApiKey !== undefined) {
@@ -140,18 +139,6 @@ export async function resolveLmstudioConfiguredApiKeyForProvider(params: {
     return undefined;
   }
   return trimmedResolvedValue;
-}
-
-export async function resolveLmstudioConfiguredApiKey(params: {
-  config?: OpenClawConfig;
-  env?: NodeJS.ProcessEnv;
-  path?: string;
-  allowUnresolved?: boolean;
-}): Promise<string | undefined> {
-  return await resolveLmstudioConfiguredApiKeyForProvider({
-    ...params,
-    providerId: LMSTUDIO_PROVIDER_ID,
-  });
 }
 
 export async function resolveLmstudioProviderHeaders(params: {

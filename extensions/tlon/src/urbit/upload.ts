@@ -1,9 +1,9 @@
 /**
  * Upload an image from a URL to Tlon storage.
  */
-import { MAX_IMAGE_BYTES, readRemoteMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
-import { TLON_MEDIA_FETCH_TIMEOUTS } from "../media-fetch-timeouts.js";
+import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { uploadFile } from "../tlon-api.js";
+import { getDefaultSsrFPolicy } from "./context.js";
 
 /**
  * Fetch an image from a URL and upload it to Tlon storage.
@@ -20,29 +20,39 @@ export async function uploadImageFromUrl(imageUrl: string): Promise<string> {
       return imageUrl;
     }
 
-    const fetched = await readRemoteMediaBuffer({
+    // Fetch the image with SSRF protection
+    // Use fetchWithSsrFGuard directly (not urbitFetch) to preserve the full URL path
+    const { response, release } = await fetchWithSsrFGuard({
       url: imageUrl,
-      maxBytes: MAX_IMAGE_BYTES,
-      ...TLON_MEDIA_FETCH_TIMEOUTS,
-      ssrfPolicy: undefined,
-      requestInit: { method: "GET" },
+      init: { method: "GET" },
+      policy: getDefaultSsrFPolicy(),
+      auditContext: "tlon-upload-image",
     });
 
-    const contentType = fetched.contentType || "image/png";
-    const blob = new Blob([new Uint8Array(fetched.buffer)], { type: contentType });
+    try {
+      if (!response.ok) {
+        console.warn(`[tlon] Failed to fetch image from ${imageUrl}: ${response.status}`);
+        return imageUrl;
+      }
 
-    // Extract filename from URL or use a default
-    const urlPath = new URL(imageUrl).pathname;
-    const fileName = urlPath.split("/").pop() || `upload-${Date.now()}.png`;
+      const contentType = response.headers.get("content-type") || "image/png";
+      const blob = await response.blob();
 
-    // Upload to Tlon storage
-    const result = await uploadFile({
-      blob,
-      fileName,
-      contentType,
-    });
+      // Extract filename from URL or use a default
+      const urlPath = new URL(imageUrl).pathname;
+      const fileName = urlPath.split("/").pop() || `upload-${Date.now()}.png`;
 
-    return result.url;
+      // Upload to Tlon storage
+      const result = await uploadFile({
+        blob,
+        fileName,
+        contentType,
+      });
+
+      return result.url;
+    } finally {
+      await release();
+    }
   } catch (err) {
     console.warn(`[tlon] Failed to upload image, using original URL: ${String(err)}`);
     return imageUrl;

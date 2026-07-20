@@ -8,7 +8,7 @@ function readRequiredDiscoveryRefs() {
     | undefined;
   return (
     config?.requiredFiles ?? [
-      "repo/qa/scenarios/index.yaml",
+      "repo/qa/scenarios/index.md",
       "repo/extensions/qa-lab/src/suite.ts",
       "repo/docs/help/testing.md",
     ]

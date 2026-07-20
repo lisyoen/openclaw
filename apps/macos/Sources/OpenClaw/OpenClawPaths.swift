@@ -46,4 +46,8 @@ enum OpenClawPaths {
         }
         return stateDir.appendingPathComponent("openclaw.json")
     }
+
+    static var workspaceURL: URL {
+        self.stateDirURL.appendingPathComponent("workspace", isDirectory: true)
+    }
 }

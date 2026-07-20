@@ -22,19 +22,14 @@ export function normalizeSecretInput(value: unknown): string {
     return "";
   }
   const collapsed = value.replace(/[\r\n\u2028\u2029]+/g, "");
-  const chars: string[] = [];
+  let latin1Only = "";
   for (const char of collapsed) {
     const codePoint = char.codePointAt(0);
-    const isControl =
-      typeof codePoint === "number" &&
-      ((codePoint >= 0x00 && codePoint <= 0x1f) ||
-        codePoint === 0x7f ||
-        (codePoint >= 0x80 && codePoint <= 0x9f));
-    if (typeof codePoint === "number" && codePoint <= 0xff && !isControl) {
-      chars.push(char);
+    if (typeof codePoint === "number" && codePoint <= 0xff) {
+      latin1Only += char;
     }
   }
-  return chars.join("").trim();
+  return latin1Only.trim();
 }
 
 /**
@@ -43,5 +38,5 @@ export function normalizeSecretInput(value: unknown): string {
  */
 export function normalizeOptionalSecretInput(value: unknown): string | undefined {
   const normalized = normalizeSecretInput(value);
-  return normalized || undefined;
+  return normalized ? normalized : undefined;
 }

@@ -51,7 +51,7 @@ export function mergeSetupRuntimeChannelPlugin(
   } as ChannelPlugin;
 }
 
-type BundledRuntimeChannelRegistration = {
+export type BundledRuntimeChannelRegistration = {
   id?: string;
   loadChannelPlugin?: () => ChannelPlugin;
   loadChannelSecrets?: () => ChannelPlugin["secrets"] | undefined;

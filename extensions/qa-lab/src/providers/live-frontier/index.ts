@@ -9,13 +9,6 @@ function isAnthropicModel(modelRef: string) {
   return modelRef.startsWith("anthropic/");
 }
 
-// claude-cli is an Anthropic-backed Claude runtime, so it shares the Anthropic
-// turn-timeout floors; mirror the claude-cli==anthropic precedent in the aimock
-// and mock-openai servers.
-function isAnthropicFamilyModel(modelRef: string) {
-  return isAnthropicModel(modelRef) || modelRef.startsWith("claude-cli/");
-}
-
 function isQaFastModeModelRef(modelRef: string) {
   return isOpenAiModel(modelRef);
 }
@@ -25,13 +18,13 @@ function isGptFiveModel(modelRef: string) {
 }
 
 function isClaudeOpusModel(modelRef: string) {
-  return isAnthropicFamilyModel(modelRef) && modelRef.includes("claude-opus");
+  return isAnthropicModel(modelRef) && modelRef.includes("claude-opus");
 }
 
 export const liveFrontierProviderDefinition: QaProviderDefinition = {
   mode: "live-frontier",
   kind: "live",
-  defaultModel: (options) => options?.preferredLiveModel ?? "openai/gpt-5.6",
+  defaultModel: (options) => options?.preferredLiveModel ?? "openai/gpt-5.5",
   defaultImageGenerationProviderIds: ["openai"],
   defaultImageGenerationModel: ({ modelProviderIds }) =>
     modelProviderIds.includes("openai") ? "openai/gpt-image-1" : null,
@@ -46,7 +39,7 @@ export const liveFrontierProviderDefinition: QaProviderDefinition = {
     if (isClaudeOpusModel(modelRef)) {
       return Math.max(fallbackMs, 240_000);
     }
-    if (isAnthropicFamilyModel(modelRef)) {
+    if (isAnthropicModel(modelRef)) {
       return Math.max(fallbackMs, 180_000);
     }
     if (isGptFiveModel(modelRef)) {

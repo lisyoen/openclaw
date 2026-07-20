@@ -19,7 +19,7 @@ describe("qa-lab server capture helpers", () => {
       metaJson: JSON.stringify({
         provider: "openai",
         api: "responses",
-        model: "gpt-5.6-luna",
+        model: "gpt-5.5",
         captureOrigin: "shared-fetch",
       }),
     }) as ReturnType<typeof mapCaptureEventForQa> & { flowId?: string };
@@ -27,7 +27,7 @@ describe("qa-lab server capture helpers", () => {
     expect(record.payloadPreview).toBe('{"hello":"world"}');
     expect(record.provider).toBe("openai");
     expect(record.api).toBe("responses");
-    expect(record.model).toBe("gpt-5.6-luna");
+    expect(record.model).toBe("gpt-5.5");
     expect(record.captureOrigin).toBe("shared-fetch");
   });
 

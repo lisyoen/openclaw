@@ -27,12 +27,9 @@ vi.mock("../config/io.js", () => ({
   })),
 }));
 
-// Export every binding http-auth-utils.js imports from http-common.js so this
-// factory stays safe under isolate:false regardless of which paths execute.
 vi.mock("./http-common.js", () => ({
   sendGatewayAuthFailure: vi.fn(),
   sendJson: vi.fn(),
-  sendMissingScopeForbidden: vi.fn(),
 }));
 
 const { authorizeHttpGatewayConnect } = await import("./auth.js");

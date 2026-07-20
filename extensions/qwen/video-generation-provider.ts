@@ -1,10 +1,7 @@
 // Qwen provider module implements model/runtime integration.
 import { isProviderApiKeyConfigured } from "openclaw/plugin-sdk/provider-auth";
 import { resolveApiKeyForProvider } from "openclaw/plugin-sdk/provider-auth-runtime";
-import {
-  resolveProviderHttpRequestConfig,
-  sanitizeConfiguredModelProviderRequest,
-} from "openclaw/plugin-sdk/provider-http";
+import { resolveProviderHttpRequestConfig } from "openclaw/plugin-sdk/provider-http";
 import {
   DASHSCOPE_WAN_VIDEO_CAPABILITIES,
   DASHSCOPE_WAN_VIDEO_MODELS,
@@ -81,7 +78,6 @@ export function buildQwenVideoGenerationProvider(): VideoGenerationProvider {
         throw new Error("Qwen API key missing");
       }
 
-      const providerConfig = req.cfg?.models?.providers?.qwen;
       const requestBaseUrl = resolveQwenVideoBaseUrl(req);
       const { baseUrl, allowPrivateNetwork, headers, dispatcherPolicy } =
         resolveProviderHttpRequestConfig({
@@ -95,7 +91,6 @@ export function buildQwenVideoGenerationProvider(): VideoGenerationProvider {
           provider: "qwen",
           capability: "video",
           transport: "http",
-          request: sanitizeConfiguredModelProviderRequest(providerConfig?.request),
         });
 
       const model = req.model?.trim() || DEFAULT_QWEN_VIDEO_MODEL;

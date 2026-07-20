@@ -5,7 +5,6 @@
  */
 import crypto from "node:crypto";
 import { resolveExpiresAtMsFromDurationMs } from "@openclaw/normalization-core/number-coercion";
-import { isApprovalNotFoundError } from "../infra/approval-errors.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { buildExecApprovalUnavailableReplyPayload } from "../infra/exec-approval-reply.js";
 import {
@@ -16,11 +15,10 @@ import {
   minSecurity,
   maxAsk,
   resolveExecApprovalAllowedDecisions,
-  resolveExecApprovalsLocked,
+  resolveExecApprovals,
   resolveExecApprovalsTranscriptPath,
   type ExecAsk,
   type ExecApprovalDecision,
-  type ExecApprovalsResolved,
   type ExecSecurity,
 } from "../infra/exec-approvals.js";
 import { logWarn } from "../logger.js";
@@ -28,7 +26,6 @@ import { registerExecApprovalFollowupRuntimeHandoff } from "./bash-tools.exec-ap
 import { sendExecApprovalFollowup } from "./bash-tools.exec-approval-followup.js";
 import {
   type ExecApprovalRegistration,
-  isExecApprovalRunAbortedError,
   resolveRegisteredExecApprovalDecision,
 } from "./bash-tools.exec-approval-request.js";
 import { buildApprovalPendingMessage } from "./bash-tools.exec-runtime.js";
@@ -37,8 +34,9 @@ import type { ExecElevatedDefaults, ExecToolDetails } from "./bash-tools.exec-ty
 import { isExecDeniedResultText } from "./exec-approval-result.js";
 import type { AgentToolResult } from "./runtime/index.js";
 
+type ResolvedExecApprovals = ReturnType<typeof resolveExecApprovals>;
 /** Cap for deduplicating repeated follow-up dispatch failure log keys. */
-const MAX_EXEC_APPROVAL_FOLLOWUP_FAILURE_LOG_KEYS = 256;
+export const MAX_EXEC_APPROVAL_FOLLOWUP_FAILURE_LOG_KEYS = 256;
 const loggedExecApprovalFollowupFailures = new Set<string>();
 
 function rememberExecApprovalFollowupFailureKey(key: string): boolean {
@@ -57,35 +55,39 @@ function rememberExecApprovalFollowupFailureKey(key: string): boolean {
 }
 
 /** Effective approval policy after caller config and approvals file are merged. */
-type ExecHostApprovalContext = {
-  approvals: ExecApprovalsResolved;
+export type ExecHostApprovalContext = {
+  approvals: ResolvedExecApprovals;
   hostSecurity: ExecSecurity;
   hostAsk: ExecAsk;
-  askFallback: ExecApprovalsResolved["agent"]["askFallback"];
+  askFallback: ResolvedExecApprovals["agent"]["askFallback"];
 };
 
 /** Pending approval state shared by gateway/node exec hosts. */
-type ExecApprovalPendingState = {
+export type ExecApprovalPendingState = {
   warningText: string;
   expiresAtMs: number;
   preResolvedDecision: string | null | undefined;
 };
 
 /** Pending approval state plus human-readable notice timing. */
-type ExecApprovalRequestState = ExecApprovalPendingState & {
+export type ExecApprovalRequestState = ExecApprovalPendingState & {
   noticeSeconds: number;
 };
 
 const EXPIRED_EXEC_APPROVAL_EXPIRES_AT_MS = 0;
 
 /** Why an approval request cannot be delivered interactively. */
-type ExecApprovalUnavailableReason =
+export type ExecApprovalUnavailableReason =
   | "no-approval-route"
   | "initiating-platform-disabled"
   | "initiating-platform-unsupported";
 
+function isHeadlessExecTrigger(trigger?: string): boolean {
+  return trigger === "cron";
+}
+
 /** Context returned after a default approval request is registered. */
-type RegisteredExecApprovalRequestContext = {
+export type RegisteredExecApprovalRequestContext = {
   approvalId: string;
   approvalSlug: string;
   warningText: string;
@@ -97,7 +99,7 @@ type RegisteredExecApprovalRequestContext = {
 };
 
 /** Destination and context for async exec approval follow-up delivery. */
-type ExecApprovalFollowupTarget = {
+export type ExecApprovalFollowupTarget = {
   approvalId: string;
   sessionKey?: string;
   /** Session UUID active when the approval was requested. Lets the followup be
@@ -115,13 +117,13 @@ type ExecApprovalFollowupTarget = {
 };
 
 /** Test seam for follow-up delivery and warning logging. */
-type ExecApprovalFollowupResultDeps = {
+export type ExecApprovalFollowupResultDeps = {
   sendExecApprovalFollowup?: typeof sendExecApprovalFollowup;
   logWarn?: typeof logWarn;
 };
 
 /** Common arguments used to build default approval request contexts. */
-type DefaultExecApprovalRequestArgs = {
+export type DefaultExecApprovalRequestArgs = {
   warnings: string[];
   approvalRunningNoticeMs: number;
   createApprovalSlug: (approvalId: string) => string;
@@ -130,7 +132,7 @@ type DefaultExecApprovalRequestArgs = {
 };
 
 /** Builds pending approval state with warnings and a bounded expiry. */
-function createExecApprovalPendingState(params: {
+export function createExecApprovalPendingState(params: {
   warnings: string[];
   timeoutMs: number;
 }): ExecApprovalPendingState {
@@ -144,7 +146,7 @@ function createExecApprovalPendingState(params: {
 }
 
 /** Builds pending approval state plus rounded notice duration. */
-function createExecApprovalRequestState(params: {
+export function createExecApprovalRequestState(params: {
   warnings: string[];
   timeoutMs: number;
   approvalRunningNoticeMs: number;
@@ -160,7 +162,7 @@ function createExecApprovalRequestState(params: {
 }
 
 /** Creates a fresh approval id/slug/context key for a pending request. */
-function createExecApprovalRequestContext(params: {
+export function createExecApprovalRequestContext(params: {
   warnings: string[];
   timeoutMs: number;
   approvalRunningNoticeMs: number;
@@ -185,7 +187,7 @@ function createExecApprovalRequestContext(params: {
 }
 
 /** Creates a pending approval context using the default approval timeout. */
-function createDefaultExecApprovalRequestContext(params: {
+export function createDefaultExecApprovalRequestContext(params: {
   warnings: string[];
   approvalRunningNoticeMs: number;
   createApprovalSlug: (approvalId: string) => string;
@@ -199,9 +201,9 @@ function createDefaultExecApprovalRequestContext(params: {
 }
 
 /** Converts a raw approval decision plus fallback policy into execution state. */
-function resolveBaseExecApprovalDecision(params: {
+export function resolveBaseExecApprovalDecision(params: {
   decision: string | null;
-  askFallback: ExecApprovalsResolved["agent"]["askFallback"];
+  askFallback: ResolvedExecApprovals["agent"]["askFallback"];
 }): {
   approvedByAsk: boolean;
   deniedReason: string | null;
@@ -223,13 +225,13 @@ function resolveBaseExecApprovalDecision(params: {
 }
 
 /** Resolves effective exec policy for a gateway/node host. */
-export async function resolveExecHostApprovalContext(params: {
+export function resolveExecHostApprovalContext(params: {
   agentId?: string;
   security: ExecSecurity;
   ask: ExecAsk;
   host: "gateway" | "node";
-}): Promise<ExecHostApprovalContext> {
-  const approvals = await resolveExecApprovalsLocked(params.agentId, {
+}): ExecHostApprovalContext {
+  const approvals = resolveExecApprovals(params.agentId, {
     security: params.security,
     ask: params.ask,
   });
@@ -255,17 +257,14 @@ export async function resolveApprovalDecisionOrUndefined(params: {
       approvalId: params.approvalId,
       preResolvedDecision: params.preResolvedDecision,
     });
-  } catch (error) {
-    if (isExecApprovalRunAbortedError(error)) {
-      throw error;
-    }
+  } catch {
     params.onFailure();
     return undefined;
   }
 }
 
 /** Resolves approval delivery availability for the initiating channel/account. */
-function resolveExecApprovalUnavailableState(params: {
+export function resolveExecApprovalUnavailableState(params: {
   turnSourceChannel?: string;
   turnSourceAccountId?: string;
   preResolvedDecision: string | null | undefined;
@@ -374,7 +373,7 @@ export function buildExecApprovalFollowupTarget(
 /** Builds mutable approval decision state from a raw decision. */
 export function createExecApprovalDecisionState(params: {
   decision: string | null | undefined;
-  askFallback: ExecApprovalsResolved["agent"]["askFallback"];
+  askFallback: ResolvedExecApprovals["agent"]["askFallback"];
 }) {
   const baseDecision = resolveBaseExecApprovalDecision({
     decision: params.decision ?? null,
@@ -414,14 +413,17 @@ export function enforceStrictInlineEvalApprovalBoundary(params: {
   };
 }
 
-/** Returns true when registration proved no approval decision can arrive later. */
+/** Returns true when a headless run should resolve an unavailable approval inline. */
 export function shouldResolveExecApprovalUnavailableInline(params: {
+  trigger?: string;
   unavailableReason: ExecApprovalUnavailableReason | null;
   preResolvedDecision: string | null | undefined;
 }): boolean {
-  // finalDecision:null is emitted only after the gateway expires a no-route record.
-  // Resolve fallback inline; an async wait can never observe a later decision.
-  return params.unavailableReason === "no-approval-route" && params.preResolvedDecision === null;
+  return (
+    isHeadlessExecTrigger(params.trigger) &&
+    params.unavailableReason === "no-approval-route" &&
+    params.preResolvedDecision === null
+  );
 }
 
 /** Builds the denial copy for headless runs that cannot wait for approval. */
@@ -430,7 +432,7 @@ export function buildHeadlessExecApprovalDeniedMessage(params: {
   host: "gateway" | "node";
   security: ExecSecurity;
   ask: ExecAsk;
-  askFallback: ExecApprovalsResolved["agent"]["askFallback"];
+  askFallback: ResolvedExecApprovals["agent"]["askFallback"];
 }): string {
   const runLabel = params.trigger === "cron" ? "Cron runs" : "Headless runs";
   return [
@@ -479,9 +481,6 @@ export async function sendExecApprovalFollowupResult(
         }
       : {}),
   }).catch((error: unknown) => {
-    if (isApprovalNotFoundError(error)) {
-      return;
-    }
     const message = formatErrorMessage(error);
     const key = `${target.approvalId}:${message}`;
     if (!rememberExecApprovalFollowupFailureKey(key)) {
@@ -520,8 +519,6 @@ export function buildExecApprovalPendingToolResult(params: {
                 channelLabel: params.initiatingSurface.channelLabel,
                 accountId: params.initiatingSurface.accountId,
                 sentApproverDms: params.sentApproverDms,
-                host: params.host,
-                nodeId: params.nodeId,
               }).text ?? "")
             : buildApprovalPendingMessage({
                 warningText: params.warningText,

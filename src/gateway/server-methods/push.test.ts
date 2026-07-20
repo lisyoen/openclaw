@@ -1,7 +1,5 @@
 // Push method tests cover APNs direct/relay registrations, alert delivery,
 // stale registration cleanup, config resolution, and error mapping.
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
 import { pushHandlers } from "./push.js";
@@ -25,6 +23,7 @@ vi.mock("../../infra/push-apns.js", () => ({
 }));
 
 import {
+  type ApnsPushResult,
   type ApnsRegistration,
   clearApnsRegistrationIfCurrent,
   loadApnsRegistration,
@@ -34,8 +33,6 @@ import {
   sendApnsAlert,
   shouldClearStoredApnsRegistration,
 } from "../../infra/push-apns.js";
-
-type ApnsPushResult = Awaited<ReturnType<typeof sendApnsAlert>>;
 
 type RespondCall = [boolean, unknown?, { code: number; message: string }?];
 
@@ -101,10 +98,7 @@ function createInvokeParams(params: Record<string, unknown>) {
   return {
     respond,
     invoke: async () =>
-      await expectDefined(
-        pushHandlers["push.test"],
-        'pushHandlers["push.test"] test invariant',
-      )({
+      await pushHandlers["push.test"]({
         params,
         respond: respond as never,
         context: { getRuntimeConfig: () => mocks.getRuntimeConfig() } as never,

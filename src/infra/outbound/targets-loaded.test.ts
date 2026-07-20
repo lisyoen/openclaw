@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   getLoadedChannelPlugin: vi.fn(),
 }));
 
-vi.mock("../../channels/plugins/registry-loaded.js", () => ({
+vi.mock("../../channels/plugins/registry-loaded-read.js", () => ({
   getLoadedChannelPluginForRead: mocks.getLoadedChannelPlugin,
 }));
 

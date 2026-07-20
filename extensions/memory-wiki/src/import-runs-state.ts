@@ -6,11 +6,8 @@ import type {
   OpenKeyedStoreOptions,
   PluginStateKeyedStore,
 } from "openclaw/plugin-sdk/plugin-state-runtime";
-import pMap, { pMapSkip } from "p-map";
 
-const LEGACY_IMPORT_RUN_READ_CONCURRENCY = 16;
-
-type ChatGptImportRunEntry = {
+export type ChatGptImportRunEntry = {
   path: string;
   snapshotPath?: string;
 };
@@ -69,6 +66,10 @@ export function resolveMemoryWikiImportRunsDir(vaultRoot: string): string {
   return path.join(vaultRoot, ".openclaw-wiki", "import-runs");
 }
 
+export function resolveMemoryWikiImportRunRecordPath(vaultRoot: string, runId: string): string {
+  return path.join(resolveMemoryWikiImportRunsDir(vaultRoot), `${runId}.json`);
+}
+
 function resolveVaultRootKey(vaultRoot: string): string {
   return createHash("sha256").update(path.resolve(vaultRoot), "utf8").digest("hex").slice(0, 32);
 }
@@ -120,7 +121,7 @@ function asNonNegativeInteger(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
-function normalizeMemoryWikiImportRunRecord(raw: unknown): ChatGptImportRunRecord | null {
+export function normalizeMemoryWikiImportRunRecord(raw: unknown): ChatGptImportRunRecord | null {
   const record = asRecord(raw);
   if (!record) {
     return null;
@@ -474,12 +475,13 @@ export async function readLegacyMemoryWikiImportRunRecords(
       }
       throw error;
     });
-  return await pMap(
-    entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json")),
-    async (entry) => {
-      const raw = await fs.readFile(path.join(importRunsDir, entry.name), "utf8");
-      return normalizeMemoryWikiImportRunRecord(JSON.parse(raw) as unknown) ?? pMapSkip;
-    },
-    { concurrency: LEGACY_IMPORT_RUN_READ_CONCURRENCY, stopOnError: true },
+  const records = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map(async (entry) => {
+        const raw = await fs.readFile(path.join(importRunsDir, entry.name), "utf8");
+        return normalizeMemoryWikiImportRunRecord(JSON.parse(raw) as unknown);
+      }),
   );
+  return records.filter((entry): entry is ChatGptImportRunRecord => entry !== null);
 }

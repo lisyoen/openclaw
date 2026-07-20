@@ -3,8 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import v8 from "node:v8";
-import { expectDefined } from "@openclaw/normalization-core";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { resolveStateDir } from "../config/paths.js";
 import type {
   DiagnosticMemoryPressureEvent,
@@ -21,8 +19,8 @@ import {
 import { redactSensitiveText } from "./redact.js";
 
 export const DIAGNOSTIC_STABILITY_BUNDLE_VERSION = 1;
-const DEFAULT_DIAGNOSTIC_STABILITY_BUNDLE_LIMIT = MAX_DIAGNOSTIC_STABILITY_LIMIT;
-const DEFAULT_DIAGNOSTIC_STABILITY_BUNDLE_RETENTION = 20;
+export const DEFAULT_DIAGNOSTIC_STABILITY_BUNDLE_LIMIT = MAX_DIAGNOSTIC_STABILITY_LIMIT;
+export const DEFAULT_DIAGNOSTIC_STABILITY_BUNDLE_RETENTION = 20;
 export const MAX_DIAGNOSTIC_STABILITY_BUNDLE_BYTES = 5 * 1024 * 1024;
 
 const SAFE_REASON_CODE = /^[A-Za-z0-9_.:-]{1,120}$/u;
@@ -73,7 +71,7 @@ type DiagnosticSessionFileSummary = {
   mtimeMs: number;
 };
 
-type DiagnosticMemoryPressureBundleEvidence = {
+export type DiagnosticMemoryPressureBundleEvidence = {
   level: DiagnosticMemoryPressureEvent["level"];
   reason: DiagnosticMemoryPressureEvent["reason"];
   memory: DiagnosticMemoryUsage;
@@ -87,7 +85,7 @@ type DiagnosticMemoryPressureBundleEvidence = {
   topSessionFiles?: DiagnosticSessionFileSummary[];
 };
 
-type DiagnosticStabilityBundleEvidence = {
+export type DiagnosticStabilityBundleEvidence = {
   memoryPressure?: DiagnosticMemoryPressureBundleEvidence;
 };
 
@@ -114,12 +112,12 @@ export type DiagnosticStabilityBundle = {
   snapshot: DiagnosticStabilitySnapshot;
 };
 
-type WriteDiagnosticStabilityBundleResult =
+export type WriteDiagnosticStabilityBundleResult =
   | { status: "written"; path: string; bundle: DiagnosticStabilityBundle }
   | { status: "skipped"; reason: "empty" }
   | { status: "failed"; error: unknown };
 
-type WriteDiagnosticStabilityBundleOptions = {
+export type WriteDiagnosticStabilityBundleOptions = {
   reason: string;
   error?: unknown;
   includeEmpty?: boolean;
@@ -131,12 +129,12 @@ type WriteDiagnosticStabilityBundleOptions = {
   evidence?: DiagnosticStabilityBundleEvidence;
 };
 
-type DiagnosticStabilityBundleLocationOptions = {
+export type DiagnosticStabilityBundleLocationOptions = {
   env?: NodeJS.ProcessEnv;
   stateDir?: string;
 };
 
-type DiagnosticStabilityBundleFile = {
+export type DiagnosticStabilityBundleFile = {
   path: string;
   mtimeMs: number;
 };
@@ -146,17 +144,17 @@ export type ReadDiagnosticStabilityBundleResult =
   | { status: "missing"; dir: string }
   | { status: "failed"; path?: string; error: unknown };
 
-type DiagnosticStabilityBundleFailureWriteOutcome =
+export type DiagnosticStabilityBundleFailureWriteOutcome =
   | { status: "written"; message: string; path: string }
   | { status: "failed"; message: string; error: unknown }
   | { status: "skipped"; reason: "empty" };
 
-type WriteDiagnosticStabilityBundleForFailureOptions = Omit<
+export type WriteDiagnosticStabilityBundleForFailureOptions = Omit<
   WriteDiagnosticStabilityBundleOptions,
   "error" | "includeEmpty" | "reason"
 >;
 
-type WriteDiagnosticMemoryPressureBundleOptions = Omit<
+export type WriteDiagnosticMemoryPressureBundleOptions = Omit<
   WriteDiagnosticStabilityBundleOptions,
   "reason" | "error" | "evidence" | "includeEmpty"
 > & {
@@ -209,7 +207,7 @@ function readErrorMessage(error: unknown): string | undefined {
     return undefined;
   }
   return sanitized.length > MAX_SAFE_ERROR_MESSAGE_LENGTH
-    ? `${truncateUtf16Safe(sanitized, MAX_SAFE_ERROR_MESSAGE_LENGTH)}...`
+    ? `${sanitized.slice(0, MAX_SAFE_ERROR_MESSAGE_LENGTH)}...`
     : sanitized;
 }
 
@@ -227,7 +225,7 @@ function readSafeErrorMetadata(error: unknown): DiagnosticStabilityBundle["error
   };
 }
 
-function resolveDiagnosticStabilityBundleDir(
+export function resolveDiagnosticStabilityBundleDir(
   options: DiagnosticStabilityBundleLocationOptions = {},
 ): string {
   return path.join(
@@ -698,7 +696,6 @@ function readStabilityEventRecord(
   assignOptionalCodeString(sanitized, "outcome", record.outcome, `${label}.outcome`);
   assignOptionalCodeString(sanitized, "level", record.level, `${label}.level`);
   assignOptionalCodeString(sanitized, "phase", record.phase, `${label}.phase`);
-  assignOptionalCodeString(sanitized, "approvalId", record.approvalId, `${label}.approvalId`);
   assignOptionalCodeString(sanitized, "detector", record.detector, `${label}.detector`);
   assignOptionalCodeString(sanitized, "toolName", record.toolName, `${label}.toolName`);
   assignOptionalCodeString(
@@ -1028,10 +1025,10 @@ function collectActiveResources(): DiagnosticActiveResourceSummary | undefined {
 function sanitizeSessionEvidencePath(relativePath: string): string {
   const parts = relativePath.split("/");
   if (parts.length === 4 && parts[0] === "agents" && parts[2] === "sessions") {
-    return `agents/<agent>/sessions/${sanitizeSessionEvidenceFileName(expectDefined(parts[3], "parts entry at 3"))}`;
+    return `agents/<agent>/sessions/${sanitizeSessionEvidenceFileName(parts[3])}`;
   }
   if (parts.length === 2 && parts[0] === "sessions") {
-    return `sessions/${sanitizeSessionEvidenceFileName(expectDefined(parts[1], "parts entry at 1"))}`;
+    return `sessions/${sanitizeSessionEvidenceFileName(parts[1])}`;
   }
   return redactSensitiveText(relativePath, { mode: "tools" });
 }
@@ -1217,7 +1214,7 @@ function isMemoryPressureReason(reason: string): reason is DiagnosticMemoryPress
   return reason === "rss_threshold" || reason === "heap_threshold" || reason === "rss_growth";
 }
 
-function listDiagnosticStabilityBundleFilesSync(
+export function listDiagnosticStabilityBundleFilesSync(
   options: DiagnosticStabilityBundleLocationOptions = {},
 ): DiagnosticStabilityBundleFile[] {
   const dir = resolveDiagnosticStabilityBundleDir(options);
@@ -1421,4 +1418,3 @@ export function uninstallDiagnosticStabilityFatalHook(): void {
 export function resetDiagnosticStabilityBundleForTest(): void {
   uninstallDiagnosticStabilityFatalHook();
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

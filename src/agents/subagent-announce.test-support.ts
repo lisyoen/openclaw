@@ -72,10 +72,6 @@ export function createSubagentAnnounceDeliveryRuntimeMock(options: DeliveryRunti
         timeoutMs: callOptions?.timeoutMs,
       })) as T) as typeof dispatchGatewayMethodInProcess,
     getRuntimeConfig: options.getRuntimeConfig,
-    loadSessionEntry: (scope: { storePath?: string; sessionKey: string }) =>
-      (options.loadSessionStore(scope.storePath ?? "") as Record<string, unknown>)[
-        scope.sessionKey
-      ],
     loadSessionStore: options.loadSessionStore,
     resolveAgentIdFromSessionKey: options.resolveAgentIdFromSessionKey,
     resolveMainSessionKey: options.resolveMainSessionKey,

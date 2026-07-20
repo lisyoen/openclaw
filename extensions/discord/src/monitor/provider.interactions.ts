@@ -5,11 +5,7 @@ import { registerChannelRuntimeContext } from "openclaw/plugin-sdk/channel-runti
 import type { NativeCommandSpec } from "openclaw/plugin-sdk/command-auth-native";
 import type { DiscordAccountConfig, OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
-import { createDiscordActivityButton } from "../activities/interaction.js";
-import {
-  getDiscordExecApprovalApprovers,
-  isDiscordExecApprovalClientEnabled,
-} from "../exec-approvals.js";
+import { isDiscordExecApprovalClientEnabled } from "../exec-approvals.js";
 import type { BaseCommand, BaseMessageInteractiveComponent, Modal } from "../internal/discord.js";
 import { createDiscordVoiceCommand } from "../voice/command.js";
 import {
@@ -27,7 +23,6 @@ import {
   createDiscordModelPickerFallbackSelect,
   createDiscordNativeCommand,
 } from "./native-command.js";
-import { createDiscordQuestionButton } from "./questions.js";
 import type { ThreadBindingManager } from "./thread-bindings.types.js";
 
 type DiscordVoiceManager = import("../voice/manager.js").DiscordVoiceManager;
@@ -36,7 +31,6 @@ export function createDiscordProviderInteractionSurface(params: {
   cfg: OpenClawConfig;
   discordConfig: DiscordAccountConfig;
   accountId: string;
-  applicationId?: string;
   token: string;
   commandSpecs: NativeCommandSpec[];
   nativeEnabled: boolean;
@@ -91,12 +85,6 @@ export function createDiscordProviderInteractionSurface(params: {
     accountId: params.accountId,
     configOverride: execApprovalsConfig,
   });
-  const approvalActionsEnabled =
-    getDiscordExecApprovalApprovers({
-      cfg: params.cfg,
-      accountId: params.accountId,
-      configOverride: execApprovalsConfig,
-    }).length > 0;
   if (execApprovalsEnabled) {
     registerChannelRuntimeContext({
       channelRuntime: params.channelRuntime,
@@ -112,20 +100,6 @@ export function createDiscordProviderInteractionSurface(params: {
   }
 
   const components: BaseMessageInteractiveComponent[] = [
-    createDiscordQuestionButton({
-      cfg: params.cfg,
-      accountId: params.accountId,
-      authContext: {
-        cfg: params.cfg,
-        accountId: params.accountId,
-        discordConfig: params.discordConfig,
-        runtime: params.runtime,
-        token: params.token,
-        guildEntries: params.guildEntries,
-        allowFrom: params.allowFrom,
-        dmPolicy: params.dmPolicy,
-      },
-    }),
     createDiscordCommandArgFallbackButton({
       cfg: params.cfg,
       discordConfig: params.discordConfig,
@@ -148,25 +122,9 @@ export function createDiscordProviderInteractionSurface(params: {
       threadBindings: params.threadBindings,
     }),
   ];
-  const activityButton = createDiscordActivityButton(
-    {
-      cfg: params.cfg,
-      discordConfig: params.discordConfig,
-      accountId: params.accountId,
-      guildEntries: params.guildEntries,
-      allowFrom: params.allowFrom,
-      dmPolicy: params.dmPolicy,
-      runtime: params.runtime,
-      token: params.token,
-    },
-    params.applicationId,
-  );
-  if (activityButton) {
-    components.push(activityButton);
-  }
   const modals: Modal[] = [];
 
-  if (approvalActionsEnabled) {
+  if (execApprovalsEnabled) {
     components.push(
       createExecApprovalButton(
         createDiscordExecApprovalButtonContext({

@@ -29,7 +29,6 @@ export const existingSessionRouteState = {
       targetId: "7",
       url: "https://example.com",
     })),
-    closeTab: vi.fn(async () => {}),
   },
   tab: {
     targetId: "7",
@@ -54,16 +53,6 @@ export function createExistingSessionAgentSharedModule() {
       throw new Error("Playwright should not be used for existing-session tests");
     }),
     resolveProfileContext: vi.fn(() => existingSessionRouteState.profileCtx),
-    resolveSafeRouteTabUrl: vi.fn(
-      async (params: {
-        profileCtx: typeof existingSessionRouteState.profileCtx;
-        targetId: string;
-        fallbackUrl?: string;
-      }) => {
-        const tabs = await params.profileCtx.listTabs();
-        return tabs.find((tab) => tab.targetId === params.targetId)?.url ?? params.fallbackUrl;
-      },
-    ),
     resolveTargetIdFromBody: vi.fn((body: Record<string, unknown>) =>
       typeof body.targetId === "string" ? body.targetId : undefined,
     ),
@@ -72,12 +61,10 @@ export function createExistingSessionAgentSharedModule() {
       async ({
         ctx,
         enforceCurrentUrlAllowed,
-        req,
         run,
       }: {
         ctx: BrowserRouteContext;
         enforceCurrentUrlAllowed?: boolean;
-        req: BrowserRequest;
         run: (args: unknown) => Promise<void>;
       }) => {
         if (enforceCurrentUrlAllowed) {
@@ -93,7 +80,6 @@ export function createExistingSessionAgentSharedModule() {
           profileCtx: existingSessionRouteState.profileCtx,
           cdpUrl: "http://127.0.0.1:18800",
           tab: existingSessionRouteState.tab,
-          signal: req.signal ?? new AbortController().signal,
           resolveTabUrl: vi.fn(async (fallbackUrl?: string) => fallbackUrl ?? routeStateUrl()),
         });
       },

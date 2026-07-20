@@ -4,7 +4,6 @@ import {
   createTopLevelChannelDmPolicy,
   createTopLevelChannelGroupPolicySetter,
   mergeAllowFromEntries,
-  setSetupChannelEnabled,
   splitSetupEntries,
   createSetupTranslator,
   type ChannelSetupDmPolicy,
@@ -278,26 +277,10 @@ export const msteamsSetupWizard: ChannelSetupWizard = {
             },
           },
         };
-        const noteDelegatedAuthFailure = async (err: unknown) => {
-          await params.prompter.note(
-            `Delegated auth setup failed: ${formatUnknownError(err)}\n` +
-              t("wizard.msteams.delegatedAuthRetry"),
-            t("wizard.msteams.delegatedAuthTitle"),
-          );
-        };
-        let oauthModule: typeof import("./oauth.js");
         try {
-          oauthModule = await import("./oauth.js");
-        } catch (err) {
-          await noteDelegatedAuthFailure(err);
-          return { ...baseResult, cfg: next };
-        }
-
-        await params.options?.beforePersistentEffect?.();
-        const progress = params.prompter.progress(t("wizard.msteams.delegatedOAuthProgress"));
-        let tokens: Awaited<ReturnType<typeof oauthModule.loginMSTeamsDelegated>>;
-        try {
-          tokens = await oauthModule.loginMSTeamsDelegated(
+          const { loginMSTeamsDelegated } = await import("./oauth.js");
+          const progress = params.prompter.progress(t("wizard.msteams.delegatedOAuthProgress"));
+          const tokens = await loginMSTeamsDelegated(
             {
               isRemote: true,
               openUrl: openDelegatedOAuthUrl,
@@ -314,25 +297,26 @@ export const msteamsSetupWizard: ChannelSetupWizard = {
               clientSecret: finalCreds.appPassword,
             },
           );
+          saveDelegatedTokens(tokens);
+          progress.stop(t("wizard.msteams.delegatedAuthConfigured"));
         } catch (err) {
-          progress.stop();
-          await noteDelegatedAuthFailure(err);
-          return { ...baseResult, cfg: next };
+          await params.prompter.note(
+            `Delegated auth setup failed: ${formatUnknownError(err)}\n` +
+              t("wizard.msteams.delegatedAuthRetry"),
+            t("wizard.msteams.delegatedAuthTitle"),
+          );
         }
-
-        try {
-          await params.options?.beforePersistentEffect?.();
-        } catch (err) {
-          progress.stop();
-          throw err;
-        }
-        saveDelegatedTokens(tokens);
-        progress.stop(t("wizard.msteams.delegatedAuthConfigured"));
       }
     }
     return { ...baseResult, cfg: next };
   },
   dmPolicy: msteamsDmPolicy,
   groupAccess: msteamsGroupAccess,
-  disable: (cfg) => setSetupChannelEnabled(cfg, channel, false),
+  disable: (cfg) => ({
+    ...cfg,
+    channels: {
+      ...cfg.channels,
+      msteams: { ...cfg.channels?.msteams, enabled: false },
+    },
+  }),
 };

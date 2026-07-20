@@ -1,6 +1,4 @@
 // Non-interactive daemon install tests cover gateway service planning, token resolution, and systemd handling.
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
 import { installGatewayDaemonNonInteractive } from "./daemon-install.js";
@@ -79,13 +77,7 @@ describe("installGatewayDaemonNonInteractive", () => {
 
     expect(resolveGatewayInstallToken).toHaveBeenCalledTimes(1);
     expect(buildGatewayInstallPlan).toHaveBeenCalledTimes(1);
-    expect(
-      "token" in
-        expectDefined(
-          buildGatewayInstallPlan.mock.calls[0],
-          "buildGatewayInstallPlan.mock.calls[0] test invariant",
-        )[0],
-    ).toBe(false);
+    expect("token" in buildGatewayInstallPlan.mock.calls[0][0]).toBe(false);
     expect(serviceInstall).toHaveBeenCalledTimes(1);
   });
 

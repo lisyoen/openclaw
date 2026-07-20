@@ -126,7 +126,7 @@ function calculateAdaptiveColumnWidths(blocks: FeishuDocxBlock[], tableBlockId: 
       if (cellId) {
         const content = getCellText(cellId);
         const length = getWeightedLength(content);
-        maxLengths[col] = Math.max(maxLengths[col] ?? 0, length);
+        maxLengths[col] = Math.max(maxLengths[col], length);
       }
     }
   }
@@ -168,12 +168,8 @@ function calculateAdaptiveColumnWidths(blocks: FeishuDocxBlock[], tableBlockId: 
     }
 
     for (const i of growable) {
-      const width = widths[i];
-      if (width === undefined) {
-        continue;
-      }
-      const add = Math.min(perColumn, MAX_COLUMN_WIDTH - width);
-      widths[i] = width + add;
+      const add = Math.min(perColumn, MAX_COLUMN_WIDTH - widths[i]);
+      widths[i] += add;
       remaining -= add;
     }
   }

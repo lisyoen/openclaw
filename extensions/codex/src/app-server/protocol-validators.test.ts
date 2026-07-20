@@ -1,7 +1,6 @@
 // Codex tests cover protocol validators plugin behavior.
 import { describe, expect, it } from "vitest";
 import {
-  assertCodexThreadForkParams,
   readCodexModelListResponse,
   readCodexTurn,
   assertCodexThreadStartResponse,
@@ -39,35 +38,17 @@ function makeMinimalResponse(threadOverrides: Record<string, unknown> = {}) {
 }
 
 describe("Codex thread response validators", () => {
-  // The 0.143 floor guarantees both thread ids; pre-0.131 servers without
-  // sessionId must fail loudly instead of being silently normalized.
-  it("rejects thread responses missing sessionId", () => {
+  it("normalizes missing sessionId from id for start and resume responses", () => {
     for (const assertResponse of [
       assertCodexThreadStartResponse,
       assertCodexThreadResumeResponse,
     ]) {
       const response = makeMinimalResponse({ sessionId: undefined });
       delete (response.thread as Record<string, unknown>).sessionId;
-      expect(() => assertResponse(response)).toThrow("Invalid Codex app-server");
+      const result = assertResponse(response);
+      expect(result.thread.id).toBe("thread-1");
+      expect(result.thread.sessionId).toBe("thread-1");
     }
-  });
-});
-
-describe("assertCodexThreadForkParams", () => {
-  it("accepts the experimental beforeTurnId boundary", () => {
-    expect(
-      assertCodexThreadForkParams({
-        threadId: "thread-1",
-        beforeTurnId: "turn-2",
-        excludeTurns: true,
-      }),
-    ).toMatchObject({ beforeTurnId: "turn-2" });
-  });
-
-  it("rejects a non-string beforeTurnId", () => {
-    expect(() => assertCodexThreadForkParams({ threadId: "thread-1", beforeTurnId: 2 })).toThrow(
-      "Invalid Codex app-server thread/fork params",
-    );
   });
 });
 
@@ -77,29 +58,18 @@ describe("assertCodexThreadStartResponse", () => {
     const result = assertCodexThreadStartResponse(response);
     expect(result.thread.id).toBe("thread-1");
     expect(result.thread.sessionId).toBe("session-1");
-    expect(result.thread.historyMode).toBe("legacy");
+  });
+
+  it("normalizes missing id from sessionId", () => {
+    const response = makeMinimalResponse({ id: undefined, sessionId: "session-1" });
+    delete (response.thread as Record<string, unknown>).id;
+    const result = assertCodexThreadStartResponse(response);
+    expect(result.thread.id).toBe("session-1");
+    expect(result.thread.sessionId).toBe("session-1");
   });
 
   it("throws on invalid response", () => {
     expect(() => assertCodexThreadStartResponse({})).toThrow("Invalid Codex app-server");
-  });
-});
-
-describe("assertCodexThreadResumeResponse", () => {
-  it("accepts the bounded initial turns page shipped by the managed Codex version", () => {
-    const result = assertCodexThreadResumeResponse({
-      ...makeMinimalResponse(),
-      initialTurnsPage: {
-        data: [{ id: "turn-running", items: [], status: "inProgress" }],
-        nextCursor: null,
-        backwardsCursor: "resume-anchor",
-      },
-    });
-
-    expect(result.thread.turns).toEqual([]);
-    expect(result.initialTurnsPage?.data).toEqual([
-      { id: "turn-running", items: [], status: "inProgress" },
-    ]);
   });
 });
 

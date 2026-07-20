@@ -1,10 +1,11 @@
 // Gateway QA parent watchdog tests cover parent-process watchdog shutdown behavior.
 import { describe, expect, it, vi } from "vitest";
-import { installQaParentWatchdog } from "./qa-parent-watchdog.js";
-
-const QA_PARENT_PID_ENV = "OPENCLAW_QA_PARENT_PID";
-const QA_TEMP_ROOT_ENV = "OPENCLAW_QA_TEMP_ROOT";
-const QA_STAGED_RUNTIME_ROOT_ENV = "OPENCLAW_QA_STAGED_RUNTIME_ROOT";
+import {
+  installQaParentWatchdog,
+  QA_PARENT_PID_ENV,
+  QA_STAGED_RUNTIME_ROOT_ENV,
+  QA_TEMP_ROOT_ENV,
+} from "./qa-parent-watchdog.js";
 
 describe("installQaParentWatchdog", () => {
   it("does not install without a QA parent pid", () => {

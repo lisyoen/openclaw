@@ -57,22 +57,12 @@ vi.mock("./runtime-prepare.runtime.js", () => ({
       }
     }
   },
+  resolveSecretRefValues: async () => new Map(),
+  applyResolvedAssignments: () => {},
   resolveRuntimeWebTools: async () => ({
-    metadata: {
-      search: { providerSource: "none", diagnostics: [] },
-      fetch: { providerSource: "none", diagnostics: [] },
-      diagnostics: [],
-    },
-    degradedOwners: [],
-    secretOwners: [],
-  }),
-}));
-
-vi.mock("./runtime-owner-assignments.js", () => ({
-  listSecretAssignmentOwners: () => [],
-  resolveAndApplySecretAssignments: async () => ({
-    degradedOwners: [],
-    resolvedValues: new Map(),
+    search: { providerSource: "none", diagnostics: [] },
+    fetch: { providerSource: "none", diagnostics: [] },
+    diagnostics: [],
   }),
 }));
 

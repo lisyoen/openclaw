@@ -9,7 +9,6 @@ import {
 } from "../../packages/gateway-protocol/src/connect-error-details.js";
 import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { withProgress } from "../cli/progress.js";
-import { OPENCLAW_WRAPPER_ENV_KEY } from "../daemon/program-args.js";
 import { readRestartSentinel } from "../infra/restart-sentinel.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
@@ -58,7 +57,7 @@ function loadStatusNodeModeModule() {
 }
 
 /** Extracts device-pairing recovery context from structured gateway errors or legacy message text. */
-function resolvePairingRecoveryContext(params: {
+export function resolvePairingRecoveryContext(params: {
   error?: string | null;
   closeReason?: string | null;
   details?: unknown;
@@ -90,31 +89,6 @@ function resolvePairingRecoveryContext(params: {
     reason: pairing.reason ?? null,
     remediationHint: null,
   };
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.statusCommandTestApi")] = {
-    resolvePairingRecoveryContext,
-  };
-}
-
-function normalizeStatusWrapperPath(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
-}
-
-function resolveServiceWrapperContextHint(params: {
-  serviceWrapperPath?: string | null;
-  cliWrapperPath?: string | null;
-}): string | null {
-  const serviceWrapperPath = normalizeStatusWrapperPath(params.serviceWrapperPath);
-  if (!serviceWrapperPath) {
-    return null;
-  }
-  if (normalizeStatusWrapperPath(params.cliWrapperPath) === serviceWrapperPath) {
-    return null;
-  }
-  return `The installed gateway service uses ${OPENCLAW_WRAPPER_ENV_KEY} (${sanitizeTerminalText(serviceWrapperPath)}), but this CLI process is not running with that same wrapper. Missing-secret diagnostics may describe the current CLI process rather than the installed gateway service context.`;
 }
 
 /** Runs `openclaw status`, including JSON/all routing and optional deep probes. */
@@ -162,7 +136,6 @@ export async function statusCommand(
     tailscaleMode,
     tailscaleDns,
     tailscaleHttpsUrl,
-    advertisedControlUiLinks,
     update,
     gatewayConnection,
     remoteUrlMissing,
@@ -274,13 +247,6 @@ export async function statusCommand(
     for (const entry of secretDiagnostics) {
       runtime.log(`- ${entry}`);
     }
-    const wrapperContextHint = resolveServiceWrapperContextHint({
-      serviceWrapperPath: daemon.wrapperPath,
-      cliWrapperPath: process.env[OPENCLAW_WRAPPER_ENV_KEY],
-    });
-    if (wrapperContextHint) {
-      runtime.log(theme.warn(wrapperContextHint));
-    }
     runtime.log("");
   }
 
@@ -308,7 +274,6 @@ export async function statusCommand(
       tailscaleMode,
       tailscaleDns,
       tailscaleHttpsUrl,
-      ...(advertisedControlUiLinks ? { advertisedControlUiLinks } : {}),
       gatewayMode,
       remoteUrlMissing,
       gatewayConnection,

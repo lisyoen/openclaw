@@ -1,10 +1,6 @@
 // Whatsapp helper module supports normalize target behavior.
 import { normalizeE164 } from "openclaw/plugin-sdk/account-resolution";
-import {
-  normalizeLowercaseStringOrEmpty,
-  normalizeStringEntries,
-  uniqueStrings,
-} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 const WHATSAPP_USER_JID_RE = /^(\d+)(?::\d+)?@s\.whatsapp\.net$/i;
 const WHATSAPP_LEGACY_USER_JID_RE = /^(\d+)@c\.us$/i;
@@ -59,18 +55,15 @@ export function isWhatsAppUserTarget(value: string): boolean {
 function extractUserJidPhone(jid: string): string | null {
   const userMatch = jid.match(WHATSAPP_USER_JID_RE);
   if (userMatch) {
-    const phone = userMatch[1];
-    return phone ? phone : null;
+    return userMatch[1];
   }
   const legacyUserMatch = jid.match(WHATSAPP_LEGACY_USER_JID_RE);
   if (legacyUserMatch) {
-    const phone = legacyUserMatch[1];
-    return phone ? phone : null;
+    return legacyUserMatch[1];
   }
   const lidMatch = jid.match(WHATSAPP_LID_RE);
   if (lidMatch) {
-    const phone = lidMatch[1];
-    return phone ? phone : null;
+    return lidMatch[1];
   }
   return null;
 }
@@ -115,11 +108,19 @@ export function normalizeWhatsAppMessagingTarget(raw: string): string | undefine
 }
 
 export function normalizeWhatsAppAllowFromEntries(allowFrom: Array<string | number>): string[] {
-  return uniqueStrings(
-    normalizeStringEntries(allowFrom)
-      .map(normalizeWhatsAppAllowFromEntry)
-      .filter((entry): entry is string => Boolean(entry)),
-  );
+  const seen = new Set<string>();
+  const normalized = allowFrom
+    .map((entry) => String(entry).trim())
+    .filter((entry): entry is string => Boolean(entry))
+    .map(normalizeWhatsAppAllowFromEntry)
+    .filter((entry): entry is string => Boolean(entry));
+  return normalized.filter((entry) => {
+    if (seen.has(entry)) {
+      return false;
+    }
+    seen.add(entry);
+    return true;
+  });
 }
 
 export function normalizeWhatsAppAllowFromEntry(entry: string): string | null {

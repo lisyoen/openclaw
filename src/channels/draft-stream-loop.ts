@@ -13,12 +13,6 @@ export type DraftStreamLoop = {
   resetPending: () => void;
   resetThrottleWindow: () => void;
   waitForInFlight: () => Promise<void>;
-  /** Removes queued (not in-flight) text atomically and cancels its scheduled flush. */
-  takePending?: () => string;
-};
-
-type CreatedDraftStreamLoop = DraftStreamLoop & {
-  takePending: () => string;
 };
 
 /** Creates a single-flight draft stream loop that preserves the newest pending text. */
@@ -27,7 +21,7 @@ export function createDraftStreamLoop(params: {
   isStopped: () => boolean;
   sendOrEditStreamMessage: (text: string) => Promise<void | boolean>;
   onBackgroundFlushError?: (err: unknown) => void;
-}): CreatedDraftStreamLoop {
+}): DraftStreamLoop {
   const throttleMs = resolveTimerTimeoutMs(params.throttleMs, 0, 0);
   let lastSentAt = 0;
   let pendingText = "";
@@ -138,15 +132,6 @@ export function createDraftStreamLoop(params: {
       if (inFlightPromise) {
         await inFlightPromise;
       }
-    },
-    takePending: () => {
-      const text = pendingText;
-      pendingText = "";
-      if (timer) {
-        clearTimeout(timer);
-        timer = undefined;
-      }
-      return text;
     },
   };
 }

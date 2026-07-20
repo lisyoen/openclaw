@@ -58,17 +58,17 @@ let blockedHostPathsCache:
     }
   | undefined;
 
-type ValidateBindMountsOptions = {
+export type ValidateBindMountsOptions = {
   allowedSourceRoots?: string[];
   allowSourcesOutsideAllowedRoots?: boolean;
   allowReservedContainerTargets?: boolean;
 };
 
-type ValidateNetworkModeOptions = {
+export type ValidateNetworkModeOptions = {
   allowContainerNamespaceJoin?: boolean;
 };
 
-type BlockedBindReason =
+export type BlockedBindReason =
   | { kind: "targets"; blockedPath: string }
   | { kind: "covers"; blockedPath: string }
   | { kind: "non_absolute"; sourcePath: string }
@@ -320,7 +320,7 @@ function formatBindBlockedError(params: { bind: string; reason: BlockedBindReaso
  * Includes a symlink/realpath pass via existing ancestors so non-existent leaf
  * paths cannot bypass source-root and blocked-path checks.
  */
-function validateBindMounts(
+export function validateBindMounts(
   binds: string[] | undefined,
   options?: ValidateBindMountsOptions,
 ): void {
@@ -397,7 +397,7 @@ export function validateNetworkMode(
   }
 }
 
-function validateSeccompProfile(profile: string | undefined): void {
+export function validateSeccompProfile(profile: string | undefined): void {
   if (profile && BLOCKED_SECCOMP_PROFILES.has(normalizeOptionalLowercaseString(profile) ?? "")) {
     throw new Error(
       `Sandbox security: seccomp profile "${profile}" is blocked. ` +
@@ -407,7 +407,7 @@ function validateSeccompProfile(profile: string | undefined): void {
   }
 }
 
-function validateApparmorProfile(profile: string | undefined): void {
+export function validateApparmorProfile(profile: string | undefined): void {
   if (profile && BLOCKED_APPARMOR_PROFILES.has(normalizeOptionalLowercaseString(profile) ?? "")) {
     throw new Error(
       `Sandbox security: apparmor profile "${profile}" is blocked. ` +

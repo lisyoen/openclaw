@@ -2,7 +2,6 @@
  * Bundled channel entry metadata for the ClickClack plugin.
  */
 import { defineBundledChannelEntry } from "openclaw/plugin-sdk/channel-entry-contract";
-import { registerClickClackDiscussions } from "./runtime-api.js";
 
 export default defineBundledChannelEntry({
   id: "clickclack",
@@ -17,5 +16,4 @@ export default defineBundledChannelEntry({
     specifier: "./api.js",
     exportName: "setClickClackRuntime",
   },
-  registerFull: registerClickClackDiscussions,
 });

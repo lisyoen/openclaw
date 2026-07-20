@@ -3,13 +3,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { withTempHome as withTempHomeBase } from "openclaw/plugin-sdk/test-env";
 import { resetPluginLoaderTestStateForTest } from "../plugins/loader.test-fixtures.js";
-import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
+import { clearPluginSetupRegistryCache } from "../plugins/setup-registry.js";
 import { resetConfigRuntimeState, type OpenClawConfig } from "./config.js";
 
 function resetConfigTestRuntimeState(): void {
   resetConfigRuntimeState();
   resetPluginLoaderTestStateForTest();
-  clearPluginMetadataLifecycleCaches();
+  clearPluginSetupRegistryCache();
 }
 
 export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {

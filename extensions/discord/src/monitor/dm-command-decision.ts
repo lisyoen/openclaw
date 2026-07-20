@@ -23,7 +23,6 @@ export async function handleDiscordDmCommandDecision(params: {
     const upsertPairingRequest = params.upsertPairingRequest ?? upsertChannelPairingRequest;
     const result = await createChannelPairingChallengeIssuer({
       channel: "discord",
-      accountId: params.accountId,
       upsertPairingRequest: async ({ id, meta }) =>
         await upsertPairingRequest({
           channel: "discord",

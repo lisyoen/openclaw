@@ -1,7 +1,6 @@
 // Xai plugin module implements code execution shared behavior.
 import { readProviderJsonObjectResponse } from "openclaw/plugin-sdk/provider-http";
 import { postTrustedWebToolsJson } from "openclaw/plugin-sdk/provider-web-search";
-import { XAI_DEFAULT_MODEL_ID } from "../model-definitions.js";
 import {
   buildXaiResponsesToolBody,
   requireXaiResponseTextAndCitations,
@@ -14,7 +13,7 @@ import {
 import type { XaiWebSearchResponse } from "./web-search-shared.js";
 
 const XAI_CODE_EXECUTION_ENDPOINT = XAI_RESPONSES_ENDPOINT;
-const XAI_DEFAULT_CODE_EXECUTION_MODEL = XAI_DEFAULT_MODEL_ID;
+const XAI_DEFAULT_CODE_EXECUTION_MODEL = "grok-4-1-fast";
 
 type XaiCodeExecutionResponse = XaiWebSearchResponse & {
   output?: Array<{
@@ -80,7 +79,6 @@ export async function requestXaiCodeExecution(params: {
         inputText: params.task,
         tools: [{ type: "code_interpreter" }],
         maxTurns: params.maxTurns,
-        reasoningEffort: params.model === XAI_DEFAULT_CODE_EXECUTION_MODEL ? "low" : undefined,
       }),
       errorLabel: "xAI",
     },

@@ -6,8 +6,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import type { AuthProfileStore } from "./auth-profiles.js";
-
-const CHUTES_TOKEN_ENDPOINT = "https://api.chutes.ai/idp/token";
+import { CHUTES_TOKEN_ENDPOINT } from "./chutes-oauth.js";
 
 vi.mock("../plugins/provider-runtime.runtime.js", () => ({
   formatProviderAuthProfileApiKeyWithPlugin: async () => undefined,

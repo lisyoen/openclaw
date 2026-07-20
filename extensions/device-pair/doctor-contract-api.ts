@@ -1,10 +1,7 @@
 // Device Pair doctor contract migrates shipped plugin-owned state.
 import fs from "node:fs/promises";
 import path from "node:path";
-import {
-  archiveLegacyStateSource,
-  type PluginDoctorStateMigration,
-} from "openclaw/plugin-sdk/runtime-doctor";
+import type { PluginDoctorStateMigration } from "openclaw/plugin-sdk/runtime-doctor";
 import {
   DEVICE_PAIR_NOTIFY_LEGACY_STATE_FILE,
   DEVICE_PAIR_NOTIFY_SUBSCRIBER_MAX_ENTRIES,
@@ -19,11 +16,40 @@ function resolveLegacyNotifyStatePath(stateDir: string): string {
   return path.join(stateDir, DEVICE_PAIR_NOTIFY_LEGACY_STATE_FILE);
 }
 
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
 async function readLegacyNotifyState(filePath: string): Promise<LegacyNotifyStateFile | null> {
   try {
     return normalizeLegacyNotifyState(JSON.parse(await fs.readFile(filePath, "utf8")) as unknown);
   } catch {
     return null;
+  }
+}
+
+async function archiveLegacySource(params: {
+  filePath: string;
+  changes: string[];
+  warnings: string[];
+}): Promise<void> {
+  const archivedPath = `${params.filePath}.migrated`;
+  if (await fileExists(archivedPath)) {
+    params.warnings.push(
+      `Left migrated Device Pair notify-state source in place because ${archivedPath} already exists`,
+    );
+    return;
+  }
+  try {
+    await fs.rename(params.filePath, archivedPath);
+    params.changes.push(`Archived Device Pair notify-state legacy source -> ${archivedPath}`);
+  } catch (err) {
+    params.warnings.push(`Failed archiving Device Pair notify-state legacy source: ${String(err)}`);
   }
 }
 
@@ -73,12 +99,7 @@ export const stateMigrations: PluginDoctorStateMigration[] = [
       changes.push(
         `Migrated Device Pair notify subscribers -> plugin state (${imported} imported, ${alreadyPresent} already present)`,
       );
-      await archiveLegacyStateSource({
-        filePath,
-        label: "Device Pair notify-state",
-        changes,
-        warnings,
-      });
+      await archiveLegacySource({ filePath, changes, warnings });
       return { changes, warnings };
     },
   },

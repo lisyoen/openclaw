@@ -1,6 +1,4 @@
 // Qqbot plugin module implements message gating behavior.
-import type { MentionGatePort } from "../adapter/mention-gate.port.js";
-
 type GroupMessageGateAction =
   | "drop_other_mention"
   | "block_unauthorized_command"
@@ -13,8 +11,7 @@ export interface GroupMessageGateResult {
   shouldBypassMention: boolean;
 }
 
-interface GroupMessageGateInput {
-  mentionGatePort: MentionGatePort;
+export interface GroupMessageGateInput {
   ignoreOtherMentions: boolean;
   hasAnyMention: boolean;
   wasMentioned: boolean;
@@ -23,19 +20,46 @@ interface GroupMessageGateInput {
   isControlCommand: boolean;
   commandAuthorized: boolean;
   requireMention: boolean;
+  canDetectMention: boolean;
 }
 
-/**
- * Group gate Layer 1 (ignoreOtherMentions) is QQ-specific and decided here;
- * Layer 2+3 (command gating + mention gating + command bypass) delegate to the
- * mention gate port backed by the SDK's `resolveInboundMentionDecision`.
- */
-export function resolveGroupMessageGate(params: GroupMessageGateInput): GroupMessageGateResult {
+function resolveMentionGating(input: {
+  requireMention: boolean;
+  canDetectMention: boolean;
+  wasMentioned: boolean;
+  implicitMention: boolean;
+  shouldBypassMention: boolean;
+}): { effectiveWasMentioned: boolean; shouldSkip: boolean } {
+  const effectiveWasMentioned =
+    input.wasMentioned || input.implicitMention || input.shouldBypassMention;
+  const shouldSkip = input.requireMention && input.canDetectMention && !effectiveWasMentioned;
+  return { effectiveWasMentioned, shouldSkip };
+}
+
+function resolveCommandBypass(input: {
+  requireMention: boolean;
+  wasMentioned: boolean;
+  hasAnyMention: boolean;
+  allowTextCommands: boolean;
+  commandAuthorized: boolean;
+  isControlCommand: boolean;
+}): boolean {
+  return (
+    input.requireMention &&
+    !input.wasMentioned &&
+    !input.hasAnyMention &&
+    input.allowTextCommands &&
+    input.commandAuthorized &&
+    input.isControlCommand
+  );
+}
+
+export function resolveGroupMessageGate(input: GroupMessageGateInput): GroupMessageGateResult {
   if (
-    params.ignoreOtherMentions &&
-    params.hasAnyMention &&
-    !params.wasMentioned &&
-    !params.implicitMention
+    input.ignoreOtherMentions &&
+    input.hasAnyMention &&
+    !input.wasMentioned &&
+    !input.implicitMention
   ) {
     return {
       action: "drop_other_mention",
@@ -44,23 +68,7 @@ export function resolveGroupMessageGate(params: GroupMessageGateInput): GroupMes
     };
   }
 
-  const decision = params.mentionGatePort.resolveInboundMentionDecision({
-    facts: {
-      canDetectMention: true,
-      wasMentioned: params.wasMentioned,
-      hasAnyMention: params.hasAnyMention,
-      implicitMentionKinds: params.implicitMention ? ["reply_to_bot"] : [],
-    },
-    policy: {
-      isGroup: true,
-      requireMention: params.requireMention,
-      allowTextCommands: params.allowTextCommands,
-      hasControlCommand: params.isControlCommand,
-      commandAuthorized: params.commandAuthorized,
-    },
-  });
-
-  if (params.allowTextCommands && params.isControlCommand && !params.commandAuthorized) {
+  if (input.allowTextCommands && input.isControlCommand && !input.commandAuthorized) {
     return {
       action: "block_unauthorized_command",
       effectiveWasMentioned: false,
@@ -68,17 +76,34 @@ export function resolveGroupMessageGate(params: GroupMessageGateInput): GroupMes
     };
   }
 
-  if (decision.shouldSkip) {
+  const shouldBypassMention = resolveCommandBypass({
+    requireMention: input.requireMention,
+    wasMentioned: input.wasMentioned,
+    hasAnyMention: input.hasAnyMention,
+    allowTextCommands: input.allowTextCommands,
+    commandAuthorized: input.commandAuthorized,
+    isControlCommand: input.isControlCommand,
+  });
+
+  const mentionGate = resolveMentionGating({
+    requireMention: input.requireMention,
+    canDetectMention: input.canDetectMention,
+    wasMentioned: input.wasMentioned,
+    implicitMention: input.implicitMention,
+    shouldBypassMention,
+  });
+
+  if (mentionGate.shouldSkip) {
     return {
       action: "skip_no_mention",
-      effectiveWasMentioned: decision.effectiveWasMentioned,
-      shouldBypassMention: decision.shouldBypassMention,
+      effectiveWasMentioned: mentionGate.effectiveWasMentioned,
+      shouldBypassMention,
     };
   }
 
   return {
     action: "pass",
-    effectiveWasMentioned: decision.effectiveWasMentioned,
-    shouldBypassMention: decision.shouldBypassMention,
+    effectiveWasMentioned: mentionGate.effectiveWasMentioned,
+    shouldBypassMention,
   };
 }

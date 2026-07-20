@@ -1,14 +1,11 @@
 // Memory Host SDK module implements session files behavior.
 import fsSync from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
-import { normalizeAgentId } from "./config-utils.js";
 import { readRegularFile, statRegularFile } from "./fs-utils.js";
 import { hashText } from "./hash.js";
 import { createSubsystemLogger, redactSensitiveText } from "./openclaw-runtime-io.js";
 import {
-  DREAMING_NARRATIVE_RUN_PREFIX,
-  isDreamingNarrativeSessionStoreKey,
-  extractAgentIdFromSessionsDir,
   HEARTBEAT_PROMPT,
   HEARTBEAT_TOKEN,
   hasInterSessionUserProvenance,
@@ -19,28 +16,14 @@ import {
   isSessionArchiveArtifactName,
   isSilentReplyPayloadText,
   isUsageCountedSessionTranscriptFileName,
-  loadTranscriptEventsSync,
   parseUsageCountedSessionIdFromFileName,
-  parseSqliteSessionFileMarker,
-  readTranscriptStatsSync,
-  resolveTranscriptSessionKeyBySessionId,
   resolveSessionTranscriptsDirForAgent,
   stripInboundMetadata,
   stripInternalRuntimeContext,
 } from "./openclaw-runtime-session.js";
 import { retryTransientMemoryRead } from "./read-retry.js";
-import {
-  listSessionTranscriptCorpusEntriesForAgent,
-  listSessionTranscriptCorpusEntriesForAgentSync,
-  type SessionTranscriptCorpusEntry,
-} from "./session-transcript-corpus.js";
-import type { MemorySessionSyncTarget } from "./types.js";
 
-export {
-  listSessionTranscriptCorpusEntriesForAgent,
-  type SessionTranscriptCorpusEntry,
-} from "./session-transcript-corpus.js";
-
+const DREAMING_NARRATIVE_RUN_PREFIX = "dreaming-narrative-";
 // Keep the historical one-line-per-message export shape for normal turns, but
 // wrap pathological long messages so downstream indexers never ingest a single
 // toxic line. Wrapped continuation lines still map back to the same JSONL line.
@@ -67,17 +50,11 @@ export type SessionFileEntry = {
   generatedByCronRun?: boolean;
 };
 
-export type SessionFileState = Pick<SessionFileEntry, "path" | "absPath" | "mtimeMs" | "size">;
-
 export type BuildSessionEntryOptions = {
   /** Optional preclassification from a caller-managed dreaming transcript lookup. */
   generatedByDreamingNarrative?: boolean;
   /** Optional preclassification from a caller-managed cron transcript lookup. */
   generatedByCronRun?: boolean;
-  /** Session key for identity-backed transcript readers. */
-  sessionKey?: string;
-  /** Activity timestamp for transcript sources that do not have filesystem stats. */
-  updatedAtMs?: number;
   /** Override for tests or specialized callers that need a tighter parse yield cadence. */
   parseYieldEveryLines?: number;
 };
@@ -85,18 +62,6 @@ export type BuildSessionEntryOptions = {
 export type SessionTranscriptClassification = {
   dreamingNarrativeTranscriptPaths: ReadonlySet<string>;
   cronRunTranscriptPaths: ReadonlySet<string>;
-};
-
-export type ResolvedMemorySessionSyncTarget = {
-  agentId: string;
-  sessionFile: string;
-  sessionId: string;
-};
-
-export type ResolvedSessionTranscriptIdentity = {
-  agentId: string;
-  sessionId: string;
-  sessionKey?: string;
 };
 
 type SessionTranscriptStoreEntry = {
@@ -188,6 +153,20 @@ function isDreamingNarrativeGeneratedRecord(record: unknown): boolean {
   return hasDreamingNarrativeRunId(nested.runId) || hasDreamingNarrativeRunId(nested.sessionKey);
 }
 
+function isDreamingNarrativeSessionStoreKey(sessionKey: string): boolean {
+  const trimmed = sessionKey.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const firstSeparator = trimmed.indexOf(":");
+  if (firstSeparator < 0) {
+    return trimmed.startsWith(DREAMING_NARRATIVE_RUN_PREFIX);
+  }
+  const secondSeparator = trimmed.indexOf(":", firstSeparator + 1);
+  const sessionSegment = secondSeparator < 0 ? trimmed : trimmed.slice(secondSeparator + 1);
+  return sessionSegment.startsWith(DREAMING_NARRATIVE_RUN_PREFIX);
+}
+
 function hasCronRunSessionKey(value: unknown): boolean {
   return typeof value === "string" && isCronRunSessionKey(value);
 }
@@ -225,40 +204,29 @@ function resolveSessionStoreTranscriptPath(
   sessionsDir: string,
   entry: { sessionFile?: unknown; sessionId?: unknown } | undefined,
 ): string | null {
-  const resolved = resolveSessionStoreTranscriptResolvedPath(sessionsDir, entry);
-  return resolved ? normalizeComparablePath(resolved) : null;
-}
-
-function resolveSessionStoreTranscriptResolvedPath(
-  sessionsDir: string,
-  entry: { sessionFile?: unknown; sessionId?: unknown } | undefined,
-): string | null {
   if (typeof entry?.sessionFile === "string" && entry.sessionFile.trim().length > 0) {
     const sessionFile = entry.sessionFile.trim();
-    return path.isAbsolute(sessionFile) ? sessionFile : path.resolve(sessionsDir, sessionFile);
+    const resolved = path.isAbsolute(sessionFile)
+      ? sessionFile
+      : path.resolve(sessionsDir, sessionFile);
+    return normalizeComparablePath(resolved);
   }
   if (typeof entry?.sessionId === "string" && entry.sessionId.trim().length > 0) {
-    return path.join(sessionsDir, `${entry.sessionId.trim()}.jsonl`);
+    return normalizeComparablePath(path.join(sessionsDir, `${entry.sessionId.trim()}.jsonl`));
   }
   return null;
 }
 
-function isCanonicalSessionsDirForAgent(sessionsDir: string, agentId: string): boolean {
-  return (
-    normalizeComparablePath(sessionsDir) ===
-    normalizeComparablePath(resolveSessionTranscriptsDirForAgent(agentId))
-  );
+export function loadDreamingNarrativeTranscriptPathSetForSessionsDir(
+  sessionsDir: string,
+): ReadonlySet<string> {
+  return loadSessionTranscriptClassificationForSessionsDir(sessionsDir)
+    .dreamingNarrativeTranscriptPaths;
 }
 
-function loadSessionTranscriptClassificationForSessionsDir(
+export function loadSessionTranscriptClassificationForSessionsDir(
   sessionsDir: string,
 ): SessionTranscriptClassification {
-  const agentId = extractAgentIdFromSessionsDir(sessionsDir);
-  if (agentId && isCanonicalSessionsDirForAgent(sessionsDir, agentId)) {
-    return classifySessionTranscriptCorpusEntries(
-      listSessionTranscriptCorpusEntriesForAgentSync(agentId),
-    );
-  }
   const storePath = path.join(sessionsDir, "sessions.json");
   const store = readSessionTranscriptClassificationStore(storePath);
   const dreamingTranscriptPaths = new Set<string>();
@@ -295,26 +263,6 @@ function readSessionTranscriptClassificationStore(
   }
 }
 
-function classifySessionTranscriptCorpusEntries(
-  corpusEntries: readonly SessionTranscriptCorpusEntry[],
-): SessionTranscriptClassification {
-  const dreamingTranscriptPaths = new Set<string>();
-  const cronRunTranscriptPaths = new Set<string>();
-  for (const entry of corpusEntries) {
-    const normalizedPath = normalizeComparablePath(entry.sessionFile);
-    if (entry.generatedByDreamingNarrative) {
-      dreamingTranscriptPaths.add(normalizedPath);
-    }
-    if (entry.generatedByCronRun) {
-      cronRunTranscriptPaths.add(normalizedPath);
-    }
-  }
-  return {
-    dreamingNarrativeTranscriptPaths: dreamingTranscriptPaths,
-    cronRunTranscriptPaths,
-  };
-}
-
 export function loadDreamingNarrativeTranscriptPathSetForAgent(
   agentId: string,
 ): ReadonlySet<string> {
@@ -324,8 +272,8 @@ export function loadDreamingNarrativeTranscriptPathSetForAgent(
 export function loadSessionTranscriptClassificationForAgent(
   agentId: string,
 ): SessionTranscriptClassification {
-  return classifySessionTranscriptCorpusEntries(
-    listSessionTranscriptCorpusEntriesForAgentSync(agentId),
+  return loadSessionTranscriptClassificationForSessionsDir(
+    resolveSessionTranscriptsDirForAgent(agentId),
   );
 }
 
@@ -353,9 +301,17 @@ function classifySessionTranscriptFromSessionStore(absPath: string): {
 }
 
 export async function listSessionFilesForAgent(agentId: string): Promise<string[]> {
-  return (await listSessionTranscriptCorpusEntriesForAgent(agentId)).map(
-    (entry) => entry.sessionFile,
-  );
+  const dir = resolveSessionTranscriptsDirForAgent(agentId);
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => isUsageCountedSessionTranscriptFileName(name))
+      .map((name) => path.join(dir, name));
+  } catch {
+    return [];
+  }
 }
 
 function extractAgentIdFromSessionPath(absPath: string): string | null {
@@ -372,89 +328,6 @@ export function sessionPathForFile(absPath: string): string {
   return path
     .join("sessions", ...(agentId ? [agentId] : []), path.basename(absPath))
     .replace(/\\/g, "/");
-}
-
-/** Returns the logical memory path for a live SQLite-backed session transcript. */
-export function sessionPathForSessionIdentity(agentId: string, sessionId: string): string {
-  return path.join("sessions", normalizeAgentId(agentId), `${sessionId}.jsonl`).replace(/\\/g, "/");
-}
-
-/**
- * Parses a deprecated path-shaped memory sync hint only when it points at an
- * OpenClaw-owned usage-counted transcript in the canonical agent sessions dir.
- */
-export function parseCanonicalSessionSyncTargetFromPath(
-  sessionFile: string,
-): MemorySessionSyncTarget | null {
-  const trimmed = sessionFile.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const resolved = path.resolve(trimmed);
-  const fileName = path.basename(resolved);
-  const sessionId = parseUsageCountedSessionIdFromFileName(fileName);
-  if (!sessionId || !isUsageCountedSessionTranscriptFileName(fileName)) {
-    return null;
-  }
-  const agentId = extractAgentIdFromSessionPath(resolved);
-  if (!agentId) {
-    return null;
-  }
-  const canonicalSessionsDir = normalizeComparablePath(
-    resolveSessionTranscriptsDirForAgent(agentId),
-  );
-  if (normalizeComparablePath(path.dirname(resolved)) !== canonicalSessionsDir) {
-    return null;
-  }
-  return { agentId, sessionId };
-}
-
-/**
- * Resolves a current transcript path back to the canonical session-store
- * identity when available, falling back to the usage-counted file identity.
- */
-export function resolveSessionIdentityForTranscriptFile(
-  sessionFile: string,
-): ResolvedSessionTranscriptIdentity | null {
-  const parsed = parseCanonicalSessionSyncTargetFromPath(sessionFile);
-  if (!parsed?.agentId) {
-    return null;
-  }
-  const sessionsDir = resolveSessionTranscriptsDirForAgent(parsed.agentId);
-  const normalizedSessionFile = normalizeComparablePath(sessionFile);
-  const store = readSessionTranscriptClassificationStore(path.join(sessionsDir, "sessions.json"));
-  for (const [sessionKey, entry] of Object.entries(store)) {
-    const transcriptPath = resolveSessionStoreTranscriptPath(sessionsDir, entry);
-    if (transcriptPath !== normalizedSessionFile) {
-      continue;
-    }
-    const sessionId = typeof entry.sessionId === "string" ? entry.sessionId.trim() : "";
-    if (!sessionId) {
-      continue;
-    }
-    return {
-      agentId: parsed.agentId,
-      sessionId,
-      ...(sessionKey.trim() ? { sessionKey } : {}),
-    };
-  }
-  return {
-    agentId: parsed.agentId,
-    sessionId: parsed.sessionId,
-  };
-}
-
-/** Resolves only deprecated path-shaped sync targets; live identity uses corpus entries. */
-export function resolveSessionFileForSyncTarget(
-  target: MemorySessionSyncTarget,
-  defaultAgentId?: string,
-): ResolvedMemorySessionSyncTarget | null {
-  const sessionId = target.sessionId.trim();
-  const rawAgentId = (target.agentId ?? defaultAgentId ?? "").trim();
-  if (!rawAgentId || !sessionId) {
-    return null;
-  }
-  return null;
 }
 
 async function logSessionFileReadFailure(absPath: string, err: unknown): Promise<void> {
@@ -620,6 +493,17 @@ function sanitizeSessionText(text: string, role: "user" | "assistant"): string |
   return normalized;
 }
 
+export function extractSessionText(
+  content: unknown,
+  role: "user" | "assistant" = "assistant",
+): string | null {
+  const rawText = collectRawSessionText(content);
+  if (rawText === null) {
+    return null;
+  }
+  return sanitizeSessionText(rawText, role);
+}
+
 function parseSessionTimestampMs(
   record: { timestamp?: unknown },
   message: { timestamp?: unknown },
@@ -642,58 +526,12 @@ function parseSessionTimestampMs(
   return 0;
 }
 
-function serializeTranscriptEvent(record: unknown): string | null {
-  const serialized = JSON.stringify(record);
-  return typeof serialized === "string" ? serialized : null;
-}
-
-function serializeTranscriptEvents(records: readonly unknown[]): string {
-  return records
-    .map(serializeTranscriptEvent)
-    .filter((line): line is string => line !== null)
-    .join("\n");
-}
-
 function resolveSessionEntryParseYieldLines(opts: BuildSessionEntryOptions): number {
   const configured = opts.parseYieldEveryLines;
   if (typeof configured === "number" && Number.isFinite(configured)) {
     return Math.max(1, Math.floor(configured));
   }
   return SESSION_ENTRY_PARSE_YIELD_LINES;
-}
-
-export function statSessionEntrySync(
-  absPath: string,
-  opts: BuildSessionEntryOptions = {},
-): SessionFileState | null {
-  const sqliteMarker = parseSqliteSessionFileMarker(absPath);
-  if (sqliteMarker) {
-    const stats = readTranscriptStatsSync({
-      agentId: sqliteMarker.agentId,
-      sessionId: sqliteMarker.sessionId,
-      ...(opts.sessionKey ? { sessionKey: opts.sessionKey } : {}),
-      storePath: sqliteMarker.storePath,
-    });
-    return {
-      absPath,
-      path: sessionPathForSessionIdentity(sqliteMarker.agentId, sqliteMarker.sessionId),
-      mtimeMs: opts.updatedAtMs ?? stats.maxSeq,
-      size: stats.sizeBytes,
-    };
-  }
-  try {
-    const stat = fsSync.statSync(absPath);
-    return stat.isFile()
-      ? {
-          absPath,
-          path: sessionPathForFile(absPath),
-          mtimeMs: stat.mtimeMs,
-          size: stat.size,
-        }
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 async function yieldSessionEntryParseIfNeeded(
@@ -712,99 +550,45 @@ export async function buildSessionEntry(
   opts: BuildSessionEntryOptions = {},
 ): Promise<SessionFileEntry | null> {
   try {
-    const sqliteMarker = parseSqliteSessionFileMarker(absPath);
-    const rawSource = sqliteMarker
-      ? (() => {
-          const stats = readTranscriptStatsSync({
-            agentId: sqliteMarker.agentId,
-            sessionId: sqliteMarker.sessionId,
-            ...(opts.sessionKey ? { sessionKey: opts.sessionKey } : {}),
-            storePath: sqliteMarker.storePath,
-          });
-          const records = loadTranscriptEventsSync({
-            agentId: sqliteMarker.agentId,
-            sessionId: sqliteMarker.sessionId,
-            ...(opts.sessionKey ? { sessionKey: opts.sessionKey } : {}),
-            storePath: sqliteMarker.storePath,
-          });
-          const raw = serializeTranscriptEvents(records);
-          return {
-            mtimeMs: opts.updatedAtMs ?? stats.maxSeq,
-            path: sessionPathForSessionIdentity(sqliteMarker.agentId, sqliteMarker.sessionId),
-            raw,
-            size: stats.sizeBytes,
-          };
-        })()
-      : null;
-    let raw: string;
-    let mtimeMs: number;
-    let size: number;
-    let memoryPath: string;
-    if (rawSource) {
-      raw = rawSource.raw;
-      mtimeMs = rawSource.mtimeMs;
-      size = rawSource.size;
-      memoryPath = rawSource.path;
-    } else {
-      const regularFile = await statRegularFile(absPath);
-      if (regularFile.missing) {
-        return null;
-      }
-      const stat = regularFile.stat;
-      if (shouldSkipTranscriptFileForDreaming(absPath)) {
-        return {
-          path: sessionPathForFile(absPath),
-          absPath,
-          mtimeMs: stat.mtimeMs,
-          size: stat.size,
-          hash: hashText("\n\n"),
-          content: "",
-          lineMap: [],
-          messageTimestampsMs: [],
-        };
-      }
-      raw = (
-        await retryTransientMemoryRead(
-          () => readRegularFile({ filePath: absPath }),
-          `read session transcript ${absPath}`,
-        )
-      ).buffer.toString("utf-8");
-      mtimeMs = stat.mtimeMs;
-      size = stat.size;
-      memoryPath = sessionPathForFile(absPath);
+    const regularFile = await statRegularFile(absPath);
+    if (regularFile.missing) {
+      return null;
     }
+    const stat = regularFile.stat;
+    if (shouldSkipTranscriptFileForDreaming(absPath)) {
+      return {
+        path: sessionPathForFile(absPath),
+        absPath,
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        hash: hashText("\n\n"),
+        content: "",
+        lineMap: [],
+        messageTimestampsMs: [],
+      };
+    }
+    const raw = (
+      await retryTransientMemoryRead(
+        () => readRegularFile({ filePath: absPath }),
+        `read session transcript ${absPath}`,
+      )
+    ).buffer.toString("utf-8");
     const collected: string[] = [];
     const lineMap: number[] = [];
     const messageTimestampsMs: number[] = [];
     const parseYieldEveryLines = resolveSessionEntryParseYieldLines(opts);
-    const sqliteSessionKey =
-      sqliteMarker && !opts.sessionKey
-        ? resolveTranscriptSessionKeyBySessionId({
-            agentId: sqliteMarker.agentId,
-            sessionId: sqliteMarker.sessionId,
-            storePath: sqliteMarker.storePath,
-          })
-        : undefined;
     const sessionStoreClassification =
-      !sqliteMarker &&
-      (opts.generatedByDreamingNarrative === undefined || opts.generatedByCronRun === undefined)
+      opts.generatedByDreamingNarrative === undefined || opts.generatedByCronRun === undefined
         ? classifySessionTranscriptFromSessionStore(absPath)
         : null;
     let generatedByDreamingNarrative =
       opts.generatedByDreamingNarrative ??
-      (sqliteSessionKey ? isDreamingNarrativeSessionStoreKey(sqliteSessionKey) : undefined) ??
       sessionStoreClassification?.generatedByDreamingNarrative ??
       false;
     let generatedByCronRun =
-      opts.generatedByCronRun ??
-      (sqliteSessionKey ? isCronRunSessionKey(sqliteSessionKey) : undefined) ??
-      sessionStoreClassification?.generatedByCronRun ??
-      false;
-    const allowArchiveRecordCronClassification =
+      opts.generatedByCronRun ?? sessionStoreClassification?.generatedByCronRun ?? false;
+    const allowArchiveContentCronClassification =
       isUsageCountedSessionArchiveTranscriptPath(absPath);
-    // A heartbeat owns every generated response until the next user turn. The
-    // persisted runtime provenance makes this coupling safe from text spoofing.
-    let insideHeartbeatTurn = false;
     for (let jsonlIdx = 0, lineStart = 0; lineStart <= raw.length; jsonlIdx++) {
       await yieldSessionEntryParseIfNeeded(jsonlIdx, parseYieldEveryLines);
       const newlineIndex = raw.indexOf("\n", lineStart);
@@ -825,7 +609,7 @@ export async function buildSessionEntry(
       }
       if (
         !generatedByCronRun &&
-        allowArchiveRecordCronClassification &&
+        allowArchiveContentCronClassification &&
         isCronRunGeneratedRecord(record)
       ) {
         generatedByCronRun = true;
@@ -849,14 +633,6 @@ export async function buildSessionEntry(
       if (message.role !== "user" && message.role !== "assistant") {
         continue;
       }
-      const provenance = message.provenance as { kind?: unknown; sourceTool?: unknown } | undefined;
-      const isHeartbeatUser =
-        message.role === "user" &&
-        provenance?.kind === "internal_system" &&
-        provenance.sourceTool === "heartbeat";
-      if (message.role === "user") {
-        insideHeartbeatTurn = isHeartbeatUser;
-      }
       if (message.role === "user" && hasInterSessionUserProvenance(message)) {
         continue;
       }
@@ -864,14 +640,25 @@ export async function buildSessionEntry(
       if (rawText === null) {
         continue;
       }
-
-      // User text is not trusted archive-wide provenance. Per-message sanitization
-      // drops cron prompts without clearing unrelated content from the archive.
+      if (
+        !generatedByCronRun &&
+        allowArchiveContentCronClassification &&
+        isGeneratedCronPromptMessage(normalizeSessionText(rawText), message.role)
+      ) {
+        generatedByCronRun = true;
+        collected.length = 0;
+        lineMap.length = 0;
+        messageTimestampsMs.length = 0;
+      }
       const text = sanitizeSessionText(rawText, message.role);
       if (!text) {
-        continue;
-      }
-      if (insideHeartbeatTurn) {
+        // Assistant-side machinery (silent replies, system wrappers) is already
+        // dropped by sanitizeSessionText. We deliberately do NOT use the prior
+        // user message's pattern-match to drop the next assistant message:
+        // user-typed text can match those same patterns (`[cron:...]`,
+        // `System (untrusted): ...`) and a cross-message drop would let users
+        // exfiltrate real assistant replies from the dreaming corpus by
+        // prefixing their own prompt. See PR #70737 review (aisle-research-bot).
         continue;
       }
       if (generatedByDreamingNarrative || generatedByCronRun) {
@@ -890,10 +677,10 @@ export async function buildSessionEntry(
     }
     const content = collected.join("\n");
     return {
-      path: memoryPath,
+      path: sessionPathForFile(absPath),
       absPath,
-      mtimeMs,
-      size,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
       hash: hashText(content + "\n" + lineMap.join(",") + "\n" + messageTimestampsMs.join(",")),
       content,
       lineMap,
@@ -906,4 +693,3 @@ export async function buildSessionEntry(
     return null;
   }
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

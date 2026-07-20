@@ -1,5 +1,4 @@
 // Tlon plugin module implements approval runtime behavior.
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime";
 import type { PendingApproval, TlonSettingsStore } from "../settings.js";
 import { normalizeShip } from "../targets.js";
@@ -217,7 +216,7 @@ export function createTlonApprovalRuntime(params: {
     );
 
     if (existingIndex !== -1) {
-      const existing = expectDefined(approvals[existingIndex], "located pending approval index");
+      const existing = approvals[existingIndex];
       if (approval.originalMessage) {
         existing.originalMessage = approval.originalMessage;
         existing.messagePreview = approval.messagePreview;

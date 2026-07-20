@@ -2,8 +2,10 @@
 // actions for background music tasks.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as musicGenerationRuntime from "../../music-generation/runtime.js";
-import { recordRecentMediaGenerationTaskStartForSession } from "../media-generation-task-status-shared.js";
-import { resetRecentMediaGenerationDuplicateGuardsForTests } from "../media-generation-task-status-shared.test-support.js";
+import {
+  recordRecentMediaGenerationTaskStartForSession,
+  resetRecentMediaGenerationDuplicateGuardsForTests,
+} from "../media-generation-task-status-shared.js";
 import { MUSIC_GENERATION_TASK_KIND } from "../music-generation-task-status.js";
 import {
   createMusicGenerateDuplicateGuardResult,

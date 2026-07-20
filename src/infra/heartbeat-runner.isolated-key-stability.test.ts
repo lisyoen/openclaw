@@ -5,11 +5,7 @@ import * as replyModule from "../auto-reply/reply.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveMainSessionKey } from "../config/sessions.js";
 import { runHeartbeatOnce } from "./heartbeat-runner.js";
-import {
-  readSessionStoreForTest,
-  seedSessionStore,
-  withTempHeartbeatSandbox,
-} from "./heartbeat-runner.test-utils.js";
+import { seedSessionStore, withTempHeartbeatSandbox } from "./heartbeat-runner.test-utils.js";
 import {
   enqueueSystemEvent,
   peekSystemEventEntries,
@@ -122,14 +118,20 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
 
       // Simulate wake-request path: key already has :heartbeat from a previous tick.
       const alreadySuffixedKey = `${baseSessionKey}:heartbeat`;
-      await seedSessionStore(storePath, alreadySuffixedKey, {
-        sessionId: "sid",
-        updatedAt: Date.now(),
-        lastChannel: "whatsapp",
-        lastProvider: "whatsapp",
-        lastTo: "+1555",
-        heartbeatIsolatedBaseSessionKey: baseSessionKey,
-      });
+      await fs.writeFile(
+        storePath,
+        JSON.stringify({
+          [alreadySuffixedKey]: {
+            sessionId: "sid",
+            updatedAt: Date.now(),
+            lastChannel: "whatsapp",
+            lastProvider: "whatsapp",
+            lastTo: "+1555",
+            heartbeatIsolatedBaseSessionKey: baseSessionKey,
+          },
+        }),
+        "utf-8",
+      );
       const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
       replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });
 
@@ -184,9 +186,10 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
       // A deeply accumulated key converges to "<base>:heartbeat" in one call.
       expect(ctx?.SessionKey).toBe(`${baseSessionKey}:heartbeat`);
 
-      const store = readSessionStoreForTest<{ heartbeatIsolatedBaseSessionKey?: string }>(
-        storePath,
-      );
+      const store = JSON.parse(await fs.readFile(storePath, "utf-8")) as Record<
+        string,
+        { heartbeatIsolatedBaseSessionKey?: string }
+      >;
       expect(store[deeplyAccumulatedKey]).toBeUndefined();
       expect(store[`${baseSessionKey}:heartbeat`]?.heartbeatIsolatedBaseSessionKey).toBe(
         baseSessionKey,
@@ -263,14 +266,20 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
       const cfg = makeNamedIsolatedHeartbeatConfig(tmpDir, storePath, "alerts:heartbeat");
       const baseSessionKey = "agent:main:alerts:heartbeat";
       const alreadyIsolatedKey = `${baseSessionKey}:heartbeat`;
-      await seedSessionStore(storePath, alreadyIsolatedKey, {
-        sessionId: "sid",
-        updatedAt: Date.now(),
-        lastChannel: "whatsapp",
-        lastProvider: "whatsapp",
-        lastTo: "+1555",
-        heartbeatIsolatedBaseSessionKey: baseSessionKey,
-      });
+      await fs.writeFile(
+        storePath,
+        JSON.stringify({
+          [alreadyIsolatedKey]: {
+            sessionId: "sid",
+            updatedAt: Date.now(),
+            lastChannel: "whatsapp",
+            lastProvider: "whatsapp",
+            lastTo: "+1555",
+            heartbeatIsolatedBaseSessionKey: baseSessionKey,
+          },
+        }),
+        "utf-8",
+      );
       const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
       replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });
 
@@ -292,14 +301,20 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
       const cfg = makeIsolatedHeartbeatConfig(tmpDir, storePath);
       const baseSessionKey = resolveMainSessionKey(cfg);
       const isolatedSessionKey = `${baseSessionKey}:heartbeat`;
-      await seedSessionStore(storePath, isolatedSessionKey, {
-        sessionId: "sid",
-        updatedAt: Date.now(),
-        lastChannel: "whatsapp",
-        lastProvider: "whatsapp",
-        lastTo: "+1555",
-        heartbeatIsolatedBaseSessionKey: baseSessionKey,
-      });
+      await fs.writeFile(
+        storePath,
+        JSON.stringify({
+          [isolatedSessionKey]: {
+            sessionId: "sid",
+            updatedAt: Date.now(),
+            lastChannel: "whatsapp",
+            lastProvider: "whatsapp",
+            lastTo: "+1555",
+            heartbeatIsolatedBaseSessionKey: baseSessionKey,
+          },
+        }),
+        "utf-8",
+      );
       enqueueSystemEvent("exec finished: deploy succeeded", { sessionKey: isolatedSessionKey });
       const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
       replySpy.mockResolvedValue({ text: "Handled internally" });
@@ -343,14 +358,20 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
       const realSessionKey = "agent:main:alerts:heartbeat";
       const isolatedSessionKey = `${realSessionKey}:heartbeat`;
 
-      await seedSessionStore(storePath, isolatedSessionKey, {
-        sessionId: "sid",
-        updatedAt: Date.now(),
-        lastChannel: "whatsapp",
-        lastProvider: "whatsapp",
-        lastTo: "+1555",
-        heartbeatIsolatedBaseSessionKey: realSessionKey,
-      });
+      await fs.writeFile(
+        storePath,
+        JSON.stringify({
+          [isolatedSessionKey]: {
+            sessionId: "sid",
+            updatedAt: Date.now(),
+            lastChannel: "whatsapp",
+            lastProvider: "whatsapp",
+            lastTo: "+1555",
+            heartbeatIsolatedBaseSessionKey: realSessionKey,
+          },
+        }),
+        "utf-8",
+      );
 
       const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
       replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });
@@ -396,16 +417,22 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
         "utf-8",
       );
 
-      await seedSessionStore(storePath, baseSessionKey, {
-        sessionId: "sid",
-        updatedAt: Date.now(),
-        lastChannel: "whatsapp",
-        lastProvider: "whatsapp",
-        lastTo: "+1555",
-        heartbeatTaskState: {
-          "daily-check": 1,
-        },
-      });
+      await fs.writeFile(
+        storePath,
+        JSON.stringify({
+          [baseSessionKey]: {
+            sessionId: "sid",
+            updatedAt: Date.now(),
+            lastChannel: "whatsapp",
+            lastProvider: "whatsapp",
+            lastTo: "+1555",
+            heartbeatTaskState: {
+              "daily-check": 1,
+            },
+          },
+        }),
+        "utf-8",
+      );
       const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
       replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });
 
@@ -421,7 +448,7 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
       expect(result).toEqual({ status: "skipped", reason: "no-tasks-due" });
       expect(replySpy).not.toHaveBeenCalled();
 
-      const store = readSessionStoreForTest(storePath);
+      const store = JSON.parse(await fs.readFile(storePath, "utf-8")) as Record<string, unknown>;
       expect(store[isolatedSessionKey]).toBeUndefined();
     });
   });
@@ -439,13 +466,19 @@ describe("runHeartbeatOnce – isolated session key stability (#59493)", () => {
       const legacyIsolatedKey = `${baseSessionKey}:heartbeat`;
 
       // Legacy entry: has :heartbeat suffix but no heartbeatIsolatedBaseSessionKey marker.
-      await seedSessionStore(storePath, legacyIsolatedKey, {
-        sessionId: "sid",
-        updatedAt: Date.now(),
-        lastChannel: "whatsapp",
-        lastProvider: "whatsapp",
-        lastTo: "+1555",
-      });
+      await fs.writeFile(
+        storePath,
+        JSON.stringify({
+          [legacyIsolatedKey]: {
+            sessionId: "sid",
+            updatedAt: Date.now(),
+            lastChannel: "whatsapp",
+            lastProvider: "whatsapp",
+            lastTo: "+1555",
+          },
+        }),
+        "utf-8",
+      );
       const replySpy = vi.spyOn(replyModule, "getReplyFromConfig");
       replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });
 

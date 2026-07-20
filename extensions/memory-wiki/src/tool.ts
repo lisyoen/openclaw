@@ -117,7 +117,6 @@ type WikiToolMemoryContext = {
 export function createWikiStatusTool(
   config: ResolvedMemoryWikiConfig,
   appConfig?: OpenClawConfig,
-  memoryContext: WikiToolMemoryContext = {},
 ): AnyAgentTool {
   return {
     name: "wiki_status",
@@ -129,7 +128,6 @@ export function createWikiStatusTool(
       await syncImportedSourcesIfNeeded(config, appConfig);
       const status = await resolveMemoryWikiStatus(config, {
         appConfig,
-        callerAgentId: memoryContext.agentId,
       });
       return {
         content: [{ type: "text", text: renderMemoryWikiStatus(status) }],

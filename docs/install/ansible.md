@@ -7,7 +7,7 @@ read_when:
 title: "Ansible"
 ---
 
-Deploy OpenClaw to production servers with **[openclaw-ansible](https://github.com/openclaw/openclaw-ansible)**, an automated installer with a security-first architecture.
+Deploy OpenClaw to production servers with **[openclaw-ansible](https://github.com/openclaw/openclaw-ansible)** -- an automated installer with security-first architecture.
 
 <Info>
 The [openclaw-ansible](https://github.com/openclaw/openclaw-ansible) repo is the source of truth for Ansible deployment. This page is a quick overview.
@@ -17,20 +17,23 @@ The [openclaw-ansible](https://github.com/openclaw/openclaw-ansible) repo is the
 
 | Requirement | Details                                                   |
 | ----------- | --------------------------------------------------------- |
-| OS          | Debian 11+ or Ubuntu 20.04+                               |
-| Access      | Root or sudo privileges                                   |
-| Network     | Internet connection for package installation              |
-| Ansible     | 2.14+ (installed automatically by the quick-start script) |
+| **OS**      | Debian 11+ or Ubuntu 20.04+                               |
+| **Access**  | Root or sudo privileges                                   |
+| **Network** | Internet connection for package installation              |
+| **Ansible** | 2.14+ (installed automatically by the quick-start script) |
 
 ## What you get
 
-- Firewall-first security: UFW + Docker isolation (only SSH + Tailscale reachable)
-- Tailscale VPN for remote access without exposing services publicly
-- Docker for isolated sandbox containers with localhost-only bindings
-- Systemd integration with hardening, auto-starting on boot
-- One-command setup
+- **Firewall-first security** -- UFW + Docker isolation (only SSH + Tailscale accessible)
+- **Tailscale VPN** -- secure remote access without exposing services publicly
+- **Docker** -- isolated sandbox containers, localhost-only bindings
+- **Defense in depth** -- 4-layer security architecture
+- **Systemd integration** -- auto-start on boot with hardening
+- **One-command setup** -- complete deployment in minutes
 
 ## Quick start
+
+One-command install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openclaw/openclaw-ansible/main/install.sh | bash
@@ -38,20 +41,22 @@ curl -fsSL https://raw.githubusercontent.com/openclaw/openclaw-ansible/main/inst
 
 ## What gets installed
 
-1. Tailscale (mesh VPN for secure remote access)
-2. UFW firewall (SSH + Tailscale ports only)
-3. Docker CE + Compose V2 (default agent sandbox backend)
-4. Node.js and pnpm (OpenClaw requires Node 22.22.3+, 24.15+, or 25.9+; Node 24 is recommended)
-5. OpenClaw, installed host-based, not containerized
-6. A systemd service with security hardening
+The Ansible playbook installs and configures:
+
+1. **Tailscale** -- mesh VPN for secure remote access
+2. **UFW firewall** -- SSH + Tailscale ports only
+3. **Docker CE + Compose V2** -- for the default agent sandbox backend
+4. **Node.js 24 + pnpm** -- runtime dependencies (Node 22 LTS, currently `22.19+`, remains supported)
+5. **OpenClaw** -- host-based, not containerized
+6. **Systemd service** -- auto-start with security hardening
 
 <Note>
-The gateway runs directly on the host, not in Docker. Agent sandboxing is
+The gateway runs directly on the host (not in Docker). Agent sandboxing is
 optional; this playbook installs Docker because it is the default sandbox
-backend. See [Sandboxing](/gateway/sandboxing) for other backends.
+backend. See [Sandboxing](/gateway/sandboxing) for details and other backends.
 </Note>
 
-## Post-install setup
+## Post-Install Setup
 
 <Steps>
   <Step title="Switch to the openclaw user">
@@ -60,12 +65,12 @@ backend. See [Sandboxing](/gateway/sandboxing) for other backends.
     ```
   </Step>
   <Step title="Run the onboarding wizard">
-    The post-install script guides you through configuring OpenClaw.
+    The post-install script guides you through configuring OpenClaw settings.
   </Step>
-  <Step title="Connect messaging channels">
+  <Step title="Connect messaging providers">
     Log in to WhatsApp, Telegram, Discord, or Signal:
     ```bash
-    openclaw channels login --channel <name>
+    openclaw channels login
     ```
   </Step>
   <Step title="Verify the installation">
@@ -91,31 +96,33 @@ sudo journalctl -u openclaw -f
 # Restart gateway
 sudo systemctl restart openclaw
 
-# Channel login (run as openclaw user)
+# Provider login (run as openclaw user)
 sudo -i -u openclaw
-openclaw channels login --channel <name>
+openclaw channels login
 ```
 
 ## Security architecture
 
-Four-layer defense model:
+The deployment uses a 4-layer defense model:
 
-1. Firewall (UFW): only SSH (22) and Tailscale (41641/udp) exposed publicly
-2. VPN (Tailscale): gateway reachable only via the VPN mesh
-3. Docker isolation: `DOCKER-USER` iptables chain prevents external port exposure
-4. Systemd hardening: `NoNewPrivileges`, `PrivateTmp`, unprivileged user
+1. **Firewall (UFW)** -- only SSH (22) + Tailscale (41641/udp) exposed publicly
+2. **VPN (Tailscale)** -- gateway accessible only via VPN mesh
+3. **Docker isolation** -- DOCKER-USER iptables chain prevents external port exposure
+4. **Systemd hardening** -- NoNewPrivileges, PrivateTmp, unprivileged user
 
-Verify your external attack surface:
+To verify your external attack surface:
 
 ```bash
 nmap -p- YOUR_SERVER_IP
 ```
 
-Only port 22 (SSH) should be open. Gateway and Docker stay locked down.
+Only port 22 (SSH) should be open. All other services (gateway, Docker) are locked down.
 
-Docker is installed for agent sandboxes (isolated tool execution), not for running the gateway. See [Multi-Agent Sandbox and Tools](/tools/multi-agent-sandbox-tools) for sandbox configuration.
+Docker is installed for agent sandboxes (isolated tool execution), not for running the gateway itself. See [Multi-Agent Sandbox and Tools](/tools/multi-agent-sandbox-tools) for sandbox configuration.
 
 ## Manual installation
+
+If you prefer manual control over the automation:
 
 <Steps>
   <Step title="Install prerequisites">
@@ -139,7 +146,7 @@ Docker is installed for agent sandboxes (isolated tool execution), not for runni
     ./run-playbook.sh
     ```
 
-    Or run the playbook directly and then run the setup script manually:
+    Alternatively, run directly and then manually execute the setup script afterward:
     ```bash
     ansible-playbook playbook.yml --ask-become-pass
     # Then run: /tmp/openclaw-setup.sh
@@ -150,9 +157,9 @@ Docker is installed for agent sandboxes (isolated tool execution), not for runni
 
 ## Updating
 
-The Ansible installer sets up OpenClaw for manual updates; see [Updating](/install/updating) for the standard flow.
+The Ansible installer sets up OpenClaw for manual updates. See [Updating](/install/updating) for the standard update flow.
 
-To re-run the playbook (for example, after configuration changes):
+To re-run the Ansible playbook (for example, for configuration changes):
 
 ```bash
 cd openclaw-ansible
@@ -165,8 +172,9 @@ This is idempotent and safe to run multiple times.
 
 <AccordionGroup>
   <Accordion title="Firewall blocks my connection">
-    - Connect via Tailscale VPN first; the gateway is only reachable that way by design.
-    - SSH (port 22) is always allowed.
+    - Ensure you can access via Tailscale VPN first
+    - SSH access (port 22) is always allowed
+    - The gateway is only accessible via Tailscale by design
 
   </Accordion>
   <Accordion title="Service will not start">
@@ -192,7 +200,7 @@ This is idempotent and safe to run multiple times.
     # Check sandbox image
     sudo docker images | grep openclaw-sandbox
 
-    # Build the sandbox image if missing (requires a source checkout)
+    # Build sandbox image if missing (requires source checkout)
     cd /opt/openclaw/openclaw
     sudo -u openclaw ./scripts/sandbox-setup.sh
     # For npm installs without a source checkout, see
@@ -200,11 +208,11 @@ This is idempotent and safe to run multiple times.
     ```
 
   </Accordion>
-  <Accordion title="Channel login fails">
+  <Accordion title="Provider login fails">
     Make sure you are running as the `openclaw` user:
     ```bash
     sudo -i -u openclaw
-    openclaw channels login --channel <name>
+    openclaw channels login
     ```
   </Accordion>
 </AccordionGroup>
@@ -219,7 +227,7 @@ For detailed security architecture and troubleshooting, see the openclaw-ansible
 
 ## Related
 
-- [openclaw-ansible](https://github.com/openclaw/openclaw-ansible): full deployment guide
-- [Docker](/install/docker): containerized gateway setup
-- [Sandboxing](/gateway/sandboxing): agent sandbox configuration
-- [Multi-Agent Sandbox and Tools](/tools/multi-agent-sandbox-tools): per-agent isolation
+- [openclaw-ansible](https://github.com/openclaw/openclaw-ansible) -- full deployment guide
+- [Docker](/install/docker) -- containerized gateway setup
+- [Sandboxing](/gateway/sandboxing) -- agent sandbox configuration
+- [Multi-Agent Sandbox and Tools](/tools/multi-agent-sandbox-tools) -- per-agent isolation

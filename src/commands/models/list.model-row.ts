@@ -8,12 +8,14 @@ export type ListRowModel = {
   id: string;
   name: string;
   provider: string;
-  api?: string | null;
-  input?: Array<"text" | "image" | "document">;
+  input: Array<"text" | "image" | "document">;
   baseUrl?: string;
   contextWindow?: number | null;
   contextTokens?: number | null;
 };
+
+/** Provider-auth predicate used when model-level availability is unavailable. */
+export type ModelAuthAvailabilityResolver = (provider: string) => boolean;
 
 /** Builds a display row, preserving configured tags and alias metadata. */
 export function toModelRow(params: {
@@ -22,8 +24,8 @@ export function toModelRow(params: {
   tags: string[];
   aliases?: string[];
   availableKeys?: Set<string>;
-  authAvailability: boolean | undefined;
-  authAvailabilityAuthoritative?: boolean;
+  allowProviderAvailabilityFallback?: boolean;
+  hasAuthForProvider?: ModelAuthAvailabilityResolver;
 }): ModelRow {
   const {
     model,
@@ -31,8 +33,7 @@ export function toModelRow(params: {
     tags,
     aliases = [],
     availableKeys,
-    authAvailability,
-    authAvailabilityAuthoritative = false,
+    allowProviderAvailabilityFallback = false,
   } = params;
   if (!model) {
     return {
@@ -47,17 +48,16 @@ export function toModelRow(params: {
     };
   }
 
-  const input = model.input?.join("+") || "-";
+  const input = model.input.join("+") || "text";
   const local = isLocalBaseUrl(model.baseUrl ?? "");
-  const modelIsAvailable =
-    local || (availableKeys?.has(modelKey(model.provider, model.id)) ?? false);
-  // Registry model availability remains authoritative unless the row is outside
-  // that inventory or provider-owned route facts select a physical auth route.
-  const available = authAvailabilityAuthoritative
-    ? (authAvailability ?? null)
-    : availableKeys !== undefined
+  const modelIsAvailable = availableKeys?.has(modelKey(model.provider, model.id)) ?? false;
+  // Prefer model-level registry availability when present.
+  // Fall back to provider-level auth heuristics only if registry availability isn't available,
+  // or if the caller marks this as a synthetic/forward-compat model that won't appear in getAvailable().
+  const available =
+    availableKeys !== undefined && !allowProviderAvailabilityFallback
       ? modelIsAvailable
-      : (authAvailability ?? (modelIsAvailable ? true : null));
+      : modelIsAvailable || (params.hasAuthForProvider?.(model.provider) ?? false);
   const aliasTags = aliases.length > 0 ? [`alias:${aliases.join(",")}`] : [];
   const mergedTags = new Set(tags);
   if (aliasTags.length > 0) {

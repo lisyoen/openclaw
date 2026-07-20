@@ -44,34 +44,16 @@ export function getLoadedChannelPluginOrigin(id: ChannelId): string | undefined 
 }
 
 /**
- * Resolves the active channel implementation together with host-owned provenance.
+ * Returns the active channel plugin, with bundled fallback for built-in channels.
  */
-export function resolveChannelPluginRegistration(
-  id: ChannelId,
-): { plugin: ChannelPlugin; origin?: string } | undefined {
+export function getChannelPlugin(id: ChannelId): ChannelPlugin | undefined {
   const resolvedId = normalizeOptionalString(id) ?? "";
   if (!resolvedId) {
     return undefined;
   }
-  // Resolve implementation and provenance together. Loaded overrides win and
-  // must never borrow bundled authority from the fallback with the same id.
-  const loadedEntry = getLoadedChannelPluginEntryById(resolvedId);
-  if (loadedEntry) {
-    const origin = normalizeOptionalString(loadedEntry.origin) ?? undefined;
-    return {
-      plugin: loadedEntry.plugin as ChannelPlugin,
-      ...(origin ? { origin } : {}),
-    };
-  }
-  const plugin = getBundledChannelPlugin(resolvedId);
-  return plugin ? { plugin, origin: "bundled" } : undefined;
-}
-
-/**
- * Returns the active channel plugin, with bundled fallback for built-in channels.
- */
-export function getChannelPlugin(id: ChannelId): ChannelPlugin | undefined {
-  return resolveChannelPluginRegistration(id)?.plugin;
+  // Loaded plugins win over bundled fallbacks so installed plugin state can pin
+  // or override a bundled channel during runtime.
+  return getLoadedChannelPlugin(resolvedId) ?? getBundledChannelPlugin(resolvedId);
 }
 
 /**

@@ -3,7 +3,6 @@ import type { waitForTransportReady } from "openclaw/plugin-sdk/transport-ready-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { createIMessageRpcClient } from "./client.js";
 import { monitorIMessageProvider } from "./monitor.js";
-import { installIMessageStateRuntimeForTest } from "./test-support/runtime.js";
 
 const waitForTransportReadyMock = vi.hoisted(() =>
   vi.fn<typeof waitForTransportReady>(async () => {}),
@@ -42,7 +41,6 @@ vi.mock("./monitor/abort-handler.js", () => ({
 
 describe("iMessage plugin payload attachments", () => {
   beforeEach(() => {
-    installIMessageStateRuntimeForTest();
     waitForTransportReadyMock.mockReset().mockResolvedValue(undefined);
     createIMessageRpcClientMock.mockReset();
     shouldDebounceTextInboundMock.mockReset().mockReturnValue(false);
@@ -58,7 +56,6 @@ describe("iMessage plugin payload attachments", () => {
           params: {
             message: {
               id: 1,
-              guid: "plugin-payload-guid-1",
               chat_id: 123,
               sender: "+15550001111",
               is_from_me: false,

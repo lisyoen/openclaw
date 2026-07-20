@@ -24,10 +24,10 @@ describe("GPT-5 prompt overlay runtime contract", () => {
 
     expect(contribution?.stablePrefix).toContain("<persona_latch>");
     expect(contribution?.sectionOverrides?.interaction_style).toContain(
-      "Live chat: short, natural, human.",
+      "Live chat tone: short, natural, human.",
     );
     expect(contribution?.sectionOverrides?.interaction_style).not.toContain(
-      "Heartbeat = useful proactive progress",
+      "Use heartbeats to create useful proactive progress",
     );
   });
 
@@ -39,7 +39,7 @@ describe("GPT-5 prompt overlay runtime contract", () => {
     });
 
     expect(contribution?.sectionOverrides?.interaction_style).toContain(
-      "Heartbeat = useful proactive progress",
+      "Use heartbeats to create useful proactive progress",
     );
   });
 
@@ -70,7 +70,7 @@ describe("GPT-5 prompt overlay runtime contract", () => {
     expect(openAiContribution?.sectionOverrides).toStrictEqual({});
     expect(nonOpenAiContribution?.stablePrefix).toContain("<persona_latch>");
     expect(nonOpenAiContribution?.sectionOverrides?.interaction_style).toContain(
-      "Live chat: short, natural, human.",
+      "Live chat tone: short, natural, human.",
     );
   });
 

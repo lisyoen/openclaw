@@ -2,12 +2,7 @@
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { ErrorCodes, errorShape } from "openclaw/plugin-sdk/gateway-runtime";
 import { timestampMsToIsoString } from "openclaw/plugin-sdk/number-runtime";
-import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
-import {
-  asOptionalRecord,
-  normalizeOptionalString,
-} from "openclaw/plugin-sdk/string-coerce-runtime";
-import { jsonResult as json } from "openclaw/plugin-sdk/tool-results";
+import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { Type } from "typebox";
 import {
   definePluginEntry,
@@ -17,26 +12,29 @@ import {
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./runtime-entry.js";
 import { registerVoiceCallCli } from "./src/cli.js";
 import {
-  VoiceCallConfigSchema,
+  formatVoiceCallLegacyConfigWarnings,
+  normalizeVoiceCallLegacyConfigInput,
+  parseVoiceCallPluginConfig,
+} from "./src/config-compat.js";
+import {
   resolveVoiceCallConfig,
   validateProviderConfig,
   type VoiceCallConfig,
 } from "./src/config.js";
 import type { CoreConfig } from "./src/core-bridge.js";
 import { createVoiceCallContinueOperationStore } from "./src/gateway-continue-operation.js";
-import type { CallRecord } from "./src/types.js";
 
 const VOICE_CALL_WRITE_METHOD_SCOPE = { scope: "operator.write" as const };
 const VOICE_CALL_READ_METHOD_SCOPE = { scope: "operator.read" as const };
 
 const voiceCallConfigSchema = {
   parse(value: unknown): VoiceCallConfig {
-    const config = asOptionalRecord(value) ?? {};
-    const enabled = typeof config.enabled === "boolean" ? config.enabled : true;
-    return VoiceCallConfigSchema.parse({
-      ...config,
+    const normalized = normalizeVoiceCallLegacyConfigInput(value);
+    const enabled = typeof normalized.enabled === "boolean" ? normalized.enabled : true;
+    return parseVoiceCallPluginConfig({
+      ...normalized,
       enabled,
-      provider: config.provider ?? (enabled ? "mock" : undefined),
+      provider: normalized.provider ?? (enabled ? "mock" : undefined),
     });
   },
   uiHints: {
@@ -59,7 +57,6 @@ const voiceCallConfigSchema = {
     "telnyx.publicKey": { label: "Telnyx Public Key", sensitive: true },
     "twilio.accountSid": { label: "Twilio Account SID" },
     "twilio.authToken": { label: "Twilio Auth Token", sensitive: true },
-    "twilio.region": { label: "Twilio Region", advanced: true },
     "outbound.defaultMode": { label: "Default Call Mode" },
     "outbound.notifyHangupDelaySec": {
       label: "Notify Hangup Delay (sec)",
@@ -81,11 +78,7 @@ const voiceCallConfigSchema = {
       label: "Allow ngrok Free Tier (Loopback Bypass)",
       advanced: true,
     },
-    "streaming.enabled": {
-      label: "Enable Streaming",
-      help: "Classic streaming transcription currently requires the Twilio call provider.",
-      advanced: true,
-    },
+    "streaming.enabled": { label: "Enable Streaming", advanced: true },
     "streaming.provider": {
       label: "Streaming Provider",
       help: "Uses the first registered realtime transcription provider when unset.",
@@ -239,33 +232,6 @@ function isCliOnlyProcess(): boolean {
   return process.env.OPENCLAW_CLI === "1" && !process.argv.slice(2).includes("gateway");
 }
 
-type VoiceCallStatus = Pick<
-  CallRecord,
-  | "callId"
-  | "providerCallId"
-  | "provider"
-  | "direction"
-  | "state"
-  | "startedAt"
-  | "answeredAt"
-  | "endedAt"
-  | "endReason"
->;
-
-function toVoiceCallStatus(call: CallRecord): VoiceCallStatus {
-  return {
-    callId: call.callId,
-    ...(call.providerCallId !== undefined ? { providerCallId: call.providerCallId } : {}),
-    provider: call.provider,
-    direction: call.direction,
-    state: call.state,
-    startedAt: call.startedAt,
-    ...(call.answeredAt !== undefined ? { answeredAt: call.answeredAt } : {}),
-    ...(call.endedAt !== undefined ? { endedAt: call.endedAt } : {}),
-    ...(call.endReason !== undefined ? { endReason: call.endReason } : {}),
-  };
-}
-
 const VOICE_CALL_RUNTIME_KEY = Symbol.for("openclaw.voice-call.runtime");
 const VOICE_CALL_RUNTIME_PROMISE_KEY = Symbol.for("openclaw.voice-call.runtimePromise");
 const VOICE_CALL_RUNTIME_STOP_PROMISE_KEY = Symbol.for("openclaw.voice-call.runtimeStopPromise");
@@ -292,6 +258,16 @@ export default definePluginEntry({
   register(api: OpenClawPluginApi) {
     const config = resolveVoiceCallConfig(voiceCallConfigSchema.parse(api.pluginConfig));
     const validation = validateProviderConfig(config);
+
+    if (api.pluginConfig && typeof api.pluginConfig === "object") {
+      for (const warning of formatVoiceCallLegacyConfigWarnings({
+        value: api.pluginConfig,
+        configPathPrefix: "plugins.entries.voice-call.config",
+        doctorFixCommand: "openclaw doctor --fix",
+      })) {
+        api.logger.warn(warning);
+      }
+    }
 
     const runtimeState = getVoiceCallRuntimeGlobalState();
     const continueOperationStore = createVoiceCallContinueOperationStore({
@@ -367,7 +343,10 @@ export default definePluginEntry({
     };
 
     const describeHistoricalCall = async (rt: VoiceCallRuntime, callId: string) => {
-      const call = await rt.manager.getCallFromMemoryOrStore(callId);
+      const history = await rt.manager.getCallHistory(100);
+      const call = history
+        .toReversed()
+        .find((candidate) => candidate.callId === callId || candidate.providerCallId === callId);
       if (!call) {
         return undefined;
       }
@@ -403,14 +382,12 @@ export default definePluginEntry({
       dtmfSequence?: string;
       sessionKey?: string;
       requesterSessionKey?: string;
-      agentId?: string;
     }) => {
       const result = await params.rt.manager.initiateCall(params.to, params.sessionKey, {
         message: params.message,
         mode: params.mode,
         dtmfSequence: params.dtmfSequence,
         ...(params.requesterSessionKey ? { requesterSessionKey: params.requesterSessionKey } : {}),
-        ...(params.agentId ? { agentId: params.agentId } : {}),
       });
       if (!result.success) {
         respondError(params.respond, result.error || "initiate failed");
@@ -646,18 +623,15 @@ export default definePluginEntry({
             normalizeOptionalString(params?.callId) ?? normalizeOptionalString(params?.sid) ?? "";
           const rt = await ensureRuntime();
           if (!raw) {
-            respond(true, {
-              found: true,
-              calls: rt.manager.getActiveCalls().map(toVoiceCallStatus),
-            });
+            respond(true, { found: true, calls: rt.manager.getActiveCalls() });
             return;
           }
-          const call = await rt.manager.getCallFromMemoryOrStore(raw);
+          const call = rt.manager.getCall(raw) || rt.manager.getCallByProviderCallId(raw);
           if (!call) {
             respond(true, { found: false });
             return;
           }
-          respond(true, { found: true, call: toVoiceCallStatus(call) });
+          respond(true, { found: true, call });
         } catch (err) {
           sendError(respond, err);
         }
@@ -667,29 +641,13 @@ export default definePluginEntry({
 
     api.registerGatewayMethod(
       "voicecall.start",
-      async ({ params, client, respond }: GatewayRequestHandlerOptions) => {
+      async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
           const to = normalizeOptionalString(params?.to) ?? "";
           const message = normalizeOptionalString(params?.message) ?? "";
           const dtmfSequence = normalizeOptionalString(params?.dtmfSequence);
           const sessionKey = normalizeOptionalString(params?.sessionKey);
           const requesterSessionKey = normalizeOptionalString(params?.requesterSessionKey);
-          const requestedAgentId = normalizeOptionalString(params?.agentId);
-          const normalizedAgentId = requestedAgentId
-            ? normalizeAgentId(requestedAgentId)
-            : undefined;
-          const pluginOwnerId = normalizeOptionalString(client?.internal?.pluginRuntimeOwnerId);
-          if (
-            requestedAgentId &&
-            (!pluginOwnerId || normalizedAgentId !== requestedAgentId.toLowerCase())
-          ) {
-            respondError(
-              respond,
-              "agentId requires a trusted plugin caller and a valid agent id",
-              ErrorCodes.INVALID_REQUEST,
-            );
-            return;
-          }
           if (!to) {
             respondError(respond, "to required", ErrorCodes.INVALID_REQUEST);
             return;
@@ -706,7 +664,6 @@ export default definePluginEntry({
             dtmfSequence,
             sessionKey,
             ...(requesterSessionKey ? { requesterSessionKey } : {}),
-            ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
           });
         } catch (err) {
           sendError(respond, err);
@@ -715,14 +672,18 @@ export default definePluginEntry({
       VOICE_CALL_WRITE_METHOD_SCOPE,
     );
 
-    api.registerTool((toolContext) => ({
+    api.registerTool({
       name: "voice_call",
       label: "Voice Call",
       description: "Make phone calls and have voice conversations via the voice-call plugin.",
       parameters: VoiceCallToolSchema,
       async execute(_toolCallId, params) {
         const rawParams = asParamRecord(params);
-        const agentId = normalizeOptionalString(toolContext.agentId);
+        const json = (payload: unknown) => ({
+          content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+          details: payload,
+        });
+
         try {
           const rt = await ensureRuntime();
 
@@ -744,7 +705,6 @@ export default definePluginEntry({
                     rawParams.mode === "notify" || rawParams.mode === "conversation"
                       ? rawParams.mode
                       : undefined,
-                  ...(agentId ? { agentId } : {}),
                 });
                 if (!result.success) {
                   throw new Error(result.error || "initiate failed");
@@ -803,10 +763,9 @@ export default definePluginEntry({
                 if (!callId) {
                   throw new Error("callId required");
                 }
-                const call = await rt.manager.getCallFromMemoryOrStore(callId);
-                return json(
-                  call ? { found: true, call: toVoiceCallStatus(call) } : { found: false },
-                );
+                const call =
+                  rt.manager.getCall(callId) || rt.manager.getCallByProviderCallId(callId);
+                return json(call ? { found: true, call } : { found: false });
               }
             }
           }
@@ -817,8 +776,8 @@ export default definePluginEntry({
             if (!sid) {
               throw new Error("sid required for status");
             }
-            const call = await rt.manager.getCallFromMemoryOrStore(sid);
-            return json(call ? { found: true, call: toVoiceCallStatus(call) } : { found: false });
+            const call = rt.manager.getCall(sid) || rt.manager.getCallByProviderCallId(sid);
+            return json(call ? { found: true, call } : { found: false });
           }
 
           const to = normalizeOptionalString(rawParams.to) ?? rt.config.toNumber;
@@ -831,7 +790,6 @@ export default definePluginEntry({
             {
               dtmfSequence: normalizeOptionalString(rawParams.dtmfSequence),
               message: normalizeOptionalString(rawParams.message),
-              ...(agentId ? { agentId } : {}),
               ...(normalizeOptionalString(rawParams.requesterSessionKey)
                 ? { requesterSessionKey: normalizeOptionalString(rawParams.requesterSessionKey) }
                 : {}),
@@ -847,7 +805,7 @@ export default definePluginEntry({
           });
         }
       },
-    }));
+    });
 
     api.registerCli(
       ({ program }) =>
@@ -908,4 +866,3 @@ export default definePluginEntry({
     });
   },
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -74,9 +74,9 @@ export interface TwitchChatMessage {
   /** Display name (may include special characters) */
   displayName?: string;
   /** Message ID */
-  id: string;
-  /** Receive timestamp in milliseconds */
-  timestamp?: number;
+  id?: string;
+  /** Timestamp */
+  timestamp?: Date;
   /** Whether the sender is a moderator */
   isMod?: boolean;
   /** Whether the sender is the channel owner/broadcaster */

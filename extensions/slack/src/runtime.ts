@@ -14,10 +14,10 @@ type SlackRuntime = PluginRuntime & {
 
 const {
   setRuntime: setSlackRuntime,
+  clearRuntime: clearSlackRuntime,
   tryGetRuntime: getOptionalSlackRuntime,
-  getRuntime: getSlackRuntime,
 } = createPluginRuntimeStore<SlackRuntime>({
   pluginId: "slack",
   errorMessage: "Slack runtime not initialized",
 });
-export { getOptionalSlackRuntime, getSlackRuntime, setSlackRuntime };
+export { clearSlackRuntime, getOptionalSlackRuntime, setSlackRuntime };

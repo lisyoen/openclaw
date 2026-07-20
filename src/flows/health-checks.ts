@@ -46,7 +46,7 @@ export interface HealthFinding {
   readonly fixHint?: string;
 }
 
-type HealthCheckMode = "doctor" | "lint" | "fix";
+export type HealthCheckMode = "doctor" | "lint" | "fix";
 
 /** Immutable runtime/config context passed to health check detection. */
 export interface HealthCheckContext {

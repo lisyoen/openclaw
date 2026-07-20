@@ -1,18 +1,8 @@
-import { expectDefined } from "@openclaw/normalization-core";
 /** Formatting helpers for `openclaw health` failures and channel summaries. */
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
-import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { colorize, isRich, theme } from "../../packages/terminal-core/src/theme.js";
 import { formatChannelStatusState } from "../channels/plugins/status-state.js";
-import { isGatewayTransportError } from "../gateway/call.js";
 import type { ChannelAccountHealthSummary, HealthSummary } from "./health.types.js";
-
-export function formatGatewayClosedDiagnostic(err: unknown): string | undefined {
-  if (!isGatewayTransportError(err) || err.kind !== "closed") {
-    return undefined;
-  }
-  return `Gateway connect failed: ${sanitizeTerminalText(err.message.split("\n", 1)[0] ?? "")}`;
-}
 
 const formatKv = (line: string, rich: boolean) => {
   const idx = line.indexOf(": ");
@@ -174,7 +164,6 @@ export const formatHealthChannelLines = (
         : (filteredSummaries ?? (channelSummary.accounts ? Object.values(accountSummaries) : []));
     const baseSummary =
       filteredSummaries && filteredSummaries.length > 0 ? filteredSummaries[0] : channelSummary;
-    const selectedSummary = expectDefined(baseSummary, "channel health summary");
     const botUsernames = listSummaries
       ? listSummaries
           .map((account) => {
@@ -185,11 +174,10 @@ export const formatHealthChannelLines = (
           .filter((value): value is string => Boolean(value))
       : [];
     const statusState =
-      typeof selectedSummary.statusState === "string" ? selectedSummary.statusState : null;
+      typeof baseSummary.statusState === "string" ? baseSummary.statusState : null;
     if (statusState) {
       if (statusState === "linked") {
-        const authAgeMs =
-          typeof selectedSummary.authAgeMs === "number" ? selectedSummary.authAgeMs : null;
+        const authAgeMs = typeof baseSummary.authAgeMs === "number" ? baseSummary.authAgeMs : null;
         const authLabel = authAgeMs != null ? ` (auth age ${Math.round(authAgeMs / 60000)}m)` : "";
         lines.push(`${label}: ${formatChannelStatusState(statusState)}${authLabel}`);
       } else {
@@ -198,11 +186,10 @@ export const formatHealthChannelLines = (
       continue;
     }
 
-    const linked = typeof selectedSummary.linked === "boolean" ? selectedSummary.linked : null;
+    const linked = typeof baseSummary.linked === "boolean" ? baseSummary.linked : null;
     if (linked !== null) {
       if (linked) {
-        const authAgeMs =
-          typeof selectedSummary.authAgeMs === "number" ? selectedSummary.authAgeMs : null;
+        const authAgeMs = typeof baseSummary.authAgeMs === "number" ? baseSummary.authAgeMs : null;
         const authLabel = authAgeMs != null ? ` (auth age ${Math.round(authAgeMs / 60000)}m)` : "";
         lines.push(`${label}: linked${authLabel}`);
       } else {
@@ -211,8 +198,7 @@ export const formatHealthChannelLines = (
       continue;
     }
 
-    const configured =
-      typeof selectedSummary.configured === "boolean" ? selectedSummary.configured : null;
+    const configured = typeof baseSummary.configured === "boolean" ? baseSummary.configured : null;
     if (configured === false) {
       lines.push(`${label}: not configured`);
       continue;
@@ -238,9 +224,7 @@ export const formatHealthChannelLines = (
       continue;
     }
 
-    const probeLine = formatProbeLine(selectedSummary.probe, {
-      botUsernames,
-    });
+    const probeLine = formatProbeLine(baseSummary.probe, { botUsernames });
     if (probeLine) {
       lines.push(`${label}: ${probeLine}`);
       continue;

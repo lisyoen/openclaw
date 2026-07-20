@@ -1,11 +1,9 @@
 // Setup wizard helper tests cover channel setup step formatting and config writes.
-import { expectDefined } from "@openclaw/normalization-core";
 import {
   resolveSetupWizardAllowFromEntries,
   resolveSetupWizardGroupAllowlist,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createWizardPrompter } from "../../../test/helpers/wizard-prompter.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../../routing/session-key.js";
@@ -14,6 +12,7 @@ import {
   createTestRegistry,
 } from "../../test-utils/channel-plugins.js";
 import {
+  applySingleTokenPromptResult,
   buildSingleChannelSecretPromptState,
   createAccountScopedAllowFromSection,
   createAccountScopedGroupAccessSection,
@@ -37,6 +36,7 @@ import {
   parseSetupEntriesAllowingWildcard,
   patchChannelConfigForAccount,
   patchNestedChannelConfigSection,
+  patchLegacyDmChannelConfig,
   patchTopLevelChannelConfigSection,
   promptLegacyChannelAllowFrom,
   promptLegacyChannelAllowFromForAccount,
@@ -44,6 +44,7 @@ import {
   parseSetupEntriesWithParser,
   promptParsedAllowFromForScopedChannel,
   promptSingleChannelSecretInput,
+  promptSingleChannelToken,
   promptResolvedAllowFrom,
   resolveAccountIdForConfigure,
   resolveEntriesWithOptionalToken,
@@ -59,6 +60,7 @@ import {
   setTopLevelChannelGroupPolicy,
   setNestedChannelAllowFrom,
   setNestedChannelDmPolicyWithAllowFrom,
+  setLegacyChannelAllowFrom,
   setLegacyChannelDmPolicyWithAllowFrom,
   setSetupChannelEnabled,
   splitSetupEntries,
@@ -108,9 +110,7 @@ function resolveMatrixSingleAccountPromotionTarget(params: {
     );
   }
   const namedAccounts = collectNamedAccountIds(accounts);
-  return namedAccounts.length === 1
-    ? expectDefined(namedAccounts[0], "namedAccounts[0] test invariant")
-    : DEFAULT_ACCOUNT_ID;
+  return namedAccounts.length === 1 ? namedAccounts[0] : DEFAULT_ACCOUNT_ID;
 }
 
 beforeEach(() => {
@@ -147,12 +147,18 @@ afterAll(() => {
 });
 
 function createPrompter(inputs: string[]) {
-  const text = vi.fn(async () => inputs.shift() ?? "");
-  const note = vi.fn(async () => undefined);
   return {
-    ...createWizardPrompter(),
-    text,
-    note,
+    text: vi.fn(async () => inputs.shift() ?? ""),
+    note: vi.fn(async () => undefined),
+  };
+}
+
+function createTokenPrompter(params: { confirms: boolean[]; texts: string[] }) {
+  const confirms = [...params.confirms];
+  const texts = [...params.texts];
+  return {
+    confirm: vi.fn(async () => confirms.shift() ?? true),
+    text: vi.fn(async () => texts.shift() ?? ""),
   };
 }
 
@@ -171,6 +177,7 @@ type AllowFromResolver = (params: {
   token: string;
   entries: string[];
 }) => Promise<Array<{ input: string; resolved: boolean; id?: string | null }>>;
+
 function asAllowFromResolver(resolveEntries: ReturnType<typeof vi.fn>): AllowFromResolver {
   return resolveEntries as AllowFromResolver;
 }
@@ -180,7 +187,7 @@ async function runPromptResolvedAllowFromWithToken(params: {
   resolveEntries: AllowFromResolver;
 }) {
   return await promptResolvedAllowFrom({
-    prompter: params.prompter,
+    prompter: params.prompter as any,
     existing: [],
     token: "xoxb-test",
     message: "msg",
@@ -193,6 +200,23 @@ async function runPromptResolvedAllowFromWithToken(params: {
   });
 }
 
+async function runPromptSingleToken(params: {
+  prompter: ReturnType<typeof createTokenPrompter>;
+  accountConfigured: boolean;
+  canUseEnv: boolean;
+  hasConfigToken: boolean;
+}) {
+  return await promptSingleChannelToken({
+    prompter: params.prompter,
+    accountConfigured: params.accountConfigured,
+    canUseEnv: params.canUseEnv,
+    hasConfigToken: params.hasConfigToken,
+    envPrompt: "use env",
+    keepPrompt: "keep",
+    inputPrompt: "token",
+  });
+}
+
 function createSecretInputPrompter(params: {
   selects: string[];
   confirms?: boolean[];
@@ -201,19 +225,11 @@ function createSecretInputPrompter(params: {
   const selects = [...params.selects];
   const confirms = [...(params.confirms ?? [])];
   const texts = [...(params.texts ?? [])];
-  const confirm = vi.fn(async () => confirms.shift() ?? false);
-  const text = vi.fn(async () => texts.shift() ?? "");
-  const note = vi.fn(async () => undefined);
-  const prompter = createWizardPrompter(undefined, {
-    defaultSelect: "plaintext",
-    selectValues: selects,
-  });
   return {
-    ...prompter,
-    select: vi.mocked(prompter.select),
-    confirm,
-    text,
-    note,
+    select: vi.fn(async () => selects.shift() ?? "plaintext"),
+    confirm: vi.fn(async () => confirms.shift() ?? false),
+    text: vi.fn(async () => texts.shift() ?? ""),
+    note: vi.fn(async () => undefined),
   };
 }
 
@@ -228,7 +244,7 @@ async function runPromptSingleChannelSecretInput(params: {
 }) {
   return await promptSingleChannelSecretInput({
     cfg: {},
-    prompter: params.prompter,
+    prompter: params.prompter as any,
     providerHint: params.providerHint,
     credentialLabel: params.credentialLabel,
     accountConfigured: params.accountConfigured,
@@ -290,7 +306,7 @@ async function runPromptLegacyAllowFrom(params: {
   return await promptLegacyChannelAllowFrom({
     cfg: params.cfg ?? {},
     channel: params.channel,
-    prompter: params.prompter,
+    prompter: params.prompter as any,
     existing: params.existing,
     token: params.token,
     noteTitle: params.noteTitle,
@@ -309,7 +325,7 @@ describe("promptResolvedAllowFrom", () => {
     const resolveEntries = vi.fn();
 
     const result = await promptResolvedAllowFrom({
-      prompter,
+      prompter: prompter as any,
       existing: ["111"],
       token: "",
       message: "msg",
@@ -318,9 +334,7 @@ describe("promptResolvedAllowFrom", () => {
       parseInputs: parseCsvInputs,
       parseId: (value) => (/^\d+$/.test(value.trim()) ? value.trim() : null),
       invalidWithoutTokenNote: "ids only",
-      resolveEntries: resolveEntries as Parameters<
-        typeof promptResolvedAllowFrom
-      >[0]["resolveEntries"],
+      resolveEntries: resolveEntries as any,
     });
 
     expect(result).toEqual(["111", "123"]);
@@ -424,7 +438,7 @@ describe("promptLegacyChannelAllowFromForAccount", () => {
         },
       } as OpenClawConfig,
       channel: "slack",
-      prompter,
+      prompter: prompter as any,
       defaultAccountId: DEFAULT_ACCOUNT_ID,
       resolveAccount: () => ({
         botToken: "xoxb-token",
@@ -444,6 +458,67 @@ describe("promptLegacyChannelAllowFromForAccount", () => {
 
     expect(next.channels?.slack?.allowFrom).toEqual(["U0", "ALICE"]);
     expect(prompter.note).toHaveBeenCalledWith("line", "Slack allowlist");
+  });
+});
+
+describe("promptSingleChannelToken", () => {
+  it.each([
+    {
+      name: "uses env tokens when confirmed",
+      confirms: [true],
+      texts: [],
+      state: {
+        accountConfigured: false,
+        canUseEnv: true,
+        hasConfigToken: false,
+      },
+      expected: { useEnv: true, token: null },
+      expectTextCalls: 0,
+    },
+    {
+      name: "prompts for token when env exists but user declines env",
+      confirms: [false],
+      texts: ["abc"],
+      state: {
+        accountConfigured: false,
+        canUseEnv: true,
+        hasConfigToken: false,
+      },
+      expected: { useEnv: false, token: "abc" },
+      expectTextCalls: 1,
+    },
+    {
+      name: "keeps existing configured token when confirmed",
+      confirms: [true],
+      texts: [],
+      state: {
+        accountConfigured: true,
+        canUseEnv: false,
+        hasConfigToken: true,
+      },
+      expected: { useEnv: false, token: null },
+      expectTextCalls: 0,
+    },
+    {
+      name: "prompts for token when no env/config token is used",
+      confirms: [false],
+      texts: ["xyz"],
+      state: {
+        accountConfigured: true,
+        canUseEnv: false,
+        hasConfigToken: false,
+      },
+      expected: { useEnv: false, token: "xyz" },
+      expectTextCalls: 1,
+    },
+  ])("$name", async ({ confirms, texts, state, expected, expectTextCalls }) => {
+    const prompter = createTokenPrompter({ confirms, texts });
+    const result = await runPromptSingleToken({
+      prompter,
+      ...state,
+    });
+    expect(result).toEqual(expected);
+    expect(prompter.text).toHaveBeenCalledTimes(expectTextCalls);
   });
 });
 
@@ -513,6 +588,35 @@ describe("promptSingleChannelSecretInput", () => {
 
     expect(result).toEqual({ action: "keep" });
     expect(prompter.text).not.toHaveBeenCalled();
+  });
+});
+
+describe("applySingleTokenPromptResult", () => {
+  it("writes env selection as an empty patch on target account", () => {
+    const next = applySingleTokenPromptResult({
+      cfg: {},
+      channel: "discord",
+      accountId: "work",
+      tokenPatchKey: "token",
+      tokenResult: { useEnv: true, token: null },
+    });
+
+    expect(next.channels?.discord?.enabled).toBe(true);
+    expect(next.channels?.discord?.accounts?.work?.enabled).toBe(true);
+    expect(next.channels?.discord?.accounts?.work?.token).toBeUndefined();
+  });
+
+  it("writes provided token under requested key", () => {
+    const next = applySingleTokenPromptResult({
+      cfg: {},
+      channel: "telegram",
+      accountId: DEFAULT_ACCOUNT_ID,
+      tokenPatchKey: "botToken",
+      tokenResult: { useEnv: false, token: "abc" },
+    });
+
+    expect(next.channels?.telegram?.enabled).toBe(true);
+    expect(next.channels?.telegram?.botToken).toBe("abc");
   });
 });
 
@@ -726,7 +830,7 @@ describe("createPromptParsedAllowFromForAccount", () => {
           },
         },
       },
-      prompter,
+      prompter: prompter as any,
     });
 
     expect(
@@ -755,7 +859,7 @@ describe("parsed allowFrom prompt builders", () => {
     const prompter = createPrompter(["npub1"]);
     const next = await promptAllowFrom({
       cfg: {},
-      prompter,
+      prompter: prompter as any,
     });
 
     expect(next.channels?.nostr?.allowFrom).toEqual(["npub1"]);
@@ -764,7 +868,7 @@ describe("parsed allowFrom prompt builders", () => {
 
   it("builds a nested parsed allowFrom prompt", async () => {
     const promptAllowFrom = createNestedChannelParsedAllowFromPrompt({
-      channel: "matrix",
+      channel: "googlechat",
       section: "dm",
       defaultAccountId: DEFAULT_ACCOUNT_ID,
       enabled: true,
@@ -775,11 +879,11 @@ describe("parsed allowFrom prompt builders", () => {
 
     const next = await promptAllowFrom({
       cfg: {},
-      prompter: createPrompter(["users/123"]),
+      prompter: createPrompter(["users/123"]) as any,
     });
 
-    expect(next.channels?.matrix?.enabled).toBe(true);
-    expect(next.channels?.matrix?.dm?.allowFrom).toEqual(["users/123"]);
+    expect(next.channels?.googlechat?.enabled).toBe(true);
+    expect(next.channels?.googlechat?.dm?.allowFrom).toEqual(["users/123"]);
   });
 });
 
@@ -1017,9 +1121,49 @@ describe("setSetupChannelEnabled", () => {
   });
 });
 
+describe("patchLegacyDmChannelConfig", () => {
+  it("patches discord root config and defaults dm.enabled to true", () => {
+    const cfg: OpenClawConfig = {
+      channels: {
+        discord: {
+          dmPolicy: "pairing",
+        },
+      },
+    };
+
+    const next = patchLegacyDmChannelConfig({
+      cfg,
+      channel: "discord",
+      patch: { allowFrom: ["123"] },
+    });
+    expect(next.channels?.discord?.allowFrom).toEqual(["123"]);
+    expect(next.channels?.discord?.dm?.enabled).toBe(true);
+  });
+
+  it("preserves explicit dm.enabled=false for slack", () => {
+    const cfg: OpenClawConfig = {
+      channels: {
+        slack: {
+          dm: {
+            enabled: false,
+          },
+        },
+      },
+    };
+
+    const next = patchLegacyDmChannelConfig({
+      cfg,
+      channel: "slack",
+      patch: { dmPolicy: "open" },
+    });
+    expect(next.channels?.slack?.dmPolicy).toBe("open");
+    expect(next.channels?.slack?.dm?.enabled).toBe(false);
+  });
+});
+
 describe("setLegacyChannelDmPolicyWithAllowFrom", () => {
   it("adds wildcard allowFrom for open policy using legacy dm allowFrom fallback", () => {
-    const cfg = {
+    const cfg: OpenClawConfig = {
       channels: {
         discord: {
           dm: {
@@ -1028,7 +1172,7 @@ describe("setLegacyChannelDmPolicyWithAllowFrom", () => {
           },
         },
       },
-    } as unknown as OpenClawConfig;
+    };
 
     const next = setLegacyChannelDmPolicyWithAllowFrom({
       cfg,
@@ -1056,6 +1200,18 @@ describe("setLegacyChannelDmPolicyWithAllowFrom", () => {
     });
     expect(next.channels?.slack?.dmPolicy).toBe("pairing");
     expect(next.channels?.slack?.allowFrom).toEqual(["U1"]);
+  });
+});
+
+describe("setLegacyChannelAllowFrom", () => {
+  it("writes allowFrom through legacy dm patching", () => {
+    const next = setLegacyChannelAllowFrom({
+      cfg: {},
+      channel: "slack",
+      allowFrom: ["U123"],
+    });
+    expect(next.channels?.slack?.allowFrom).toEqual(["U123"]);
+    expect(next.channels?.slack?.dm?.enabled).toBe(true);
   });
 });
 
@@ -1319,14 +1475,14 @@ describe("setNestedChannelAllowFrom", () => {
   it("writes nested allowFrom and can force enabled state", () => {
     const next = setNestedChannelAllowFrom({
       cfg: {},
-      channel: "matrix",
+      channel: "googlechat",
       section: "dm",
       allowFrom: ["users/123"],
       enabled: true,
     });
 
-    expect(next.channels?.matrix?.enabled).toBe(true);
-    expect(next.channels?.matrix?.dm?.allowFrom).toEqual(["users/123"]);
+    expect(next.channels?.googlechat?.enabled).toBe(true);
+    expect(next.channels?.googlechat?.dm?.allowFrom).toEqual(["users/123"]);
   });
 });
 
@@ -1394,28 +1550,28 @@ describe("createNestedChannelDmPolicy", () => {
 describe("createNestedChannelDmPolicySetter", () => {
   it("reuses the shared nested dmPolicy writer", () => {
     const setPolicy = createNestedChannelDmPolicySetter({
-      channel: "matrix",
+      channel: "googlechat",
       section: "dm",
       enabled: true,
     });
     const next = setPolicy({}, "disabled");
 
-    expect(next.channels?.matrix?.enabled).toBe(true);
-    expect(next.channels?.matrix?.dm?.policy).toBe("disabled");
+    expect(next.channels?.googlechat?.enabled).toBe(true);
+    expect(next.channels?.googlechat?.dm?.policy).toBe("disabled");
   });
 });
 
 describe("createNestedChannelAllowFromSetter", () => {
   it("reuses the shared nested allowFrom writer", () => {
     const setAllowFrom = createNestedChannelAllowFromSetter({
-      channel: "matrix",
+      channel: "googlechat",
       section: "dm",
       enabled: true,
     });
     const next = setAllowFrom({}, ["users/123"]);
 
-    expect(next.channels?.matrix?.enabled).toBe(true);
-    expect(next.channels?.matrix?.dm?.allowFrom).toEqual(["users/123"]);
+    expect(next.channels?.googlechat?.enabled).toBe(true);
+    expect(next.channels?.googlechat?.dm?.allowFrom).toEqual(["users/123"]);
   });
 });
 
@@ -1448,7 +1604,7 @@ describe("createLegacyCompatChannelDmPolicy", () => {
             },
           },
         },
-      } as unknown as OpenClawConfig),
+      }),
     ).toBe("open");
 
     const next = dmPolicy.setPolicy(
@@ -1460,7 +1616,7 @@ describe("createLegacyCompatChannelDmPolicy", () => {
             },
           },
         },
-      } as unknown as OpenClawConfig,
+      },
       "open",
     );
 
@@ -1924,7 +2080,7 @@ describe("resolveAccountIdForConfigure", () => {
   it("uses normalized override without prompting", async () => {
     const accountId = await resolveAccountIdForConfigure({
       cfg: {},
-      prompter: createWizardPrompter(),
+      prompter: {} as any,
       label: "Signal",
       accountOverride: " Team Primary ",
       shouldPromptAccountIds: true,
@@ -1937,7 +2093,7 @@ describe("resolveAccountIdForConfigure", () => {
   it("uses default account when override is missing and prompting disabled", async () => {
     const accountId = await resolveAccountIdForConfigure({
       cfg: {},
-      prompter: createWizardPrompter(),
+      prompter: {} as any,
       label: "Signal",
       shouldPromptAccountIds: false,
       listAccountIds: () => ["default"],
@@ -1947,15 +2103,15 @@ describe("resolveAccountIdForConfigure", () => {
   });
 
   it("prompts for account id when prompting is enabled and no override is provided", async () => {
-    const basePrompter = createWizardPrompter(undefined, { defaultSelect: "prompted-id" });
     const prompter = {
-      ...basePrompter,
-      select: vi.mocked(basePrompter.select),
+      select: vi.fn(async () => "prompted-id"),
+      text: vi.fn(async () => ""),
+      note: vi.fn(async () => undefined),
     };
 
     const accountId = await resolveAccountIdForConfigure({
       cfg: {},
-      prompter,
+      prompter: prompter as any,
       label: "Signal",
       shouldPromptAccountIds: true,
       listAccountIds: () => ["default", "prompted-id"],
@@ -1974,4 +2130,3 @@ describe("resolveAccountIdForConfigure", () => {
     expect(prompter.text).not.toHaveBeenCalled();
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

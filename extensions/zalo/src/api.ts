@@ -4,16 +4,14 @@
  */
 
 import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
-import { readProviderJsonResponse } from "openclaw/plugin-sdk/provider-http";
 import { resolvePinnedHostnameWithPolicy, type SsrFPolicy } from "openclaw/plugin-sdk/ssrf-runtime";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
-const ZALO_API_URL_ENV = "ZALO_API_URL";
 const ZALO_MEDIA_SSRF_POLICY: SsrFPolicy = {};
 
 export type ZaloFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
-type ZaloApiResponse<T = unknown> = {
+export type ZaloApiResponse<T = unknown> = {
   ok: boolean;
   result?: T;
   error_code?: number;
@@ -22,9 +20,8 @@ type ZaloApiResponse<T = unknown> = {
 
 export type ZaloBotInfo = {
   id: string;
-  account_name: string;
-  account_type: string;
-  can_join_groups: boolean;
+  name: string;
+  avatar?: string;
 };
 
 export type ZaloMessage = {
@@ -57,34 +54,34 @@ export type ZaloUpdate = {
   message?: ZaloMessage;
 };
 
-type ZaloSendMessageParams = {
+export type ZaloSendMessageParams = {
   chat_id: string;
   text: string;
 };
 
-type ZaloSendPhotoParams = {
+export type ZaloSendPhotoParams = {
   chat_id: string;
   photo: string;
   caption?: string;
 };
 
-type ZaloSendChatActionParams = {
+export type ZaloSendChatActionParams = {
   chat_id: string;
   action: "typing" | "upload_photo";
 };
 
-type ZaloSetWebhookParams = {
+export type ZaloSetWebhookParams = {
   url: string;
   secret_token: string;
 };
 
-type ZaloWebhookInfo = {
+export type ZaloWebhookInfo = {
   url?: string;
   updated_at?: number;
   has_custom_certificate?: boolean;
 };
 
-type ZaloGetUpdatesParams = {
+export type ZaloGetUpdatesParams = {
   /** Timeout in seconds (passed as string to API) */
   timeout?: number;
 };
@@ -105,27 +102,6 @@ export class ZaloApiError extends Error {
   }
 }
 
-function resolveZaloApiUrl(apiUrl?: string): string {
-  const value =
-    apiUrl === undefined ? (process.env[ZALO_API_URL_ENV]?.trim() ?? ZALO_API_BASE) : apiUrl.trim();
-  if (!value) {
-    throw new Error(`${ZALO_API_URL_ENV} must not be empty.`);
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error(`${ZALO_API_URL_ENV} must be a valid URL.`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`${ZALO_API_URL_ENV} must use http:// or https://.`);
-  }
-  if (parsed.search || parsed.hash) {
-    throw new Error(`${ZALO_API_URL_ENV} must not include a query string or fragment.`);
-  }
-  return parsed.href.replace(/\/+$/u, "");
-}
-
 /**
  * Call the Zalo Bot API
  */
@@ -133,9 +109,9 @@ export async function callZaloApi<T = unknown>(
   method: string,
   token: string,
   body?: Record<string, unknown>,
-  options?: { apiUrl?: string; timeoutMs?: number; fetch?: ZaloFetch },
+  options?: { timeoutMs?: number; fetch?: ZaloFetch },
 ): Promise<ZaloApiResponse<T>> {
-  const url = `${resolveZaloApiUrl(options?.apiUrl)}/bot${token}/${method}`;
+  const url = `${ZALO_API_BASE}/bot${token}/${method}`;
   const controller = new AbortController();
   const requestTimeoutMs =
     options?.timeoutMs === undefined ? undefined : resolveTimerTimeoutMs(options.timeoutMs, 1);
@@ -155,7 +131,7 @@ export async function callZaloApi<T = unknown>(
       signal: controller.signal,
     });
 
-    const data = await readProviderJsonResponse<ZaloApiResponse<T>>(response, `zalo.${method}`);
+    const data = (await response.json()) as ZaloApiResponse<T>;
 
     if (!data.ok) {
       throw new ZaloApiError(

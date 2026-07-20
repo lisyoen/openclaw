@@ -67,7 +67,6 @@ async function ensureDmComponentAuthorized(params: {
   }
   const pairingResult = await createChannelPairingChallengeIssuer({
     channel: "discord",
-    accountId: ctx.accountId,
     upsertPairingRequest: async ({ id, meta }) => {
       return await upsertChannelPairingRequest({
         channel: "discord",

@@ -82,7 +82,7 @@ function resolveOpenClawHome(): string {
  * Current QQ Bot runtime state lives in plugin SQLite KV. This path remains for
  * legacy imports and media-path remaps from older releases.
  */
-function getQQBotDataPath(...subPaths: string[]): string {
+export function getQQBotDataPath(...subPaths: string[]): string {
   return path.join(getHomeDir(), ".openclaw", "qqbot", ...subPaths);
 }
 
@@ -130,6 +130,18 @@ export function getQQBotMediaDir(...subPaths: string[]): string {
  */
 function getOpenClawMediaDir(): string {
   return path.join(resolveOpenClawHome(), ".openclaw", "media");
+}
+
+// ---- Basic platform information ----
+
+type PlatformType = "darwin" | "linux" | "win32" | "other";
+
+export function getPlatform(): PlatformType {
+  const p = process.platform;
+  if (p === "darwin" || p === "linux" || p === "win32") {
+    return p;
+  }
+  return "other";
 }
 
 export function isWindows(): boolean {
@@ -231,7 +243,7 @@ function isPathWithinRoot(candidate: string, root: string): boolean {
 }
 
 /** Remap legacy or hallucinated QQ Bot local media paths to real files when possible. */
-function resolveQQBotLocalMediaPath(p: string): string {
+export function resolveQQBotLocalMediaPath(p: string): string {
   const normalized = normalizePath(p);
   if (!isLocalPath(normalized) || fs.existsSync(normalized)) {
     return normalized;

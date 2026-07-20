@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { estimateBase64DecodedBytes } from "@openclaw/media-core/base64";
+import { resolveIntegerOption } from "@openclaw/normalization-core/number-coercion";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -34,11 +35,7 @@ import {
   type InputImageSource,
 } from "../media/input-files.js";
 import { defaultRuntime } from "../runtime.js";
-import {
-  isReplaceableAssistantStreamEvent,
-  resolveAssistantStreamDeltaText,
-  resolveAssistantStreamSnapshotText,
-} from "./agent-event-assistant-text.js";
+import { resolveAssistantStreamDeltaText } from "./agent-event-assistant-text.js";
 import {
   buildAgentMessageFromConversationEntries,
   type ConversationEntry,
@@ -56,7 +53,6 @@ import {
 import { handleGatewayPostJsonEndpoint } from "./http-endpoint-helpers.js";
 import {
   authorizeOpenAiCompatibleHttpModelOverride,
-  isGatewaySessionKeyOverrideError,
   isUnknownGatewayAgentError,
   resolveGatewayRequestContext,
   resolveOpenAiCompatModelOverride,
@@ -132,9 +128,15 @@ function resolveOpenAiChatCompletionsLimits(
 ): ResolvedOpenAiChatCompletionsLimits {
   const imageConfig = config?.images;
   return {
-    maxBodyBytes: DEFAULT_OPENAI_CHAT_COMPLETIONS_BODY_BYTES,
-    maxImageParts: DEFAULT_OPENAI_MAX_IMAGE_PARTS,
-    maxTotalImageBytes: DEFAULT_OPENAI_MAX_TOTAL_IMAGE_BYTES,
+    maxBodyBytes: config?.maxBodyBytes ?? DEFAULT_OPENAI_CHAT_COMPLETIONS_BODY_BYTES,
+    maxImageParts: resolveIntegerOption(config?.maxImageParts, DEFAULT_OPENAI_MAX_IMAGE_PARTS, {
+      min: 0,
+    }),
+    maxTotalImageBytes: resolveIntegerOption(
+      config?.maxTotalImageBytes,
+      DEFAULT_OPENAI_MAX_TOTAL_IMAGE_BYTES,
+      { min: 1 },
+    ),
     images: {
       allowUrl: imageConfig?.allowUrl ?? DEFAULT_OPENAI_IMAGE_LIMITS.allowUrl,
       urlAllowlist: normalizeInputHostnameAllowlist(imageConfig?.urlAllowlist),
@@ -625,6 +627,7 @@ export const testOnlyOpenAiHttp = {
   resolveOpenAiChatCompletionsLimits,
   resolveChatCompletionUsage,
 };
+export { testOnlyOpenAiHttp as __testOnlyOpenAiHttp };
 
 function buildAgentPrompt(
   messagesUnknown: unknown,
@@ -985,7 +988,7 @@ export async function handleOpenAiHttpRequest(
       useMessageChannelHeader: true,
     }));
   } catch (err) {
-    if (isUnknownGatewayAgentError(err) || isGatewaySessionKeyOverrideError(err)) {
+    if (isUnknownGatewayAgentError(err)) {
       sendJson(res, 400, {
         error: { message: err.message, type: "invalid_request_error" },
       });
@@ -1177,7 +1180,6 @@ export async function handleOpenAiHttpRequest(
   let wroteStopChunk = false;
   let sawAssistantDelta = false;
   let bufferedAssistantContent = "";
-  let bufferedReplaceableAssistantContent = "";
   let finalUsage: OpenAiChatCompletionsUsage | undefined;
   let finalizeRequested = false;
   let finalizeFinishReason: "stop" | "tool_calls" = "stop";
@@ -1224,20 +1226,6 @@ export async function handleOpenAiHttpRequest(
     }
 
     if (evt.stream === "assistant") {
-      const text = evt.data?.text;
-      const replace = evt.data?.replace === true;
-      if (replace && typeof text === "string") {
-        bufferedReplaceableAssistantContent = text;
-      }
-
-      if (isReplaceableAssistantStreamEvent(evt)) {
-        const snapshot = resolveAssistantStreamSnapshotText(evt);
-        if (snapshot) {
-          bufferedReplaceableAssistantContent = snapshot;
-        }
-        return;
-      }
-
       const content = resolveAssistantStreamDeltaText(evt) ?? "";
       if (!content) {
         return;
@@ -1325,10 +1313,7 @@ export async function handleOpenAiHttpRequest(
           writeAssistantRoleChunk(res, { runId, model });
         }
         if (!sawAssistantDelta) {
-          const commentary =
-            bufferedAssistantContent ||
-            resolveAgentResponseCommentary(result) ||
-            bufferedReplaceableAssistantContent;
+          const commentary = bufferedAssistantContent || resolveAgentResponseCommentary(result);
           if (commentary) {
             sawAssistantDelta = true;
             writeAssistantContentChunk(res, {
@@ -1354,11 +1339,7 @@ export async function handleOpenAiHttpRequest(
           writeAssistantRoleChunk(res, { runId, model });
         }
 
-        const content =
-          resolveAgentResponseCommentary(result) ||
-          bufferedReplaceableAssistantContent ||
-          resolveAgentResponseText(result) ||
-          "No response from OpenClaw.";
+        const content = resolveAgentResponseText(result);
 
         sawAssistantDelta = true;
         writeAssistantContentChunk(res, {
@@ -1428,4 +1409,3 @@ export async function handleOpenAiHttpRequest(
 
   return true;
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

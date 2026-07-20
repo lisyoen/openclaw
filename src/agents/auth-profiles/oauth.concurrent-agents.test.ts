@@ -31,7 +31,7 @@ const {
 } = getOAuthProviderRuntimeMocks();
 
 let resolveApiKeyForProfile: typeof import("./oauth.js").resolveApiKeyForProfile;
-let resetOAuthRefreshQueuesForTest: typeof import("./oauth.test-support.js").resetOAuthRefreshQueuesForTest;
+let resetOAuthRefreshQueuesForTest: typeof import("./oauth.js").resetOAuthRefreshQueuesForTest;
 type ResolveApiKeyResult = NonNullable<
   Awaited<ReturnType<typeof import("./oauth.js").resolveApiKeyForProfile>>
 >;
@@ -43,8 +43,7 @@ type ConcurrentRefreshResult = {
 };
 
 async function loadOAuthModuleForTest() {
-  ({ resolveApiKeyForProfile } = await import("./oauth.js"));
-  ({ resetOAuthRefreshQueuesForTest } = await import("./oauth.test-support.js"));
+  ({ resolveApiKeyForProfile, resetOAuthRefreshQueuesForTest } = await import("./oauth.js"));
 }
 
 vi.mock("../../llm/oauth.js", () => ({

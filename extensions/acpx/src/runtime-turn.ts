@@ -2,7 +2,6 @@
  * ACPX turn adapters. Modern runtimes can expose startTurn directly; legacy
  * runtimes that only stream runTurn events are adapted to the newer contract.
  */
-import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import type {
   AcpRuntime,
   AcpRuntimeEvent,
@@ -11,8 +10,14 @@ import type {
   AcpRuntimeTurnResult,
 } from "../runtime-api.js";
 
-function isCancellationStopReason(stopReason: string | undefined): boolean {
-  return stopReason === "cancel" || stopReason === "cancelled" || stopReason === "manual-cancel";
+function createDeferredResult<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 class LegacyRunTurnEventQueue {
@@ -89,7 +94,7 @@ class LegacyRunTurnEventQueue {
 }
 
 function legacyRunTurnAsStartTurn(runtime: AcpRuntime, input: AcpRuntimeTurnInput): AcpRuntimeTurn {
-  const result = createDeferred<AcpRuntimeTurnResult>();
+  const result = createDeferredResult<AcpRuntimeTurnResult>();
   result.promise.catch(() => {});
   const queue = new LegacyRunTurnEventQueue();
   let resultSettled = false;
@@ -104,12 +109,8 @@ function legacyRunTurnAsStartTurn(runtime: AcpRuntime, input: AcpRuntimeTurnInpu
     try {
       for await (const event of runtime.runTurn(input)) {
         if (event.type === "done") {
-          // Legacy runTurn events omit result.status but preserve stopReason, so infer
-          // cancellation here instead of silently converting it to success.
           settleResult({
-            status:
-              event.status ??
-              (isCancellationStopReason(event.stopReason) ? "cancelled" : "completed"),
+            status: "completed",
             ...(event.stopReason ? { stopReason: event.stopReason } : {}),
           });
           continue;
@@ -157,7 +158,7 @@ function legacyRunTurnAsStartTurn(runtime: AcpRuntime, input: AcpRuntimeTurnInpu
 }
 
 /** Start an ACP turn, adapting legacy runTurn-only runtimes when needed. */
-function startRuntimeTurn(runtime: AcpRuntime, input: AcpRuntimeTurnInput): AcpRuntimeTurn {
+export function startRuntimeTurn(runtime: AcpRuntime, input: AcpRuntimeTurnInput): AcpRuntimeTurn {
   return runtime.startTurn?.(input) ?? legacyRunTurnAsStartTurn(runtime, input);
 }
 

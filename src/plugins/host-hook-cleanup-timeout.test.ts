@@ -1,8 +1,9 @@
 /** Verifies host hook cleanup timeout behavior and cancellation reporting. */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { withPluginHostCleanupTimeout } from "./host-hook-cleanup-timeout.js";
-
-const PLUGIN_HOST_CLEANUP_TIMEOUT_MS = 5_000;
+import {
+  PLUGIN_HOST_CLEANUP_TIMEOUT_MS,
+  withPluginHostCleanupTimeout,
+} from "./host-hook-cleanup-timeout.js";
 
 function requireSetTimeoutCall(callIndex: number): unknown[] {
   const call = vi.mocked(globalThis.setTimeout).mock.calls[callIndex];

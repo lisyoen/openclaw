@@ -10,7 +10,7 @@ export type RuntimeChannelStatusPayload = {
   channelAccounts?: unknown;
 };
 
-type RuntimeChannelAccount = Record<string, unknown>;
+export type RuntimeChannelAccount = Record<string, unknown>;
 
 const CREDENTIAL_STATUS_KEYS = [
   "tokenStatus",
@@ -56,7 +56,7 @@ export function normalizeRuntimeChannelAccountSnapshots(
 }
 
 /** Resolves a stable account id from runtime status record fallbacks. */
-function resolveRuntimeChannelAccountId(account: RuntimeChannelAccount): string {
+export function resolveRuntimeChannelAccountId(account: RuntimeChannelAccount): string {
   return (
     normalizeOptionalString(account.accountId) ??
     normalizeOptionalString(account.id) ??
@@ -66,7 +66,7 @@ function resolveRuntimeChannelAccountId(account: RuntimeChannelAccount): string 
 }
 
 /** Finds a runtime account, including singleton default-account fallback. */
-function findRuntimeChannelAccount(params: {
+export function findRuntimeChannelAccount(params: {
   liveAccounts: RuntimeChannelAccount[];
   accountId: string;
 }): RuntimeChannelAccount | null {

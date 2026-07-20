@@ -14,11 +14,11 @@ const FEISHU_QUICK_ACTION_CARD_TTL_MS = 10 * 60_000;
 
 const QUICK_ACTION_MENU_KEYS = new Set(["quick-actions", "quick_actions", "launcher"]);
 
-function isFeishuQuickActionMenuEventKey(eventKey: string): boolean {
+export function isFeishuQuickActionMenuEventKey(eventKey: string): boolean {
   return QUICK_ACTION_MENU_KEYS.has(normalizeOptionalLowercaseString(eventKey) ?? "");
 }
 
-function createQuickActionLauncherCard(params: {
+export function createQuickActionLauncherCard(params: {
   operatorOpenId: string;
   chatId?: string;
   expiresAt: number;

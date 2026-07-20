@@ -29,19 +29,6 @@ const GATEWAY_RUN_VALUE_FLAGS = [
 
 const INTERACTIVE_TTY_COMMANDS = new Set(["tui", "terminal", "chat"]);
 
-function isInteractiveTtyCommandArgv(argv: string[]): boolean {
-  const invocation = resolveCliArgvInvocation(argv);
-  return invocation.primary !== null && INTERACTIVE_TTY_COMMANDS.has(invocation.primary);
-}
-
-export function isTerminalInteractiveRespawnArgv(argv: string[]): boolean {
-  const invocation = resolveCliArgvInvocation(argv);
-  if (invocation.hasHelpOrVersion) {
-    return false;
-  }
-  return invocation.primary === null || INTERACTIVE_TTY_COMMANDS.has(invocation.primary);
-}
-
 function isForegroundGatewayRunArgv(argv: string[]): boolean {
   const positionals = getCommandPositionalsWithRootOptions(argv, {
     commandPath: ["gateway"],
@@ -61,7 +48,7 @@ export function shouldSkipRespawnForArgv(argv: string[]): boolean {
   const invocation = resolveCliArgvInvocation(argv);
   return (
     invocation.hasHelpOrVersion ||
-    isInteractiveTtyCommandArgv(argv) ||
+    (invocation.primary !== null && INTERACTIVE_TTY_COMMANDS.has(invocation.primary)) ||
     (invocation.primary === "gateway" && isForegroundGatewayRunArgv(argv))
   );
 }

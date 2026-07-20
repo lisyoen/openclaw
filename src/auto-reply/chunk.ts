@@ -96,15 +96,12 @@ function resolveChunkModeForProvider(
   const accounts = cfgSection.accounts;
   if (accounts && typeof accounts === "object") {
     const direct = resolveAccountEntry(accounts, normalizedAccountId);
-    // resolveChannelStreamingChunkMode owns nested-first/flat-fallback
-    // precedence (the flat `chunkMode` fallback serves external SDK plugin
-    // configs during the deprecation window). Do not re-read flat keys here.
     const directMode = resolveChannelStreamingChunkMode(direct);
     if (directMode) {
       return directMode;
     }
   }
-  return resolveChannelStreamingChunkMode(cfgSection);
+  return resolveChannelStreamingChunkMode(cfgSection) ?? cfgSection.chunkMode;
 }
 
 export function resolveChunkMode(
@@ -166,10 +163,7 @@ export function chunkByNewline(
       continue;
     }
 
-    // Back the head cut off to a code-point boundary so an over-long line never splits a surrogate
-    // pair; the recursive chunkText below is already surrogate-safe, only this first cut was raw.
-    const rawLimit = Math.max(1, maxLineLength - prefix.length);
-    const firstLimit = avoidTrailingHighSurrogateBreak(lineValue, 0, rawLimit);
+    const firstLimit = Math.max(1, maxLineLength - prefix.length);
     const first = lineValue.slice(0, firstLimit);
     chunks.push(prefix + first);
     const remaining = lineValue.slice(firstLimit);
@@ -207,10 +201,8 @@ export function chunkByParagraph(
   }
   const splitLongParagraphs = opts?.splitLongParagraphs !== false;
 
-  // U+2029 PARAGRAPH SEPARATOR maps to a blank-line boundary; U+2028 LINE
-  // SEPARATOR and CR/CRLF map to a single newline.
-  // Normalize in two steps so consecutive U+2028\u2029 also produces a blank line.
-  const normalized = text.replace(/\u2029/g, "\n\n").replace(/\r\n?|\u2028/g, "\n");
+  // Normalize to \n so blank line detection is consistent.
+  const normalized = text.replace(/\r\n?/g, "\n");
 
   // Fast-path: if there are no blank-line paragraph separators, do not split.
   // (We *do not* early-return based on `limit` — newline mode is about paragraph
@@ -477,7 +469,7 @@ export function chunkMarkdownText(text: string, limit: number): string[] {
     }
 
     let rawChunk = `${reopenPrefix}${rawContent}`;
-    const brokeOnSeparator = breakIdx < text.length && /\s/.test(text.charAt(breakIdx));
+    const brokeOnSeparator = breakIdx < text.length && /\s/.test(text[breakIdx]);
     let nextStart = Math.min(text.length, breakIdx + (brokeOnSeparator ? 1 : 0));
 
     if (fenceToSplit) {
@@ -536,7 +528,7 @@ function scanParenAwareBreakpoints(
     if (!isAllowed(i)) {
       continue;
     }
-    const char = text.charAt(i);
+    const char = text[i];
     if (char === "(") {
       depth += 1;
       continue;

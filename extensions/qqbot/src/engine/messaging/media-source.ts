@@ -81,9 +81,7 @@ function tryParseDataUrl(value: string): { mime: string; data: string } | null {
   if (!m) {
     return null;
   }
-  const mime = m[1];
-  const data = m[2];
-  return mime === undefined || data === undefined ? null : { mime, data };
+  return { mime: m[1], data: m[2] };
 }
 
 // ============ Local file safe open ============

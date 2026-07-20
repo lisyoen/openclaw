@@ -62,9 +62,7 @@ describe("monitorSlackProvider tool results", () => {
       },
       channels: {
         slack: {
-          dm: { enabled: true },
-          dmPolicy: "open",
-          allowFrom: ["*"],
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
           replyToMode,
         },
       },
@@ -111,9 +109,7 @@ describe("monitorSlackProvider tool results", () => {
         : {}),
       channels: {
         slack: {
-          dm: { enabled: true },
-          dmPolicy: "open",
-          allowFrom: ["*"],
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
           channels: { C1: { allow: true, requireMention: true } },
         },
       },
@@ -156,9 +152,7 @@ describe("monitorSlackProvider tool results", () => {
       channels: {
         slack: {
           historyLimit: 5,
-          dm: { enabled: true },
-          dmPolicy: "open",
-          allowFrom: ["*"],
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
           channels,
         },
       },
@@ -193,9 +187,7 @@ describe("monitorSlackProvider tool results", () => {
         ...currentConfig.channels,
         slack: {
           ...currentConfig.channels?.slack,
-          dm: { enabled: true },
-          dmPolicy: "pairing",
-          allowFrom: [],
+          dm: { enabled: true, policy: "pairing", allowFrom: [] },
         },
       },
     };
@@ -210,9 +202,7 @@ describe("monitorSlackProvider tool results", () => {
     visibleReplies?: "automatic" | "message_tool";
   }) {
     const slackChannelConfig: Record<string, unknown> = {
-      dm: { enabled: true },
-      dmPolicy: "open",
-      allowFrom: ["*"],
+      dm: { enabled: true, policy: "open", allowFrom: ["*"] },
       channels: { C1: { allow: true, requireMention: false } },
       ...(params?.groupPolicy ? { groupPolicy: params.groupPolicy } : {}),
       ...(params?.replyToMode ? { replyToMode: params.replyToMode } : {}),
@@ -272,9 +262,7 @@ describe("monitorSlackProvider tool results", () => {
       },
       channels: {
         slack: {
-          dm: { enabled: true },
-          dmPolicy: "open",
-          allowFrom: ["*"],
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
           groupPolicy: "open",
         },
       },
@@ -294,18 +282,15 @@ describe("monitorSlackProvider tool results", () => {
     });
   }
 
-  async function runMentionGatedChannelMessage() {
-    await runSlackMessageOnce(
-      monitorSlackProvider,
-      {
-        event: makeSlackMessageEvent({
-          text: "<@bot-user> hello",
-          ts: "456",
-          channel_type: "channel",
-        }),
-      },
-      { awaitDispatch: true },
-    );
+  async function runMentionGatedChannelMessageAndFlush() {
+    await runSlackMessageOnce(monitorSlackProvider, {
+      event: makeSlackMessageEvent({
+        text: "<@bot-user> hello",
+        ts: "456",
+        channel_type: "channel",
+      }),
+    });
+    await flush();
   }
 
   function expectReactionFlow(expected: {
@@ -366,7 +351,7 @@ describe("monitorSlackProvider tool results", () => {
     (client.auth as { test: ReturnType<typeof vi.fn> }).test.mockResolvedValue({
       user_id: "bot-user",
       team_id: "T1",
-      app_id: "A1",
+      api_app_id: "A1",
     });
 
     await runSlackMessageOnce(
@@ -452,8 +437,7 @@ describe("monitorSlackProvider tool results", () => {
       assistant?: { threads?: { setStatus?: ReturnType<typeof vi.fn> } };
     };
     const setStatus = client.assistant?.threads?.setStatus;
-    // Status updates run detached from the awaited dispatch; wait on the mock.
-    await vi.waitFor(() => expect(setStatus).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    expect(setStatus).toHaveBeenCalledTimes(2);
     expect(setStatus).toHaveBeenNthCalledWith(1, {
       token: "bot-token",
       channel_id: "C1",
@@ -516,9 +500,7 @@ describe("monitorSlackProvider tool results", () => {
       },
       channels: {
         slack: {
-          dm: { enabled: true },
-          dmPolicy: "open",
-          allowFrom: ["*"],
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
           groupPolicy: "open",
           requireMention: false,
         },
@@ -550,9 +532,7 @@ describe("monitorSlackProvider tool results", () => {
       },
       channels: {
         slack: {
-          dm: { enabled: true },
-          dmPolicy: "open",
-          allowFrom: ["*"],
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
           groupPolicy: "open",
           requireMention: false,
         },
@@ -644,9 +624,7 @@ describe("monitorSlackProvider tool results", () => {
       },
       channels: {
         slack: {
-          dm: { enabled: true },
-          dmPolicy: "open",
-          allowFrom: ["*"],
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
           groupPolicy: "open",
         },
       },
@@ -662,39 +640,14 @@ describe("monitorSlackProvider tool results", () => {
       channel: { name: "general", is_channel: true },
     });
 
-    await runSlackMessageOnce(
-      monitorSlackProvider,
-      {
-        event: makeSlackMessageEvent({
-          text: "<@bot-user> hello",
-          ts: "456",
-          channel_type: "channel",
-        }),
-      },
-      { awaitDispatch: true },
-    );
+    await runSlackMessageOnce(monitorSlackProvider, {
+      event: makeSlackMessageEvent({
+        text: "<@bot-user> hello",
+        ts: "456",
+        channel_type: "channel",
+      }),
+    });
 
-    // Ack reactions apply via the status-reaction debounce/queue, detached
-    // from the awaited dispatch; wait on the mock instead of asserting inline.
-    await vi.waitFor(
-      () =>
-        expect(reactMock).toHaveBeenCalledWith({
-          channel: "C1",
-          timestamp: "456",
-          name: "eyes",
-        }),
-      { timeout: 5_000 },
-    );
-  });
-
-  it("keeps ack reaction when no reply is delivered and status reactions are disabled", async () => {
-    replyMock.mockResolvedValue(undefined);
-    setMentionGatedAckConfig(false);
-    mockGeneralChannelInfo();
-    await runMentionGatedChannelMessage();
-
-    expect(sendMock).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(reactMock).toHaveBeenCalledTimes(1), { timeout: 5_000 });
     expect(reactMock).toHaveBeenCalledWith({
       channel: "C1",
       timestamp: "456",
@@ -702,14 +655,29 @@ describe("monitorSlackProvider tool results", () => {
     });
   });
 
+  it("keeps ack reaction when no reply is delivered and status reactions are disabled", async () => {
+    replyMock.mockResolvedValue(undefined);
+    setMentionGatedAckConfig(false);
+    mockGeneralChannelInfo();
+    await runMentionGatedChannelMessageAndFlush();
+
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(reactMock).toHaveBeenCalledTimes(1);
+    expect(reactMock).toHaveBeenCalledWith({
+      channel: "C1",
+      timestamp: "456",
+      name: "👀",
+    });
+  });
+
   it("keeps ack reaction when no reply is delivered and status reactions are enabled", async () => {
     replyMock.mockResolvedValue(undefined);
     setMentionGatedAckConfig(true);
     mockGeneralChannelInfo();
-    await runMentionGatedChannelMessage();
+    await runMentionGatedChannelMessageAndFlush();
 
     expect(sendMock).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(reactMock).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    expect(reactMock).toHaveBeenCalledTimes(1);
     expect(reactMock).toHaveBeenCalledWith({
       channel: "C1",
       timestamp: "456",
@@ -732,46 +700,36 @@ describe("monitorSlackProvider tool results", () => {
       },
       channels: {
         slack: {
-          dm: { enabled: true },
-          dmPolicy: "open",
-          allowFrom: ["*"],
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
           groupPolicy: "open",
         },
       },
     };
     mockGeneralChannelInfo();
 
-    await runMentionGatedChannelMessage();
+    await runMentionGatedChannelMessageAndFlush();
 
     expect(replyMock).toHaveBeenCalledTimes(1);
     expect(sendMock).not.toHaveBeenCalled();
-    await vi.waitFor(
-      () =>
-        expect(reactMock).toHaveBeenCalledWith({
-          channel: "C1",
-          timestamp: "456",
-          name: "eyes",
-        }),
-      { timeout: 5_000 },
-    );
+    expect(reactMock).toHaveBeenCalledWith({
+      channel: "C1",
+      timestamp: "456",
+      name: "eyes",
+    });
   });
 
   it("keeps the error reaction when dispatch fails before any reply is delivered", async () => {
     replyMock.mockRejectedValue(new Error("boom"));
     setMentionGatedAckConfig(true);
     mockGeneralChannelInfo();
-    await expect(runMentionGatedChannelMessage()).rejects.toThrow("boom");
+    await runMentionGatedChannelMessageAndFlush();
 
     expect(sendMock).not.toHaveBeenCalled();
-    await vi.waitFor(
-      () =>
-        expectReactionFlow({
-          startsWith: ["eyes", "x"],
-          includes: "x",
-          endsWith: "x",
-        }),
-      { timeout: 5_000 },
-    );
+    expectReactionFlow({
+      startsWith: ["eyes", "x"],
+      includes: "x",
+      endsWith: "x",
+    });
   });
 
   it("replies with pairing code when dmPolicy is pairing and no allowFrom is set", async () => {

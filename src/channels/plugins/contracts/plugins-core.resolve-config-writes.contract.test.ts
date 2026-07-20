@@ -1,6 +1,6 @@
 // Config write resolution contract tests cover channel plugin config write normalization.
 import { describe, expect, it } from "vitest";
-import { resolveChannelConfigWrites } from "../../../plugin-sdk/channel-config-helpers.js";
+import { resolveChannelConfigWrites } from "../config-writes.js";
 
 const demoOriginChannelId = "demo-origin";
 const demoTargetChannelId = "demo-target";

@@ -4,39 +4,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildTelegramErrorScopeKey,
   resolveTelegramErrorPolicy,
+  resetTelegramErrorPolicyStoreForTest,
   shouldSuppressTelegramError,
 } from "./error-policy.js";
-
-let scopeSequence = 0;
-let accountId: string;
 
 describe("telegram error policy", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    accountId = `work-${scopeSequence++}`;
+    resetTelegramErrorPolicyStoreForTest();
   });
 
   afterEach(() => {
+    resetTelegramErrorPolicyStoreForTest();
     vi.useRealTimers();
   });
 
-  it("resolves policy from the most specific config", () => {
+  it("resolves policy and cooldown from the most specific config", () => {
     expect(
       resolveTelegramErrorPolicy({
-        accountConfig: { errorPolicy: "once" },
-        groupConfig: {},
+        accountConfig: { errorPolicy: "once", errorCooldownMs: 1000 },
+        groupConfig: { errorCooldownMs: 2000 },
         topicConfig: { errorPolicy: "silent" },
       }),
     ).toEqual({
       policy: "silent",
-      cooldownMs: 14_400_000,
+      cooldownMs: 2000,
     });
   });
 
   it("suppresses only repeated matching errors within the same scope", () => {
     const scopeKey = buildTelegramErrorScopeKey({
-      accountId,
+      accountId: "work",
       chatId: 42,
       threadId: 7,
     });
@@ -66,7 +65,7 @@ describe("telegram error policy", () => {
 
   it("keeps cooldowns per error message within the same scope", () => {
     const scopeKey = buildTelegramErrorScopeKey({
-      accountId,
+      accountId: "work",
       chatId: 42,
     });
 
@@ -95,7 +94,7 @@ describe("telegram error policy", () => {
 
   it("prunes expired cooldowns within a single scope", () => {
     const scopeKey = buildTelegramErrorScopeKey({
-      accountId,
+      accountId: "work",
       chatId: 42,
     });
 
@@ -125,7 +124,7 @@ describe("telegram error policy", () => {
 
   it("does not suppress or keep cooldowns when the process clock is invalid", () => {
     const scopeKey = buildTelegramErrorScopeKey({
-      accountId,
+      accountId: "work",
       chatId: 42,
     });
 
@@ -167,7 +166,7 @@ describe("telegram error policy", () => {
 
   it("does not store cooldowns whose expiry would exceed the Date range", () => {
     const scopeKey = buildTelegramErrorScopeKey({
-      accountId,
+      accountId: "work",
       chatId: 42,
     });
     vi.setSystemTime(MAX_DATE_TIMESTAMP_MS);
@@ -191,7 +190,7 @@ describe("telegram error policy", () => {
 
   it("does not leak suppression across accounts or threads", () => {
     const workMain = buildTelegramErrorScopeKey({
-      accountId,
+      accountId: "work",
       chatId: 42,
     });
     const personalMain = buildTelegramErrorScopeKey({
@@ -199,7 +198,7 @@ describe("telegram error policy", () => {
       chatId: 42,
     });
     const workTopic = buildTelegramErrorScopeKey({
-      accountId,
+      accountId: "work",
       chatId: 42,
       threadId: 9,
     });

@@ -4,8 +4,6 @@
  * Converts markdown-like text to Tlon's story format.
  */
 
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
-
 // Inline content types
 type StoryInline =
   | string
@@ -55,7 +53,7 @@ function parseInlineMarkdown(text: string): StoryInline[] {
     // Ship mentions: ~sampel-palnet
     const shipMatch = remaining.match(/^(~[a-z][-a-z0-9]*)/);
     if (shipMatch) {
-      result.push({ ship: expectDefined(shipMatch[1], "ship mention capture") });
+      result.push({ ship: shipMatch[1] });
       remaining = remaining.slice(shipMatch[0].length);
       continue;
     }
@@ -63,7 +61,7 @@ function parseInlineMarkdown(text: string): StoryInline[] {
     // Bold: **text** or __text__
     const boldMatch = remaining.match(/^\*\*(.+?)\*\*|^__(.+?)__/);
     if (boldMatch) {
-      const content = expectDefined(boldMatch[1] ?? boldMatch[2], "bold body capture");
+      const content = boldMatch[1] || boldMatch[2];
       result.push({ bold: parseInlineMarkdown(content) });
       remaining = remaining.slice(boldMatch[0].length);
       continue;
@@ -72,7 +70,7 @@ function parseInlineMarkdown(text: string): StoryInline[] {
     // Italics: *text* or _text_ (but not inside words for _)
     const italicsMatch = remaining.match(/^\*([^*]+?)\*|^_([^_]+?)_(?![a-zA-Z0-9])/);
     if (italicsMatch) {
-      const content = expectDefined(italicsMatch[1] ?? italicsMatch[2], "italic body capture");
+      const content = italicsMatch[1] || italicsMatch[2];
       result.push({ italics: parseInlineMarkdown(content) });
       remaining = remaining.slice(italicsMatch[0].length);
       continue;
@@ -81,9 +79,7 @@ function parseInlineMarkdown(text: string): StoryInline[] {
     // Strikethrough: ~~text~~
     const strikeMatch = remaining.match(/^~~(.+?)~~/);
     if (strikeMatch) {
-      result.push({
-        strike: parseInlineMarkdown(expectDefined(strikeMatch[1], "strikethrough body capture")),
-      });
+      result.push({ strike: parseInlineMarkdown(strikeMatch[1]) });
       remaining = remaining.slice(strikeMatch[0].length);
       continue;
     }
@@ -91,7 +87,7 @@ function parseInlineMarkdown(text: string): StoryInline[] {
     // Inline code: `code`
     const codeMatch = remaining.match(/^`([^`]+)`/);
     if (codeMatch) {
-      result.push({ "inline-code": expectDefined(codeMatch[1], "inline code capture") });
+      result.push({ "inline-code": codeMatch[1] });
       remaining = remaining.slice(codeMatch[0].length);
       continue;
     }
@@ -99,12 +95,7 @@ function parseInlineMarkdown(text: string): StoryInline[] {
     // Links: [text](url)
     const linkMatch = remaining.match(/^\[([^\]]+)\]\(([^)]+)\)/);
     if (linkMatch) {
-      result.push({
-        link: {
-          href: expectDefined(linkMatch[2], "link URL capture"),
-          content: expectDefined(linkMatch[1], "link text capture"),
-        },
-      });
+      result.push({ link: { href: linkMatch[2], content: linkMatch[1] } });
       remaining = remaining.slice(linkMatch[0].length);
       continue;
     }
@@ -114,10 +105,7 @@ function parseInlineMarkdown(text: string): StoryInline[] {
     if (imageMatch) {
       // Return a special marker that will be hoisted to a block
       result.push({
-        __image: {
-          src: expectDefined(imageMatch[2], "image URL capture"),
-          alt: expectDefined(imageMatch[1], "image alt capture"),
-        },
+        __image: { src: imageMatch[2], alt: imageMatch[1] },
       } as unknown as StoryInline);
       remaining = remaining.slice(imageMatch[0].length);
       continue;
@@ -126,8 +114,7 @@ function parseInlineMarkdown(text: string): StoryInline[] {
     // Plain URL detection
     const urlMatch = remaining.match(/^(https?:\/\/[^\s<>"\]]+)/);
     if (urlMatch) {
-      const url = expectDefined(urlMatch[1], "plain URL capture");
-      result.push({ link: { href: url, content: url } });
+      result.push({ link: { href: urlMatch[1], content: urlMatch[1] } });
       remaining = remaining.slice(urlMatch[0].length);
       continue;
     }
@@ -142,37 +129,20 @@ function parseInlineMarkdown(text: string): StoryInline[] {
 
     // Plain text: consume until next special character or URL start
     // Exclude : and / to allow URL detection to work (stops before https://)
-    const plainMatch = remaining.match(/^[^*_`~[#\n:/]+/);
+    const plainMatch = remaining.match(/^[^*_`~[#~\n:/]+/);
     if (plainMatch) {
-      result.push(expectDefined(plainMatch[0], "plain text match"));
+      result.push(plainMatch[0]);
       remaining = remaining.slice(plainMatch[0].length);
       continue;
     }
 
     // Single special char that didn't match a pattern
-    result.push(remaining.charAt(0));
+    result.push(remaining[0]);
     remaining = remaining.slice(1);
   }
 
   // Merge adjacent strings
   return mergeAdjacentStrings(result);
-}
-
-function headingTag(marker: string): "h1" | "h2" | "h3" | "h4" | "h5" | "h6" {
-  switch (marker.length) {
-    case 1:
-      return "h1";
-    case 2:
-      return "h2";
-    case 3:
-      return "h3";
-    case 4:
-      return "h4";
-    case 5:
-      return "h5";
-    default:
-      return "h6";
-  }
 }
 
 /**
@@ -181,9 +151,8 @@ function headingTag(marker: string): "h1" | "h2" | "h3" | "h4" | "h5" | "h6" {
 function mergeAdjacentStrings(inlines: StoryInline[]): StoryInline[] {
   const result: StoryInline[] = [];
   for (const item of inlines) {
-    const last = result.at(-1);
-    if (typeof item === "string" && typeof last === "string") {
-      result.splice(-1, 1, last + item);
+    if (typeof item === "string" && typeof result[result.length - 1] === "string") {
+      result[result.length - 1] = (result[result.length - 1] as string) + item;
     } else {
       result.push(item);
     }
@@ -206,14 +175,8 @@ export function createImageBlock(src: string, alt = "", height = 0, width = 0): 
  * Check if URL looks like an image
  */
 export function isImageUrl(url: string): boolean {
-  const imageExtensions = /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i;
-  let path = url.split(/[?#]/, 1)[0] ?? url;
-  try {
-    path = new URL(url).pathname;
-  } catch {
-    // Keep existing non-URL path handling.
-  }
-  return imageExtensions.test(path);
+  const imageExtensions = /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico)(\?.*)?$/i;
+  return imageExtensions.test(url);
 }
 
 /**
@@ -247,19 +210,15 @@ export function markdownToStory(markdown: string): Story {
   let i = 0;
 
   while (i < lines.length) {
-    const line = expectDefined(lines[i], "Markdown line index is in bounds");
+    const line = lines[i];
 
     // Code block: ```lang\ncode\n```
     if (line.startsWith("```")) {
       const lang = line.slice(3).trim() || "plaintext";
       const codeLines: string[] = [];
       i++;
-      while (true) {
-        const codeLine = lines.at(i);
-        if (codeLine === undefined || codeLine.startsWith("```")) {
-          break;
-        }
-        codeLines.push(codeLine);
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        codeLines.push(lines[i]);
         i++;
       }
       story.push({
@@ -277,12 +236,13 @@ export function markdownToStory(markdown: string): Story {
     // Headers: # H1, ## H2, etc.
     const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
     if (headerMatch) {
-      const tag = headingTag(expectDefined(headerMatch[1], "header marker capture"));
+      const level = headerMatch[1].length as 1 | 2 | 3 | 4 | 5 | 6;
+      const tag = `h${level}` as const;
       story.push({
         block: {
           header: {
             tag,
-            content: parseInlineMarkdown(expectDefined(headerMatch[2], "header body capture")),
+            content: parseInlineMarkdown(headerMatch[2]),
           },
         },
       });
@@ -300,12 +260,8 @@ export function markdownToStory(markdown: string): Story {
     // Blockquote: > text
     if (line.startsWith("> ")) {
       const quoteLines: string[] = [];
-      while (true) {
-        const quoteLine = lines.at(i);
-        if (quoteLine === undefined || !quoteLine.startsWith("> ")) {
-          break;
-        }
-        quoteLines.push(quoteLine.slice(2));
+      while (i < lines.length && lines[i].startsWith("> ")) {
+        quoteLines.push(lines[i].slice(2));
         i++;
       }
       const quoteText = quoteLines.join("\n");
@@ -323,19 +279,15 @@ export function markdownToStory(markdown: string): Story {
 
     // Regular paragraph - collect consecutive non-empty lines
     const paragraphLines: string[] = [];
-    while (true) {
-      const paragraphLine = lines.at(i);
-      if (
-        paragraphLine === undefined ||
-        paragraphLine.trim() === "" ||
-        paragraphLine.startsWith("#") ||
-        paragraphLine.startsWith("```") ||
-        paragraphLine.startsWith("> ") ||
-        /^(-{3,}|\*{3,})$/.test(paragraphLine.trim())
-      ) {
-        break;
-      }
-      paragraphLines.push(paragraphLine);
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !lines[i].startsWith("#") &&
+      !lines[i].startsWith("```") &&
+      !lines[i].startsWith("> ") &&
+      !/^(-{3,}|\*{3,})$/.test(lines[i].trim())
+    ) {
+      paragraphLines.push(lines[i]);
       i++;
     }
 
@@ -348,9 +300,9 @@ export function markdownToStory(markdown: string): Story {
       for (const inline of inlines) {
         if (typeof inline === "string" && inline.includes("\n")) {
           const parts = inline.split("\n");
-          for (const [j, part] of parts.entries()) {
-            if (part) {
-              withBreaks.push(part);
+          for (let j = 0; j < parts.length; j++) {
+            if (parts[j]) {
+              withBreaks.push(parts[j]);
             }
             if (j < parts.length - 1) {
               withBreaks.push({ break: null });

@@ -1,5 +1,4 @@
 // Hook frontmatter tests cover hook metadata parsing from hook files.
-import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import {
   parseFrontmatter,
@@ -224,15 +223,9 @@ describe("resolveOpenClawMetadata", () => {
 
     const result = resolveOpenClawMetadata(frontmatter);
     expect(result?.install).toHaveLength(2);
-    expect(expectDefined(result?.install?.[0], "result?.install?.[0] test invariant").kind).toBe(
-      "bundled",
-    );
-    expect(expectDefined(result?.install?.[1], "result?.install?.[1] test invariant").kind).toBe(
-      "npm",
-    );
-    expect(expectDefined(result?.install?.[1], "result?.install?.[1] test invariant").package).toBe(
-      "@openclaw/hook",
-    );
+    expect(result?.install?.[0].kind).toBe("bundled");
+    expect(result?.install?.[1].kind).toBe("npm");
+    expect(result?.install?.[1].package).toBe("@openclaw/hook");
   });
 
   it("handles os restrictions", () => {
@@ -280,9 +273,7 @@ metadata:
     expect(openclaw.emoji).toBe("💾");
     expect(openclaw.events).toEqual(["command:new", "command:reset"]);
     expect(openclaw.requires?.config).toEqual(["workspace.dir"]);
-    expect(expectDefined(openclaw.install?.[0], "openclaw.install?.[0] test invariant").kind).toBe(
-      "bundled",
-    );
+    expect(openclaw.install?.[0].kind).toBe("bundled");
   });
 
   it("parses YAML metadata map", () => {

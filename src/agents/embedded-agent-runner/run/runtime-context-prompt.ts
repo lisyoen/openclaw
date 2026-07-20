@@ -11,6 +11,7 @@ import {
   OPENCLAW_RUNTIME_EVENT_HEADER,
 } from "../../internal-runtime-context.js";
 import type { CurrentInboundPromptContext } from "./params.js";
+export { OPENCLAW_RUNTIME_CONTEXT_CUSTOM_TYPE };
 
 const OPENCLAW_RUNTIME_EVENT_USER_PROMPT = "Continue the OpenClaw runtime event.";
 
@@ -28,19 +29,23 @@ export type RuntimeContextCustomMessage = {
   customType: string;
   content: string;
   display: false;
-  details: { source: "openclaw-runtime-context"; runtimeContextCarrier: true };
+  details: { source: "openclaw-runtime-context" };
   timestamp: number;
 };
 
 type EmptyTranscriptMode = "model-prompt" | "runtime-event";
 
-type ModelPromptBuildContext = {
-  promptBeforeHooks: string;
-  transcriptPromptBeforeTransforms: string;
-  promptBeforeAnnotation: string;
-  prependContext: string;
-  appendContext: string;
-};
+/** Returns the visible or resumable inbound prompt prefix used before the user prompt. */
+export function buildCurrentInboundPromptContextPrefix(
+  context: CurrentInboundPromptContext | undefined,
+  options?: { preferResumableText?: boolean },
+): string {
+  const text =
+    options?.preferResumableText === true
+      ? (context?.resumableText ?? context?.text)
+      : context?.text;
+  return text?.trim() ?? "";
+}
 
 /** Combines inbound context and the current prompt using the channel-provided joiner. */
 export function buildCurrentInboundPrompt(params: {
@@ -48,11 +53,9 @@ export function buildCurrentInboundPrompt(params: {
   prompt: string;
   preferResumableText?: boolean;
 }): string {
-  const contextText =
-    params.preferResumableText === true
-      ? (params.context?.resumableText ?? params.context?.text)
-      : params.context?.text;
-  const prefix = contextText?.trim() ?? "";
+  const prefix = buildCurrentInboundPromptContextPrefix(params.context, {
+    preferResumableText: params.preferResumableText,
+  });
   if (!prefix) {
     return params.prompt;
   }
@@ -62,53 +65,17 @@ export function buildCurrentInboundPrompt(params: {
   return [prefix, params.prompt].join(params.context?.promptJoiner ?? "\n\n");
 }
 
-function splitLastPromptOccurrence(
-  text: string,
-  prompt: string,
-): { before: string; after: string } | null {
+function removeLastPromptOccurrence(text: string, prompt: string): string | null {
   const index = text.lastIndexOf(prompt);
   if (index === -1) {
     return null;
   }
-  return {
-    before: text.slice(0, index),
-    after: text.slice(index + prompt.length),
-  };
-}
-
-function replacePromptOccurrenceWithinHookBounds(params: {
-  text: string;
-  promptBeforeHooks: string;
-  transcriptPrompt: string;
-  prependContext: string;
-  appendContext: string;
-}): string | null {
-  if (!params.promptBeforeHooks) {
-    return null;
-  }
-  const prependIndex = params.prependContext ? params.text.indexOf(params.prependContext) : -1;
-  if (params.prependContext && prependIndex === -1) {
-    return null;
-  }
-  const searchStart = prependIndex === -1 ? 0 : prependIndex + params.prependContext.length;
-  const appendIndex = params.appendContext ? params.text.lastIndexOf(params.appendContext) : -1;
-  if (params.appendContext && appendIndex < searchStart) {
-    return null;
-  }
-  const searchEnd = appendIndex === -1 ? params.text.length : appendIndex;
-  const occurrenceIndex = params.text.lastIndexOf(
-    params.promptBeforeHooks,
-    searchEnd - params.promptBeforeHooks.length,
-  );
-  if (
-    occurrenceIndex < searchStart ||
-    occurrenceIndex + params.promptBeforeHooks.length > searchEnd
-  ) {
-    return null;
-  }
-  return `${params.text.slice(0, occurrenceIndex)}${params.transcriptPrompt}${params.text.slice(
-    occurrenceIndex + params.promptBeforeHooks.length,
-  )}`;
+  const before = text.slice(0, index).trimEnd();
+  const after = text.slice(index + prompt.length).trimStart();
+  return [before, after]
+    .filter((part) => part.length > 0)
+    .join("\n\n")
+    .trim();
 }
 
 /**
@@ -120,7 +87,6 @@ export function resolveRuntimeContextPromptParts(params: {
   effectivePrompt: string;
   transcriptPrompt?: string;
   modelPrompt?: string;
-  modelPromptBuildContext?: ModelPromptBuildContext;
   emptyTranscriptMode?: EmptyTranscriptMode;
 }): RuntimeContextPromptParts {
   const transcriptPrompt = params.transcriptPrompt;
@@ -134,23 +100,6 @@ export function resolveRuntimeContextPromptParts(params: {
       : shouldExtractInternalRuntimeContext
         ? extractInternalRuntimeContext(params.modelPrompt)
         : { text: params.modelPrompt };
-  const modelPromptBuildContext = params.modelPromptBuildContext
-    ? {
-        promptBeforeHooks: extractInternalRuntimeContext(
-          params.modelPromptBuildContext.promptBeforeHooks,
-        ).text,
-        transcriptPromptBeforeTransforms: extractInternalRuntimeContext(
-          params.modelPromptBuildContext.transcriptPromptBeforeTransforms,
-        ).text,
-        promptBeforeAnnotation: extractInternalRuntimeContext(
-          params.modelPromptBuildContext.promptBeforeAnnotation,
-        ).text,
-        prependContext: extractInternalRuntimeContext(params.modelPromptBuildContext.prependContext)
-          .text,
-        appendContext: extractInternalRuntimeContext(params.modelPromptBuildContext.appendContext)
-          .text,
-      }
-    : undefined;
   const modelPromptText = modelPrompt?.text ?? transcriptPrompt ?? extracted.text;
   const prompt = transcriptPrompt ?? extracted.text;
   if (!prompt.trim() && params.emptyTranscriptMode === "model-prompt") {
@@ -162,36 +111,14 @@ export function resolveRuntimeContextPromptParts(params: {
       ...(extracted.runtimeContext ? { runtimeContext: extracted.runtimeContext } : {}),
     };
   }
-  const sourcePromptParts = modelPromptBuildContext
-    ? splitLastPromptOccurrence(
-        modelPromptBuildContext.promptBeforeHooks,
-        modelPromptBuildContext.transcriptPromptBeforeTransforms,
-      )
-    : undefined;
-  const outerPromptParts = modelPromptBuildContext
-    ? splitLastPromptOccurrence(extracted.text, modelPromptBuildContext.promptBeforeAnnotation)
-    : undefined;
-  const fallbackPromptParts = !modelPromptBuildContext
-    ? modelPrompt
-      ? (splitLastPromptOccurrence(extracted.text, modelPrompt.text) ??
-        (transcriptPrompt
-          ? splitLastPromptOccurrence(extracted.text, transcriptPrompt)
-          : undefined))
-      : transcriptPrompt
-        ? splitLastPromptOccurrence(extracted.text, transcriptPrompt)
-        : undefined
-    : undefined;
-  // Source context sits inside the active prompt; provenance sits outside all
-  // prompt transforms. Preserve that nesting order when hiding both.
-  const hiddenRuntimeContext = [
-    outerPromptParts?.before,
-    sourcePromptParts?.before ?? fallbackPromptParts?.before,
-    sourcePromptParts?.after ?? fallbackPromptParts?.after,
-    outerPromptParts?.after,
-  ]
-    .map((part) => part?.trim())
-    .filter((part): part is string => Boolean(part))
-    .join("\n\n");
+  const hiddenRuntimeContext = modelPrompt
+    ? (removeLastPromptOccurrence(extracted.text, modelPrompt.text)?.trim() ??
+      (transcriptPrompt
+        ? removeLastPromptOccurrence(extracted.text, transcriptPrompt)?.trim()
+        : undefined))
+    : transcriptPrompt
+      ? removeLastPromptOccurrence(extracted.text, transcriptPrompt)?.trim()
+      : undefined;
   // The hidden context is whatever remains after removing the last visible
   // prompt occurrence, plus any explicit internal runtime-context block.
   const runtimeContext =
@@ -207,10 +134,7 @@ export function resolveRuntimeContextPromptParts(params: {
             : {}),
           runtimeContext,
           runtimeOnly: true,
-          runtimeSystemContext: buildRuntimeContextMessageContent({
-            runtimeContext,
-            kind: "runtime-event",
-          }),
+          runtimeSystemContext: buildRuntimeEventSystemContext(runtimeContext),
         }
       : {
           prompt: "",
@@ -218,27 +142,10 @@ export function resolveRuntimeContextPromptParts(params: {
         };
   }
 
-  // When hooks added pre-prompt context, modelPromptText still contains the
-  // system-event prefix that was separated into runtimeContext. Strip it so
-  // events aren't delivered to the model twice (Message A and Message B).
-  const hasHiddenSourceContext = Boolean(
-    sourcePromptParts?.before.trim() || sourcePromptParts?.after.trim(),
-  );
-  const returnModelPromptText =
-    hasHiddenSourceContext && modelPromptBuildContext && modelPrompt
-      ? (replacePromptOccurrenceWithinHookBounds({
-          text: modelPromptText,
-          promptBeforeHooks: modelPromptBuildContext.promptBeforeHooks,
-          transcriptPrompt: modelPromptBuildContext.transcriptPromptBeforeTransforms,
-          prependContext: modelPromptBuildContext.prependContext,
-          appendContext: modelPromptBuildContext.appendContext,
-        }) ?? modelPromptText)
-      : modelPromptText;
-
   return {
     prompt,
-    ...(returnModelPromptText.trim() && returnModelPromptText !== prompt
-      ? { modelPrompt: returnModelPromptText }
+    ...(modelPromptText.trim() && modelPromptText !== prompt
+      ? { modelPrompt: modelPromptText }
       : {}),
     ...(runtimeContext ? { runtimeContext } : {}),
   };
@@ -263,6 +170,16 @@ function buildRuntimeContextMessageContent(params: {
   ].join("\n");
 }
 
+/** Builds the hidden next-turn system context payload for model conversion. */
+export function buildRuntimeContextSystemContext(runtimeContext: string): string {
+  return buildRuntimeContextMessageContent({ runtimeContext, kind: "next-turn" });
+}
+
+/** Builds the hidden runtime-event system context payload for empty runtime-only turns. */
+export function buildRuntimeEventSystemContext(runtimeContext: string): string {
+  return buildRuntimeContextMessageContent({ runtimeContext, kind: "runtime-event" });
+}
+
 /** Creates a non-displayed custom transcript message for runtime context, if any exists. */
 export function buildRuntimeContextCustomMessage(
   runtimeContext: string | undefined,
@@ -274,12 +191,9 @@ export function buildRuntimeContextCustomMessage(
   return {
     role: "custom",
     customType: OPENCLAW_RUNTIME_CONTEXT_CUSTOM_TYPE,
-    content: buildRuntimeContextMessageContent({
-      runtimeContext: trimmedRuntimeContext,
-      kind: "next-turn",
-    }),
+    content: buildRuntimeContextSystemContext(trimmedRuntimeContext),
     display: false,
-    details: { source: "openclaw-runtime-context", runtimeContextCarrier: true },
+    details: { source: "openclaw-runtime-context" },
     timestamp: Date.now(),
   };
 }

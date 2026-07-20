@@ -160,8 +160,7 @@ actor VoicePushToTalk {
         self.isCapturing = true
         self.triggerChimePlayed = false
         self.finalized = false
-        self.timeoutTask?.cancel()
-        self.timeoutTask = nil
+        self.timeoutTask?.cancel(); self.timeoutTask = nil
         let snapshot = await MainActor.run { VoiceSessionCoordinator.shared.snapshot() }
         self.adoptedPrefix = snapshot.visible ? snapshot.text.trimmingCharacters(in: .whitespacesAndNewlines) : ""
         self.logger.info("ptt begin adopted_prefix_len=\(self.adoptedPrefix.count, privacy: .public)")
@@ -322,8 +321,7 @@ actor VoicePushToTalk {
         }
         self.finalized = true
         self.isCapturing = false
-        self.timeoutTask?.cancel()
-        self.timeoutTask = nil
+        self.timeoutTask?.cancel(); self.timeoutTask = nil
 
         let finalRecognized: String = {
             if let override = transcriptOverride?.trimmingCharacters(in: .whitespacesAndNewlines) {

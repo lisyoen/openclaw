@@ -1,11 +1,24 @@
 /**
  * Shared bash-tool helper tests.
- * Covers strict env parsing and compact session labels.
+ * Covers strict env parsing and sandbox workdir mapping between container and
+ * host workspace paths.
  */
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chunkString, deriveSessionName, readEnvInt } from "./bash-tools.shared.js";
+import { deriveSessionName, readEnvInt, resolveSandboxWorkdir } from "./bash-tools.shared.js";
 
-describe("readEnvInt", () => {
+async function withTempDir(run: (dir: string) => Promise<void>) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-bash-workdir-"));
+  try {
+    await run(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+describe("resolveSandboxWorkdir", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -43,6 +56,67 @@ describe("readEnvInt", () => {
 
     expect(readEnvInt("OPENCLAW_BASH_YIELD_MS", "PI_BASH_YIELD_MS")).toBeUndefined();
   });
+
+  it("maps container root workdir to host workspace", async () => {
+    await withTempDir(async (workspaceDir) => {
+      const warnings: string[] = [];
+      const resolved = await resolveSandboxWorkdir({
+        workdir: "/workspace",
+        sandbox: {
+          containerName: "sandbox-1",
+          workspaceDir,
+          containerWorkdir: "/workspace",
+        },
+        warnings,
+      });
+
+      expect(resolved.hostWorkdir).toBe(workspaceDir);
+      expect(resolved.containerWorkdir).toBe("/workspace");
+      expect(warnings).toStrictEqual([]);
+    });
+  });
+
+  it("maps nested container workdir under the container workspace", async () => {
+    await withTempDir(async (workspaceDir) => {
+      const nested = path.join(workspaceDir, "scripts", "runner");
+      await mkdir(nested, { recursive: true });
+      const warnings: string[] = [];
+      const resolved = await resolveSandboxWorkdir({
+        workdir: "/workspace/scripts/runner",
+        sandbox: {
+          containerName: "sandbox-2",
+          workspaceDir,
+          containerWorkdir: "/workspace",
+        },
+        warnings,
+      });
+
+      expect(resolved.hostWorkdir).toBe(nested);
+      expect(resolved.containerWorkdir).toBe("/workspace/scripts/runner");
+      expect(warnings).toStrictEqual([]);
+    });
+  });
+
+  it("supports custom container workdir prefixes", async () => {
+    await withTempDir(async (workspaceDir) => {
+      const nested = path.join(workspaceDir, "project");
+      await mkdir(nested, { recursive: true });
+      const warnings: string[] = [];
+      const resolved = await resolveSandboxWorkdir({
+        workdir: "/sandbox-root/project",
+        sandbox: {
+          containerName: "sandbox-3",
+          workspaceDir,
+          containerWorkdir: "/sandbox-root",
+        },
+        warnings,
+      });
+
+      expect(resolved.hostWorkdir).toBe(nested);
+      expect(resolved.containerWorkdir).toBe("/sandbox-root/project");
+      expect(warnings).toStrictEqual([]);
+    });
+  });
 });
 
 describe("deriveSessionName", () => {
@@ -68,24 +142,5 @@ describe("deriveSessionName", () => {
       expect(typeof label).toBe("string");
       expect(elapsedMs).toBeLessThan(100);
     }
-  });
-});
-
-describe("chunkString", () => {
-  it("preserves surrogate pairs at chunk boundaries", () => {
-    const input = "a".repeat(8191) + "🚀b";
-    expect(chunkString(input, 8192)).toEqual(["a".repeat(8191), "🚀b"]);
-  });
-
-  it("returns single chunk for input smaller than limit", () => {
-    expect(chunkString("hello", 8192)).toEqual(["hello"]);
-  });
-
-  it("emits a whole code point when the limit is one UTF-16 unit", () => {
-    expect(chunkString("😀a", 1)).toEqual(["😀", "a"]);
-  });
-
-  it("preserves every code point across mixed chunk boundaries", () => {
-    expect(chunkString("aa🚀bb", 2)).toEqual(["aa", "🚀", "bb"]);
   });
 });

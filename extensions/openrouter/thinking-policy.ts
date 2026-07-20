@@ -22,6 +22,10 @@ const OPENROUTER_DEEPSEEK_V4_THINKING_PROFILE = {
   defaultLevel: "high",
 } satisfies ProviderThinkingProfile;
 
+export function supportsOpenRouterXHighThinking(modelId: string): boolean {
+  return isOpenRouterDeepSeekV4ModelId(modelId);
+}
+
 export function resolveOpenRouterThinkingProfile(
   modelId: string,
 ): ProviderThinkingProfile | undefined {

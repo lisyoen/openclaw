@@ -769,4 +769,8 @@ export const matrixOnboardingAdapter: ChannelSetupWizardAdapter = {
     },
   }),
 };
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+
+export const testing = {
+  promptMatrixAllowFrom,
+};
+export { testing as __testing };

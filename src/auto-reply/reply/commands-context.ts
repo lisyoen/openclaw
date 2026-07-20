@@ -47,7 +47,6 @@ export function buildCommandContext(params: {
     surface,
     channel,
     channelId: channelId ?? auth.providerId,
-    accountId: normalizeOptionalString(ctx.AccountId),
     ownerList: auth.ownerList,
     senderIsOwner: auth.senderIsOwner,
     isAuthorizedSender: auth.isAuthorizedSender,

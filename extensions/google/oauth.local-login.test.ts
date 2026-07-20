@@ -36,7 +36,6 @@ describe("loginGeminiCliOAuth local browser flow", () => {
   it("prints the auth URL before attempting best-effort browser launch", async () => {
     const events: string[] = [];
     const { loginGeminiCliOAuth } = await import("./oauth.js");
-    const signal = new AbortController().signal;
     const openUrl = vi.fn(async () => {
       events.push("open");
     });
@@ -51,7 +50,6 @@ describe("loginGeminiCliOAuth local browser flow", () => {
       note: async () => {},
       prompt: async () => "",
       progress: { update: () => {}, stop: () => {} },
-      signal,
     });
 
     expect(result).toEqual({
@@ -67,6 +65,6 @@ describe("loginGeminiCliOAuth local browser flow", () => {
     expect(waitForLocalCallbackMock).toHaveBeenCalledWith(
       expect.objectContaining({ expectedState: "state-123" }),
     );
-    expect(exchangeCodeForTokensMock).toHaveBeenCalledWith("oauth-code", "pkce-verifier", signal);
+    expect(exchangeCodeForTokensMock).toHaveBeenCalledWith("oauth-code", "pkce-verifier");
   });
 });

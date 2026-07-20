@@ -6,9 +6,8 @@ import {
   isCronReminderPayload,
   isMediaPayload,
   parseQQBotPayload,
+  type CronReminderPayload,
 } from "./payload.js";
-
-type CronReminderPayload = Parameters<typeof encodePayloadForCron>[0];
 
 describe("engine/utils/payload", () => {
   it("returns original text for non-payload replies", () => {

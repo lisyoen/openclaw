@@ -39,7 +39,7 @@ type ChannelPackageStateMetadata = {
 /**
  * Metadata keys that can declare a lightweight package-state checker.
  */
-type ChannelPackageStateMetadataKey = "configuredState" | "persistedAuthState";
+export type ChannelPackageStateMetadataKey = "configuredState" | "persistedAuthState";
 
 const log = createSubsystemLogger("channels");
 const sourcePackageStateLoaderCache: PluginModuleLoaderCache = new Map();

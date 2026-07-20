@@ -9,23 +9,6 @@ const { registerManagedProxyBrowserCdpBypassMock } = vi.hoisted(() => ({
   ),
 }));
 
-function createDeferred<T = void>(): {
-  promise: Promise<T>;
-  resolve: (value: T | PromiseLike<T>) => void;
-  reject: (reason?: unknown) => void;
-} {
-  let resolve: ((value: T | PromiseLike<T>) => void) | undefined;
-  let reject: ((reason?: unknown) => void) | undefined;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  if (!resolve || !reject) {
-    throw new Error("Expected deferred callbacks to be initialized");
-  }
-  return { promise, resolve, reject };
-}
-
 vi.mock("openclaw/plugin-sdk/ssrf-runtime-internal", () => ({
   registerManagedProxyBrowserCdpBypass: registerManagedProxyBrowserCdpBypassMock,
 }));
@@ -33,17 +16,30 @@ vi.mock("openclaw/plugin-sdk/ssrf-runtime-internal", () => ({
 import {
   assertManagedProxyAllowsCdpUrl,
   getDirectAgentForCdp,
+  hasProxyEnv,
   withManagedProxyForCdpUrl,
   withNoProxyForCdpUrl,
+  withNoProxyForLocalhost,
 } from "./cdp-proxy-bypass.js";
-
-const LOOPBACK_CDP_URL = "http://127.0.0.1:9222";
 
 beforeEach(() => {
   vi.useRealTimers();
   registerManagedProxyBrowserCdpBypassMock.mockReset();
   registerManagedProxyBrowserCdpBypassMock.mockImplementation(() => undefined);
 });
+
+function createDeferred<T = void>() {
+  let resolve: ((value: T | PromiseLike<T>) => void) | undefined;
+  let reject: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  if (!resolve || !reject) {
+    throw new Error("Expected deferred callbacks to be initialized");
+  }
+  return { promise, resolve, reject };
+}
 
 async function withIsolatedNoProxyEnv(fn: () => Promise<void>) {
   const origNoProxy = process.env.NO_PROXY;
@@ -111,7 +107,52 @@ describe("cdp-proxy-bypass", () => {
     });
   });
 
-  describe("withNoProxyForCdpUrl loopback", () => {
+  describe("hasProxyEnv", () => {
+    const proxyVars = [
+      "HTTP_PROXY",
+      "http_proxy",
+      "HTTPS_PROXY",
+      "https_proxy",
+      "ALL_PROXY",
+      "all_proxy",
+    ];
+    const saved: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+      for (const v of proxyVars) {
+        saved[v] = process.env[v];
+      }
+      for (const v of proxyVars) {
+        delete process.env[v];
+      }
+    });
+
+    afterEach(() => {
+      for (const v of proxyVars) {
+        if (saved[v] !== undefined) {
+          process.env[v] = saved[v];
+        } else {
+          delete process.env[v];
+        }
+      }
+    });
+
+    it("returns false when no proxy vars set", () => {
+      expect(hasProxyEnv()).toBe(false);
+    });
+
+    it("returns true when HTTP_PROXY is set", () => {
+      process.env.HTTP_PROXY = "http://proxy:8080";
+      expect(hasProxyEnv()).toBe(true);
+    });
+
+    it("returns true when ALL_PROXY is set", () => {
+      process.env.ALL_PROXY = "socks5://proxy:1080";
+      expect(hasProxyEnv()).toBe(true);
+    });
+  });
+
+  describe("withNoProxyForLocalhost", () => {
     const saved: Record<string, string | undefined> = {};
     const vars = ["HTTP_PROXY", "NO_PROXY", "no_proxy"];
 
@@ -137,7 +178,7 @@ describe("cdp-proxy-bypass", () => {
       delete process.env.no_proxy;
 
       let capturedNoProxy: string | undefined;
-      await withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      await withNoProxyForLocalhost(async () => {
         capturedNoProxy = process.env.NO_PROXY;
       });
 
@@ -153,7 +194,7 @@ describe("cdp-proxy-bypass", () => {
       process.env.NO_PROXY = "internal.corp";
 
       let capturedNoProxy: string | undefined;
-      await withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      await withNoProxyForLocalhost(async () => {
         capturedNoProxy = process.env.NO_PROXY;
       });
 
@@ -169,7 +210,7 @@ describe("cdp-proxy-bypass", () => {
       delete process.env.ALL_PROXY;
       delete process.env.NO_PROXY;
 
-      await withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      await withNoProxyForLocalhost(async () => {
         expect(process.env.NO_PROXY).toBeUndefined();
       });
     });
@@ -179,7 +220,7 @@ describe("cdp-proxy-bypass", () => {
       delete process.env.NO_PROXY;
 
       await expect(
-        withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+        withNoProxyForLocalhost(async () => {
           throw new Error("boom");
         }),
       ).rejects.toThrow("boom");
@@ -189,13 +230,16 @@ describe("cdp-proxy-bypass", () => {
   });
 });
 
-describe("withNoProxyForCdpUrl concurrency", () => {
+describe("withNoProxyForLocalhost concurrency", () => {
   it("does not leak NO_PROXY when called concurrently", async () => {
     await withIsolatedNoProxyEnv(async () => {
+      const { withNoProxyForLocalhost: withNoProxyForLocalhostScoped } =
+        await import("./cdp-proxy-bypass.js");
+
       const releaseA = createDeferred();
       const enteredA = createDeferred();
 
-      const callA = withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      const callA = withNoProxyForLocalhostScoped(async () => {
         expect(process.env.NO_PROXY).toContain("localhost");
         expect(process.env.NO_PROXY).toContain("[::1]");
         enteredA.resolve();
@@ -205,7 +249,7 @@ describe("withNoProxyForCdpUrl concurrency", () => {
 
       await enteredA.promise;
 
-      const callB = withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      const callB = withNoProxyForLocalhostScoped(async () => {
         return "b";
       });
 
@@ -219,22 +263,25 @@ describe("withNoProxyForCdpUrl concurrency", () => {
   });
 });
 
-describe("withNoProxyForCdpUrl reverse exit order", () => {
+describe("withNoProxyForLocalhost reverse exit order", () => {
   it("restores NO_PROXY when first caller exits before second", async () => {
     await withIsolatedNoProxyEnv(async () => {
+      const { withNoProxyForLocalhost: withNoProxyForLocalhostItem } =
+        await import("./cdp-proxy-bypass.js");
+
       const enteredA = createDeferred();
       const enteredB = createDeferred();
       const releaseA = createDeferred();
       const releaseB = createDeferred();
 
-      const callA = withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      const callA = withNoProxyForLocalhostItem(async () => {
         enteredA.resolve();
         await releaseA.promise;
         return "a";
       });
       await enteredA.promise;
 
-      const callB = withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      const callB = withNoProxyForLocalhostItem(async () => {
         enteredB.resolve();
         await releaseB.promise;
         return "b";
@@ -254,7 +301,7 @@ describe("withNoProxyForCdpUrl reverse exit order", () => {
   });
 });
 
-describe("withNoProxyForCdpUrl preserves user-configured NO_PROXY", () => {
+describe("withNoProxyForLocalhost preserves user-configured NO_PROXY", () => {
   it("does not delete NO_PROXY when loopback entries already present", async () => {
     const userNoProxy = "localhost,127.0.0.1,[::1],myhost.internal";
     process.env.NO_PROXY = userNoProxy;
@@ -262,7 +309,10 @@ describe("withNoProxyForCdpUrl preserves user-configured NO_PROXY", () => {
     process.env.HTTP_PROXY = "http://proxy:8080";
 
     try {
-      await withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      const { withNoProxyForLocalhost: withNoProxyForLocalhostCandidate } =
+        await import("./cdp-proxy-bypass.js");
+
+      await withNoProxyForLocalhostCandidate(async () => {
         // Should not modify since loopback is already covered
         expect(process.env.NO_PROXY).toBe(userNoProxy);
         return "ok";
@@ -286,7 +336,10 @@ describe("withNoProxyForCdpUrl preserves user-configured NO_PROXY", () => {
     process.env.HTTP_PROXY = "http://proxy:8080";
 
     try {
-      await withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      const { withNoProxyForLocalhost: withNoProxyForLocalhostEntry } =
+        await import("./cdp-proxy-bypass.js");
+
+      await withNoProxyForLocalhostEntry(async () => {
         expect(process.env.NO_PROXY).toBe(`${coveredNoProxy},localhost,127.0.0.1,[::1]`);
         expect(process.env.no_proxy).toBe(`${staleLowerNoProxy},localhost,127.0.0.1,[::1]`);
       });
@@ -307,7 +360,10 @@ describe("withNoProxyForCdpUrl preserves user-configured NO_PROXY", () => {
     process.env.HTTP_PROXY = "http://proxy:8080";
 
     try {
-      await withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      const { withNoProxyForLocalhost: withNoProxyForLocalhostResult } =
+        await import("./cdp-proxy-bypass.js");
+
+      await withNoProxyForLocalhostResult(async () => {
         expect(process.env.NO_PROXY).toBe(`${lowerNoProxy},localhost,127.0.0.1,[::1]`);
         expect(process.env.no_proxy).toBe(`${lowerNoProxy},localhost,127.0.0.1,[::1]`);
       });
@@ -328,7 +384,10 @@ describe("withNoProxyForCdpUrl preserves user-configured NO_PROXY", () => {
     process.env.HTTP_PROXY = "http://proxy:8080";
 
     try {
-      await withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      const { withNoProxyForLocalhost: withNoProxyForLocalhostValue } =
+        await import("./cdp-proxy-bypass.js");
+
+      await withNoProxyForLocalhostValue(async () => {
         expect(process.env.NO_PROXY).toBe(`${userNoProxy},localhost,127.0.0.1,[::1]`);
         expect(process.env.no_proxy).toBe(`${userNoProxy},localhost,127.0.0.1,[::1]`);
         delete process.env.no_proxy;
@@ -350,7 +409,10 @@ describe("withNoProxyForCdpUrl preserves user-configured NO_PROXY", () => {
     process.env.HTTP_PROXY = "http://proxy:8080";
 
     try {
-      await withNoProxyForCdpUrl(LOOPBACK_CDP_URL, async () => {
+      const { withNoProxyForLocalhost: withNoProxyForLocalhostLocal } =
+        await import("./cdp-proxy-bypass.js");
+
+      await withNoProxyForLocalhostLocal(async () => {
         expect(process.env.NO_PROXY).toBe(`${userNoProxy},localhost,127.0.0.1,[::1]`);
         expect(process.env.no_proxy).toBe(`${userNoProxy},localhost,127.0.0.1,[::1]`);
       });

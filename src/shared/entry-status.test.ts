@@ -1,7 +1,11 @@
-// Entry status tests cover shared presentation metadata and requirement evaluation.
+// Entry status tests cover normalized status labels and terminal-state behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockProcessPlatform } from "../test-utils/vitest-spies.js";
-import { evaluateEntryRequirementsForCurrentPlatform } from "./entry-status.js";
+import {
+  evaluateEntryMetadataRequirements,
+  evaluateEntryMetadataRequirementsForCurrentPlatform,
+  evaluateEntryRequirementsForCurrentPlatform,
+} from "./entry-status.js";
 
 function setPlatform(platform: NodeJS.Platform): void {
   mockProcessPlatform(platform);
@@ -13,28 +17,25 @@ afterEach(() => {
 
 describe("shared/entry-status", () => {
   it("combines metadata presentation fields with evaluated requirements", () => {
-    setPlatform("linux");
-
-    const result = evaluateEntryRequirementsForCurrentPlatform({
+    const result = evaluateEntryMetadataRequirements({
       always: false,
-      entry: {
-        metadata: {
-          emoji: "🦀",
-          homepage: "https://openclaw.ai",
-          requires: {
-            bins: ["bun"],
-            anyBins: ["ffmpeg", "sox"],
-            env: ["OPENCLAW_TOKEN"],
-            config: ["gateway.bind"],
-          },
-          os: ["darwin"],
+      metadata: {
+        emoji: "🦀",
+        homepage: "https://openclaw.ai",
+        requires: {
+          bins: ["bun"],
+          anyBins: ["ffmpeg", "sox"],
+          env: ["OPENCLAW_TOKEN"],
+          config: ["gateway.bind"],
         },
-        frontmatter: {
-          emoji: "🙂",
-          homepage: "https://docs.openclaw.ai",
-        },
+        os: ["darwin"],
+      },
+      frontmatter: {
+        emoji: "🙂",
+        homepage: "https://docs.openclaw.ai",
       },
       hasLocalBin: (bin) => bin === "bun",
+      localPlatform: "linux",
       remote: {
         hasAnyBin: (bins) => bins.includes("sox"),
       },
@@ -67,12 +68,10 @@ describe("shared/entry-status", () => {
   it("uses process.platform in the current-platform wrapper", () => {
     setPlatform("darwin");
 
-    const result = evaluateEntryRequirementsForCurrentPlatform({
+    const result = evaluateEntryMetadataRequirementsForCurrentPlatform({
       always: false,
-      entry: {
-        metadata: {
-          os: ["darwin"],
-        },
+      metadata: {
+        os: ["darwin"],
       },
       hasLocalBin: () => false,
       isEnvSatisfied: () => true,
@@ -127,12 +126,10 @@ describe("shared/entry-status", () => {
   });
 
   it("returns empty requirements when metadata and frontmatter are missing", () => {
-    setPlatform("linux");
-
-    const result = evaluateEntryRequirementsForCurrentPlatform({
+    const result = evaluateEntryMetadataRequirements({
       always: false,
-      entry: {},
       hasLocalBin: () => false,
+      localPlatform: "linux",
       isEnvSatisfied: () => false,
       isConfigSatisfied: () => false,
     });

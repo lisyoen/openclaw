@@ -1,4 +1,3 @@
-import { expectDefined } from "@openclaw/normalization-core";
 // Gateway sessions.resolve implementation helper.
 // Resolves key/sessionId/label selectors into one canonical session key.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
@@ -8,7 +7,7 @@ import {
   errorShape,
   type SessionsResolveParams,
 } from "../../packages/gateway-protocol/src/index.js";
-import { canonicalizeSessionEntryAliases, type SessionEntry } from "../config/sessions.js";
+import { loadSessionStore, updateSessionStore, type SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveSessionIdMatchSelection } from "../sessions/session-id-resolution.js";
 import { parseSessionLabel } from "../sessions/session-label.js";
@@ -16,14 +15,12 @@ import {
   filterAndSortSessionEntries,
   listSessionsFromStore,
   loadCombinedSessionStoreForGateway,
+  migrateAndPruneGatewaySessionStoreKey,
   resolveDeletedAgentIdFromSessionKey,
-  resolveGatewaySessionStoreTargetWithStore,
+  resolveGatewaySessionStoreTarget,
 } from "./session-utils.js";
 
-export type SessionsResolveResult =
-  | { ok: true; key: string }
-  | { ok: true; missing: true }
-  | { ok: false; error: ErrorShape };
+export type SessionsResolveResult = { ok: true; key: string } | { ok: false; error: ErrorShape };
 
 function resolveSessionVisibilityFilterOptions(p: SessionsResolveParams) {
   return {
@@ -34,14 +31,11 @@ function resolveSessionVisibilityFilterOptions(p: SessionsResolveParams) {
   };
 }
 
-function noSessionFoundResult(params: { p: SessionsResolveParams; message: string }) {
-  if (params.p.allowMissing) {
-    return { ok: true, missing: true } as const;
-  }
+function noSessionFoundResult(key: string): SessionsResolveResult {
   return {
     ok: false,
-    error: errorShape(ErrorCodes.INVALID_REQUEST, params.message),
-  } as const;
+    error: errorShape(ErrorCodes.INVALID_REQUEST, `No session found: ${key}`),
+  };
 }
 
 /** Rejects sessions whose owning agent no longer exists in config (#65524). */
@@ -67,7 +61,8 @@ function validateSessionAgentExists(
 function isResolvedSessionKeyVisible(params: {
   cfg: OpenClawConfig;
   p: SessionsResolveParams;
-  store: Record<string, SessionEntry>;
+  storePath: string;
+  store: ReturnType<typeof loadSessionStore>;
   key: string;
 }) {
   if (typeof params.p.spawnedBy !== "string" || params.p.spawnedBy.trim().length === 0) {
@@ -130,18 +125,19 @@ export async function resolveSessionKeyFromResolveParams(params: {
   if (hasKey) {
     // Key lookups may hit legacy store aliases. Migrate/prune before returning
     // the canonical key so later calls operate on one store identity.
-    const target = resolveGatewaySessionStoreTargetWithStore({ cfg, key, clone: false });
-    const store = target.store;
+    const target = resolveGatewaySessionStoreTarget({ cfg, key });
+    const store = loadSessionStore(target.storePath);
     if (store[target.canonicalKey]) {
       if (
         !isResolvedSessionKeyVisible({
           cfg,
           p,
+          storePath: target.storePath,
           store,
           key: target.canonicalKey,
         })
       ) {
-        return noSessionFoundResult({ p, message: `No session found: ${key}` });
+        return noSessionFoundResult(key);
       }
       const agentCheck = validateSessionAgentExists(
         cfg,
@@ -156,40 +152,36 @@ export async function resolveSessionKeyFromResolveParams(params: {
     }
     const legacyKey = target.storeKeys.find((candidate) => store[candidate]);
     if (!legacyKey) {
-      return noSessionFoundResult({ p, message: `No session found: ${key}` });
+      return noSessionFoundResult(key);
     }
-    await canonicalizeSessionEntryAliases({
-      storePath: target.storePath,
-      target: {
-        canonicalKey: target.canonicalKey,
-        storeKeys: target.storeKeys,
-      },
+    await updateSessionStore(target.storePath, (s) => {
+      const { primaryKey } = migrateAndPruneGatewaySessionStoreKey({ cfg, key, store: s });
+      if (!s[primaryKey] && s[legacyKey]) {
+        s[primaryKey] = s[legacyKey];
+      }
     });
-    const refreshedTarget = resolveGatewaySessionStoreTargetWithStore({
-      cfg,
-      key: target.canonicalKey,
-      clone: false,
-    });
+    const migratedStore = loadSessionStore(target.storePath);
     if (
       !isResolvedSessionKeyVisible({
         cfg,
         p,
-        store: refreshedTarget.store,
-        key: refreshedTarget.canonicalKey,
+        storePath: target.storePath,
+        store: migratedStore,
+        key: target.canonicalKey,
       })
     ) {
-      return noSessionFoundResult({ p, message: `No session found: ${key}` });
+      return noSessionFoundResult(key);
     }
     const agentCheckLegacy = validateSessionAgentExists(
       cfg,
-      refreshedTarget.canonicalKey,
-      refreshedTarget.store[refreshedTarget.canonicalKey],
-      { acpMetadataSessionKey: refreshedTarget.canonicalKey },
+      target.canonicalKey,
+      migratedStore[target.canonicalKey],
+      { acpMetadataSessionKey: target.canonicalKey },
     );
     if (agentCheckLegacy) {
       return agentCheckLegacy;
     }
-    return { ok: true, key: refreshedTarget.canonicalKey };
+    return { ok: true, key: target.canonicalKey };
   }
 
   if (hasSessionId) {
@@ -199,7 +191,10 @@ export async function resolveSessionKeyFromResolveParams(params: {
     const matches = findVisibleSessionIdMatches({ cfg, store, p, sessionId });
     const selection = resolveSessionIdMatchSelection(matches, sessionId);
     if (selection.kind === "none") {
-      return noSessionFoundResult({ p, message: `No session found: ${sessionId}` });
+      return {
+        ok: false,
+        error: errorShape(ErrorCodes.INVALID_REQUEST, `No session found: ${sessionId}`),
+      };
     }
     if (selection.kind === "ambiguous") {
       const keys = selection.sessionKeys.join(", ");
@@ -246,10 +241,13 @@ export async function resolveSessionKeyFromResolveParams(params: {
     },
   });
   if (list.sessions.length === 0) {
-    return noSessionFoundResult({
-      p,
-      message: `No session found with label: ${parsedLabel.label}`,
-    });
+    return {
+      ok: false,
+      error: errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        `No session found with label: ${parsedLabel.label}`,
+      ),
+    };
   }
   if (list.sessions.length > 1) {
     const keys = list.sessions.map((s) => s.key).join(", ");
@@ -262,13 +260,10 @@ export async function resolveSessionKeyFromResolveParams(params: {
     };
   }
 
-  const labelKey = expectDefined(list.sessions[0], "sessions entry at 0").key;
+  const labelKey = list.sessions[0].key;
   const agentCheckLabel = validateSessionAgentExists(cfg, labelKey, store[labelKey]);
   if (agentCheckLabel) {
     return agentCheckLabel;
   }
-  return {
-    ok: true,
-    key: expectDefined(list.sessions[0], "sessions entry at 0").key,
-  };
+  return { ok: true, key: list.sessions[0].key };
 }

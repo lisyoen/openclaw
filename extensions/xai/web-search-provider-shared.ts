@@ -4,7 +4,7 @@ import {
   type WebSearchProviderPlugin,
 } from "openclaw/plugin-sdk/provider-web-search-config-contract";
 
-const XAI_WEB_SEARCH_CREDENTIAL_PATH = "plugins.entries.xai.config.webSearch.apiKey";
+export const XAI_WEB_SEARCH_CREDENTIAL_PATH = "plugins.entries.xai.config.webSearch.apiKey";
 
 export function buildXaiWebSearchProviderBase(): Omit<
   WebSearchProviderPlugin,

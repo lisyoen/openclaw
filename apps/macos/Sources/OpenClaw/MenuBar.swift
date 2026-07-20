@@ -16,8 +16,8 @@ struct OpenClawApp: App {
     private let gatewayManager = GatewayProcessManager.shared
     private let controlChannel = ControlChannel.shared
     private let activityStore = WorkActivityStore.shared
+    private let connectivityCoordinator = GatewayConnectivityCoordinator.shared
     @State private var statusItem: NSStatusItem?
-    @State private var statusItemMouseRouter = StatusItemMouseRouter()
     @State private var isMenuPresented = false
     @State private var isPanelVisible = false
     @State private var tailscaleService = TailscaleService.shared
@@ -89,7 +89,6 @@ struct OpenClawApp: App {
         .onChange(of: self.state.connectionMode) { _, mode in
             Task { await ConnectionModeCoordinator.shared.apply(mode: mode, paused: self.state.isPaused) }
             CLIInstallPrompter.shared.checkAndPromptIfNeeded(reason: "connection-mode")
-            BrowserProfileImportModel.shared.handleConnectionModeChange()
         }
 
         Window("OpenClaw Settings", id: SettingsWindowOpener.windowID) {
@@ -97,17 +96,9 @@ struct OpenClawApp: App {
                 .frame(width: SettingsTab.windowWidth, height: SettingsTab.windowHeight, alignment: .topLeading)
                 .environment(self.tailscaleService)
         }
-        .defaultLaunchBehavior(.suppressed)
-        .restorationBehavior(.disabled)
         .defaultSize(width: SettingsTab.windowWidth, height: SettingsTab.windowHeight)
         .windowResizability(.contentSize)
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("New Thread") {
-                    DashboardManager.shared.dispatchNativeCommand(.newSession)
-                }
-                .keyboardShortcut("n", modifiers: .command)
-            }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings...") {
                     self.openWindow(id: SettingsWindowOpener.windowID)
@@ -115,24 +106,6 @@ struct OpenClawApp: App {
                 .keyboardShortcut(",", modifiers: .command)
             }
             SidebarCommands()
-            CommandMenu("Navigate") {
-                Button("Back") {
-                    DashboardManager.shared.navigateBack()
-                }
-                .keyboardShortcut("[", modifiers: .command)
-
-                Button("Forward") {
-                    DashboardManager.shared.navigateForward()
-                }
-                .keyboardShortcut("]", modifiers: .command)
-
-                Divider()
-
-                Button("Command Palette…") {
-                    DashboardManager.shared.dispatchNativeCommand(.commandPalette)
-                }
-                .keyboardShortcut("k", modifiers: .command)
-            }
         }
         .onChange(of: self.isMenuPresented) { _, _ in
             self.updateStatusHighlight()
@@ -161,23 +134,17 @@ struct OpenClawApp: App {
     }
 
     private var isGatewaySleeping: Bool {
-        if self.state.isPaused {
-            return false
-        }
+        if self.state.isPaused { return false }
         switch self.state.connectionMode {
         case .unconfigured:
             return true
         case .remote:
-            if case .connected = self.controlChannel.state {
-                return false
-            }
+            if case .connected = self.controlChannel.state { return false }
             return true
         case .local:
             switch self.gatewayManager.status {
             case .running, .starting, .attachedExisting:
-                if case .connected = self.controlChannel.state {
-                    return false
-                }
+                if case .connected = self.controlChannel.state { return false }
                 return true
             case .failed, .stopped:
                 return true
@@ -187,6 +154,9 @@ struct OpenClawApp: App {
 
     @MainActor
     private func installStatusItemMouseHandler(for item: NSStatusItem) {
+        guard let button = item.button else { return }
+        if button.subviews.contains(where: { $0 is StatusItemMouseHandlerView }) { return }
+
         WebChatManager.shared.onPanelVisibilityChanged = { [self] visible in
             self.isPanelVisible = visible
             self.updateStatusHighlight()
@@ -197,23 +167,31 @@ struct OpenClawApp: App {
         }
         CanvasManager.shared.defaultAnchorProvider = { [self] in self.statusButtonScreenFrame() }
 
-        self.statusItemMouseRouter.install(
-            on: item,
-            onLeftClick: { [self] in
-                HoverHUDController.shared.dismiss()
-                self.openDashboardWindow()
-            },
-            onRightClick: { [self] in
-                HoverHUDController.shared.dismiss()
-                WebChatManager.shared.closePanel()
-                self.isMenuPresented = true
-                self.updateStatusHighlight()
-            },
-            onHoverChanged: { [self] inside in
-                HoverHUDController.shared.statusItemHoverChanged(
-                    inside: inside,
-                    anchorProvider: { [self] in self.statusButtonScreenFrame() })
-            })
+        let handler = StatusItemMouseHandlerView()
+        handler.translatesAutoresizingMaskIntoConstraints = false
+        handler.onLeftClick = { [self] in
+            HoverHUDController.shared.dismiss(reason: "statusItemClick")
+            self.openDashboardWindow()
+        }
+        handler.onRightClick = { [self] in
+            HoverHUDController.shared.dismiss(reason: "statusItemRightClick")
+            WebChatManager.shared.closePanel()
+            self.isMenuPresented = true
+            self.updateStatusHighlight()
+        }
+        handler.onHoverChanged = { [self] inside in
+            HoverHUDController.shared.statusItemHoverChanged(
+                inside: inside,
+                anchorProvider: { [self] in self.statusButtonScreenFrame() })
+        }
+
+        button.addSubview(handler)
+        NSLayoutConstraint.activate([
+            handler.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            handler.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+            handler.topAnchor.constraint(equalTo: button.topAnchor),
+            handler.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+        ])
     }
 
     @MainActor
@@ -225,7 +203,7 @@ struct OpenClawApp: App {
 
     @MainActor
     private func statusButtonScreenFrame() -> NSRect? {
-        guard let button = statusItem?.button, let window = button.window else { return nil }
+        guard let button = self.statusItem?.button, let window = button.window else { return nil }
         let inWindow = button.convert(button.bounds, to: nil)
         return window.convertToScreen(inWindow)
     }
@@ -245,147 +223,37 @@ struct OpenClawApp: App {
     }
 }
 
-/// Routes status-item clicks before AppKit starts the menu's nested tracking loop.
-/// A label subview is not durable because SwiftUI replaces it when `MenuBarExtra` redraws.
-@MainActor
-final class StatusItemMouseRouter: NSResponder {
-    typealias EventMonitorHandler = (NSEvent) -> NSEvent?
-    typealias EventMonitorInstaller = (NSEvent.EventTypeMask, @escaping EventMonitorHandler) -> Any?
-    typealias EventMonitorRemover = (Any) -> Void
+/// Transparent overlay that intercepts clicks without stealing MenuBarExtra ownership.
+private final class StatusItemMouseHandlerView: NSView {
+    var onLeftClick: (() -> Void)?
+    var onRightClick: (() -> Void)?
+    var onHoverChanged: ((Bool) -> Void)?
+    private var tracking: NSTrackingArea?
 
-    private weak var button: NSView?
-    private var eventMonitor: Any?
-    private var trackingArea: NSTrackingArea?
-    private var onLeftClick: (() -> Void)?
-    private var onRightClick: (() -> Void)?
-    private var onHoverChanged: ((Bool) -> Void)?
-    private let eventMonitorInstaller: EventMonitorInstaller
-    private let eventMonitorRemover: EventMonitorRemover
-
-    init(
-        eventMonitorInstaller: @escaping EventMonitorInstaller = { mask, handler in
-            NSEvent.addLocalMonitorForEvents(matching: mask, handler: handler)
-        },
-        eventMonitorRemover: @escaping EventMonitorRemover = { monitor in
-            NSEvent.removeMonitor(monitor)
-        })
-    {
-        self.eventMonitorInstaller = eventMonitorInstaller
-        self.eventMonitorRemover = eventMonitorRemover
-        super.init()
-    }
-
-    required init?(coder: NSCoder) {
-        self.eventMonitorInstaller = { mask, handler in
-            NSEvent.addLocalMonitorForEvents(matching: mask, handler: handler)
-        }
-        self.eventMonitorRemover = { monitor in
-            NSEvent.removeMonitor(monitor)
-        }
-        super.init(coder: coder)
-    }
-
-    func install(
-        on item: NSStatusItem,
-        onLeftClick: @escaping () -> Void,
-        onRightClick: @escaping () -> Void,
-        onHoverChanged: @escaping (Bool) -> Void)
-    {
-        guard let button = item.button else { return }
-        self.install(
-            on: button,
-            onLeftClick: onLeftClick,
-            onRightClick: onRightClick,
-            onHoverChanged: onHoverChanged)
-    }
-
-    func install(
-        on button: NSView,
-        onLeftClick: @escaping () -> Void,
-        onRightClick: @escaping () -> Void,
-        onHoverChanged: @escaping (Bool) -> Void)
-    {
-        self.onLeftClick = onLeftClick
-        self.onRightClick = onRightClick
-        self.onHoverChanged = onHoverChanged
-        self.track(button)
-
-        guard self.eventMonitor == nil else { return }
-        self.eventMonitor = Self.installMonitor(using: self.eventMonitorInstaller) { [weak self] event in
-            guard let self else { return event }
-            return self.route(event)
-        }
-    }
-
-    func route(_ event: NSEvent) -> NSEvent? {
-        Self.route(
-            event,
-            hitsTarget: self.button.map { Self.contains(event, in: $0) } ?? false,
-            onLeftClick: { self.onLeftClick?() },
-            onRightClick: { self.onRightClick?() })
-    }
-
-    static func installMonitor(
-        using installer: EventMonitorInstaller,
-        handler: @escaping EventMonitorHandler) -> Any?
-    {
-        installer([.leftMouseDown, .rightMouseDown]) { event in
-            handler(event)
-        }
-    }
-
-    static func route(
-        _ event: NSEvent,
-        hitsTarget: Bool,
-        onLeftClick: () -> Void,
-        onRightClick: () -> Void) -> NSEvent?
-    {
-        guard hitsTarget else { return event }
-        switch event.type {
-        case .leftMouseDown:
+    override func mouseDown(with event: NSEvent) {
+        if let onLeftClick {
             onLeftClick()
-            return nil
-        case .rightMouseDown:
-            onRightClick()
-            return nil
-        default:
-            return event
+        } else {
+            super.mouseDown(with: event)
         }
     }
 
-    private func track(_ button: NSView) {
-        guard self.button !== button else { return }
-        if let previousButton = self.button, let trackingArea {
-            previousButton.removeTrackingArea(trackingArea)
-        }
-        let trackingArea = NSTrackingArea(
-            rect: button.bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil)
-        button.addTrackingArea(trackingArea)
-        self.button = button
-        self.trackingArea = trackingArea
+    override func rightMouseDown(with event: NSEvent) {
+        self.onRightClick?()
+        // Do not call super; menu will be driven by isMenuPresented binding.
     }
 
-    private static func contains(_ event: NSEvent, in button: NSView) -> Bool {
-        guard let window = button.window, event.windowNumber == window.windowNumber else { return false }
-        let point = button.convert(event.locationInWindow, from: nil)
-        return button.bounds.contains(point)
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        TrackingAreaSupport.resetMouseTracking(on: self, tracking: &self.tracking, owner: self)
     }
 
-    override func mouseEntered(with _: NSEvent) {
+    override func mouseEntered(with event: NSEvent) {
         self.onHoverChanged?(true)
     }
 
-    override func mouseExited(with _: NSEvent) {
+    override func mouseExited(with event: NSEvent) {
         self.onHoverChanged?(false)
-    }
-
-    @MainActor deinit {
-        if let eventMonitor {
-            self.eventMonitorRemover(eventMonitor)
-        }
     }
 }
 
@@ -406,32 +274,9 @@ private struct SettingsWindowOpenRegistrar: View {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let dashboardURL = URL(string: "openclaw://dashboard")!
     private var state: AppState?
-    private var terminationCleanupTask: Task<Void, Never>?
-    private var terminationDeadlineTask: Task<Void, Never>?
-    private var terminationCleanupFinished = false
     private let webChatAutoLogger = Logger(subsystem: "ai.openclaw", category: "Chat")
-    var nodeTerminationCleanup: @MainActor () async -> Void = {
-        await TalkMLXSpeechSynthesizer.shared.shutdown()
-        await MacNodeModeCoordinator.shared.stopAndWait()
-    }
-
-    var waitForTerminationCleanupDeadline: @MainActor () async -> Void = {
-        try? await Task.sleep(for: .seconds(AppTerminationTiming.cleanupDeadlineSeconds))
-    }
-
-    var applicationTerminationReply: @MainActor (NSApplication, Bool) -> Void = { app, allow in
-        app.reply(toApplicationShouldTerminate: allow)
-    }
-
-    var openDashboardAction: @MainActor () -> Void = { AppNavigationActions.openDashboard() }
     let updaterController: UpdaterProviding = makeUpdaterController()
-
-    func applicationWillFinishLaunching(_: Notification) {
-        // URL/reopen callbacks can create the dashboard before didFinishLaunching.
-        DashboardManager.shared.configure(updater: self.updaterController)
-    }
 
     func applicationDockMenu(_: NSApplication) -> NSMenu? {
         let menu = NSMenu()
@@ -468,7 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc
     private func openDashboardFromDockMenu(_: Any?) {
-        self.openDashboardAction()
+        AppNavigationActions.openDashboard()
     }
 
     @objc
@@ -494,70 +339,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if flag {
-            return true
-        }
-        self.openDashboardAction()
-        return false
-    }
-
     @MainActor
-    func applicationDidFinishLaunching(_: Notification) {
-        let environment = ProcessInfo.processInfo.environment
-        let hasReplacementHandoff = ApplicationRelocator.hasReplacementHandoffMetadata(
-            environment: environment)
-        let isReplacementHandoff = ApplicationRelocator.acceptReplacementHandoff(
-            environment: environment)
-        if hasReplacementHandoff, !isReplacementHandoff {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if self.isDuplicateInstance() {
             NSApp.terminate(nil)
             return
         }
-        // Only a child whose signed parent and inherited readiness pipe authenticate
-        // may overlap the old process during replacement handoff.
-        if !isReplacementHandoff, self.isDuplicateInstance() {
-            NSWorkspace.shared.open(Self.dashboardURL)
-            NSApp.terminate(nil)
-            return
-        }
-        switch ApplicationRelocator.handleLaunch() {
-        case .terminating:
-            return
-        case let .continueLaunch(startUpdater):
-            if startUpdater {
-                self.updaterController.start()
-            }
-        }
-        // Remote startup can spawn an SSH child. Admit tunnel work only after the
-        // singleton check so a short-lived handoff process cannot orphan that child.
-        GatewayEndpointStore.admitPrimaryAppLaunch()
-        GatewayConnectivityCoordinator.shared.start()
         self.state = AppStateStore.shared
+        AppActivationPolicy.apply(showDockIcon: self.state?.showDockIcon ?? false)
         if let state {
-            MacNodeModeCoordinator.prepareNodeIdentityProfile(
-                isExistingInstallation: state.onboardingSeen || state.connectionMode != .unconfigured)
-        }
-        AppActivationPolicy.apply(showDockIcon: state?.showDockIcon ?? false)
-        if let state {
-            let shouldWaitForConnection = state.connectionMode != .unconfigured
-            if !shouldWaitForConnection {
-                Task { @MainActor in
-                    await self.scheduleFirstRunOnboardingIfNeeded(gatewayConnected: false)
-                }
-            }
-            Task { @MainActor in
-                // Validate PATH selection before local startup. Existing installs may not
-                // have the validation cache yet, and a stale external CLI must not win.
-                if state.connectionMode == .local {
-                    _ = await CLIInstaller.status()
-                }
-                await ConnectionModeCoordinator.shared.apply(
-                    mode: state.connectionMode,
-                    paused: state.isPaused)
-                guard shouldWaitForConnection else { return }
-                await self.scheduleFirstRunOnboardingIfNeeded(
-                    gatewayConnected: ControlChannel.shared.state == .connected)
-            }
+            Task { await ConnectionModeCoordinator.shared.apply(mode: state.connectionMode, paused: state.isPaused) }
         }
         TerminationSignalWatcher.shared.start()
         NodePairingApprovalPrompter.shared.start()
@@ -566,29 +357,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ExecApprovalsGatewayPrompter.shared.start()
         MacNodeModeCoordinator.shared.start()
         VoiceWakeGlobalSettingsSync.shared.start()
-        QuickChatController.shared.start()
         Task { PresenceReporter.shared.start() }
         Task { await HealthStore.shared.refresh(onDemand: true) }
         Task { await PortGuardian.shared.sweep(mode: AppStateStore.shared.connectionMode) }
-        AppStateStore.shared.applyPeekabooBridgeHostState()
+        Task { await PeekabooBridgeHostCoordinator.shared.setEnabled(AppStateStore.shared.peekabooBridgeEnabled) }
+        self.scheduleFirstRunOnboardingIfNeeded()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            if !PostUpdateController.shared.startIfNeeded() {
-                CLIInstallPrompter.shared.checkAndPromptIfNeeded(reason: "launch")
-            }
-        }
-        Task {
-            try? await Task.sleep(for: .seconds(2))
-            DashboardManager.shared.preloadIfConfigured()
+            CLIInstallPrompter.shared.checkAndPromptIfNeeded(reason: "launch")
         }
 
-        #if DEBUG
-        // Screenshot/demo helper: show the pairing panel with sample requests.
-        if ProcessInfo.processInfo.environment["OPENCLAW_DEBUG_PAIRING_DEMO"] == "1" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                DebugActions.showPairingPanelDemo()
-            }
-        }
-        #endif
         // Developer/testing helper: auto-open chat when launched with --chat (or legacy --webchat).
         if CommandLine.arguments.contains("--chat") || CommandLine.arguments.contains("--webchat") {
             self.webChatAutoLogger.debug("Auto-opening chat via CLI flag")
@@ -612,8 +389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationWillTerminate(_: Notification) {
-        QuickChatController.shared.stop()
+    func applicationWillTerminate(_ notification: Notification) {
         PresenceReporter.shared.stop()
         NodePairingApprovalPrompter.shared.stop()
         DevicePairingApprovalPrompter.shared.stop()
@@ -630,160 +406,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await PeekabooBridgeHostCoordinator.shared.stop() }
     }
 
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if self.terminationCleanupFinished {
-            return .terminateNow
-        }
-        guard self.terminationCleanupTask == nil else {
-            return .terminateLater
-        }
-        let cleanup = self.nodeTerminationCleanup
-        self.terminationCleanupTask = Task { @MainActor [weak self] in
-            await cleanup()
-            self?.finishTerminationCleanup(for: sender)
-        }
-        let waitForDeadline = self.waitForTerminationCleanupDeadline
-        self.terminationDeadlineTask = Task { @MainActor [weak self] in
-            await waitForDeadline()
-            guard !Task.isCancelled else { return }
-            self?.finishTerminationCleanup(for: sender)
-        }
-        return .terminateLater
-    }
-
-    private func finishTerminationCleanup(for sender: NSApplication) {
-        guard !self.terminationCleanupFinished else { return }
-        // Cleanup may ignore cancellation while transport or input teardown is stuck.
-        // The deadline replies without awaiting that loser; this gate keeps the reply single.
-        self.terminationCleanupFinished = true
-        self.terminationCleanupTask?.cancel()
-        self.terminationDeadlineTask?.cancel()
-        self.terminationCleanupTask = nil
-        self.terminationDeadlineTask = nil
-        self.applicationTerminationReply(sender, true)
-    }
-
     @MainActor
-    static func shouldOpenDashboardInsteadOfOnboarding(
-        connectionMode: AppState.ConnectionMode,
-        onboardingSeen: Bool,
-        systemAgentResumePending: Bool,
-        gatewayConnected: Bool,
-        configuredInferenceModel: String?) -> Bool
-    {
-        let model = configuredInferenceModel?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return connectionMode != .unconfigured &&
-            !onboardingSeen &&
-            !systemAgentResumePending &&
-            gatewayConnected &&
-            model?.isEmpty == false
-    }
-
-    static func isCurrentFirstRunInferenceProbe(
-        expectedConnectionMode: AppState.ConnectionMode,
-        currentConnectionMode: AppState.ConnectionMode,
-        expectedRouteIdentity: String?,
-        currentRouteIdentity: String?,
-        gatewayRouteIsCurrent: Bool) -> Bool
-    {
-        expectedConnectionMode != .unconfigured &&
-            expectedConnectionMode == currentConnectionMode &&
-            expectedRouteIdentity != nil &&
-            expectedRouteIdentity == currentRouteIdentity &&
-            gatewayRouteIsCurrent
-    }
-
-    static func shouldPresentScheduledFirstRunOnboarding(
-        expectedConnectionMode: AppState.ConnectionMode,
-        currentConnectionMode: AppState.ConnectionMode,
-        expectedRouteIdentity: String?,
-        currentRouteIdentity: String?,
-        onboardingSeen: Bool) -> Bool
-    {
-        !onboardingSeen &&
-            expectedConnectionMode == currentConnectionMode &&
-            expectedRouteIdentity == currentRouteIdentity
-    }
-
-    private func scheduleFirstRunOnboardingIfNeeded(gatewayConnected: Bool) async {
-        let connectionMode = AppStateStore.shared.connectionMode
-        let expectedRouteIdentity = OnboardingSystemAgentResumeStore.selectedRouteIdentity()
-        var configuredInferenceModel: String?
-        if connectionMode != .unconfigured,
-           !AppStateStore.shared.onboardingSeen,
-           gatewayConnected
-        {
-            guard let route = await GatewayConnection.shared.captureRoute() else {
-                self.scheduleFirstRunOnboardingRecovery()
-                return
-            }
-            // Bind inference discovery to the connected route. A socket without a
-            // default-agent model cannot run OpenClaw and must stay in onboarding.
-            do {
-                configuredInferenceModel = try await GatewayConnection.shared.configuredInferenceModel(
-                    ifCurrentRoute: route)
-            } catch {
-                // A transient read failure is not evidence that inference is absent.
-                // Onboarding retries the same read without mutating on failure.
-                self.scheduleFirstRunOnboardingRecovery()
-                return
-            }
-            let gatewayRouteIsCurrent = await GatewayConnection.shared.isCurrentRoute(route)
-            let currentRouteIdentity = OnboardingSystemAgentResumeStore.selectedRouteIdentity()
-            guard Self.isCurrentFirstRunInferenceProbe(
-                expectedConnectionMode: connectionMode,
-                currentConnectionMode: AppStateStore.shared.connectionMode,
-                expectedRouteIdentity: expectedRouteIdentity,
-                currentRouteIdentity: currentRouteIdentity,
-                gatewayRouteIsCurrent: gatewayRouteIsCurrent)
-            else {
-                self.scheduleFirstRunOnboardingRecovery()
-                return
-            }
-        }
-        let onboardingSeen = AppStateStore.shared.onboardingSeen
-        let systemAgentResumePending = OnboardingSystemAgentResumeStore.isPending(for: expectedRouteIdentity)
-        let shouldOpenDashboard = Self.shouldOpenDashboardInsteadOfOnboarding(
-            connectionMode: connectionMode,
-            onboardingSeen: onboardingSeen,
-            systemAgentResumePending: systemAgentResumePending,
-            gatewayConnected: gatewayConnected,
-            configuredInferenceModel: configuredInferenceModel)
-        if connectionMode != .unconfigured, onboardingSeen || shouldOpenDashboard {
-            // Completion flags do not own any route's activation receipt.
+    private func scheduleFirstRunOnboardingIfNeeded() {
+        if AppStateStore.shared.connectionMode != .unconfigured {
             OnboardingController.markComplete()
-            if shouldOpenDashboard {
-                self.openDashboardAction()
-            }
             return
         }
-        self.scheduleFirstRunOnboardingPresentation(
-            expectedConnectionMode: connectionMode,
-            expectedRouteIdentity: expectedRouteIdentity)
-    }
-
-    private func scheduleFirstRunOnboardingRecovery() {
-        self.scheduleFirstRunOnboardingPresentation(
-            expectedConnectionMode: AppStateStore.shared.connectionMode,
-            expectedRouteIdentity: OnboardingSystemAgentResumeStore.selectedRouteIdentity())
-    }
-
-    private func scheduleFirstRunOnboardingPresentation(
-        expectedConnectionMode: AppState.ConnectionMode,
-        expectedRouteIdentity: String?)
-    {
         let seenVersion = UserDefaults.standard.integer(forKey: onboardingVersionKey)
         let shouldShow = seenVersion < currentOnboardingVersion || !AppStateStore.shared.onboardingSeen
         guard shouldShow else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            let currentRouteIdentity = OnboardingSystemAgentResumeStore.selectedRouteIdentity()
-            guard Self.shouldPresentScheduledFirstRunOnboarding(
-                expectedConnectionMode: expectedConnectionMode,
-                currentConnectionMode: AppStateStore.shared.connectionMode,
-                expectedRouteIdentity: expectedRouteIdentity,
-                currentRouteIdentity: currentRouteIdentity,
-                onboardingSeen: AppStateStore.shared.onboardingSeen)
-            else { return }
             OnboardingController.shared.show()
         }
     }
@@ -803,12 +435,7 @@ protocol UpdaterProviding: AnyObject {
     var automaticallyDownloadsUpdates: Bool { get set }
     var isAvailable: Bool { get }
     var updateStatus: UpdateStatus { get }
-    func start()
     func checkForUpdates(_ sender: Any?)
-}
-
-extension UpdaterProviding {
-    func start() {}
 }
 
 /// No-op updater used for debug/dev runs to suppress Sparkle dialogs.
@@ -841,18 +468,12 @@ final class SparkleUpdaterController: NSObject, UpdaterProviding {
         updaterDelegate: self,
         userDriverDelegate: nil)
     let updateStatus = UpdateStatus()
-    private var started = false
 
     init(savedAutoUpdate: Bool) {
         super.init()
         let updater = self.controller.updater
         updater.automaticallyChecksForUpdates = savedAutoUpdate
         updater.automaticallyDownloadsUpdates = savedAutoUpdate
-    }
-
-    func start() {
-        guard !self.started else { return }
-        self.started = true
         self.controller.startUpdater()
     }
 
@@ -867,31 +488,29 @@ final class SparkleUpdaterController: NSObject, UpdaterProviding {
     }
 
     var isAvailable: Bool {
-        self.started
+        true
     }
 
     func checkForUpdates(_ sender: Any?) {
-        guard self.started else { return }
         self.controller.checkForUpdates(sender)
     }
 
-    func updater(_: SPUUpdater, didDownloadUpdate _: SUAppcastItem) {
+    func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
         self.updateStatus.isUpdateReady = true
     }
 
-    func updater(_: SPUUpdater, failedToDownloadUpdate _: SUAppcastItem, error _: Error) {
+    func updater(_ updater: SPUUpdater, failedToDownloadUpdate item: SUAppcastItem, error: Error) {
         self.updateStatus.isUpdateReady = false
     }
 
-    func userDidCancelDownload(_: SPUUpdater) {
+    func userDidCancelDownload(_ updater: SPUUpdater) {
         self.updateStatus.isUpdateReady = false
     }
 
-    // periphery:ignore - Sparkle invokes this optional Objective-C delegate callback dynamically.
     func updater(
-        _: SPUUpdater,
+        _ updater: SPUUpdater,
         userDidMakeChoice choice: SPUUserUpdateChoice,
-        forUpdate _: SUAppcastItem,
+        forUpdate updateItem: SUAppcastItem,
         state: SPUUserUpdateState)
     {
         switch choice {
@@ -905,27 +524,7 @@ final class SparkleUpdaterController: NSObject, UpdaterProviding {
     }
 }
 
-func allowedSparkleChannels(forGatewayUpdateChannel channel: String?) -> Set<String> {
-    switch channel {
-    case "beta", "dev":
-        ["beta"]
-    default:
-        []
-    }
-}
-
-extension SparkleUpdaterController: SPUUpdaterDelegate {
-    func allowedChannels(for _: SPUUpdater) -> Set<String> {
-        allowedSparkleChannels(forGatewayUpdateChannel: OpenClawConfigFile.gatewayUpdateChannel())
-    }
-
-    func updater(_: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
-        guard let currentVersion = GatewayEnvironment.appVersionString() else { return }
-        PostAppUpdateReceiptStore.record(
-            fromVersion: currentVersion,
-            toVersion: item.displayVersionString)
-    }
-}
+extension SparkleUpdaterController: SPUUpdaterDelegate {}
 
 private func isDeveloperIDSigned(bundleURL: URL) -> Bool {
     var staticCode: SecStaticCode?

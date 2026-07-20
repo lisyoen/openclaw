@@ -6,28 +6,44 @@ read_when:
   - You need cost tracking, logging, or model routing through LiteLLM
 ---
 
-[LiteLLM](https://litellm.ai) is an open-source LLM gateway with a unified API to 100+ model
-providers. Route OpenClaw through LiteLLM for centralized cost tracking, logging, virtual keys with
-spend limits, and backend failover without changing OpenClaw config.
+[LiteLLM](https://litellm.ai) is an open-source LLM gateway that provides a unified API to 100+ model providers. Route OpenClaw through LiteLLM to get centralized cost tracking, logging, and the flexibility to switch backends without changing your OpenClaw config.
+
+<Tip>
+**Why use LiteLLM with OpenClaw?**
+
+- **Cost tracking** — See exactly what OpenClaw spends across all models
+- **Model routing** — Switch between Claude, GPT-4, Gemini, Bedrock without config changes
+- **Virtual keys** — Create keys with spend limits for OpenClaw
+- **Logging** — Full request/response logs for debugging
+- **Fallbacks** — Automatic failover if your primary provider is down
+
+</Tip>
 
 ## Quick start
 
 <Tabs>
   <Tab title="Onboarding (recommended)">
-    ```bash
-    openclaw onboard --auth-choice litellm-api-key
-    ```
+    **Best for:** fastest path to a working LiteLLM setup.
 
-    For non-interactive setup against a remote proxy, pass the proxy URL explicitly:
+    <Steps>
+      <Step title="Run onboarding">
+        ```bash
+        openclaw onboard --auth-choice litellm-api-key
+        ```
 
-    ```bash
-    openclaw onboard --non-interactive --accept-risk --auth-choice litellm-api-key \
-      --litellm-api-key "$LITELLM_API_KEY" --custom-base-url "https://litellm.example/v1"
-    ```
+        For non-interactive setup against a remote proxy, pass the proxy URL explicitly:
+
+        ```bash
+        openclaw onboard --non-interactive --auth-choice litellm-api-key --litellm-api-key "$LITELLM_API_KEY" --custom-base-url "https://litellm.example/v1"
+        ```
+      </Step>
+    </Steps>
 
   </Tab>
 
   <Tab title="Manual setup">
+    **Best for:** full control over installation and config.
+
     <Steps>
       <Step title="Start LiteLLM Proxy">
         ```bash
@@ -38,14 +54,26 @@ spend limits, and backend failover without changing OpenClaw config.
       <Step title="Point OpenClaw to LiteLLM">
         ```bash
         export LITELLM_API_KEY="your-litellm-key"
+
         openclaw
         ```
+
+        That's it. OpenClaw now routes through LiteLLM.
       </Step>
     </Steps>
+
   </Tab>
 </Tabs>
 
 ## Configuration
+
+### Environment variables
+
+```bash
+export LITELLM_API_KEY="sk-litellm-key"
+```
+
+### Config file
 
 ```json5
 {
@@ -84,13 +112,13 @@ spend limits, and backend failover without changing OpenClaw config.
 }
 ```
 
-The default model onboarding writes is `litellm/claude-opus-4-6`.
+## Advanced configuration
 
-## Image generation
+### Image generation
 
-LiteLLM can back the `image_generate` tool through OpenAI-compatible `/images/generations` and
-`/images/edits` routes. Default image model is `gpt-image-2`; configure a different one under
-`agents.defaults.imageGenerationModel`:
+LiteLLM can also back the `image_generate` tool through OpenAI-compatible
+`/images/generations` and `/images/edits` routes. Configure a LiteLLM image
+model under `agents.defaults.imageGenerationModel`:
 
 ```json5
 {
@@ -113,11 +141,10 @@ LiteLLM can back the `image_generate` tool through OpenAI-compatible `/images/ge
 }
 ```
 
-Loopback LiteLLM URLs (`http://localhost:4000`, `127.0.0.1`, `::1`, `host.docker.internal`) work
-without a global private-network override. For a LAN-hosted proxy, set
-`models.providers.litellm.request.allowPrivateNetwork: true` because the API key is sent to that host.
-
-## Advanced
+Loopback LiteLLM URLs such as `http://localhost:4000` work without a global
+private-network override. For a LAN-hosted proxy, set
+`models.providers.litellm.request.allowPrivateNetwork: true` because the API key
+will be sent to the configured proxy host.
 
 <AccordionGroup>
   <Accordion title="Virtual keys">
@@ -154,11 +181,13 @@ without a global private-network override. For a LAN-hosted proxy, set
           api_key: os.environ/OPENAI_API_KEY
     ```
 
-    OpenClaw keeps requesting `claude-opus-4-6`; LiteLLM handles the routing.
+    OpenClaw keeps requesting `claude-opus-4-6` — LiteLLM handles the routing.
 
   </Accordion>
 
   <Accordion title="Viewing usage">
+    Check LiteLLM's dashboard or API:
+
     ```bash
     # Key info
     curl "http://localhost:4000/key/info" \
@@ -172,13 +201,14 @@ without a global private-network override. For a LAN-hosted proxy, set
   </Accordion>
 
   <Accordion title="Proxy behavior notes">
-    - LiteLLM runs on `http://localhost:4000` by default.
-    - OpenClaw connects through LiteLLM's proxy-style OpenAI-compatible `/v1` endpoint.
-    - Native-OpenAI-only request shaping does not apply through a configured LiteLLM base URL:
-      no `service_tier`, no Responses `store`, no prompt-cache hints, no OpenAI reasoning-effort
-      payload shaping.
-    - Hidden OpenClaw attribution headers (`originator`, `version`, `User-Agent`) are only sent to
-      verified native OpenAI endpoints, so they are not injected on a custom LiteLLM base URL.
+    - LiteLLM runs on `http://localhost:4000` by default
+    - OpenClaw connects through LiteLLM's proxy-style OpenAI-compatible `/v1`
+      endpoint
+    - Native OpenAI-only request shaping does not apply through LiteLLM:
+      no `service_tier`, no Responses `store`, no prompt-cache hints, and no
+      OpenAI reasoning-compat payload shaping
+    - Hidden OpenClaw attribution headers (`originator`, `version`, `User-Agent`)
+      are not injected on custom LiteLLM base URLs
   </Accordion>
 </AccordionGroup>
 
@@ -198,7 +228,7 @@ For general provider configuration and failover behavior, see [Model Providers](
   <Card title="Configuration" href="/gateway/configuration" icon="gear">
     Full config reference.
   </Card>
-  <Card title="Models" href="/concepts/models" icon="brain">
+  <Card title="Model selection" href="/concepts/models" icon="brain">
     How to choose and configure models.
   </Card>
 </CardGroup>

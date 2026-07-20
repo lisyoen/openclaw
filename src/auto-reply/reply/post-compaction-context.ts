@@ -1,21 +1,12 @@
 // Loads post-compaction context summaries for continuation prompts.
 import fs from "node:fs";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { resolveAgentContextLimits } from "../../agents/agent-scope.js";
 import { resolveCronStyleNow } from "../../agents/current-time.js";
 import { formatDateStamp, resolveUserTimezone } from "../../agents/date-time.js";
-import {
-  MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
-  readWorkspaceBootstrapFile,
-} from "../../agents/workspace-bootstrap-read.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { openRootFile } from "../../infra/boundary-file-read.js";
-import { createSubsystemLogger } from "../../logging/subsystem.js";
-
-const log = createSubsystemLogger("post-compaction-context");
 
 const MAX_CONTEXT_CHARS = 1800;
 const DEFAULT_POST_COMPACTION_SECTIONS = ["Session Startup", "Red Lines"];
@@ -56,7 +47,7 @@ function matchesSectionSet(sectionNames: string[], expectedSections: string[]): 
  * Substitutes YYYY-MM-DD placeholders with the real date so agents read the correct
  * daily memory files instead of guessing based on training cutoff.
  */
-type PostCompactionContextOptions = {
+export type PostCompactionContextOptions = {
   cfg?: OpenClawConfig;
   agentId?: string;
   nowMs?: number;
@@ -69,10 +60,6 @@ export async function readPostCompactionContext(
   const cfg = options?.cfg;
   const agentId = options?.agentId;
   const effectiveNowMs = options?.nowMs;
-  const configuredSections = cfg?.agents?.defaults?.compaction?.postCompactionSections;
-  if (!Array.isArray(configuredSections) || configuredSections.length === 0) {
-    return null;
-  }
   const agentsPath = path.join(workspaceDir, "AGENTS.md");
 
   try {
@@ -84,21 +71,18 @@ export async function readPostCompactionContext(
     if (!opened.ok) {
       return null;
     }
-    let content: string;
-    try {
-      content = await readWorkspaceBootstrapFile(opened.fd);
-    } catch (err) {
-      if (err instanceof RangeError) {
-        log.warn(
-          `Ignoring oversized AGENTS.md ${agentsPath}: file exceeds the ${MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES}-byte limit`,
-        );
-        return null;
+    const content = (() => {
+      try {
+        return fs.readFileSync(opened.fd, "utf-8");
+      } finally {
+        fs.closeSync(opened.fd);
       }
-      throw err;
-    } finally {
-      fs.closeSync(opened.fd);
-    }
+    })();
 
+    const configuredSections = cfg?.agents?.defaults?.compaction?.postCompactionSections;
+    if (!Array.isArray(configuredSections) || configuredSections.length === 0) {
+      return null;
+    }
     const sectionNames = configuredSections;
 
     const foundSectionNames: string[] = [];
@@ -133,7 +117,7 @@ export async function readPostCompactionContext(
     const combined = sections.join("\n\n").replaceAll("YYYY-MM-DD", dateStamp);
     const safeContent =
       combined.length > maxContextChars
-        ? truncateUtf16Safe(combined, maxContextChars) + "\n...[truncated]..."
+        ? combined.slice(0, maxContextChars) + "\n...[truncated]..."
         : combined;
 
     // When using the default section set, use precise prose that names the
@@ -202,7 +186,7 @@ export function extractSections(
       const headingMatch = line.match(/^(#{2,3})\s+(.+?)\s*$/);
 
       if (headingMatch) {
-        const level = expectDefined(headingMatch[1], "heading match capture group 1").length; // 2 or 3
+        const level = headingMatch[1].length; // 2 or 3
         const headingText = headingMatch[2];
 
         if (!inSection) {

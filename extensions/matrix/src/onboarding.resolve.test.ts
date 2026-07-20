@@ -12,21 +12,11 @@ vi.mock("./resolve-targets.js", () => ({
   resolveMatrixTargets: resolveMatrixTargetsMock,
 }));
 
-let promptMatrixAllowFrom: NonNullable<
-  NonNullable<typeof import("./onboarding.js").matrixOnboardingAdapter.dmPolicy>["promptAllowFrom"]
->;
+let promptMatrixAllowFrom: typeof import("./onboarding.js").testing.promptMatrixAllowFrom;
 
 describe("matrix onboarding account-scoped resolution", () => {
   beforeAll(async () => {
-    const { matrixOnboardingAdapter } = await import("./onboarding.js");
-    if (!matrixOnboardingAdapter.dmPolicy) {
-      throw new Error("expected Matrix onboarding DM policy");
-    }
-    const promptAllowFrom = matrixOnboardingAdapter.dmPolicy.promptAllowFrom;
-    if (!promptAllowFrom) {
-      throw new Error("expected Matrix onboarding allowlist prompt");
-    }
-    promptMatrixAllowFrom = promptAllowFrom;
+    ({ promptMatrixAllowFrom } = (await import("./onboarding.js")).testing);
   });
 
   beforeEach(() => {

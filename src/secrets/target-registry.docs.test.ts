@@ -1,7 +1,6 @@
 /** Verifies docs stay aligned with the secret target registry. */
 import fs from "node:fs";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildSecretRefCredentialMatrix,
@@ -79,7 +78,7 @@ describe("secret target registry docs", () => {
         if (!match) {
           continue;
         }
-        const candidate = expectDefined(match[1], "match[1] test invariant");
+        const candidate = match[1];
         if (!candidate.includes(".")) {
           continue;
         }

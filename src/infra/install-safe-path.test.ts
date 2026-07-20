@@ -1,7 +1,5 @@
 // Covers safe plugin install path normalization and boundary checks.
-import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { withTempDir } from "../test-helpers/temp-dir.js";
@@ -13,31 +11,6 @@ import {
   safePathSegmentHashed,
   unscopedPackageName,
 } from "./install-safe-path.js";
-
-const directorySymlinkType = process.platform === "win32" ? "junction" : "dir";
-
-// Vitest evaluates skipIf while declaring tests, so probe before describe().
-const canCreateDirectorySymlinks = (() => {
-  let probeDir: string | undefined;
-  try {
-    probeDir = fsSync.mkdtempSync(
-      path.join(os.tmpdir(), "openclaw-install-safe-dir-symlink-probe-"),
-    );
-    const targetDir = path.join(probeDir, "target");
-    const linkDir = path.join(probeDir, "link");
-    fsSync.mkdirSync(targetDir);
-    fsSync.symlinkSync(targetDir, linkDir, directorySymlinkType);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    if (probeDir) {
-      try {
-        fsSync.rmSync(probeDir, { recursive: true, force: true });
-      } catch {}
-    }
-  }
-})();
 
 describe("unscopedPackageName", () => {
   it.each([
@@ -182,13 +155,13 @@ describe("assertCanonicalPathWithinBase", () => {
     });
   });
 
-  it.skipIf(!canCreateDirectorySymlinks)(
+  it.runIf(process.platform !== "win32")(
     "rejects symlinked candidate directories that escape the base",
     async () => {
       await withTempDir({ prefix: "openclaw-install-safe-" }, async (baseDir) => {
         await withTempDir({ prefix: "openclaw-install-safe-outside-" }, async (outsideDir) => {
           const linkDir = path.join(baseDir, "alias");
-          await fs.symlink(outsideDir, linkDir, directorySymlinkType);
+          await fs.symlink(outsideDir, linkDir);
           await expect(
             assertCanonicalPathWithinBase({
               baseDir,
@@ -201,14 +174,14 @@ describe("assertCanonicalPathWithinBase", () => {
     },
   );
 
-  it.skipIf(!canCreateDirectorySymlinks)(
+  it.runIf(process.platform !== "win32")(
     "accepts symlinked base directories when the target stays in the real base",
     async () => {
       await withTempDir({ prefix: "openclaw-install-safe-" }, async (parentDir) => {
         const realBaseDir = path.join(parentDir, "real-base");
         const symlinkBaseDir = path.join(parentDir, "base-link");
         await fs.mkdir(realBaseDir, { recursive: true });
-        await fs.symlink(realBaseDir, symlinkBaseDir, directorySymlinkType);
+        await fs.symlink(realBaseDir, symlinkBaseDir);
         await expect(
           assertCanonicalPathWithinBase({
             baseDir: symlinkBaseDir,
@@ -220,7 +193,7 @@ describe("assertCanonicalPathWithinBase", () => {
     },
   );
 
-  it.skipIf(!canCreateDirectorySymlinks)(
+  it.runIf(process.platform !== "win32")(
     "rejects nested symlinked candidate directories",
     async () => {
       await withTempDir({ prefix: "openclaw-install-safe-" }, async (parentDir) => {
@@ -229,7 +202,7 @@ describe("assertCanonicalPathWithinBase", () => {
         const nestedSymlinkDir = path.join(realBaseDir, "nested-link");
         await fs.mkdir(realBaseDir, { recursive: true });
         await fs.mkdir(nestedRealDir, { recursive: true });
-        await fs.symlink(nestedRealDir, nestedSymlinkDir, directorySymlinkType);
+        await fs.symlink(nestedRealDir, nestedSymlinkDir);
         await expect(
           assertCanonicalPathWithinBase({
             baseDir: realBaseDir,

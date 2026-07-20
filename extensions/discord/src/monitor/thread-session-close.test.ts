@@ -2,10 +2,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hoisted = vi.hoisted(() => {
-  const deleteSessionEntry = vi.fn();
-  const listSessionEntries = vi.fn();
+  const updateSessionStore = vi.fn();
   const resolveStorePath = vi.fn(() => "/tmp/openclaw-sessions.json");
-  return { deleteSessionEntry, listSessionEntries, resolveStorePath };
+  return { updateSessionStore, resolveStorePath };
 });
 
 vi.mock("openclaw/plugin-sdk/session-store-runtime", async () => {
@@ -14,37 +13,16 @@ vi.mock("openclaw/plugin-sdk/session-store-runtime", async () => {
   );
   return {
     ...actual,
-    deleteSessionEntry: hoisted.deleteSessionEntry,
-    listSessionEntries: hoisted.listSessionEntries,
+    updateSessionStore: hoisted.updateSessionStore,
     resolveStorePath: hoisted.resolveStorePath,
   };
 });
 
 let closeDiscordThreadSessions: typeof import("./thread-session-close.js").closeDiscordThreadSessions;
 
-function setupStore(store: Record<string, { sessionId?: string; updatedAt: number }>) {
-  hoisted.listSessionEntries.mockImplementation(() =>
-    Object.entries(store).map(([sessionKey, entry]) => ({ sessionKey, entry })),
-  );
-  hoisted.deleteSessionEntry.mockImplementation(
-    async (params: {
-      expectedSessionId?: string | null;
-      expectedUpdatedAt?: number;
-      sessionKey: string;
-    }) => {
-      const entry = store[params.sessionKey];
-      if (
-        !entry ||
-        (params.expectedSessionId === null
-          ? entry.sessionId !== undefined
-          : entry.sessionId !== params.expectedSessionId) ||
-        entry.updatedAt !== params.expectedUpdatedAt
-      ) {
-        return false;
-      }
-      delete store[params.sessionKey];
-      return true;
-    },
+function setupStore(store: Record<string, { updatedAt: number }>) {
+  hoisted.updateSessionStore.mockImplementation(
+    async (_storePath: string, mutator: (s: typeof store) => unknown) => mutator(store),
   );
 }
 
@@ -60,13 +38,12 @@ describe("closeDiscordThreadSessions", () => {
   });
 
   beforeEach(() => {
-    hoisted.deleteSessionEntry.mockReset();
-    hoisted.listSessionEntries.mockReset();
+    hoisted.updateSessionStore.mockClear();
     hoisted.resolveStorePath.mockClear();
     hoisted.resolveStorePath.mockReturnValue("/tmp/openclaw-sessions.json");
   });
 
-  it("deletes sessions whose key contains the threadId", async () => {
+  it("resets updatedAt to 0 for sessions whose key contains the threadId", async () => {
     const store = {
       [MATCHED_KEY]: { updatedAt: 1_700_000_000_000 },
       [UNMATCHED_KEY]: { updatedAt: 1_700_000_000_001 },
@@ -80,7 +57,7 @@ describe("closeDiscordThreadSessions", () => {
     });
 
     expect(count).toBe(1);
-    expect(store[MATCHED_KEY]).toBeUndefined();
+    expect(store[MATCHED_KEY].updatedAt).toBe(0);
     expect(store[UNMATCHED_KEY].updatedAt).toBe(1_700_000_000_001);
   });
 
@@ -100,7 +77,7 @@ describe("closeDiscordThreadSessions", () => {
     expect(store[UNMATCHED_KEY].updatedAt).toBe(1_700_000_000_001);
   });
 
-  it("deletes all matching sessions when multiple keys contain the threadId", async () => {
+  it("resets all matching sessions when multiple keys contain the threadId", async () => {
     const keyA = `agent:main:discord:channel:${THREAD_ID}`;
     const keyB = `agent:work:discord:channel:${THREAD_ID}`;
     const keyC = `agent:main:discord:channel:${OTHER_ID}`;
@@ -118,8 +95,8 @@ describe("closeDiscordThreadSessions", () => {
     });
 
     expect(count).toBe(2);
-    expect(store[keyA]).toBeUndefined();
-    expect(store[keyB]).toBeUndefined();
+    expect(store[keyA].updatedAt).toBe(0);
+    expect(store[keyB].updatedAt).toBe(0);
     expect(store[keyC].updatedAt).toBe(3_000);
   });
 
@@ -155,7 +132,7 @@ describe("closeDiscordThreadSessions", () => {
     });
 
     expect(count).toBe(1);
-    expect(store[uppercaseKey]).toBeUndefined();
+    expect(store[uppercaseKey].updatedAt).toBe(0);
   });
 
   it("returns 0 immediately when threadId is empty without touching the store", async () => {
@@ -166,51 +143,15 @@ describe("closeDiscordThreadSessions", () => {
     });
 
     expect(count).toBe(0);
-    expect(hoisted.listSessionEntries).not.toHaveBeenCalled();
-    expect(hoisted.deleteSessionEntry).not.toHaveBeenCalled();
+    expect(hoisted.updateSessionStore).not.toHaveBeenCalled();
   });
 
-  it("does not recount sessions that were already deleted", async () => {
+  it("does not recount sessions that were already reset", async () => {
     const store = {
-      [MATCHED_KEY]: { updatedAt: 1_700_000_000_000 },
+      [MATCHED_KEY]: { updatedAt: 0 },
       [UNMATCHED_KEY]: { updatedAt: 1_700_000_000_001 },
     };
     setupStore(store);
-
-    const firstCount = await closeDiscordThreadSessions({
-      cfg: {},
-      accountId: "default",
-      threadId: THREAD_ID,
-    });
-    const secondCount = await closeDiscordThreadSessions({
-      cfg: {},
-      accountId: "default",
-      threadId: THREAD_ID,
-    });
-
-    expect(firstCount).toBe(1);
-    expect(secondCount).toBe(0);
-    expect(store[MATCHED_KEY]).toBeUndefined();
-    expect(store[UNMATCHED_KEY].updatedAt).toBe(1_700_000_000_001);
-  });
-
-  it("does not delete a matching session that changed after the list snapshot", async () => {
-    const store = {
-      [MATCHED_KEY]: {
-        sessionId: "fresh-session",
-        updatedAt: 2_000,
-      },
-    };
-    setupStore(store);
-    hoisted.listSessionEntries.mockReturnValue([
-      {
-        sessionKey: MATCHED_KEY,
-        entry: {
-          sessionId: "old-session",
-          updatedAt: 1_000,
-        },
-      },
-    ]);
 
     const count = await closeDiscordThreadSessions({
       cfg: {},
@@ -219,8 +160,8 @@ describe("closeDiscordThreadSessions", () => {
     });
 
     expect(count).toBe(0);
-    expect(store[MATCHED_KEY].updatedAt).toBe(2_000);
-    expect(store[MATCHED_KEY].sessionId).toBe("fresh-session");
+    expect(store[MATCHED_KEY].updatedAt).toBe(0);
+    expect(store[UNMATCHED_KEY].updatedAt).toBe(1_700_000_000_001);
   });
 
   it("resolves the store path using cfg.session.store and accountId", async () => {

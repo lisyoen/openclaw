@@ -1,26 +1,14 @@
 // Diffs plugin module implements viewer client behavior.
 import { FileDiff, preloadHighlighter } from "@pierre/diffs";
-import type { FileDiffOptions, SupportedLanguages } from "@pierre/diffs";
+import type {
+  FileContents,
+  FileDiffMetadata,
+  FileDiffOptions,
+  SupportedLanguages,
+} from "@pierre/diffs";
 import { normalizeDiffViewerPayloadLanguages } from "./language-hints.js";
 import type { DiffViewerPayload, DiffLayout, DiffTheme } from "./types.js";
 import { parseViewerPayloadJson } from "./viewer-payload.js";
-
-// oxlint-disable-next-line eslint/no-underscore-dangle -- Bundled builds replace this compile-time define identifier.
-declare const __OPENCLAW_DIFFS_LANGUAGE_PACK__: boolean | undefined;
-
-// Build-time esbuild define; typeof guard keeps the module loadable where the
-// define is absent (vitest/node), matching the __OPENCLAW_VERSION__ pattern.
-function readInjectedLanguagePackFlag(): boolean | undefined {
-  return typeof __OPENCLAW_DIFFS_LANGUAGE_PACK__ === "boolean"
-    ? __OPENCLAW_DIFFS_LANGUAGE_PACK__
-    : undefined;
-}
-
-function resolveViewerLanguagePackAvailability(
-  buildFlag: boolean | undefined = readInjectedLanguagePackFlag(),
-): boolean {
-  return buildFlag === true;
-}
 
 type ViewerState = {
   theme: DiffTheme;
@@ -34,7 +22,7 @@ type DiffController = {
   diff: FileDiff;
 };
 
-const controllers: DiffController[] = [];
+export const controllers: DiffController[] = [];
 
 const viewerState: ViewerState = {
   theme: "dark",
@@ -67,6 +55,35 @@ function getCards(): Array<{ host: HTMLElement; payload: DiffViewerPayload }> {
     }
   }
   return cards;
+}
+
+function ensureShadowRoot(host: HTMLElement): void {
+  if (host.shadowRoot) {
+    return;
+  }
+  const template = host.querySelector<HTMLTemplateElement>(
+    ":scope > template[shadowrootmode='open']",
+  );
+  if (!template) {
+    return;
+  }
+  const shadowRoot = host.attachShadow({ mode: "open" });
+  shadowRoot.append(template.content.cloneNode(true));
+  template.remove();
+}
+
+function getHydrateProps(payload: DiffViewerPayload): {
+  fileDiff?: FileDiffMetadata;
+  oldFile?: FileContents;
+  newFile?: FileContents;
+} {
+  if (payload.fileDiff) {
+    return { fileDiff: payload.fileDiff };
+  }
+  return {
+    oldFile: payload.oldFile,
+    newFile: payload.newFile,
+  };
 }
 
 type ToolbarIconName =
@@ -180,10 +197,6 @@ function applyToolbarButtonStyles(button: HTMLButtonElement, active: boolean): v
   icon.style.pointerEvents = "none";
 }
 
-function isImageRenderMode(): boolean {
-  return document.querySelector("main.oc-frame")?.getAttribute("data-render-mode") === "image";
-}
-
 function createToolbar(): HTMLElement {
   const toolbar = document.createElement("div");
   toolbar.className = "oc-diff-toolbar";
@@ -253,10 +266,7 @@ function createRenderOptions(payload: DiffViewerPayload): FileDiffOptions<undefi
     disableLineNumbers: payload.options.disableLineNumbers,
     disableBackground: !viewerState.backgroundEnabled,
     unsafeCSS: payload.options.unsafeCSS,
-    // Image/PDF exports are static; the interactive toggle toolbar would
-    // render as dead UI in the captured file. Returning null keeps the
-    // library's built-in +N/-N header counts without the buttons.
-    renderHeaderMetadata: () => (isImageRenderMode() ? null : createToolbar()),
+    renderHeaderMetadata: () => createToolbar(),
   };
 }
 
@@ -277,14 +287,10 @@ function syncAllControllers(): void {
 }
 
 export async function hydrateViewer(): Promise<void> {
-  // Rehydration replaces the current DOM card set; do not retain controllers
-  // from a previous render because they can keep stale DOM references alive.
-  controllers.length = 0;
-  const languagePackAvailable = resolveViewerLanguagePackAvailability();
   const cards = await Promise.all(
     getCards().map(async ({ host, payload }) => ({
       host,
-      payload: await normalizeDiffViewerPayloadLanguages(payload, { languagePackAvailable }),
+      payload: await normalizeDiffViewerPayloadLanguages(payload),
     })),
   );
   const langs = new Set<SupportedLanguages>();
@@ -312,13 +318,12 @@ export async function hydrateViewer(): Promise<void> {
 
   for (const { host, payload } of cards) {
     try {
+      ensureShadowRoot(host);
       const diff = new FileDiff(createRenderOptions(payload));
       diff.hydrate({
         fileContainer: host,
         prerenderedHTML: payload.prerenderedHTML,
-        fileDiff: payload.fileDiff,
-        oldFile: payload.oldFile,
-        newFile: payload.newFile,
+        ...getHydrateProps(payload),
       });
       const controller = { payload, diff };
       applyState(controller);
@@ -339,7 +344,7 @@ async function main(): Promise<void> {
   }
 }
 
-const disableAutoStartKey = Symbol.for("openclaw.diffs.disableAutoStart");
+export const disableAutoStartKey = Symbol.for("openclaw.diffs.disableAutoStart");
 
 const autoStartDisabled = Boolean(
   (globalThis as typeof globalThis & Record<symbol, unknown>)[disableAutoStartKey],

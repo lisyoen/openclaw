@@ -24,7 +24,6 @@ export function buildTestConfigSnapshot(params: {
 }): ConfigFileSnapshot {
   return {
     path: params.path,
-    includedPaths: [],
     exists: params.exists,
     raw: params.raw,
     parsed: params.parsed,

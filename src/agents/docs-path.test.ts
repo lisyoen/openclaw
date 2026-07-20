@@ -3,7 +3,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveOpenClawReferencePaths } from "./docs-path.js";
+import {
+  resolveOpenClawDocsPath,
+  resolveOpenClawReferencePaths,
+  resolveOpenClawSourcePath,
+} from "./docs-path.js";
 
 async function makePackageRoot(prefix: string): Promise<string> {
   // Tests create minimal package roots so path resolution is checked without
@@ -23,9 +27,9 @@ describe("resolveOpenClawDocsPath", () => {
     const root = await makePackageRoot("openclaw-docs-workspace-");
     await writeDocsJson(root);
 
-    await expect(resolveOpenClawReferencePaths({ workspaceDir: root })).resolves.toMatchObject({
-      docsPath: path.join(root, "docs"),
-    });
+    await expect(resolveOpenClawDocsPath({ workspaceDir: root })).resolves.toBe(
+      path.join(root, "docs"),
+    );
   });
 
   it("finds bundled package docs from a nested package path", async () => {
@@ -34,9 +38,7 @@ describe("resolveOpenClawDocsPath", () => {
     const nested = path.join(root, "dist", "agents");
     await fs.mkdir(nested, { recursive: true });
 
-    await expect(resolveOpenClawReferencePaths({ cwd: nested })).resolves.toMatchObject({
-      docsPath: path.join(root, "docs"),
-    });
+    await expect(resolveOpenClawDocsPath({ cwd: nested })).resolves.toBe(path.join(root, "docs"));
   });
 
   it("does not accept incomplete template-only docs directories", async () => {
@@ -45,9 +47,7 @@ describe("resolveOpenClawDocsPath", () => {
     const root = await makePackageRoot("openclaw-docs-incomplete-");
     await fs.mkdir(path.join(root, "docs", "reference", "templates"), { recursive: true });
 
-    await expect(resolveOpenClawReferencePaths({ cwd: root })).resolves.toMatchObject({
-      docsPath: null,
-    });
+    await expect(resolveOpenClawDocsPath({ cwd: root })).resolves.toBeNull();
   });
 });
 
@@ -56,18 +56,14 @@ describe("resolveOpenClawSourcePath", () => {
     const root = await makePackageRoot("openclaw-source-git-");
     await fs.mkdir(path.join(root, ".git"));
 
-    await expect(resolveOpenClawReferencePaths({ cwd: root })).resolves.toMatchObject({
-      sourcePath: root,
-    });
+    await expect(resolveOpenClawSourcePath({ cwd: root })).resolves.toBe(root);
   });
 
   it("omits source path for npm-style package installs", async () => {
     // npm installs may contain package files but not source checkout metadata.
     const root = await makePackageRoot("openclaw-source-npm-");
 
-    await expect(resolveOpenClawReferencePaths({ cwd: root })).resolves.toMatchObject({
-      sourcePath: null,
-    });
+    await expect(resolveOpenClawSourcePath({ cwd: root })).resolves.toBeNull();
   });
 });
 

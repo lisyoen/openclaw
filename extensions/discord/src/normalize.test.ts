@@ -51,12 +51,7 @@ describe("discord target normalization", () => {
     expect(looksLikeDiscordTargetId("<@!123456>")).toBe(true);
     expect(looksLikeDiscordTargetId("user:123456")).toBe(true);
     expect(looksLikeDiscordTargetId("discord:123456")).toBe(true);
-    expect(looksLikeDiscordTargetId("discord:user:123456")).toBe(true);
-    expect(looksLikeDiscordTargetId("discord:channel:123456")).toBe(true);
     expect(looksLikeDiscordTargetId("123456")).toBe(true);
-    expect(looksLikeDiscordTargetId("channel:general")).toBe(false);
-    expect(looksLikeDiscordTargetId("user:jane")).toBe(false);
-    expect(looksLikeDiscordTargetId("discord:channel:general")).toBe(false);
     expect(looksLikeDiscordTargetId("hello world")).toBe(false);
   });
 });

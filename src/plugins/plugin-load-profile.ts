@@ -7,7 +7,7 @@
  *
  *     [plugin-load-profile] phase=<X> plugin=<Y> elapsedMs=<N> [extras…] source=<S>
  *
- * The `plugin.load-profile` diagnostics flag activates all probes.
+ * The same `OPENCLAW_PLUGIN_LOAD_PROFILE=1` env flag activates all probes.
  *
  * Tooling that scrapes these lines (e.g. PERF-STARTUP-PLAN.md profiling
  * methodology) depends on the field order being:
@@ -21,10 +21,8 @@
  * Keep this contract stable — downstream parsers rely on it.
  */
 
-import { isDiagnosticFlagEnabled } from "../infra/diagnostic-flags.js";
-
 export function shouldProfilePluginLoader(): boolean {
-  return isDiagnosticFlagEnabled("plugin.load-profile");
+  return process.env.OPENCLAW_PLUGIN_LOAD_PROFILE === "1";
 }
 
 /**
@@ -33,10 +31,10 @@ export function shouldProfilePluginLoader(): boolean {
  * scrapers see a deterministic field order regardless of object iteration
  * quirks.
  */
-type PluginLoadProfileExtras = ReadonlyArray<readonly [string, number | string]>;
+export type PluginLoadProfileExtras = ReadonlyArray<readonly [string, number | string]>;
 
 /** Per-call scope: which plugin and which source path the probe is for. */
-type PluginLoadProfileScope = {
+export type PluginLoadProfileScope = {
   pluginId?: string;
   source: string;
 };
@@ -46,7 +44,11 @@ type PluginLoadProfileScope = {
  * emit a `[plugin-load-profile]` line that already includes the bound
  * `pluginId` and `source`. Build one with `createProfiler(scope)`.
  */
-type PluginLoadProfiler = <T>(phase: string, run: () => T, extras?: PluginLoadProfileExtras) => T;
+export type PluginLoadProfiler = <T>(
+  phase: string,
+  run: () => T,
+  extras?: PluginLoadProfileExtras,
+) => T;
 
 /**
  * Render a `[plugin-load-profile]` line. Exported so that callers needing

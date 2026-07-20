@@ -1,9 +1,6 @@
 // Sms plugin module implements phone behavior.
 export function normalizeSmsPhoneNumber(raw: string): string {
-  const trimmed = raw
-    .trim()
-    .replace(/^(?:sms|twilio-sms):/i, "")
-    .trim();
+  const trimmed = raw.trim().replace(/^(?:sms|twilio-sms):/i, "");
   if (!trimmed) {
     return "";
   }

@@ -11,10 +11,7 @@ export function registerMessageSendCommand(message: Command, helpers: MessageCli
           message
             .command("send")
             .description("Send a message")
-            .option(
-              "-m, --message <text>",
-              "Message body (required unless --media or --presentation is set)",
-            ),
+            .option("-m, --message <text>", "Message body (required unless --media is set)"),
         )
         .option(
           "--media <path-or-url>",
@@ -22,7 +19,7 @@ export function registerMessageSendCommand(message: Command, helpers: MessageCli
         )
         .option(
           "--presentation <json>",
-          "Shared presentation payload as JSON (text, context, dividers, charts, tables, buttons, selects)",
+          "Shared presentation payload as JSON (text, context, dividers, buttons, selects)",
         )
         .option("--delivery <json>", "Shared delivery preferences as JSON")
         .option("--pin", "Request that the delivered message be pinned when supported", false)

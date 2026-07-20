@@ -86,6 +86,7 @@ final class VoiceSessionCoordinator {
             token: token,
             transcript: text,
             autoSendAfter: autoSendAfter,
+            sendChime: sendChime,
             attributed: attributed)
     }
 

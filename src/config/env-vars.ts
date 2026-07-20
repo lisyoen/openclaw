@@ -1,7 +1,7 @@
 // Public facade for config env var collection and durable state-dir dotenv reads.
 export {
-  cloneEnvWithPlatformSemantics,
+  applyConfigEnvVars,
   collectConfigRuntimeEnvVars,
   createConfigRuntimeEnv,
-  isConfigRuntimeEnvVarAllowed,
 } from "./config-env-vars.js";
+export { collectDurableServiceEnvVars, readStateDirDotEnvVars } from "./state-dir-dotenv.js";

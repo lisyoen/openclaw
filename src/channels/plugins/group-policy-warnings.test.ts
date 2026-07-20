@@ -24,6 +24,7 @@ import {
   collectOpenGroupPolicyRestrictSendersWarnings,
   collectOpenGroupPolicyRouteAllowlistWarnings,
   buildOpenGroupPolicyConfigureRouteAllowlistWarning,
+  buildOpenGroupPolicyNoRouteAllowlistWarning,
   buildOpenGroupPolicyRestrictSendersWarning,
   buildOpenGroupPolicyWarning,
 } from "./group-policy-warnings.js";
@@ -155,6 +156,20 @@ describe("group policy warning builders", () => {
       }),
     ).toBe(
       '- Example groups: groupPolicy="open" allows any member in allowed groups to trigger (mention-gated). Set channels.example.groupPolicy="allowlist" + channels.example.groupAllowFrom to restrict senders.',
+    );
+  });
+
+  it("builds no-route-allowlist warning", () => {
+    expect(
+      buildOpenGroupPolicyNoRouteAllowlistWarning({
+        surface: "Example groups",
+        routeAllowlistPath: "channels.example.groups",
+        routeScope: "group",
+        groupPolicyPath: "channels.example.groupPolicy",
+        groupAllowFromPath: "channels.example.groupAllowFrom",
+      }),
+    ).toBe(
+      '- Example groups: groupPolicy="open" with no channels.example.groups allowlist; any group can add + ping (mention-gated). Set channels.example.groupPolicy="allowlist" + channels.example.groupAllowFrom or configure channels.example.groups.',
     );
   });
 
@@ -325,9 +340,7 @@ describe("group policy warning builders", () => {
         ...params,
         routeAllowlistConfigured: false,
       }),
-    ).toEqual([
-      '- Example groups: groupPolicy="open" with no channels.example.groups allowlist; any group can add + ping (mention-gated). Set channels.example.groupPolicy="allowlist" + channels.example.groupAllowFrom or configure channels.example.groups.',
-    ]);
+    ).toEqual([buildOpenGroupPolicyNoRouteAllowlistWarning(params.noRouteAllowlist)]);
   });
 
   it("collects configured-route warning variants", () => {
@@ -444,7 +457,13 @@ describe("group policy warning builders", () => {
         cfg: { channels: { example: {} } },
       }),
     ).toEqual([
-      '- Example groups: groupPolicy="open" with no channels.example.groups allowlist; any group can add + ping (mention-gated). Set channels.example.groupPolicy="allowlist" + channels.example.groupAllowFrom or configure channels.example.groups.',
+      buildOpenGroupPolicyNoRouteAllowlistWarning({
+        surface: "Example groups",
+        routeAllowlistPath: "channels.example.groups",
+        routeScope: "group",
+        groupPolicyPath: "channels.example.groupPolicy",
+        groupAllowFromPath: "channels.example.groupAllowFrom",
+      }),
     ]);
   });
 

@@ -9,7 +9,7 @@ const CODEX_SUBAGENT_NOTIFICATION_START = "<subagent_notification>";
 const CODEX_SUBAGENT_NOTIFICATION_END = "</subagent_notification>";
 
 /** Terminal status values OpenClaw accepts for Codex native subagent completion. */
-type CodexNativeSubagentCompletionStatus = "succeeded" | "failed" | "cancelled";
+export type CodexNativeSubagentCompletionStatus = "succeeded" | "failed" | "cancelled";
 
 type CodexNativeSubagentCompletionDetails = {
   status: CodexNativeSubagentCompletionStatus;
@@ -23,12 +23,12 @@ export type CodexNativeSubagentCompletion = CodexNativeSubagentCompletionDetails
 };
 
 /** Completion parsed from a notification payload before agent-path matching resolves the thread. */
-type CodexNativeSubagentNotificationCompletion = CodexNativeSubagentCompletionDetails & {
+export type CodexNativeSubagentNotificationCompletion = CodexNativeSubagentCompletionDetails & {
   agentPath: string;
 };
 
 /** Extracts trusted subagent completion payloads from a Codex server notification. */
-function extractCodexNativeSubagentCompletions(
+export function extractCodexNativeSubagentCompletions(
   notification: CodexServerNotification,
 ): CodexNativeSubagentNotificationCompletion[] {
   const params = isJsonObject(notification.params) ? notification.params : undefined;
@@ -50,7 +50,7 @@ function extractCodexNativeSubagentCompletions(
 }
 
 /** Parses one or more tagged subagent completion payloads from commentary text. */
-function extractCodexNativeSubagentCompletionsFromText(
+export function extractCodexNativeSubagentCompletionsFromText(
   text: string,
 ): CodexNativeSubagentNotificationCompletion[] {
   const completions: CodexNativeSubagentNotificationCompletion[] = [];
@@ -73,11 +73,6 @@ function extractCodexNativeSubagentCompletionsFromText(
   }
   return completions;
 }
-
-export const codexNativeSubagentNotifications = {
-  fromNotification: extractCodexNativeSubagentCompletions,
-  fromText: extractCodexNativeSubagentCompletionsFromText,
-};
 
 function parseCodexNativeSubagentNotificationBody(
   body: string,

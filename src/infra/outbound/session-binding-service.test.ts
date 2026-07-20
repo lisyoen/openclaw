@@ -1,15 +1,13 @@
 // Covers session binding adapter registration, generic current-conversation
 // fallback, capability errors, deduping, and duplicate graph teardown.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import {
   pinActivePluginChannelRegistry,
   releasePinnedPluginChannelRegistry,
   setActivePluginRegistry,
 } from "../../plugins/runtime.js";
-import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { createTestRegistry } from "../../test-utils/channel-plugins.js";
-import { createTrackedTempDirs } from "../../test-utils/tracked-temp-dirs.js";
 import {
   testing,
   getSessionBindingService,
@@ -25,7 +23,6 @@ type SessionBindingServiceModule = typeof import("./session-binding-service.js")
 
 const sessionBindingServiceModuleUrl = new URL("./session-binding-service.ts", import.meta.url)
   .href;
-const tempDirs = createTrackedTempDirs();
 
 function setMinimalCurrentConversationRegistry(): void {
   setActivePluginRegistry(
@@ -124,26 +121,9 @@ function expectConversationFields(value: unknown, fields: Record<string, unknown
 }
 
 describe("session binding service", () => {
-  let previousStateDir: string | undefined;
-  let testStateDir = "";
-
-  beforeEach(async () => {
-    previousStateDir = process.env.OPENCLAW_STATE_DIR;
-    testStateDir = await tempDirs.make("openclaw-session-binding-");
-    process.env.OPENCLAW_STATE_DIR = testStateDir;
+  beforeEach(() => {
     testing.resetSessionBindingAdaptersForTests();
     setMinimalCurrentConversationRegistry();
-  });
-
-  afterEach(async () => {
-    testing.resetSessionBindingAdaptersForTests();
-    closeOpenClawStateDatabaseForTest();
-    if (previousStateDir == null) {
-      delete process.env.OPENCLAW_STATE_DIR;
-    } else {
-      process.env.OPENCLAW_STATE_DIR = previousStateDir;
-    }
-    await tempDirs.cleanup();
   });
 
   it("normalizes conversation refs and infers current placement", async () => {

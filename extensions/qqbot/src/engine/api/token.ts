@@ -12,16 +12,12 @@ import {
   resolveExpiresAtMsFromDurationSeconds,
   resolveTimestampMsToIsoString,
 } from "openclaw/plugin-sdk/number-runtime";
-import { readResponseTextLimited } from "openclaw/plugin-sdk/provider-http";
-import { sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { fetchWithSsrFGuard, type SsrFPolicy } from "openclaw/plugin-sdk/ssrf-runtime";
 import type { EngineLogger } from "../types.js";
 import { formatErrorMessage } from "../utils/format.js";
 
 const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
 const DEFAULT_TOKEN_EXPIRES_IN_SECONDS = 7200;
-const QQBOT_TOKEN_RESPONSE_LIMIT_BYTES = 8 * 1024;
-const QQBOT_TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * Host-scoped SSRF policy for the QQ Bot token endpoint.
@@ -174,10 +170,6 @@ export class TokenManager {
     const controller = new AbortController();
     this.refreshControllers.set(appId, controller);
     const { signal } = controller;
-    // Preserve the old timer's event-loop yield for zero/invalid overrides;
-    // the shared helper's no-op semantics would let this refresh loop spin.
-    const sleepAndYield = (ms: number) =>
-      sleepWithAbort(Number.isFinite(ms) ? Math.max(ms, 1) : 1, signal);
 
     const loop = async () => {
       this.logger?.info?.(`[qqbot:token:${appId}] Background refresh started`);
@@ -197,9 +189,9 @@ export class TokenManager {
             this.logger?.debug?.(
               `[qqbot:token:${appId}] Next refresh in ${Math.round(refreshIn / 1000)}s`,
             );
-            await sleepAndYield(refreshIn);
+            await this.abortableSleep(refreshIn, signal);
           } else {
-            await sleepAndYield(minRefreshIntervalMs);
+            await this.abortableSleep(minRefreshIntervalMs, signal);
           }
         } catch (err) {
           if (signal.aborted) {
@@ -208,7 +200,7 @@ export class TokenManager {
           this.logger?.error?.(
             `[qqbot:token:${appId}] Background refresh failed: ${formatErrorMessage(err)}`,
           );
-          await sleepAndYield(retryDelayMs);
+          await this.abortableSleep(retryDelayMs, signal);
         }
       }
 
@@ -240,6 +232,14 @@ export class TokenManager {
     }
   }
 
+  /** Check whether background refresh is running. */
+  isBackgroundRefreshRunning(appId?: string): boolean {
+    if (appId) {
+      return this.refreshControllers.has(appId);
+    }
+    return this.refreshControllers.size > 0;
+  }
+
   // ---- Internal ----
 
   private async doFetchToken(appId: string, clientSecret: string): Promise<string> {
@@ -253,7 +253,6 @@ export class TokenManager {
         auditContext: "qqbot-token",
         capture: false,
         policy: QQBOT_TOKEN_SSRF_POLICY,
-        timeoutMs: QQBOT_TOKEN_REQUEST_TIMEOUT_MS,
         init: {
           method: "POST",
           headers: {
@@ -280,7 +279,7 @@ export class TokenManager {
 
       let rawBody: string;
       try {
-        rawBody = await readResponseTextLimited(response, QQBOT_TOKEN_RESPONSE_LIMIT_BYTES);
+        rawBody = await response.text();
       } catch (err) {
         throw new Error(`Failed to read access_token response: ${formatErrorMessage(err)}`, {
           cause: err,
@@ -318,5 +317,21 @@ export class TokenManager {
     } finally {
       await release?.();
     }
+  }
+
+  private abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, ms);
+      if (signal.aborted) {
+        clearTimeout(timer);
+        reject(new Error("Aborted"));
+        return;
+      }
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new Error("Aborted"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
   }
 }

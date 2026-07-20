@@ -4,10 +4,9 @@ import type { CompactResult, ContextEngine } from "../context-engine/types.js";
 import {
   compactContextEngineWithSafetyTimeout,
   compactWithSafetyTimeout,
+  EMBEDDED_COMPACTION_TIMEOUT_MS,
   resolveCompactionTimeoutMs,
 } from "./embedded-agent-runner/compaction-safety-timeout.js";
-
-const EMBEDDED_COMPACTION_TIMEOUT_MS = 180_000;
 
 describe("compactWithSafetyTimeout", () => {
   beforeEach(() => {
@@ -182,7 +181,7 @@ describe("compactContextEngineWithSafetyTimeout", () => {
   type CompactFn = ContextEngine["compact"];
   const baseParams: Parameters<CompactFn>[0] = {
     sessionId: "session-1",
-    sessionKey: "agent:main:session-1",
+    sessionFile: "/tmp/session-1.jsonl",
     tokenBudget: 100_000,
     force: true,
   };

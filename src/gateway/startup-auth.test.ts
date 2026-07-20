@@ -2,13 +2,12 @@
 // references, and merged Tailscale gateway auth config.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { assertGatewayAuthNotKnownWeak } from "./known-weak-gateway-secrets.js";
-import { ensureGatewayStartupAuth, mergeGatewayTailscaleConfig } from "./startup-auth.js";
-
-const KNOWN_WEAK_GATEWAY_TOKEN_PLACEHOLDERS = [
-  "change-me-to-a-long-random-token",
-  "change-me-now",
-] as const;
+import { KNOWN_WEAK_GATEWAY_TOKEN_PLACEHOLDERS } from "./known-weak-gateway-secrets.js";
+import {
+  assertGatewayAuthNotKnownWeak,
+  ensureGatewayStartupAuth,
+  mergeGatewayTailscaleConfig,
+} from "./startup-auth.js";
 
 const mocks = vi.hoisted(() => ({
   replaceConfigFile: vi.fn(async (_params: { nextConfig: OpenClawConfig }) => {}),

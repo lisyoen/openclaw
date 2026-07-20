@@ -4,7 +4,7 @@ import {
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
-import { getLoadedChannelPluginForRead } from "../../channels/plugins/registry-loaded.js";
+import { getLoadedChannelPluginForRead } from "../../channels/plugins/registry-loaded-read.js";
 import type { ChannelMessagingAdapter } from "../../channels/plugins/types.public.js";
 import { normalizeAnyChannelId } from "../../channels/registry.js";
 import {
@@ -36,7 +36,7 @@ function extractInferredGroupTargetId(params: {
         "room",
         "thread",
       ]),
-      { allowNumericShorthand: params.messaging?.numericTopicShorthand === true },
+      { allowNumericShorthand: params.channelId === "telegram" },
     );
     if (target) {
       return target;
@@ -62,7 +62,7 @@ function extractLegacyParsedGroupTargetId(params: {
       "room",
       "thread",
     ]),
-    { allowNumericShorthand: params.messaging?.numericTopicShorthand === true },
+    { allowNumericShorthand: params.channelId === "telegram" },
   );
   return target || undefined;
 }

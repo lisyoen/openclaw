@@ -6,8 +6,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import YAML from "yaml";
-import { readBoundedResponseText } from "./lib/bounded-response.mjs";
-import { escapeRegExp } from "./lib/regexp.mjs";
 import { parseReportCliArgs, writeReportArtifact } from "./lib/report-cli-helpers.mjs";
 import {
   collectAllResolvedPackagesFromLockfile,
@@ -25,8 +23,7 @@ const EXOTIC_SPEC_PATTERN = /^(?:git\+|github:|gitlab:|bitbucket:|https?:)/iu;
 const RECENTLY_PUBLISHED_VERSION_TYPE = "recently-published-version";
 const NPM_PACKUMENT_ACCEPT_HEADER = "application/json";
 /** Maximum npm packument response size accepted by the risk scanner. */
-const NPM_PACKUMENT_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
-const NPM_PACKUMENT_FETCH_TIMEOUT_MS = 60_000;
+export const NPM_PACKUMENT_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
 
 function isAllowedPinnedSpec(spec) {
   if (typeof spec !== "string") {
@@ -67,12 +64,47 @@ function isExoticResolvedVersion(version) {
 export async function readBoundedNpmRegistryText(
   response,
   maxBytes = NPM_PACKUMENT_RESPONSE_MAX_BYTES,
-  options = {},
 ) {
-  return await readBoundedResponseText(response, "npm registry", maxBytes, {
-    signal: options.signal,
-    formatTooLargeMessage: (_label, bytes) => `npm registry response exceeded ${bytes} bytes`,
-  });
+  const contentLength = response.headers?.get?.("content-length");
+  if (contentLength) {
+    const parsedContentLength = Number(contentLength);
+    if (Number.isFinite(parsedContentLength) && parsedContentLength > maxBytes) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(
+        `npm registry response exceeded ${maxBytes} bytes (content-length ${contentLength})`,
+      );
+    }
+  }
+
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let receivedBytes = 0;
+  let text = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      receivedBytes += value.byteLength;
+      if (receivedBytes > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error(
+          `npm registry response exceeded ${maxBytes} bytes while reading response body`,
+        );
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function packageVersionsFromPayload(payload) {
@@ -131,6 +163,10 @@ function splitMinimumReleaseAgeExcludeSelector(selector) {
       .map((entry) => entry.trim())
       .filter(Boolean),
   };
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function packagePatternMatches(pattern, packageName) {
@@ -230,19 +266,16 @@ export async function fetchNpmManifest({
   fetchImpl,
   registryBaseUrl,
   maxBytes = NPM_PACKUMENT_RESPONSE_MAX_BYTES,
-  timeoutMs = NPM_PACKUMENT_FETCH_TIMEOUT_MS,
 }) {
-  const signal = AbortSignal.timeout(timeoutMs);
   const response = await fetchImpl(`${registryBaseUrl}/${encodePackageName(packageName)}`, {
     headers: {
       Accept: NPM_PACKUMENT_ACCEPT_HEADER,
     },
-    signal,
   });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
   }
-  const packumentText = await readBoundedNpmRegistryText(response, maxBytes, { signal });
+  const packumentText = await readBoundedNpmRegistryText(response, maxBytes);
   const packument = JSON.parse(packumentText);
   const manifest = packument.versions?.[version];
   if (!manifest) {
@@ -603,7 +636,7 @@ export function renderTransitiveManifestRiskMarkdownReport(report) {
   return `${lines.join("\n")}\n`;
 }
 
-async function runTransitiveManifestRiskReport({
+export async function runTransitiveManifestRiskReport({
   rootDir = process.cwd(),
   fetchImpl = fetch,
   now = new Date(),
@@ -653,7 +686,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.met
       process.exitCode = exitCode;
     },
     /** @param {unknown} error */ (error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(`${error.stack ?? error.message ?? String(error)}\n`);
       process.exitCode = 1;
     },
   );

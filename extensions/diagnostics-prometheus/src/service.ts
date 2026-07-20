@@ -1,6 +1,5 @@
 // Diagnostics Prometheus plugin module implements service behavior.
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type {
   DiagnosticEventMetadata,
   DiagnosticEventPayload,
@@ -229,12 +228,10 @@ function createPrometheusMetricStore() {
 
 function safeErrorMessage(err: unknown): string {
   const message = err instanceof Error ? (err.message ?? err.name) : String(err);
-  return truncateUtf16Safe(
-    redactSensitiveText(message)
-      .replaceAll("\u0000", " ")
-      .replace(/[\r\n\t\u2028\u2029]/gu, " "),
-    500,
-  );
+  return redactSensitiveText(message)
+    .replaceAll("\u0000", " ")
+    .replace(/[\r\n\t\u2028\u2029]/gu, " ")
+    .slice(0, 500);
 }
 
 function shouldRecordDiagnosticEvent(metadata: DiagnosticEventMetadata): boolean {
@@ -323,7 +320,6 @@ function modelCallLabels(evt: {
   api?: string;
   errorCategory?: string;
   model?: string;
-  observationUnit?: "request" | "turn";
   provider?: string;
   transport?: string;
   type: string;
@@ -333,7 +329,6 @@ function modelCallLabels(evt: {
     error_category:
       evt.type === "model.call.error" ? lowCardinalityLabel(evt.errorCategory, "other") : "none",
     model: lowCardinalityLabel(evt.model),
-    observation_unit: evt.observationUnit === "turn" ? "turn" : "request",
     outcome: evt.type === "model.call.error" ? "error" : "completed",
     provider: lowCardinalityLabel(evt.provider),
     transport: lowCardinalityLabel(evt.transport),
@@ -586,13 +581,13 @@ function recordDiagnosticEvent(
     case "model.call.error":
       store.histogram(
         "openclaw_model_call_duration_seconds",
-        "Model request or synthetic agent-turn duration in seconds.",
+        "Provider model call duration in seconds.",
         modelCallLabels(evt),
         seconds(evt.durationMs),
       );
       store.counter(
         "openclaw_model_call_total",
-        "Model requests or synthetic agent turns completed by outcome.",
+        "Provider model calls completed by outcome.",
         modelCallLabels(evt),
       );
       return;
@@ -969,9 +964,9 @@ function recordDiagnosticEvent(
         {},
         numericValue(evt.queueLength),
       );
-      break;
+      return;
     case "diagnostic.heartbeat":
-      break;
+      return;
     case "telemetry.exporter":
       store.counter("openclaw_telemetry_exporter_total", "Telemetry exporter lifecycle events.", {
         exporter: lowCardinalityLabel(evt.exporter),
@@ -1062,4 +1057,9 @@ export function createDiagnosticsPrometheusExporter() {
   };
 }
 
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+export const testApi = {
+  createPrometheusMetricStore,
+  recordDiagnosticEvent,
+  renderPrometheusMetrics,
+};
+export { testApi as __test__ };

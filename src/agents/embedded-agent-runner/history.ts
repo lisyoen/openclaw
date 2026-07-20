@@ -16,10 +16,6 @@ function stripThreadSuffix(value: string): string {
 /**
  * Limits conversation history to the last N user turns (and their associated
  * assistant responses). This reduces token usage for long-running DM sessions.
- *
- * Leading non-conversation messages (e.g. compactionSummary, branchSummary)
- * placed at index 0 by buildSessionContext are always preserved, since they
- * carry summarized pre-compaction context that history limiting must not drop.
  */
 export function limitHistoryTurns(
   messages: AgentMessage[],
@@ -29,30 +25,14 @@ export function limitHistoryTurns(
     return messages;
   }
 
-  // Preserve leading non-conversation messages (compactionSummary, branchSummary, etc.)
-  // that buildSessionContext places at index 0 to carry pre-compaction context.
-  let conversationStart = 0;
-  while (conversationStart < messages.length) {
-    const role = messages.at(conversationStart)?.role;
-    if (role === "user" || role === "assistant") {
-      break;
-    }
-    conversationStart++;
-  }
-
-  const tail = messages.slice(conversationStart);
-  if (tail.length === 0) {
-    return messages;
-  }
-
   let userCount = 0;
-  let lastUserIndex = tail.length;
+  let lastUserIndex = messages.length;
 
-  for (const [i, message] of Array.from(tail.entries()).toReversed()) {
-    if (message.role === "user") {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
       userCount++;
       if (userCount > limit) {
-        return [...messages.slice(0, conversationStart), ...tail.slice(lastUserIndex)];
+        return messages.slice(lastUserIndex);
       }
       lastUserIndex = i;
     }

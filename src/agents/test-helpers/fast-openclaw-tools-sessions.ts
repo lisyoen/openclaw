@@ -11,10 +11,6 @@ vi.mock("../tools/agents-list-tool.js", () => ({
   createAgentsListTool: () => stubTool("agents_list"),
 }));
 
-vi.mock("../tools/computer-tool.js", () => ({
-  createComputerTool: () => stubTool("computer"),
-}));
-
 vi.mock("../tools/cron-tool.js", () => ({
   createCronTool: () => stubTool("cron"),
 }));
@@ -71,18 +67,6 @@ vi.mock("../../channels/plugins/session-conversation.js", () => ({
       kind: match.groups.kind,
       id: match.groups.id,
       threadId: match.groups.threadId,
-    };
-  },
-  resolveSessionThreadInfo: (sessionKey: string | undefined | null) => {
-    const trimmed = sessionKey?.trim();
-    const topicMarker = ":topic:";
-    const topicIndex = trimmed?.lastIndexOf(topicMarker) ?? -1;
-    if (!trimmed || topicIndex < 0) {
-      return { baseSessionKey: trimmed, threadId: undefined };
-    }
-    return {
-      baseSessionKey: trimmed.slice(0, topicIndex),
-      threadId: trimmed.slice(topicIndex + topicMarker.length) || undefined,
     };
   },
 }));

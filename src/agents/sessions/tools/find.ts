@@ -1,52 +1,40 @@
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { createInterface } from "node:readline";
-import { Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { releaseChildProcessOutputAfterExit } from "../../../process/child-process.js";
-import { spawnCommand } from "../../../process/exec.js";
 /**
  * Built-in find session tool.
  *
  * Searches files by glob through fd/local operations and returns bounded, renderable results.
  */
-import { toPosixPath } from "../../../shared/ignore-rules.js";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { createInterface } from "node:readline";
+import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
 import type { AgentTool } from "../../runtime/index.js";
 import { ensureTool } from "../../utils/tools-manager.js";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
 import { appendBoundedTextTail, normalizePositiveLimit } from "./limits.js";
 import { resolveToCwd } from "./path-utils.js";
-import {
-  appendSessionToolTruncationWarning,
-  formatSessionToolOutput,
-  invalidArgText,
-  shortenPath,
-  str,
-} from "./render-utils.js";
+import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.js";
 import type { FindToolDetails } from "./tool-contracts.js";
 import { wrapToolDefinition } from "./tool-definition-wrapper.js";
 import { DEFAULT_MAX_BYTES, formatSize, truncateHead } from "./truncate.js";
 
-function isInsideGitRepository(searchPath: string): boolean {
-  for (let current = searchPath; ;) {
-    if (existsSync(path.join(current, ".git"))) {
-      return true;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return false;
-    }
-    current = parent;
-  }
+function toPosixPath(value: string): string {
+  return value.split(path.sep).join("/");
 }
 
 const findSchema = Type.Object({
   pattern: Type.String({
-    description: "File glob, e.g. **/*.ts.",
+    description: "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'",
   }),
-  path: Type.Optional(Type.String({ description: "Search dir; default cwd." })),
-  limit: Type.Optional(Type.Number({ description: "Max results; default 1000." })),
+  path: Type.Optional(
+    Type.String({ description: "Directory to search in (default: current directory)" }),
+  ),
+  limit: Type.Optional(Type.Number({ description: "Maximum number of results (default: 1000)" })),
 });
+export type { FindToolDetails, FindToolInput } from "./tool-contracts.js";
+
 const DEFAULT_LIMIT = 1000;
 
 /**
@@ -104,15 +92,32 @@ function formatFindResult(
   theme: typeof import("../../modes/interactive/theme/theme.js").theme,
   showImages: boolean,
 ): string {
+  const output = getTextOutput(result, showImages).trim();
+  let text = "";
+  if (output) {
+    const lines = output.split("\n");
+    const maxLines = options.expanded ? lines.length : 20;
+    const displayLines = lines.slice(0, maxLines);
+    const remaining = lines.length - maxLines;
+    text += `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}`;
+    if (remaining > 0) {
+      text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")})`;
+    }
+  }
+
   const resultLimit = result.details?.resultLimitReached;
-  return appendSessionToolTruncationWarning(
-    formatSessionToolOutput(result, options, theme, showImages, 20),
-    theme,
-    {
-      limit: resultLimit ? { count: resultLimit, noun: "results" } : undefined,
-      truncation: result.details?.truncation,
-    },
-  );
+  const truncation = result.details?.truncation;
+  if (resultLimit || truncation?.truncated) {
+    const warnings: string[] = [];
+    if (resultLimit) {
+      warnings.push(`${resultLimit} results limit`);
+    }
+    if (truncation?.truncated) {
+      warnings.push(`${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
+    }
+    text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
+  }
+  return text;
 }
 
 function buildFindResult(params: {
@@ -154,7 +159,7 @@ export function createFindToolDefinition(
   return {
     name: "find",
     label: "find",
-    description: `Find by glob; paths relative to search dir. Respects .gitignore. Caps ${DEFAULT_LIMIT} results/${DEFAULT_MAX_BYTES / 1024}KB.`,
+    description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
     promptSnippet: "Find files by glob pattern (respects .gitignore)",
     parameters: findSchema,
     async execute(
@@ -254,13 +259,17 @@ export function createFindToolDefinition(
               return;
             }
 
-            const args: string[] = ["--glob", "--color=never", "--hidden"];
-            // Outside a repo, fd needs this flag to honor standalone ignore files.
-            // Inside a repo, default git-aware traversal preserves nested repo boundaries.
-            if (!isInsideGitRepository(searchPath)) {
-              args.push("--no-require-git");
-            }
-            args.push("--max-results", String(effectiveLimit));
+            // Build fd arguments. --no-require-git makes fd apply hierarchical .gitignore
+            // semantics whether or not the search path is inside a git repository, without
+            // leaking sibling-directory rules the way --ignore-file (a global source) would.
+            const args: string[] = [
+              "--glob",
+              "--color=never",
+              "--hidden",
+              "--no-require-git",
+              "--max-results",
+              String(effectiveLimit),
+            ];
 
             // fd --glob matches against the basename unless --full-path is set; in --full-path
             // mode it matches against the absolute candidate path, so a path-containing
@@ -274,12 +283,7 @@ export function createFindToolDefinition(
             }
             args.push("--", effectivePattern, searchPath);
 
-            const child = spawnCommand([fdPath, ...args], {
-              buffer: false,
-              reject: false,
-              stdio: ["ignore", "pipe", "pipe"],
-            });
-            releaseChildProcessOutputAfterExit(child);
+            const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
             const rl = createInterface({ input: child.stdout });
             let stderr = "";
             const lines: string[] = [];
@@ -293,23 +297,10 @@ export function createFindToolDefinition(
             const cleanup = () => {
               rl.close();
             };
-            const onStreamError = (stream: "stdout" | "stderr", error: Error) => {
-              if (settled) {
-                return;
-              }
-              stopChild?.();
-              cleanup();
-              settle(() => reject(new Error(`fd ${stream} error: ${error.message}`)));
-            };
 
             child.stderr?.on("data", (chunk) => {
               stderr = appendBoundedTextTail(stderr, chunk);
             });
-            // Readline re-emits input failures, while the stream listener also catches
-            // implementations that do not. settle() keeps the shared failure path one-shot.
-            rl.on("error", (error) => onStreamError("stdout", error));
-            child.stdout?.on("error", (error) => onStreamError("stdout", error));
-            child.stderr?.on("error", (error) => onStreamError("stderr", error));
 
             rl.on("line", (line) => {
               lines.push(line);
@@ -329,8 +320,10 @@ export function createFindToolDefinition(
               const output = lines.join("\n");
               if (code !== 0) {
                 const errorMsg = stderr.trim() || `fd exited with code ${code}`;
-                settle(() => reject(new Error(errorMsg)));
-                return;
+                if (!output) {
+                  settle(() => reject(new Error(errorMsg)));
+                  return;
+                }
               }
               if (!output) {
                 settle(() =>

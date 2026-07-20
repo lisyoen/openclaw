@@ -1,7 +1,7 @@
 /**
  * Formats the user-facing error shown when no target is available.
  */
-function missingTargetMessage(provider: string, hint?: string): string {
+export function missingTargetMessage(provider: string, hint?: string): string {
   return `Delivering to ${provider} requires target${formatTargetHint(hint)}`;
 }
 
@@ -15,7 +15,7 @@ export function missingTargetError(provider: string, hint?: string): Error {
 /**
  * Formats the user-facing error shown when a target name resolves ambiguously.
  */
-function ambiguousTargetMessage(provider: string, raw: string, hint?: string): string {
+export function ambiguousTargetMessage(provider: string, raw: string, hint?: string): string {
   return `Ambiguous target "${raw}" for ${provider}. Provide a unique name or an explicit id.${formatTargetHint(hint, true)}`;
 }
 
@@ -29,7 +29,7 @@ export function ambiguousTargetError(provider: string, raw: string, hint?: strin
 /**
  * Formats the user-facing error shown when no target matches the input.
  */
-function unknownTargetMessage(provider: string, raw: string, hint?: string): string {
+export function unknownTargetMessage(provider: string, raw: string, hint?: string): string {
   return `Unknown target "${raw}" for ${provider}.${formatTargetHint(hint, true)}`;
 }
 
@@ -38,18 +38,6 @@ function unknownTargetMessage(provider: string, raw: string, hint?: string): str
  */
 export function unknownTargetError(provider: string, raw: string, hint?: string): Error {
   return new Error(unknownTargetMessage(provider, raw, hint));
-}
-
-function reservedTargetLiteralMessage(provider: string, raw: string, hint?: string): string {
-  return `Reserved target "${raw}" for ${provider} cannot be used as a literal destination. Provide an explicit id or handle.${formatTargetHint(hint, true)}`;
-}
-
-export function reservedTargetLiteralError(provider: string, raw: string, hint?: string): Error {
-  return new Error(reservedTargetLiteralMessage(provider, raw, hint));
-}
-
-export function isReservedTargetLiteralError(error: Error): boolean {
-  return error.message.includes("Reserved target");
 }
 
 function formatTargetHint(hint?: string, withLabel = false): string {

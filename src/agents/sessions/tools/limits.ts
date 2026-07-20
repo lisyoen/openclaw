@@ -4,11 +4,12 @@
  * Tail storage is byte-bounded but decoded as UTF-8, so truncation avoids
  * splitting multi-byte characters in display output.
  */
-import { resolveIntegerOption } from "@openclaw/normalization-core/number-coercion";
-
 /** Normalizes optional positive numeric limits to a finite integer. */
 export function normalizePositiveLimit(value: number | undefined, fallback: number): number {
-  return resolveIntegerOption(value, fallback, { min: 1 });
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value));
 }
 
 /** Default stderr tail retained for long-running session tools. */

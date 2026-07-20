@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isMatrixVerificationEventType,
+  isMatrixVerificationNoticeBody,
   isMatrixVerificationRequestMsgType,
   isMatrixVerificationRoomMessage,
 } from "./verification-utils.js";
@@ -19,14 +20,9 @@ describe("matrix verification message classifiers", () => {
 
   it("recognizes verification notice bodies", () => {
     expect(
-      isMatrixVerificationRoomMessage({
-        msgtype: "m.notice",
-        body: "Matrix verification started with @alice:example.org.",
-      }),
+      isMatrixVerificationNoticeBody("Matrix verification started with @alice:example.org."),
     ).toBe(true);
-    expect(isMatrixVerificationRoomMessage({ msgtype: "m.notice", body: "hello world" })).toBe(
-      false,
-    );
+    expect(isMatrixVerificationNoticeBody("hello world")).toBe(false);
   });
 
   it("classifies verification room messages", () => {

@@ -399,7 +399,7 @@ function printTextReport(report) {
 
 function readArtifactPath(argv, index, optionName) {
   const value = argv[index + 1];
-  if (value === undefined || value === "" || value.startsWith("-")) {
+  if (value === undefined || value === "" || value.startsWith("--")) {
     throw new Error(`${optionName} requires a value`);
   }
   return value;
@@ -412,14 +412,6 @@ export function parseArgs(argv) {
     jsonPath: null,
     markdownPath: null,
   };
-  const seen = new Set();
-  const setOnce = (flag, key, value) => {
-    if (seen.has(flag)) {
-      throw new Error(`${flag} was provided more than once.`);
-    }
-    seen.add(flag);
-    options[key] = value;
-  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--") {
@@ -430,18 +422,14 @@ export function parseArgs(argv) {
       continue;
     }
     if (arg === "--json") {
-      if (seen.has(arg)) {
-        throw new Error(`${arg} was provided more than once.`);
-      }
-      seen.add(arg);
       options.asJson = true;
-      if (argv[index + 1] && !argv[index + 1].startsWith("-")) {
+      if (argv[index + 1] && !argv[index + 1].startsWith("--")) {
         options.jsonPath = argv[++index];
       }
       continue;
     }
     if (arg === "--markdown") {
-      setOnce(arg, "markdownPath", readArtifactPath(argv, index, arg));
+      options.markdownPath = readArtifactPath(argv, index, arg);
       index += 1;
       continue;
     }

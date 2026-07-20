@@ -1094,4 +1094,3 @@ describe("matrix verification actions", () => {
     expect(summary.error).toMatch(/verifier rejected mid-protocol/);
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

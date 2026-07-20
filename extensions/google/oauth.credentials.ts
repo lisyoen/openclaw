@@ -22,8 +22,6 @@ const defaultFs: CredentialFs = {
   readdirSync,
 };
 
-const OAUTH_CREDENTIALS_TEST_API_KEY = Symbol.for("openclaw.google.oauthCredentialsTestApi");
-
 let credentialFs: CredentialFs = defaultFs;
 const GEMINI_CLI_TREE_SEARCH_DEPTH = 10;
 
@@ -47,16 +45,16 @@ function resolveEnv(keys: string[]): string | undefined {
 let cachedGeminiCliCredentials: { clientId: string; clientSecret: string } | null = null;
 let geminiCliCredentialExtractError: string | null = null;
 
-function clearCredentialsCache(): void {
+export function clearCredentialsCache(): void {
   cachedGeminiCliCredentials = null;
   geminiCliCredentialExtractError = null;
 }
 
-function setOAuthCredentialsFsForTest(overrides?: Partial<CredentialFs>): void {
+export function setOAuthCredentialsFsForTest(overrides?: Partial<CredentialFs>): void {
   credentialFs = overrides ? { ...defaultFs, ...overrides } : defaultFs;
 }
 
-function extractGeminiCliCredentials(): { clientId: string; clientSecret: string } | null {
+export function extractGeminiCliCredentials(): { clientId: string; clientSecret: string } | null {
   if (cachedGeminiCliCredentials) {
     return cachedGeminiCliCredentials;
   }
@@ -363,11 +361,4 @@ export function resolveOAuthClientConfig(): { clientId: string; clientSecret?: s
   throw new Error(
     `Gemini CLI not found. Install it first: brew install gemini-cli (or npm install -g @google/gemini-cli), or set GEMINI_CLI_OAUTH_CLIENT_ID.${detail}`,
   );
-}
-
-if (process.env.VITEST) {
-  (globalThis as Record<PropertyKey, unknown>)[OAUTH_CREDENTIALS_TEST_API_KEY] = {
-    clearCredentialsCache,
-    setFs: setOAuthCredentialsFsForTest,
-  };
 }

@@ -25,8 +25,6 @@ export type {
   LsToolInput,
   ReadToolDetails,
   ReadToolInput,
-  ReadToolTruncationDetails,
-  WriteToolDetails,
   WriteToolInput,
 } from "./tool-contracts.js";
 export {
@@ -93,7 +91,7 @@ import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } fro
  * Keep grouped creators here so callers can request stable tool sets without importing each
  * individual implementation module.
  */
-type Tool = AgentTool;
+export type Tool = AgentTool;
 export type ToolDef = ToolDefinition;
 export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
 export const allToolNames: Set<ToolName> = new Set([

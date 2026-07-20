@@ -4,7 +4,6 @@ import { getQaProvider, type QaMockProviderServer, type QaProviderModeInput } fr
 type QaProviderServerParams = {
   host: string;
   port: number;
-  modelRefs?: readonly string[];
 };
 
 async function startMockOpenAiProviderServer(params: QaProviderServerParams) {
@@ -19,13 +18,12 @@ async function startAimockProviderServer(params: QaProviderServerParams) {
 
 export async function startQaProviderServer(
   input: QaProviderModeInput,
-  params?: { host?: string; port?: number; modelRefs?: readonly string[] },
+  params?: { host?: string; port?: number },
 ): Promise<QaMockProviderServer | null> {
   const provider = getQaProvider(input);
   const serverParams = {
     host: params?.host ?? "127.0.0.1",
     port: params?.port ?? 0,
-    modelRefs: params?.modelRefs,
   };
   switch (provider.mode) {
     case "mock-openai":

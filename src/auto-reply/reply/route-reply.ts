@@ -10,7 +10,6 @@
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveEffectiveMessagesConfig } from "../../agents/identity.js";
-import { normalizeChatType } from "../../channels/chat-type.js";
 import { getBundledChannelPlugin } from "../../channels/plugins/bundled.js";
 import { getLoadedChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
 import { normalizeChatChannelId } from "../../channels/registry.js";
@@ -18,11 +17,9 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { hasReplyPayloadContent } from "../../interactive/payload.js";
-import { normalizeAccountId } from "../../routing/account-id.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import type { SilentReplyConversationType } from "../../shared/silent-reply-policy.js";
 import { INTERNAL_MESSAGE_CHANNEL, normalizeMessageChannel } from "../../utils/message-channel.js";
-import { getReplyPayloadMetadata, type ReplyDeliveryContext } from "../reply-payload.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
 import { normalizeReplyPayload } from "./normalize-reply.js";
@@ -31,7 +28,6 @@ import {
   formatBtwTextForExternalDelivery,
   shouldSuppressReasoningPayload,
 } from "./reply-payloads.js";
-import type { ResponsePrefixContext } from "./response-prefix-template.js";
 
 const messageRuntimeLoader = createLazyImportLoader(
   () => import("../../channels/message/runtime.js"),
@@ -41,29 +37,7 @@ function loadDeliverRuntime() {
   return messageRuntimeLoader.load();
 }
 
-function replyDeliverySourceMatchesRoute(params: {
-  source: NonNullable<
-    NonNullable<ReturnType<typeof getReplyPayloadMetadata>>["replyDeliverySource"]
-  >;
-  payloadDelivery: ReplyDeliveryContext;
-  routeDelivery: ReplyDeliveryContext;
-  channel: string;
-  accountId?: string;
-}): boolean {
-  const sourceChannel =
-    normalizeMessageChannel(params.source.channel) ??
-    normalizeOptionalLowercaseString(params.source.channel);
-  const routeChannel =
-    normalizeMessageChannel(params.channel) ?? normalizeOptionalLowercaseString(params.channel);
-  return (
-    sourceChannel === routeChannel &&
-    normalizeAccountId(params.source.accountId) === normalizeAccountId(params.accountId) &&
-    normalizeChatType(params.payloadDelivery.chatType ?? undefined) ===
-      normalizeChatType(params.routeDelivery.chatType ?? undefined)
-  );
-}
-
-type RouteReplyParams = {
+export type RouteReplyParams = {
   /** The reply payload to send. */
   payload: ReplyPayload;
   /** The originating channel type. */
@@ -88,8 +62,6 @@ type RouteReplyParams = {
   requesterSenderE164?: string;
   /** Thread id for replies (Telegram topic id or Matrix thread event id). */
   threadId?: string | number;
-  /** Reply policy fallback for delivery kinds that do not carry payload metadata. */
-  replyDelivery?: ReplyDeliveryContext;
   /** Config for provider-specific settings. */
   cfg: OpenClawConfig;
   /** Optional abort signal for cooperative cancellation. */
@@ -104,11 +76,9 @@ type RouteReplyParams = {
   replyKind: ReplyDispatchKind;
   /** Agent run id for hook context. */
   runId?: string;
-  /** Model/session context for response-prefix template interpolation. */
-  responsePrefixContext?: ResponsePrefixContext;
 };
 
-type RouteReplyResult = {
+export type RouteReplyResult = {
   /** Whether the reply was sent successfully. */
   ok: boolean;
   /** True when a hook intentionally suppressed provider delivery. */
@@ -160,7 +130,6 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       : cfg.messages?.responsePrefix;
   const normalized = normalizeReplyPayload(payload, {
     responsePrefix,
-    responsePrefixContext: params.responsePrefixContext,
     transformReplyPayload: messaging?.transformReplyPayload
       ? (nextPayload) =>
           messaging.transformReplyPayload?.({
@@ -223,44 +192,18 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
     return { ok: false, error: "Reply routing aborted" };
   }
 
-  const payloadMetadata = getReplyPayloadMetadata(normalized);
-  const payloadReplyDelivery = payloadMetadata?.replyDelivery;
-  const payloadPolicyMatchesRoute =
-    payloadReplyDelivery && params.replyDelivery && payloadMetadata.replyDeliverySource
-      ? replyDeliverySourceMatchesRoute({
-          source: payloadMetadata.replyDeliverySource,
-          payloadDelivery: payloadReplyDelivery,
-          routeDelivery: params.replyDelivery,
-          channel: channelId,
-          accountId,
-        })
-      : false;
-  const replyDelivery = payloadPolicyMatchesRoute
-    ? payloadReplyDelivery
-    : (params.replyDelivery ?? payloadReplyDelivery);
   const replyTransport =
     threading?.resolveReplyTransport?.({
       cfg,
       accountId,
       threadId,
       replyToId,
-      replyToIsExplicit: Boolean(
-        payloadMetadata?.replyToIdExplicit || normalized.replyToTag || normalized.replyToCurrent,
-      ),
-      replyDelivery,
     }) ?? null;
-  const resolvedReplyToId =
-    replyTransport?.replyToId === null
-      ? undefined
-      : (replyTransport?.replyToId ?? replyToId ?? undefined);
+  const resolvedReplyToId = replyTransport?.replyToId ?? replyToId ?? undefined;
   const resolvedThreadId =
     replyTransport && Object.hasOwn(replyTransport, "threadId")
       ? (replyTransport.threadId ?? null)
       : (threadId ?? null);
-  const deliveryPayload = {
-    ...externalPayload,
-    replyToId: resolvedReplyToId,
-  };
 
   try {
     // Provider docking: this is an execution boundary (we're about to send).
@@ -284,7 +227,7 @@ export async function routeReply(params: RouteReplyParams): Promise<RouteReplyRe
       channel: channelId,
       to,
       accountId: accountId ?? undefined,
-      payloads: [deliveryPayload],
+      payloads: [externalPayload],
       replyPayloadSendingHook: {
         kind: params.replyKind,
         channel: channelId,

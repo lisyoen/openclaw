@@ -1,5 +1,4 @@
 // Discord plugin module implements inbound context behavior.
-import { resolveInboundSupplementalSenderAllowed } from "openclaw/plugin-sdk/channel-inbound";
 import type { MsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import {
   resolveDiscordMemberAllowed,
@@ -21,24 +20,18 @@ export function createDiscordSupplementalContextAccessChecker(params: {
   allowNameMatching?: boolean;
   isGuild: boolean;
 }) {
-  const userAllowList = params.channelConfig?.users ?? params.guildInfo?.users ?? [];
-  const roleAllowList = params.channelConfig?.roles ?? params.guildInfo?.roles ?? [];
-  const allowFrom = [...userAllowList, ...roleAllowList];
   return (sender: DiscordSupplementalContextSender): boolean => {
-    return resolveInboundSupplementalSenderAllowed({
-      isGroup: params.isGuild,
-      groupPolicy: allowFrom.length === 0 ? "open" : "allowlist",
-      allowFrom,
-      isSenderAllowed: () =>
-        resolveDiscordMemberAllowed({
-          userAllowList,
-          roleAllowList,
-          memberRoleIds: sender.memberRoleIds ?? [],
-          userId: sender.id ?? "",
-          userName: sender.name,
-          userTag: sender.tag,
-          allowNameMatching: params.allowNameMatching,
-        }),
+    if (!params.isGuild) {
+      return true;
+    }
+    return resolveDiscordMemberAllowed({
+      userAllowList: params.channelConfig?.users ?? params.guildInfo?.users,
+      roleAllowList: params.channelConfig?.roles ?? params.guildInfo?.roles,
+      memberRoleIds: sender.memberRoleIds ?? [],
+      userId: sender.id ?? "",
+      userName: sender.name,
+      userTag: sender.tag,
+      allowNameMatching: params.allowNameMatching,
     });
   };
 }
@@ -52,7 +45,7 @@ export function buildDiscordGroupSystemPrompt(
   return systemPromptParts.length > 0 ? systemPromptParts.join("\n\n") : undefined;
 }
 
-function buildDiscordUntrustedContext(params: {
+export function buildDiscordUntrustedContext(params: {
   isGuild: boolean;
   channelTopic?: string;
 }): MsgContext["UntrustedStructuredContext"] | undefined {

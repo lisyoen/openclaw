@@ -2,7 +2,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import {
   createPluginStateKeyedStoreForTests,
   resetPluginStateStoreForTests,
@@ -90,7 +89,7 @@ describe("acpx doctor state migration", () => {
       "utf8",
     );
 
-    const migration = expectDefined(stateMigrations[0], "ACPX state migration");
+    const migration = stateMigrations[0];
     await expect(migration.detectLegacyState(migrationParams())).resolves.toMatchObject({
       preview: [
         expect.stringContaining("ACPX gateway instance id"),
@@ -155,7 +154,7 @@ describe("acpx doctor state migration", () => {
       "utf8",
     );
 
-    const migration = expectDefined(stateMigrations[0], "ACPX state migration");
+    const migration = stateMigrations[0];
 
     await expect(migration.detectLegacyState(migrationParams())).resolves.toBeNull();
     await expect(migration.migrateLegacyState(migrationParams())).resolves.toEqual({
@@ -213,10 +212,7 @@ describe("acpx doctor state migration", () => {
       state: "open",
     });
 
-    const result = await expectDefined(
-      stateMigrations[0],
-      "ACPX state migration",
-    ).migrateLegacyState(migrationParams());
+    const result = await stateMigrations[0].migrateLegacyState(migrationParams());
 
     expect(result.changes).toEqual([]);
     expect(result.warnings).toEqual([
@@ -258,10 +254,7 @@ describe("acpx doctor state migration", () => {
         createdAt: 2,
       });
 
-    const result = await expectDefined(
-      stateMigrations[0],
-      "ACPX state migration",
-    ).migrateLegacyState(migrationParams());
+    const result = await stateMigrations[0].migrateLegacyState(migrationParams());
 
     expect(result.warnings).toEqual([]);
     expect(result.changes).toEqual([

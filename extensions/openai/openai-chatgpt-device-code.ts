@@ -1,26 +1,17 @@
 // Openai plugin module implements openai chatgpt device code behavior.
 import {
-  shouldUseEnvHttpProxyForUrl,
-  withTrustedEnvProxyGuardedFetchMode,
-} from "openclaw/plugin-sdk/fetch-runtime";
-import {
   positiveSecondsToSafeMilliseconds,
   resolveExpiresAtMsFromDurationSeconds,
 } from "openclaw/plugin-sdk/number-runtime";
-import { readResponseTextLimited } from "openclaw/plugin-sdk/provider-http";
-import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { resolveCodexAccessTokenExpiry } from "./openai-chatgpt-auth-identity.js";
 import { trimNonEmptyString } from "./openai-chatgpt-shared.js";
 
 const OPENAI_AUTH_BASE_URL = "https://auth.openai.com";
 const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_CODEX_DEVICE_CODE_TIMEOUT_MS = 15 * 60_000;
-const OPENAI_CODEX_DEVICE_REQUEST_TIMEOUT_MS = 30_000;
 const OPENAI_CODEX_DEVICE_CODE_DEFAULT_INTERVAL_MS = 5_000;
 const OPENAI_CODEX_DEVICE_CODE_MIN_INTERVAL_MS = 1_000;
 const OPENAI_CODEX_DEVICE_CALLBACK_URL = `${OPENAI_AUTH_BASE_URL}/deviceauth/callback`;
-const OPENAI_CODEX_DEVICE_ERROR_BODY_LIMIT_BYTES = 8 * 1024;
-const OPENAI_CODEX_DEVICE_JSON_BODY_LIMIT_BYTES = 256 * 1024;
 
 function resolveOpenAICodexDeviceCodeHeaders(contentType: string): Record<string, string> {
   const version = process.env.OPENCLAW_VERSION?.trim();
@@ -75,12 +66,6 @@ type DeviceCodeAuthorizationCode = {
   codeVerifier: string;
 };
 
-type DeviceCodeHttpResult = {
-  ok: boolean;
-  status: number;
-  bodyText: string;
-};
-
 function parseJsonObject(text: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(text);
@@ -113,20 +98,6 @@ function resolveNextDeviceCodePollDelayMs(intervalMs: number, deadlineMs: number
   return Math.min(Math.max(intervalMs, OPENAI_CODEX_DEVICE_CODE_MIN_INTERVAL_MS), remainingMs);
 }
 
-function resolveDeviceCodePollRequestTimeoutMs(deadlineMs: number): number {
-  return Math.min(OPENAI_CODEX_DEVICE_REQUEST_TIMEOUT_MS, Math.max(0, deadlineMs - Date.now()));
-}
-
-function isDeviceCodeOperationTimeoutError(error: unknown): boolean {
-  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-}
-
-function rethrowIfDeviceCodeCallerAborted(signal: AbortSignal | undefined, error: unknown): void {
-  if (signal?.aborted) {
-    throw signal.reason instanceof Error ? signal.reason : error;
-  }
-}
-
 function formatDeviceCodeError(params: {
   prefix: string;
   status: number;
@@ -149,92 +120,18 @@ function formatDeviceCodeError(params: {
     : `${params.prefix}: HTTP ${params.status}`;
 }
 
-async function readOpenAICodexDeviceBody(response: Response): Promise<string> {
-  return await readResponseTextLimited(
-    response,
-    response.ok
-      ? OPENAI_CODEX_DEVICE_JSON_BODY_LIMIT_BYTES
-      : OPENAI_CODEX_DEVICE_ERROR_BODY_LIMIT_BYTES,
-  );
-}
-
-async function runOpenAICodexDeviceRequest(params: {
-  fetchFn: typeof fetch;
-  url: string;
-  init: Omit<RequestInit, "signal">;
-  timeoutMs: number;
-  signal?: AbortSignal;
-}): Promise<DeviceCodeHttpResult> {
-  const guardedOptions = {
-    url: params.url,
-    fetchImpl: params.fetchFn,
-    init: params.init,
-    timeoutMs: params.timeoutMs,
-    ...(params.signal ? { signal: params.signal } : {}),
-    requireHttps: true,
-    auditContext: "openai-chatgpt-device-code",
-  };
-  const { response, release } = await fetchWithSsrFGuard(
-    shouldUseEnvHttpProxyForUrl(params.url)
-      ? withTrustedEnvProxyGuardedFetchMode(guardedOptions)
-      : guardedOptions,
-  );
-  try {
-    return {
-      ok: response.ok,
-      status: response.status,
-      bodyText: await readOpenAICodexDeviceBody(response),
-    };
-  } finally {
-    await release();
-  }
-}
-
-async function fetchOpenAICodexDeviceCode(params: {
-  fetchFn: typeof fetch;
-  url: string;
-  init: Omit<RequestInit, "signal">;
-  timeoutOperation: string;
-  signal?: AbortSignal;
-}): Promise<DeviceCodeHttpResult> {
-  try {
-    return await runOpenAICodexDeviceRequest({
-      ...params,
-      timeoutMs: OPENAI_CODEX_DEVICE_REQUEST_TIMEOUT_MS,
-    });
-  } catch (error) {
-    rethrowIfDeviceCodeCallerAborted(params.signal, error);
-    if (isDeviceCodeOperationTimeoutError(error)) {
-      throw new Error(
-        `OpenAI device code ${params.timeoutOperation} timed out after ${OPENAI_CODEX_DEVICE_REQUEST_TIMEOUT_MS}ms`,
-        { cause: error },
-      );
-    }
-    throw error;
-  }
-}
-
-async function requestOpenAICodexDeviceCode(
-  fetchFn: typeof fetch,
-  signal?: AbortSignal,
-): Promise<RequestedDeviceCode> {
-  signal?.throwIfAborted();
-  const result = await fetchOpenAICodexDeviceCode({
-    fetchFn,
-    url: `${OPENAI_AUTH_BASE_URL}/api/accounts/deviceauth/usercode`,
-    init: {
-      method: "POST",
-      headers: resolveOpenAICodexDeviceCodeHeaders("application/json"),
-      body: JSON.stringify({
-        client_id: OPENAI_CODEX_CLIENT_ID,
-      }),
-    },
-    timeoutOperation: "user code request",
-    ...(signal ? { signal } : {}),
+async function requestOpenAICodexDeviceCode(fetchFn: typeof fetch): Promise<RequestedDeviceCode> {
+  const response = await fetchFn(`${OPENAI_AUTH_BASE_URL}/api/accounts/deviceauth/usercode`, {
+    method: "POST",
+    headers: resolveOpenAICodexDeviceCodeHeaders("application/json"),
+    body: JSON.stringify({
+      client_id: OPENAI_CODEX_CLIENT_ID,
+    }),
   });
 
-  if (!result.ok) {
-    if (result.status === 404) {
+  const bodyText = await response.text();
+  if (!response.ok) {
+    if (response.status === 404) {
       throw new Error(
         "OpenAI Codex device code login is not enabled for this server. Use ChatGPT OAuth instead.",
       );
@@ -242,13 +139,13 @@ async function requestOpenAICodexDeviceCode(
     throw new Error(
       formatDeviceCodeError({
         prefix: "OpenAI device code request failed",
-        status: result.status,
-        bodyText: result.bodyText,
+        status: response.status,
+        bodyText,
       }),
     );
   }
 
-  const body = parseJsonObject(result.bodyText) as DeviceCodeUserCodePayload | null;
+  const body = parseJsonObject(bodyText) as DeviceCodeUserCodePayload | null;
   const deviceAuthId = trimNonEmptyString(body?.device_auth_id);
   const userCode = trimNonEmptyString(body?.user_code) ?? trimNonEmptyString(body?.usercode);
   if (!deviceAuthId || !userCode) {
@@ -270,44 +167,22 @@ async function pollOpenAICodexDeviceCode(params: {
   deviceAuthId: string;
   userCode: string;
   intervalMs: number;
-  signal?: AbortSignal;
 }): Promise<DeviceCodeAuthorizationCode> {
   const deadline = Date.now() + OPENAI_CODEX_DEVICE_CODE_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
-    params.signal?.throwIfAborted();
-    const requestTimeoutMs = resolveDeviceCodePollRequestTimeoutMs(deadline);
-    if (requestTimeoutMs <= 0) {
-      break;
-    }
+    const response = await params.fetchFn(`${OPENAI_AUTH_BASE_URL}/api/accounts/deviceauth/token`, {
+      method: "POST",
+      headers: resolveOpenAICodexDeviceCodeHeaders("application/json"),
+      body: JSON.stringify({
+        device_auth_id: params.deviceAuthId,
+        user_code: params.userCode,
+      }),
+    });
 
-    let result: DeviceCodeHttpResult;
-    try {
-      result = await runOpenAICodexDeviceRequest({
-        fetchFn: params.fetchFn,
-        url: `${OPENAI_AUTH_BASE_URL}/api/accounts/deviceauth/token`,
-        init: {
-          method: "POST",
-          headers: resolveOpenAICodexDeviceCodeHeaders("application/json"),
-          body: JSON.stringify({
-            device_auth_id: params.deviceAuthId,
-            user_code: params.userCode,
-          }),
-        },
-        timeoutMs: requestTimeoutMs,
-        ...(params.signal ? { signal: params.signal } : {}),
-      });
-    } catch (error) {
-      rethrowIfDeviceCodeCallerAborted(params.signal, error);
-      // A stalled poll is transient; keep the overall 15-minute authorization deadline.
-      if (isDeviceCodeOperationTimeoutError(error)) {
-        continue;
-      }
-      throw error;
-    }
-
-    if (result.ok) {
-      const body = parseJsonObject(result.bodyText) as DeviceCodeTokenPayload | null;
+    const bodyText = await response.text();
+    if (response.ok) {
+      const body = parseJsonObject(bodyText) as DeviceCodeTokenPayload | null;
       const authorizationCode = trimNonEmptyString(body?.authorization_code);
       const codeVerifier = trimNonEmptyString(body?.code_verifier);
       if (!authorizationCode || !codeVerifier) {
@@ -319,19 +194,18 @@ async function pollOpenAICodexDeviceCode(params: {
       };
     }
 
-    if (result.status === 403 || result.status === 404) {
-      await waitForDeviceCodePoll(
-        resolveNextDeviceCodePollDelayMs(params.intervalMs, deadline),
-        params.signal,
-      );
+    if (response.status === 403 || response.status === 404) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, resolveNextDeviceCodePollDelayMs(params.intervalMs, deadline));
+      });
       continue;
     }
 
     throw new Error(
       formatDeviceCodeError({
         prefix: "OpenAI device authorization failed",
-        status: result.status,
-        bodyText: result.bodyText,
+        status: response.status,
+        bodyText,
       }),
     );
   }
@@ -343,38 +217,31 @@ async function exchangeOpenAICodexDeviceCode(params: {
   fetchFn: typeof fetch;
   authorizationCode: string;
   codeVerifier: string;
-  signal?: AbortSignal;
 }): Promise<OpenAICodexDeviceCodeCredentials> {
-  params.signal?.throwIfAborted();
-  const result = await fetchOpenAICodexDeviceCode({
-    fetchFn: params.fetchFn,
-    url: `${OPENAI_AUTH_BASE_URL}/oauth/token`,
-    init: {
-      method: "POST",
-      headers: resolveOpenAICodexDeviceCodeHeaders("application/x-www-form-urlencoded"),
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code: params.authorizationCode,
-        redirect_uri: OPENAI_CODEX_DEVICE_CALLBACK_URL,
-        client_id: OPENAI_CODEX_CLIENT_ID,
-        code_verifier: params.codeVerifier,
-      }),
-    },
-    timeoutOperation: "token exchange",
-    ...(params.signal ? { signal: params.signal } : {}),
+  const response = await params.fetchFn(`${OPENAI_AUTH_BASE_URL}/oauth/token`, {
+    method: "POST",
+    headers: resolveOpenAICodexDeviceCodeHeaders("application/x-www-form-urlencoded"),
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code: params.authorizationCode,
+      redirect_uri: OPENAI_CODEX_DEVICE_CALLBACK_URL,
+      client_id: OPENAI_CODEX_CLIENT_ID,
+      code_verifier: params.codeVerifier,
+    }),
   });
 
-  if (!result.ok) {
+  const bodyText = await response.text();
+  if (!response.ok) {
     throw new Error(
       formatDeviceCodeError({
         prefix: "OpenAI device token exchange failed",
-        status: result.status,
-        bodyText: result.bodyText,
+        status: response.status,
+        bodyText,
       }),
     );
   }
 
-  const body = parseJsonObject(result.bodyText) as OAuthTokenPayload | null;
+  const body = parseJsonObject(bodyText) as OAuthTokenPayload | null;
   const access = trimNonEmptyString(body?.access_token);
   const refresh = trimNonEmptyString(body?.refresh_token);
   if (!access || !refresh) {
@@ -397,12 +264,11 @@ export async function loginOpenAICodexDeviceCode(params: {
   fetchFn?: typeof fetch;
   onVerification: (prompt: OpenAICodexDeviceCodePrompt) => Promise<void> | void;
   onProgress?: (message: string) => void;
-  signal?: AbortSignal;
 }): Promise<OpenAICodexDeviceCodeCredentials> {
   const fetchFn = params.fetchFn ?? fetch;
 
   params.onProgress?.("Requesting device code…");
-  const deviceCode = await requestOpenAICodexDeviceCode(fetchFn, params.signal);
+  const deviceCode = await requestOpenAICodexDeviceCode(fetchFn);
 
   await params.onVerification({
     verificationUrl: deviceCode.verificationUrl,
@@ -416,7 +282,6 @@ export async function loginOpenAICodexDeviceCode(params: {
     deviceAuthId: deviceCode.deviceAuthId,
     userCode: deviceCode.userCode,
     intervalMs: deviceCode.intervalMs,
-    ...(params.signal ? { signal: params.signal } : {}),
   });
 
   params.onProgress?.("Exchanging device code…");
@@ -424,26 +289,5 @@ export async function loginOpenAICodexDeviceCode(params: {
     fetchFn,
     authorizationCode: authorization.authorizationCode,
     codeVerifier: authorization.codeVerifier,
-    ...(params.signal ? { signal: params.signal } : {}),
-  });
-}
-
-function waitForDeviceCodePoll(ms: number, signal?: AbortSignal): Promise<void> {
-  if (!signal) {
-    return new Promise((resolve) => {
-      setTimeout(resolve, ms);
-    });
-  }
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal.reason instanceof Error ? signal.reason : new Error("Device login cancelled"));
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
   });
 }

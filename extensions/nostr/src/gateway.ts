@@ -3,13 +3,10 @@ import {
   resolveStableChannelMessageIngress,
   type StableChannelIngressIdentityParams,
 } from "openclaw/plugin-sdk/channel-ingress-runtime";
-import {
-  bindIngressLifecycleToReplyOptions,
-  runPassiveAccountLifecycle,
-} from "openclaw/plugin-sdk/channel-outbound";
 import { createChannelPairingController } from "openclaw/plugin-sdk/channel-pairing";
 import { attachChannelToResult } from "openclaw/plugin-sdk/channel-send-result";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { runStoppablePassiveMonitor } from "openclaw/plugin-sdk/extension-shared";
 import type { ChannelOutboundAdapter, ChannelPlugin } from "./channel-api.js";
 import type { MetricEvent, MetricsSnapshot } from "./metrics.js";
 import { startNostrBus, type NostrBusHandle } from "./nostr-bus.js";
@@ -148,7 +145,7 @@ export const startNostrGatewayAccount: NostrGatewayStart = async (ctx) => {
     return "block";
   };
 
-  await runPassiveAccountLifecycle({
+  await runStoppablePassiveMonitor({
     abortSignal: ctx.abortSignal,
     start: async () => {
       const bus = await startNostrBus({
@@ -157,7 +154,7 @@ export const startNostrGatewayAccount: NostrGatewayStart = async (ctx) => {
         relays: account.relays,
         authorizeSender: async ({ senderPubkey, reply }) =>
           await authorizeSender({ senderId: senderPubkey, reply }),
-        onMessage: async (senderPubkey, text, reply, meta, lifecycle) => {
+        onMessage: async (senderPubkey, text, reply, meta) => {
           const resolvedAccess = await resolveInboundAccess(senderPubkey, text);
           if (resolvedAccess.senderAccess.decision !== "allow") {
             ctx.log?.warn?.(
@@ -166,9 +163,11 @@ export const startNostrGatewayAccount: NostrGatewayStart = async (ctx) => {
             return;
           }
 
-          const { dispatchInboundDirectDm } = await import("./inbound-direct-dm-runtime.js");
-          await dispatchInboundDirectDm({
+          const { dispatchInboundDirectDmWithRuntime } =
+            await import("./inbound-direct-dm-runtime.js");
+          await dispatchInboundDirectDmWithRuntime({
             cfg: ctx.cfg,
+            runtime,
             channel: "nostr",
             channelLabel: "Nostr",
             accountId: account.accountId,
@@ -186,8 +185,6 @@ export const startNostrGatewayAccount: NostrGatewayStart = async (ctx) => {
             commandAuthorized: resolvedAccess.commandAccess.requested
               ? resolvedAccess.commandAccess.authorized
               : undefined,
-            turnAdoptionLifecycle:
-              bindIngressLifecycleToReplyOptions(lifecycle).turnAdoptionLifecycle,
             deliver: async (payload) => {
               const outboundText =
                 payload && typeof payload === "object" && "text" in payload
@@ -248,16 +245,21 @@ export const startNostrGatewayAccount: NostrGatewayStart = async (ctx) => {
           }
         },
       });
+      let stopped = false;
       busHandle = bus;
       activeBuses.set(account.accountId, bus);
 
       ctx.log?.info?.(
-        `[${account.accountId}] Nostr provider started with ${account.relays.length} configured relay(s)`,
+        `[${account.accountId}] Nostr provider started, connected to ${account.relays.length} relay(s)`,
       );
 
       return {
-        stop: async () => {
-          await bus.close();
+        stop: () => {
+          if (stopped) {
+            return;
+          }
+          stopped = true;
+          bus.close();
           if (busHandle === bus) {
             busHandle = null;
           }
@@ -268,9 +270,6 @@ export const startNostrGatewayAccount: NostrGatewayStart = async (ctx) => {
           ctx.log?.info?.(`[${account.accountId}] Nostr provider stopped`);
         },
       };
-    },
-    stop: async (monitor) => {
-      await monitor.stop();
     },
   });
 };
@@ -326,10 +325,10 @@ export const nostrOutboundAdapter: NostrOutboundAdapter = {
     });
     const message = core.channel.text.convertMarkdownTables(text ?? "", tableMode);
     const normalizedTo = normalizePubkey(to);
-    const eventId = await bus.sendDm(normalizedTo, message);
+    await bus.sendDm(normalizedTo, message);
     return attachChannelToResult("nostr", {
       to: normalizedTo,
-      messageId: eventId,
+      messageId: `nostr-${Date.now()}`,
     });
   },
 };

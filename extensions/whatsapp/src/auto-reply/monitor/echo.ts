@@ -1,5 +1,4 @@
 // Whatsapp plugin module implements echo behavior.
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 export type EchoTracker = {
   rememberText: (
     text: string | undefined,
@@ -49,7 +48,7 @@ export function createEchoTracker(params: {
     }
     if (opts.logVerboseMessage) {
       params.logVerbose?.(
-        `Added to echo detection set (size now: ${recentlySent.size}): ${truncateUtf16Safe(text, 50)}...`,
+        `Added to echo detection set (size now: ${recentlySent.size}): ${text.slice(0, 50)}...`,
       );
     }
     trim();

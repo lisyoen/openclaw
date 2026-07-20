@@ -7,7 +7,7 @@ import {
 } from "openclaw/plugin-sdk/media-understanding";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 
-function stripOpencodeDisabledResponsesReasoningPayload(payload: unknown): void {
+export function stripOpencodeDisabledResponsesReasoningPayload(payload: unknown): void {
   if (!isRecord(payload)) {
     return;
   }

@@ -9,12 +9,7 @@ import {
 } from "../channels/plugins/types.public.js";
 import { shouldApplyCrossContextMarker } from "../infra/outbound/outbound-policy.js";
 
-const CORE_MESSAGING_TOOLS = new Set([
-  "sessions_send",
-  "conversations_send",
-  "conversations_turn",
-  "message",
-]);
+const CORE_MESSAGING_TOOLS = new Set(["sessions_send", "message"]);
 const MESSAGE_TOOL_SEND_ACTIONS = new Set([
   "send",
   "thread-reply",
@@ -77,11 +72,7 @@ export function isMessagingToolSendAction(
   args: Record<string, unknown>,
 ): boolean {
   const action = normalizeOptionalString(args.action) ?? "";
-  if (
-    toolName === "sessions_send" ||
-    toolName === "conversations_send" ||
-    toolName === "conversations_turn"
-  ) {
+  if (toolName === "sessions_send") {
     return true;
   }
   if (toolName === "message") {
@@ -98,9 +89,6 @@ export function isMessagingToolTargetEvidenceAction(
   toolName: string,
   args: Record<string, unknown>,
 ): boolean {
-  if (toolName === "conversations_send" || toolName === "conversations_turn") {
-    return true;
-  }
   if (toolName === "message") {
     const action = normalizeOptionalString(args.action) ?? "";
     return (
@@ -116,9 +104,6 @@ export function isMessagingToolDeliveryAction(
   toolName: string,
   args: Record<string, unknown>,
 ): boolean {
-  if (toolName === "conversations_send" || toolName === "conversations_turn") {
-    return true;
-  }
   if (toolName === "message") {
     const action = normalizeOptionalString(args.action) ?? "";
     return (

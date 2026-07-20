@@ -24,6 +24,8 @@ import type { CoreConfig } from "./types.js";
 type ApprovalRequest = ExecApprovalRequest | PluginApprovalRequest;
 type ApprovalKind = "exec" | "plugin";
 
+export { normalizeMatrixApproverId };
+
 function normalizeMatrixExecApproverId(value: string | number): string | undefined {
   const normalized = normalizeMatrixApproverId(value);
   return normalized === "*" ? undefined : normalized;
@@ -127,6 +129,10 @@ export function getMatrixExecApprovalApprovers(params: {
   });
 }
 
+function resolveMatrixApprovalKind(request: ApprovalRequest): ApprovalKind {
+  return request.id.startsWith("plugin:") ? "plugin" : "exec";
+}
+
 export function getMatrixApprovalApprovers(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
@@ -141,7 +147,7 @@ export function getMatrixApprovalApprovers(params: {
   return getMatrixExecApprovalApprovers(params);
 }
 
-function isMatrixExecApprovalTargetRecipient(params: {
+export function isMatrixExecApprovalTargetRecipient(params: {
   cfg: OpenClawConfig;
   senderId?: string | null;
   accountId?: string | null;
@@ -168,8 +174,10 @@ const matrixExecApprovalProfile = createChannelExecApprovalProfile({
 });
 
 export const isMatrixExecApprovalClientEnabled = matrixExecApprovalProfile.isClientEnabled;
+export const isMatrixExecApprovalApprover = matrixExecApprovalProfile.isApprover;
 export const isMatrixExecApprovalAuthorizedSender = matrixExecApprovalProfile.isAuthorizedSender;
 export const resolveMatrixExecApprovalTarget = matrixExecApprovalProfile.resolveTarget;
+export const shouldHandleMatrixExecApprovalRequest = matrixExecApprovalProfile.shouldHandleRequest;
 
 export function isMatrixApprovalClientEnabled(params: {
   cfg: OpenClawConfig;
@@ -205,16 +213,13 @@ export function isMatrixAnyApprovalClientEnabled(params: {
 export function shouldHandleMatrixApprovalRequest(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
-  approvalKind: ApprovalKind;
   request: ApprovalRequest;
 }): boolean {
-  if (params.approvalKind !== "exec" && params.approvalKind !== "plugin") {
-    return false;
-  }
+  const approvalKind = resolveMatrixApprovalKind(params.request);
   if (
     !matchesMatrixRequestAccount({
       ...params,
-      approvalKind: params.approvalKind,
+      approvalKind,
     })
   ) {
     return false;
@@ -225,7 +230,7 @@ export function shouldHandleMatrixApprovalRequest(params: {
       enabled: config?.enabled,
       approverCount: getMatrixApprovalApprovers({
         ...params,
-        approvalKind: params.approvalKind,
+        approvalKind,
       }).length,
     })
   ) {
@@ -284,7 +289,6 @@ export function shouldSuppressLocalMatrixExecApprovalPrompt(params: {
   return shouldHandleMatrixApprovalRequest({
     cfg: params.cfg,
     accountId: params.accountId,
-    approvalKind: metadata.approvalKind,
     request,
   });
 }

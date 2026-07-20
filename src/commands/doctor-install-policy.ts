@@ -12,7 +12,7 @@ import {
   type InstallPolicyStaticValidation,
 } from "../security/install-policy.js";
 
-type InstallPolicyHealthOptions = {
+export type InstallPolicyHealthOptions = {
   deep?: boolean;
   env?: NodeJS.ProcessEnv;
 };
@@ -22,7 +22,7 @@ function formatTargets(validation: InstallPolicyStaticValidation): string {
 }
 
 /** Builds doctor note lines for static install policy validation and optional deep probing. */
-async function collectInstallPolicyHealthLines(
+export async function collectInstallPolicyHealthLines(
   cfg: OpenClawConfig,
   options: InstallPolicyHealthOptions = {},
 ): Promise<string[]> {

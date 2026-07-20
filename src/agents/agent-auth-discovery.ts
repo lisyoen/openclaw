@@ -21,7 +21,6 @@ import {
 /** Options for discovering credentials without prompting for secret material. */
 export type DiscoverAuthStorageOptions = {
   externalCli?: ExternalCliAuthDiscovery;
-  inheritedAuthDir?: string;
   readOnly?: boolean;
   skipExternalAuthProfiles?: boolean;
   skipCredentials?: boolean;
@@ -37,28 +36,22 @@ export function resolveAgentCredentialsForDiscovery(
     allowKeychainPrompt: false,
     ...(options?.config ? { config: options.config } : {}),
     ...(options?.externalCli ? { externalCli: options.externalCli } : {}),
-    ...(options?.inheritedAuthDir ? { inheritedAuthDir: options.inheritedAuthDir } : {}),
   };
   const store =
     options?.skipExternalAuthProfiles === true
       ? options.readOnly === true
-        ? loadAuthProfileStoreWithoutExternalProfiles(
-            agentDir,
-            options.inheritedAuthDir ? { inheritedAuthDir: options.inheritedAuthDir } : undefined,
-          )
+        ? loadAuthProfileStoreWithoutExternalProfiles(agentDir)
         : ensureAuthProfileStoreWithoutExternalProfiles(agentDir, {
             allowKeychainPrompt: false,
-            ...(options?.inheritedAuthDir ? { inheritedAuthDir: options.inheritedAuthDir } : {}),
           })
       : options?.readOnly === true
-        ? options.externalCli || options.config || options.inheritedAuthDir
+        ? options.externalCli || options.config
           ? loadAuthProfileStoreForRuntime(agentDir, { readOnly: true, ...storeOptions })
           : loadAuthProfileStoreForSecretsRuntime(agentDir)
         : ensureAuthProfileStore(agentDir, storeOptions);
   const credentials = addEnvBackedAgentCredentials(
     resolveAgentCredentialMapFromStore(store, {
       includeSecretRefPlaceholders: options?.readOnly === true,
-      config: options?.config,
     }),
     {
       config: options?.config,
@@ -93,3 +86,5 @@ export function resolveAgentCredentialsForDiscovery(
   }
   return credentials;
 }
+
+export { addEnvBackedAgentCredentials } from "./agent-auth-discovery-core.js";

@@ -30,10 +30,6 @@ export function createBrowserPluginService(): OpenClawPluginService {
   return {
     id: "browser-control",
     start: async () => {
-      const pageShare = await import("./browser/extension-relay/page-share.js");
-      // Plugin services start only in the Gateway process. The sink marks this
-      // process as able to deliver page shares to the main session.
-      pageShare.setPageShareSink(pageShare.createGatewayPageShareSink());
       if (!isTruthyEnvValue(process.env[EAGER_BROWSER_CONTROL_SERVICE_ENV])) {
         return;
       }
@@ -54,18 +50,14 @@ export function createBrowserPluginService(): OpenClawPluginService {
       });
     },
     stop: async () => {
-      const { setPageShareSink } = await import("./browser/extension-relay/page-share.js");
-      setPageShareSink(null);
       const current = handle;
+      handle = null;
       if (current) {
-        await current.stop();
-        if (handle === current) {
-          handle = null;
-        }
+        await current.stop().catch(() => {});
         return;
       }
       const { stopBrowserControlService } = await import("./control-service.js");
-      await stopBrowserControlService();
+      await stopBrowserControlService().catch(() => {});
     },
   };
 }

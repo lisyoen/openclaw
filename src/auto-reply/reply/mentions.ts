@@ -16,20 +16,7 @@ import { compileConfigRegexes, type ConfigRegexRejectReason } from "../../securi
 import { escapeRegExp } from "../../utils.js";
 import type { MsgContext } from "../templating.js";
 import type { BuildMentionRegexesOptions, ExplicitMentionSignal } from "./mentions.types.js";
-export type { BuildMentionRegexesOptions } from "./mentions.types.js";
-
-type ResolvedMentionPatterns = {
-  patterns: string[];
-  unicode: boolean;
-};
-
-const UNICODE_WORD_CHAR = String.raw`[\p{L}\p{M}\p{N}\p{Pc}\u200C\u200D]`;
-
-function wrapDerivedMentionPattern(pattern: string): string {
-  // JavaScript \b is ASCII-oriented. Derived identity names need Unicode word
-  // boundaries so a name is neither missed nor matched inside another word.
-  return `(?:@|(?<!${UNICODE_WORD_CHAR}))${pattern}(?!${UNICODE_WORD_CHAR})`;
-}
+export type { BuildMentionRegexesOptions, ExplicitMentionSignal } from "./mentions.types.js";
 
 function deriveMentionPatterns(identity?: { name?: string; emoji?: string }) {
   const patterns: string[] = [];
@@ -37,7 +24,7 @@ function deriveMentionPatterns(identity?: { name?: string; emoji?: string }) {
   if (name) {
     const parts = name.split(/\s+/).filter(Boolean).map(escapeRegExp);
     const re = parts.length ? parts.join(String.raw`\s+`) : escapeRegExp(name);
-    patterns.push(wrapDerivedMentionPattern(re));
+    patterns.push(String.raw`\b@?${re}\b`);
   }
   const emoji = normalizeOptionalString(identity?.emoji);
   if (emoji) {
@@ -125,24 +112,21 @@ function compileMentionPatternsCached(params: {
   return cacheMentionRegexes(params.cache, cacheKey, compiled.regexes);
 }
 
-function resolveMentionPatterns(
-  cfg: OpenClawConfig | undefined,
-  agentId?: string,
-): ResolvedMentionPatterns {
+function resolveMentionPatterns(cfg: OpenClawConfig | undefined, agentId?: string): string[] {
   if (!cfg) {
-    return { patterns: [], unicode: false };
+    return [];
   }
   const agentConfig = agentId ? resolveAgentConfig(cfg, agentId) : undefined;
   const agentGroupChat = agentConfig?.groupChat;
   if (agentGroupChat && Object.hasOwn(agentGroupChat, "mentionPatterns")) {
-    return { patterns: agentGroupChat.mentionPatterns ?? [], unicode: false };
+    return agentGroupChat.mentionPatterns ?? [];
   }
   const globalGroupChat = cfg.messages?.groupChat;
   if (globalGroupChat && Object.hasOwn(globalGroupChat, "mentionPatterns")) {
-    return { patterns: globalGroupChat.mentionPatterns ?? [], unicode: false };
+    return globalGroupChat.mentionPatterns ?? [];
   }
   const derived = deriveMentionPatterns(agentConfig?.identity);
-  return { patterns: derived, unicode: derived.length > 0 };
+  return derived.length > 0 ? derived : [];
 }
 
 /** Builds mention regexes from config, agent identity, and channel policy. */
@@ -154,11 +138,10 @@ export function buildMentionRegexes(
   if (!resolveMentionPatternPolicy({ ...options, cfg, agentId }).enabled) {
     return [];
   }
-  const resolved = resolveMentionPatterns(cfg, agentId);
-  const patterns = normalizeMentionPatterns(resolved.patterns);
+  const patterns = normalizeMentionPatterns(resolveMentionPatterns(cfg, agentId));
   return compileMentionPatternsCached({
     patterns,
-    flags: resolved.unicode ? "iu" : "i",
+    flags: "i",
     cache: mentionMatchRegexCompileCache,
     warnRejected: true,
   });
@@ -213,11 +196,11 @@ export function stripStructuralPrefixes(text: string): string {
       ? /^[ \t]*(?!\/)[^\n:]{1,120}:\s+/gm
       : /^[ \t]*[^\n:]{1,120}:\s+/gm;
 
-  const stripped = afterEnvelope.replace(senderPrefixPattern, "").replace(/\\n/g, " ").trim();
-  if (stripped.startsWith("/")) {
-    return stripped.replace(/[ \t]+/g, " ");
-  }
-  return stripped.replace(/\s+/g, " ");
+  return afterEnvelope
+    .replace(senderPrefixPattern, "")
+    .replace(/\\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Removes bot mentions from command text before command normalization. */
@@ -235,10 +218,9 @@ export function stripMentions(
   const providerMentions = providerId
     ? (getLoadedChannelPluginById(providerId) as ChannelPlugin | undefined)?.mentions
     : undefined;
-  const resolvedPatterns = resolveMentionPatterns(cfg, agentId);
   const configRegexes = compileMentionPatternsCached({
-    patterns: normalizeMentionPatterns(resolvedPatterns.patterns),
-    flags: resolvedPatterns.unicode ? "giu" : "gi",
+    patterns: normalizeMentionPatterns(resolveMentionPatterns(cfg, agentId)),
+    flags: "gi",
     cache: mentionStripRegexCompileCache,
     warnRejected: true,
   });

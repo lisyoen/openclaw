@@ -3,64 +3,56 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { normalizeMainKey } from "openclaw/plugin-sdk/routing";
+import { saveSessionStore } from "openclaw/plugin-sdk/session-store-runtime";
+import { withTempDir } from "openclaw/plugin-sdk/test-env";
+import { describe, expect, it, vi } from "vitest";
+import { createTestWebInboundMessage } from "../inbound/test-message.test-helper.js";
+import type { WebInboundMessage } from "../inbound/types.js";
 import {
   evaluateSessionFreshness,
-  getSessionEntry,
+  loadSessionStore,
   resolveChannelResetConfig,
   resolveSessionKey,
   resolveSessionResetPolicy,
   resolveSessionResetType,
   resolveStorePath,
   resolveThreadFlag,
-  upsertSessionEntry,
-} from "openclaw/plugin-sdk/session-store-runtime";
-import { withTempDir } from "openclaw/plugin-sdk/test-env";
-import { describe, expect, it, vi } from "vitest";
-import { createTestWebInboundMessage } from "../inbound/test-message.test-helper.js";
-import type { AdmittedWebInboundMessage } from "../inbound/types.js";
-import { debugMention, resolveOwnerList } from "./mentions.js";
+} from "./config.runtime.js";
+import {
+  debugMention,
+  isBotMentionedFromTargets,
+  resolveMentionTargets,
+  resolveOwnerList,
+} from "./mentions.js";
 import { elide, isLikelyWhatsAppCryptoError } from "./util.js";
 
 type TestMessageOverrides = {
-  admission?: NonNullable<Parameters<typeof createTestWebInboundMessage>[0]>["admission"];
   body?: string;
+  chatType?: "direct" | "group";
+  conversationId?: string;
+  from?: string;
   mentionedJids?: string[];
   selfE164?: string;
   selfJid?: string;
   selfLid?: string;
 };
 
-const makeMsg = (overrides: TestMessageOverrides): AdmittedWebInboundMessage => {
-  const conversationId = overrides.admission?.conversation?.id ?? "120363401234567890@g.us";
-  const conversationKind = overrides.admission?.conversation?.kind ?? "group";
+const makeMsg = (overrides: TestMessageOverrides): WebInboundMessage => {
+  const from = overrides.from ?? "120363401234567890@g.us";
   return createTestWebInboundMessage({
     event: { id: "m1" },
     payload: { body: overrides.body ?? "" },
     platform: {
-      chatJid: conversationId,
+      chatJid: "120363401234567890@g.us",
       recipientJid: "15551234567@s.whatsapp.net",
       selfE164: overrides.selfE164,
       selfJid: overrides.selfJid,
       selfLid: overrides.selfLid,
     },
-    admission: {
-      ...overrides.admission,
-      accountId: overrides.admission?.accountId ?? "default",
-      conversation: {
-        kind: conversationKind,
-        id: conversationId,
-        ...overrides.admission?.conversation,
-      },
-      sender: {
-        id: conversationId,
-        ...overrides.admission?.sender,
-      },
-      senderAccess: {
-        reasonCode:
-          conversationKind === "direct" ? "dm_policy_allowlisted" : "group_policy_allowed",
-        ...overrides.admission?.senderAccess,
-      },
-    },
+    from,
+    conversationId: overrides.conversationId ?? from,
+    accountId: "default",
+    chatType: overrides.chatType ?? "group",
     group: {
       mentions: {
         jids: overrides.mentionedJids,
@@ -90,10 +82,8 @@ function getSessionSnapshotForTest(
       { From: from, To: "", Body: "" },
       normalizeMainKey(sessionCfg?.mainKey),
     );
-  const entry = getSessionEntry({
-    sessionKey: key,
-    storePath: resolveStorePath(sessionCfg?.store),
-  });
+  const store = loadSessionStore(resolveStorePath(sessionCfg?.store));
+  const entry = store[key];
   const isThread = resolveThreadFlag({
     sessionKey: key,
     messageThreadId: ctx?.messageThreadId ?? null,
@@ -129,42 +119,17 @@ describe("isBotMentionedFromTargets", () => {
   const mentionCfg = { mentionRegexes: [/\bopenclaw\b/i] };
 
   function expectMentioned(
-    msg: AdmittedWebInboundMessage,
+    msg: WebInboundMessage,
     cfg: { mentionRegexes: RegExp[]; allowFrom?: Array<string | number>; isSelfChat?: boolean },
     expected: boolean,
   ) {
-    expect(debugMention(msg, cfg).wasMentioned).toBe(expected);
+    const targets = resolveMentionTargets(msg);
+    expect(isBotMentionedFromTargets(msg, cfg, targets)).toBe(expected);
   }
 
-  it("honors configured mention patterns when only other members are @-mentioned (#109488)", () => {
-    // Previously a native @-mention of a non-bot member short-circuited the
-    // gate to false before mentionPatterns were evaluated, silently dropping
-    // messages like "marlow, look at @SomeoneElse's message".
+  it("ignores regex matches when other mentions are present", () => {
     const msg = makeMsg({
       body: "@OpenClaw please help",
-      mentionedJids: ["19998887777@s.whatsapp.net"],
-      selfE164: "+15551234567",
-      selfJid: "15551234567@s.whatsapp.net",
-    });
-    expectMentioned(msg, mentionCfg, true);
-  });
-
-  it("still rejects third-party mentions when no configured pattern matches", () => {
-    const msg = makeMsg({
-      body: "look at @SomeoneElse's message",
-      mentionedJids: ["19998887777@s.whatsapp.net"],
-      selfE164: "+15551234567",
-      selfJid: "15551234567@s.whatsapp.net",
-    });
-    expectMentioned(msg, mentionCfg, false);
-  });
-
-  it("keeps the self-number digit fallback suppressed when other members are @-mentioned", () => {
-    // An @-tag of another member injects that member's number into the body,
-    // so loose digit matching stays disabled in this shape — only explicit
-    // mentionPatterns can rescue the message (#109488).
-    const msg = makeMsg({
-      body: "call me at +15551234567 and ask @SomeoneElse",
       mentionedJids: ["19998887777@s.whatsapp.net"],
       selfE164: "+15551234567",
       selfJid: "15551234567@s.whatsapp.net",
@@ -197,12 +162,9 @@ describe("isBotMentionedFromTargets", () => {
       // Direct chat with self, not a group — the original "ignore mentions
       // in self-chat" suppression still applies here so that mentioning the
       // owner in their own DM does not falsely trigger the bot.
-      admission: {
-        conversation: {
-          kind: "direct",
-          id: "999@s.whatsapp.net",
-        },
-      },
+      from: "999@s.whatsapp.net",
+      conversationId: "999@s.whatsapp.net",
+      chatType: "direct",
       body: "@owner ping",
       mentionedJids: ["999@s.whatsapp.net"],
       selfE164: "+999",
@@ -211,12 +173,9 @@ describe("isBotMentionedFromTargets", () => {
     expectMentioned(msg, cfg, false);
 
     const msgTextMention = makeMsg({
-      admission: {
-        conversation: {
-          kind: "direct",
-          id: "999@s.whatsapp.net",
-        },
-      },
+      from: "999@s.whatsapp.net",
+      conversationId: "999@s.whatsapp.net",
+      chatType: "direct",
       body: "openclaw ping",
       selfE164: "+999",
       selfJid: "999@s.whatsapp.net",
@@ -276,27 +235,31 @@ describe("resolveMentionTargets with @lid mapping", () => {
         JSON.stringify("+1777"),
       );
 
-      const mentionDetails = debugMention(
+      const mentionTargets = resolveMentionTargets(
         makeMsg({
           body: "ping",
           mentionedJids: ["777@lid"],
           selfE164: "+15551234567",
           selfJid: "15551234567@s.whatsapp.net",
         }),
-        { mentionRegexes: [] },
         authDir,
-      ).details;
-      expect(mentionDetails.normalizedMentionedJids).toEqual([["+1777", "777@lid"]]);
+      );
+      expect(mentionTargets.normalizedMentions).toEqual([
+        {
+          jid: null,
+          lid: "777@lid",
+          e164: "+1777",
+        },
+      ]);
 
-      const selfDetails = debugMention(
+      const selfTargets = resolveMentionTargets(
         makeMsg({
           body: "ping",
           selfJid: "777@lid",
         }),
-        { mentionRegexes: [] },
         authDir,
-      ).details;
-      expect(selfDetails.resolvedSelf).toEqual({
+      );
+      expect(selfTargets.self).toEqual({
         jid: null,
         lid: "777@lid",
         e164: "+1777",
@@ -314,10 +277,8 @@ describe("getSessionSnapshot", () => {
         const storePath = path.join(root, "sessions.json");
         const sessionKey = "agent:main:whatsapp:dm:s1";
 
-        await upsertSessionEntry({
-          storePath,
-          sessionKey,
-          entry: {
+        await saveSessionStore(storePath, {
+          [sessionKey]: {
             sessionId: "snapshot-session",
             updatedAt: new Date(2026, 0, 18, 3, 30, 0).getTime(),
             lastChannel: "whatsapp",
@@ -353,11 +314,7 @@ describe("web auto-reply util", () => {
   describe("mentions diagnostics", () => {
     it("returns normalized debug fields and mention outcome", () => {
       const msg = makeMsg({
-        admission: {
-          conversation: {
-            id: "777@lid",
-          },
-        },
+        from: "777@lid",
         body: "openclaw ping",
         selfE164: "+15551234567",
         selfJid: "15551234567@s.whatsapp.net",
@@ -383,15 +340,6 @@ describe("web auto-reply util", () => {
   });
 
   describe("elide", () => {
-    const hasLoneSurrogate = (value: string): boolean =>
-      Array.from(value).some((char) => {
-        if (char.length !== 1) {
-          return false;
-        }
-        const codeUnit = char.charCodeAt(0);
-        return codeUnit >= 0xd800 && codeUnit <= 0xdfff;
-      });
-
     it("returns undefined for undefined input", () => {
       expect(elide(undefined)).toBe(undefined);
     });
@@ -402,20 +350,6 @@ describe("web auto-reply util", () => {
 
     it("truncates and annotates when over limit", () => {
       expect(elide("abcdef", 3)).toBe("abc… (truncated 3 chars)");
-    });
-
-    it("does not split surrogate pairs when the limit lands inside an emoji", () => {
-      const output = elide("😀😀😀", 5);
-
-      expect(output).toBe("😀😀… (truncated 2 chars)");
-      expect(hasLoneSurrogate(output ?? "")).toBe(false);
-    });
-
-    it("keeps a complete astral character when it fits before the limit", () => {
-      const output = elide("ab😀cd", 4);
-
-      expect(output).toBe("ab😀… (truncated 2 chars)");
-      expect(hasLoneSurrogate(output ?? "")).toBe(false);
     });
   });
 

@@ -49,17 +49,9 @@ vi.mock("./doctor-config-audit-scrub.js", () => ({
   maybeScrubConfigAuditLog: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("./doctor-usage-cost-cache.js", () => ({
-  maybeRepairLegacyRuntimeFiles: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("./doctor/cron/index.js", () => ({
+vi.mock("./doctor-cron.js", () => ({
   maybeRepairLegacyCronStore: vi.fn().mockResolvedValue(undefined),
   noteLegacyWhatsAppCrontabHealthCheck: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("./doctor/cron/legacy-repair.js", () => ({
-  repairLegacyCronStoreWithoutPrompt: vi.fn().mockResolvedValue({ changes: [], warnings: [] }),
 }));
 
 vi.mock("./doctor-device-pairing.js", () => ({
@@ -153,6 +145,6 @@ vi.mock("./doctor-heartbeat-template-repair.js", () => ({
   maybeRepairHeartbeatTemplate: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../plugins/provider-openai-chatgpt-oauth-tls.js", () => ({
+vi.mock("./oauth-tls-preflight.js", () => ({
   noteOpenAIOAuthTlsPrerequisites: vi.fn().mockResolvedValue(undefined),
 }));

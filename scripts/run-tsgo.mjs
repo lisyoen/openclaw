@@ -6,9 +6,7 @@ import { readFlagValue } from "./lib/arg-utils.mjs";
 import {
   acquireLocalHeavyCheckLockSync,
   applyLocalTsgoPolicy,
-  ensureRepoToolNodeModulesLink,
   resolveLocalHeavyCheckEnv,
-  resolveRepoToolBinPath,
   shouldAcquireLocalHeavyCheckLockForTsgo,
 } from "./lib/local-heavy-check-runtime.mjs";
 import { createManagedCommandInvocation } from "./lib/managed-child-process.mjs";
@@ -22,7 +20,7 @@ const { args: finalArgs, env } = applyLocalTsgoPolicy(
   resolveLocalHeavyCheckEnv(process.env),
 );
 
-const tsgoPath = resolveRepoToolBinPath("tsgo");
+const tsgoPath = path.resolve("node_modules", ".bin", "tsgo");
 const tsBuildInfoFile = readFlagValue(finalArgs, "--tsBuildInfoFile");
 if (tsBuildInfoFile) {
   fs.mkdirSync(path.dirname(path.resolve(tsBuildInfoFile)), { recursive: true });
@@ -49,7 +47,6 @@ try {
       process.exitCode = 1;
     }
   } else {
-    ensureRepoToolNodeModulesLink(tsgoPath);
     const tsgo = createManagedCommandInvocation({
       args: finalArgs,
       bin: tsgoPath,

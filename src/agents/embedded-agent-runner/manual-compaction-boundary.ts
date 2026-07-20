@@ -11,7 +11,7 @@ import {
 
 type CompactionEntry = Extract<SessionEntry, { type: "compaction" }>;
 
-type HardenedManualCompactionBoundary = {
+export type HardenedManualCompactionBoundary = {
   applied: boolean;
   firstKeptEntryId?: string;
   leafId?: string;

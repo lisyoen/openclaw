@@ -2,13 +2,12 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { withEnvAsync } from "../test-utils/env.js";
-import { collectSecurityAuditFindings } from "./audit.test-support.js";
-import type { SecurityAuditFinding } from "./audit.types.js";
+import { collectGatewayConfigFindings, collectLoggingFindings } from "./audit.js";
 
 function hasGatewayFinding(
   checkId: "gateway.trusted_proxies_missing" | "gateway.loopback_no_auth",
   severity: "warn" | "critical",
-  findings: SecurityAuditFinding[],
+  findings: ReturnType<typeof collectGatewayConfigFindings>,
 ) {
   return findings.some((finding) => finding.checkId === checkId && finding.severity === severity);
 }
@@ -16,7 +15,7 @@ function hasGatewayFinding(
 function hasLoggingFinding(
   checkId: "logging.redact_off",
   severity: "warn",
-  findings: SecurityAuditFinding[],
+  findings: ReturnType<typeof collectLoggingFindings>,
 ) {
   return findings.some((finding) => finding.checkId === checkId && finding.severity === severity);
 }
@@ -35,7 +34,7 @@ describe("security audit loopback and logging findings", () => {
           hasGatewayFinding(
             "gateway.trusted_proxies_missing",
             "warn",
-            await collectSecurityAuditFindings(cfg),
+            collectGatewayConfigFindings(cfg, cfg, process.env),
           ),
         ).toBe(true);
       })(),
@@ -56,7 +55,7 @@ describe("security audit loopback and logging findings", () => {
             hasGatewayFinding(
               "gateway.loopback_no_auth",
               "critical",
-              await collectSecurityAuditFindings(cfg),
+              collectGatewayConfigFindings(cfg, cfg, process.env),
             ),
           ).toBe(true);
         },
@@ -65,9 +64,9 @@ describe("security audit loopback and logging findings", () => {
         const cfg: OpenClawConfig = {
           logging: { redactSensitive: "off" },
         };
-        expect(
-          hasLoggingFinding("logging.redact_off", "warn", await collectSecurityAuditFindings(cfg)),
-        ).toBe(true);
+        expect(hasLoggingFinding("logging.redact_off", "warn", collectLoggingFindings(cfg))).toBe(
+          true,
+        );
       })(),
     ]);
   });

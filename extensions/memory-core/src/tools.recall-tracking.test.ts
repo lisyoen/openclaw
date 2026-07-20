@@ -6,7 +6,7 @@ import {
   resetMemoryToolMockState,
   setMemoryBackend,
   setMemorySearchImpl,
-} from "./memory-tool-manager.test-mocks.js";
+} from "./memory-tool-manager-mock.js";
 import { createMemorySearchTool } from "./tools.js";
 
 type RecordShortTermRecallsFn = (params: {

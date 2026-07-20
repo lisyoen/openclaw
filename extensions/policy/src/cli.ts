@@ -12,7 +12,6 @@ import {
   type HealthCheckContext,
   type HealthFinding,
 } from "openclaw/plugin-sdk/health";
-import { POLICY_FIX_METADATA_BY_CHECK_ID } from "./doctor/fix-metadata.js";
 import { POLICY_CHECK_IDS, evaluatePolicy } from "./doctor/register.js";
 import {
   buildPolicyConformanceReport,
@@ -20,24 +19,24 @@ import {
 } from "./policy-conformance.js";
 import { createPolicyAttestation } from "./policy-state.js";
 
-type PolicyCommandRuntime = {
+export type PolicyCommandRuntime = {
   writeStdout(value: string): void;
   error(value: string): void;
   sleep?(ms: number): Promise<void>;
 };
 
-interface PolicyCheckOptions {
+export interface PolicyCheckOptions {
   readonly json?: boolean;
   readonly severityMin?: string;
   readonly cwd?: string;
 }
 
-interface PolicyWatchOptions extends PolicyCheckOptions {
+export interface PolicyWatchOptions extends PolicyCheckOptions {
   readonly intervalMs?: string | number;
   readonly once?: boolean;
 }
 
-interface PolicyCompareOptions {
+export interface PolicyCompareOptions {
   readonly baseline?: string;
   readonly policy?: string;
   readonly json?: boolean;
@@ -101,7 +100,7 @@ export function registerPolicyCli(program: Command): void {
     });
 }
 
-async function policyCompareCommand(
+export async function policyCompareCommand(
   options: PolicyCompareOptions,
   runtime: PolicyCommandRuntime = defaultRuntime,
 ): Promise<number> {
@@ -123,7 +122,7 @@ async function policyCompareCommand(
   }
 }
 
-async function policyCheckCommand(
+export async function policyCheckCommand(
   options: PolicyCheckOptions,
   runtime: PolicyCommandRuntime = defaultRuntime,
 ): Promise<number> {
@@ -137,7 +136,7 @@ async function policyCheckCommand(
   }
 }
 
-async function policyWatchCommand(
+export async function policyWatchCommand(
   options: PolicyWatchOptions,
   runtime: PolicyCommandRuntime = defaultRuntime,
 ): Promise<number> {
@@ -221,7 +220,7 @@ async function buildPolicyCheckReport(
     healthFindingMeetsSeverity(finding, severityMin),
   );
   const jsonFindings = findings.map(toJsonFinding);
-  const attestedFindings = evaluation.attestedFindings.map(toAttestedJsonFinding);
+  const attestedFindings = evaluation.attestedFindings.map(toJsonFinding);
   const ok = exitCodeFromFindings(evaluation.findings, severityMin) === 0;
   const attestation = createPolicyAttestation({
     ok: evaluation.attestedFindings.length === 0,
@@ -417,7 +416,7 @@ function normalizeWatchIntervalMs(value: string | number | undefined): number {
   return raw;
 }
 
-function toAttestedJsonFinding(finding: HealthFinding): Record<string, unknown> {
+function toJsonFinding(finding: HealthFinding): Record<string, unknown> {
   return {
     checkId: finding.checkId,
     severity: finding.severity,
@@ -429,31 +428,5 @@ function toAttestedJsonFinding(finding: HealthFinding): Record<string, unknown> 
     ...(finding.target !== undefined ? { target: finding.target } : {}),
     ...(finding.requirement !== undefined ? { requirement: finding.requirement } : {}),
     ...(finding.fixHint !== undefined ? { fixHint: finding.fixHint } : {}),
-  };
-}
-
-function toJsonFinding(finding: HealthFinding): Record<string, unknown> {
-  return {
-    ...toAttestedJsonFinding(finding),
-    ...policyFindingMetadata(finding),
-  };
-}
-
-function policyFindingMetadata(finding: HealthFinding): Record<string, unknown> {
-  const metadata = POLICY_FIX_METADATA_BY_CHECK_ID.get(
-    finding.checkId as (typeof POLICY_CHECK_IDS)[number],
-  );
-  if (metadata === undefined) {
-    return {};
-  }
-  return {
-    policy: {
-      fixRecommendation: {
-        fixClass: metadata.fixClass,
-        ...(metadata.policyPath !== undefined ? { policyPath: metadata.policyPath } : {}),
-        ...(metadata.configTargets !== undefined ? { configTargets: metadata.configTargets } : {}),
-        summary: metadata.summary,
-      },
-    },
   };
 }

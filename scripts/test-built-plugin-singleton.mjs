@@ -78,7 +78,8 @@ fs.writeFileSync(
 fs.writeFileSync(
   path.join(distPluginDir, "index.js"),
   [
-    "import { emptyPluginConfigSchema } from 'openclaw/plugin-sdk/plugin-entry';",
+    "import sdk from 'openclaw/plugin-sdk';",
+    "const { emptyPluginConfigSchema } = sdk;",
     "",
     "export default {",
     `  id: ${JSON.stringify(pluginId)},`,

@@ -1,4 +1,3 @@
-import { expectDefined } from "@openclaw/normalization-core";
 // Channel selection chooses a deliverable message channel from explicit input,
 // tool context fallback, or configured plugin accounts.
 import { listChannelPlugins } from "../../channels/plugins/index.js";
@@ -9,21 +8,22 @@ import {
   resolveMissingOfficialExternalChannelPluginRepairHint,
 } from "../../plugins/official-external-plugin-repair-hints.js";
 import { defaultRuntime } from "../../runtime.js";
-import { isAccountEnabled } from "../../shared/account-enabled.js";
 import {
   listDeliverableMessageChannels,
   type DeliverableMessageChannel,
   isDeliverableMessageChannel,
   normalizeMessageChannel,
 } from "../../utils/message-channel.js";
-import { createDedupeCache } from "../dedupe.js";
 import { formatErrorMessage } from "../errors.js";
 import { resolveOutboundChannelPlugin } from "./channel-resolution.js";
 
 /** Deliverable message channel id that can be selected for message actions. */
-type MessageChannelId = DeliverableMessageChannel;
+export type MessageChannelId = DeliverableMessageChannel;
 /** Source that explains how message channel selection chose its result. */
-type MessageChannelSelectionSource = "explicit" | "tool-context-fallback" | "single-configured";
+export type MessageChannelSelectionSource =
+  | "explicit"
+  | "tool-context-fallback"
+  | "single-configured";
 
 const getMessageChannels = () => listDeliverableMessageChannels();
 
@@ -132,12 +132,15 @@ function formatMultipleConfiguredChannelsMessage(configured: readonly string[]):
   ].join(" ");
 }
 
-const CHANNEL_SELECTION_ERROR_DEDUPE_LIMIT = 1024;
-// Bound process-lifetime warning state; evicted plugin/account failures may log again.
-const loggedChannelSelectionErrors = createDedupeCache({
-  ttlMs: 0,
-  maxSize: CHANNEL_SELECTION_ERROR_DEDUPE_LIMIT,
-});
+function isAccountEnabled(account: unknown): boolean {
+  if (!account || typeof account !== "object") {
+    return true;
+  }
+  const enabled = (account as { enabled?: boolean }).enabled;
+  return enabled !== false;
+}
+
+const loggedChannelSelectionErrors = new Set<string>();
 
 function logChannelSelectionError(params: {
   pluginId: string;
@@ -147,9 +150,10 @@ function logChannelSelectionError(params: {
 }) {
   const message = formatErrorMessage(params.error);
   const key = `${params.pluginId}:${params.accountId}:${params.operation}:${message}`;
-  if (loggedChannelSelectionErrors.check(key)) {
+  if (loggedChannelSelectionErrors.has(key)) {
     return;
   }
+  loggedChannelSelectionErrors.add(key);
   defaultRuntime.error?.(
     `[channel-selection] ${params.pluginId}(${params.accountId}) ${params.operation} failed: ${message}`,
   );
@@ -282,11 +286,7 @@ export async function resolveMessageChannelSelection(params: {
 
   const configured = await listConfiguredMessageChannels(params.cfg);
   if (configured.length === 1) {
-    return {
-      channel: expectDefined(configured[0], "configured entry at 0"),
-      configured,
-      source: "single-configured",
-    };
+    return { channel: configured[0], configured, source: "single-configured" };
   }
   if (configured.length === 0) {
     const repairHints = listConfiguredOfficialExternalRepairHints(params.cfg);
@@ -299,3 +299,10 @@ export async function resolveMessageChannelSelection(params: {
   }
   throw new Error(formatMultipleConfiguredChannelsMessage(configured));
 }
+
+export const testing = {
+  resetLoggedChannelSelectionErrors() {
+    loggedChannelSelectionErrors.clear();
+  },
+};
+export { testing as __testing };

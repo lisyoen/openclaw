@@ -1,6 +1,5 @@
 // Android node capability live tests verify paired node command allowlists and remote policy behavior.
 import { randomUUID } from "node:crypto";
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { unwrapRemoteConfigSnapshot } from "../../test/helpers/gateway/android-node-capabilities-policy-config.js";
 import { shouldFetchRemotePolicyConfig } from "../../test/helpers/gateway/android-node-capabilities-policy-source.js";
@@ -105,36 +104,6 @@ function assertObjectPayload(command: string, payload: unknown): Record<string, 
   return obj;
 }
 
-const VALID_A2UI_JSONL = [
-  JSON.stringify({
-    surfaceUpdate: {
-      surfaceId: "main",
-      components: [
-        {
-          id: "root",
-          component: { Column: { children: { explicitList: ["text"] } } },
-        },
-        {
-          id: "text",
-          component: {
-            Text: {
-              text: { literalString: "Android Canvas live test" },
-              usageHint: "body",
-            },
-          },
-        },
-      ],
-    },
-  }),
-  JSON.stringify({ beginRendering: { surfaceId: "main", root: "root" } }),
-].join("\n");
-
-function assertA2uiPushPayload(command: string, payload: unknown) {
-  const obj = assertObjectPayload(command, payload);
-  expect(obj.ok).toBe(true);
-  expect(readStringArray(obj.surfaces)).toContain("main");
-}
-
 const COMMAND_PROFILES: Record<string, CommandProfile> = {
   "canvas.present": {
     buildParams: () => ({ url: "about:blank" }),
@@ -171,20 +140,14 @@ const COMMAND_PROFILES: Record<string, CommandProfile> = {
     },
   },
   "canvas.a2ui.push": {
-    buildParams: () => ({ jsonl: VALID_A2UI_JSONL }),
+    buildParams: () => ({ jsonl: '{"beginRendering":{}}\n' }),
     timeoutMs: 30_000,
     outcome: "success",
-    onSuccess: (payload) => {
-      assertA2uiPushPayload("canvas.a2ui.push", payload);
-    },
   },
   "canvas.a2ui.pushJSONL": {
-    buildParams: () => ({ jsonl: VALID_A2UI_JSONL }),
+    buildParams: () => ({ jsonl: '{"beginRendering":{}}\n' }),
     timeoutMs: 30_000,
     outcome: "success",
-    onSuccess: (payload) => {
-      assertA2uiPushPayload("canvas.a2ui.pushJSONL", payload);
-    },
   },
   "canvas.a2ui.reset": {
     buildParams: () => ({}),
@@ -479,14 +442,11 @@ function selectTargetNode(nodes: NodeListNode[]): NodeListNode {
     throw new Error("no Android node found in node.list");
   }
 
-  return expectDefined(
-    androidNodes.slice().toSorted((a, b) => {
-      const aMs = typeof a.connectedAtMs === "number" ? a.connectedAtMs : 0;
-      const bMs = typeof b.connectedAtMs === "number" ? b.connectedAtMs : 0;
-      return bMs - aMs;
-    })[0],
-    "androidNodes.slice().toSorted((a, b) => { const aMs = typeof a.connec... test invariant",
-  );
+  return androidNodes.slice().toSorted((a, b) => {
+    const aMs = typeof a.connectedAtMs === "number" ? a.connectedAtMs : 0;
+    const bMs = typeof b.connectedAtMs === "number" ? b.connectedAtMs : 0;
+    return bMs - aMs;
+  })[0];
 }
 
 async function invokeNodeCommand(params: {
@@ -645,10 +605,7 @@ describeLive("android node capability integration (preconditioned)", () => {
 
   const profiledCommands = Object.keys(COMMAND_PROFILES).toSorted();
   for (const command of profiledCommands) {
-    const profile = expectDefined(
-      COMMAND_PROFILES[command],
-      "COMMAND_PROFILES[command] test invariant",
-    );
+    const profile = COMMAND_PROFILES[command];
     const timeout = Math.max(20_000, profile.timeoutMs ?? 20_000) + 15_000;
     it(`command: ${command}`, { timeout }, async () => {
       if (!client) {

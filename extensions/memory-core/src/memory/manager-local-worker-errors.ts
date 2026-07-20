@@ -1,14 +1,14 @@
 // Memory Core plugin module implements manager local worker errors behavior.
-const LOCAL_EMBEDDING_WORKER_ERROR_CODES = {
+export const LOCAL_EMBEDDING_WORKER_ERROR_CODES = {
   exited: "LOCAL_EMBEDDING_WORKER_EXITED",
   processError: "LOCAL_EMBEDDING_WORKER_PROCESS_ERROR",
   ipcError: "LOCAL_EMBEDDING_WORKER_IPC_ERROR",
 } as const;
 
-type LocalEmbeddingWorkerFailureCode =
+export type LocalEmbeddingWorkerFailureCode =
   (typeof LOCAL_EMBEDDING_WORKER_ERROR_CODES)[keyof typeof LOCAL_EMBEDDING_WORKER_ERROR_CODES];
 
-type LocalEmbeddingWorkerFailureError = Error & {
+export type LocalEmbeddingWorkerFailureError = Error & {
   code: LocalEmbeddingWorkerFailureCode;
 };
 

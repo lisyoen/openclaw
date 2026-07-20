@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 const listChannelPluginsMock = vi.hoisted(() =>
   vi.fn(() => [
     { id: "mattermost", messaging: { defaultMarkdownTableMode: "off" as const } },
-    { id: "signal", messaging: { defaultMarkdownTableMode: "block" as const } },
+    { id: "signal", messaging: { defaultMarkdownTableMode: "bullets" as const } },
     { id: "whatsapp", messaging: { defaultMarkdownTableMode: "bullets" as const } },
   ]),
 );
@@ -17,7 +17,6 @@ vi.mock("../channels/plugins/registry.js", async () => {
   return {
     ...actual,
     listChannelPlugins: () => listChannelPluginsMock(),
-    normalizeChannelId: (raw?: string | null) => raw ?? null,
   };
 });
 
@@ -30,25 +29,23 @@ vi.mock("../plugins/runtime.js", async () => {
   };
 });
 
-import { resolveMarkdownTableMode } from "./markdown-tables.js";
+import { DEFAULT_TABLE_MODES, resolveMarkdownTableMode } from "./markdown-tables.js";
 
-describe("resolveMarkdownTableMode default modes", () => {
+describe("DEFAULT_TABLE_MODES", () => {
   it("mattermost mode is off", () => {
-    expect(resolveMarkdownTableMode({ channel: "mattermost" })).toBe("off");
+    expect(DEFAULT_TABLE_MODES.get("mattermost")).toBe("off");
   });
 
-  it("signal mode is block", () => {
-    expect(resolveMarkdownTableMode({ channel: "signal", supportsBlockTables: true })).toBe(
-      "block",
-    );
+  it("signal mode is bullets", () => {
+    expect(DEFAULT_TABLE_MODES.get("signal")).toBe("bullets");
   });
 
   it("whatsapp mode is bullets", () => {
-    expect(resolveMarkdownTableMode({ channel: "whatsapp" })).toBe("bullets");
+    expect(DEFAULT_TABLE_MODES.get("whatsapp")).toBe("bullets");
   });
 
   it("slack has no special default in this seam-only slice", () => {
-    expect(resolveMarkdownTableMode({ channel: "slack" })).toBe("code");
+    expect(DEFAULT_TABLE_MODES.get("slack")).toBeUndefined();
   });
 });
 
@@ -62,22 +59,8 @@ describe("resolveMarkdownTableMode", () => {
     expect(resolveMarkdownTableMode({ cfg, channel: "slack" })).toBe("code");
   });
 
-  it("keeps block mode behind renderer capability", () => {
-    expect(resolveMarkdownTableMode({ channel: "signal" })).toBe("code");
-    expect(resolveMarkdownTableMode({ channel: "signal", supportsBlockTables: true })).toBe(
-      "block",
-    );
-    const cfg = { channels: { signal: { markdown: { tables: "code" as const } } } };
-    expect(resolveMarkdownTableMode({ cfg, channel: "signal", supportsBlockTables: true })).toBe(
-      "code",
-    );
-  });
-
-  it("allows explicit block mode only for block-aware renderers", () => {
+  it("coerces explicit block mode to code for non-slack channels", () => {
     const cfg = { channels: { telegram: { markdown: { tables: "block" as const } } } };
     expect(resolveMarkdownTableMode({ cfg, channel: "telegram" })).toBe("code");
-    expect(resolveMarkdownTableMode({ cfg, channel: "telegram", supportsBlockTables: true })).toBe(
-      "block",
-    );
   });
 });

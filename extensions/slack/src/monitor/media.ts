@@ -8,10 +8,9 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
-import pMap, { pMapSkip } from "p-map";
 import { formatSlackFileReference } from "../file-reference.js";
 import type { SlackAttachment, SlackFile } from "../types.js";
-export type { SlackMediaResult } from "./media-types.js";
+export { MAX_SLACK_MEDIA_FILES, type SlackMediaResult } from "./media-types.js";
 import { MAX_SLACK_MEDIA_FILES, type SlackMediaResult } from "./media-types.js";
 import { type FetchLike, fetchWithRuntimeDispatcher, saveRemoteMedia } from "./media.runtime.js";
 import { logVerbose } from "./thread.runtime.js";
@@ -19,6 +18,8 @@ export {
   resetSlackThreadStarterCacheForTest,
   resolveSlackThreadHistory,
   resolveSlackThreadStarter,
+  type SlackThreadMessage,
+  type SlackThreadStarter,
 } from "./thread.js";
 
 function isSlackHostname(hostname: string): boolean {
@@ -99,14 +100,89 @@ function createSlackMediaFetch(): FetchLike {
   };
 }
 
+function resolveSlackFetchForRuntime(): typeof fetch {
+  return isMockedFetch(globalThis.fetch) ? globalThis.fetch : fetchWithRuntimeDispatcher;
+}
+
+/**
+ * Fetches a URL with Authorization header while keeping same-origin redirects
+ * authenticated and dropping auth once the redirect crosses origins.
+ */
+export async function fetchWithSlackAuth(url: string, token: string): Promise<Response> {
+  const parsed = assertSlackFileUrl(url);
+  const authHeaders = createSlackAuthHeaders(token);
+  const fetchImpl = resolveSlackFetchForRuntime();
+
+  const initialRes = await fetchImpl(parsed.href, {
+    headers: authHeaders,
+    redirect: "manual",
+  });
+
+  if (initialRes.status < 300 || initialRes.status >= 400) {
+    return initialRes;
+  }
+
+  const redirectUrl = initialRes.headers.get("location");
+  if (!redirectUrl) {
+    return initialRes;
+  }
+
+  let resolvedUrl: URL;
+  try {
+    resolvedUrl = new URL(redirectUrl, parsed.href);
+  } catch {
+    return initialRes;
+  }
+  if (resolvedUrl.protocol !== "https:") {
+    return initialRes;
+  }
+  if (resolvedUrl.origin === parsed.origin) {
+    return fetchImpl(resolvedUrl.toString(), {
+      headers: authHeaders,
+      redirect: "follow",
+    });
+  }
+  return fetchImpl(resolvedUrl.toString(), { redirect: "follow" });
+}
+
 const SLACK_MEDIA_SSRF_POLICY = {
   allowedHostnames: ["*.slack.com", "*.slack-edge.com", "*.slack-files.com"],
   hostnameAllowlist: ["*.slack.com", "*.slack-edge.com", "*.slack-files.com"],
   allowRfc2544BenchmarkRange: true,
 };
 export const SLACK_MEDIA_READ_IDLE_TIMEOUT_MS = 60_000;
-const SLACK_MEDIA_TOTAL_TIMEOUT_MS = 120_000;
+export const SLACK_MEDIA_TOTAL_TIMEOUT_MS = 120_000;
 type SlackSaveRemoteMediaOptions = Parameters<typeof saveRemoteMedia>[0];
+
+function mergeAbortSignals(signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const activeSignals = signals.filter((signal): signal is AbortSignal => Boolean(signal));
+  if (activeSignals.length === 0) {
+    return undefined;
+  }
+  if (activeSignals.length === 1) {
+    return activeSignals[0];
+  }
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any(activeSignals);
+  }
+  const controller = new AbortController();
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      controller.abort();
+      return controller.signal;
+    }
+  }
+  const abort = () => {
+    controller.abort();
+    for (const signal of activeSignals) {
+      signal.removeEventListener("abort", abort);
+    }
+  };
+  for (const signal of activeSignals) {
+    signal.addEventListener("abort", abort, { once: true });
+  }
+  return controller.signal;
+}
 
 async function saveSlackMedia(params: {
   options: SlackSaveRemoteMediaOptions;
@@ -115,12 +191,11 @@ async function saveSlackMedia(params: {
   abortSignal?: AbortSignal;
 }): ReturnType<typeof saveRemoteMedia> {
   const timeoutAbortController = params.totalTimeoutMs ? new AbortController() : undefined;
-  const abortSignals = [
+  const signal = mergeAbortSignals([
     params.abortSignal,
     params.options.requestInit?.signal ?? undefined,
     timeoutAbortController?.signal,
-  ].filter((signal): signal is AbortSignal => Boolean(signal));
-  const signal = abortSignals.length > 1 ? AbortSignal.any(abortSignals) : abortSignals[0];
+  ]);
   let timedOut = false;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -299,6 +374,32 @@ function resolveForwardedAttachmentImageUrl(attachment: SlackAttachment): string
   }
 }
 
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+  const results: R[] = [];
+  results.length = items.length;
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const idx = nextIndex++;
+        if (idx >= items.length) {
+          return;
+        }
+        results[idx] = await fn(items[idx]);
+      }
+    }),
+  );
+  return results;
+}
+
 /**
  * Downloads all files attached to a Slack message and returns them as an array.
  * Returns `null` when no files could be downloaded.
@@ -311,25 +412,19 @@ export async function resolveSlackMedia(params: {
   readIdleTimeoutMs?: number;
   totalTimeoutMs?: number;
   abortSignal?: AbortSignal;
-  preloadedMedia?: ReadonlyMap<SlackFile, SlackMediaResult>;
 }): Promise<SlackMediaResult[] | null> {
   const files = params.files ?? [];
   const limitedFiles =
     files.length > MAX_SLACK_MEDIA_FILES ? files.slice(0, MAX_SLACK_MEDIA_FILES) : files;
 
-  const resolved = await pMap(
+  const resolved = await mapLimit<SlackFile, SlackMediaResult | null>(
     limitedFiles,
-    async (file): Promise<SlackMediaResult | typeof pMapSkip> => {
-      // Audio preflight keys the original event file object so admission can
-      // reuse that exact download without turning this into a persistent cache.
-      const preloaded = params.preloadedMedia?.get(file);
-      if (preloaded) {
-        return preloaded;
-      }
+    MAX_SLACK_MEDIA_CONCURRENCY,
+    async (file) => {
       const eventUrl = file.url_private_download ?? file.url_private;
       const url = eventUrl ?? (await fetchFreshSlackFileUrl({ file, client: params.client }));
       if (!url) {
-        return pMapSkip;
+        return null;
       }
       const result = await downloadSlackMediaFile({
         file,
@@ -341,14 +436,14 @@ export async function resolveSlackMedia(params: {
         abortSignal: params.abortSignal,
       }).catch(() => null);
       if (result || !eventUrl) {
-        return result ?? pMapSkip;
+        return result;
       }
 
       const freshUrl = await fetchFreshSlackFileUrl({ file, client: params.client });
       if (!freshUrl) {
-        return pMapSkip;
+        return null;
       }
-      const retryResult = await downloadSlackMediaFile({
+      return await downloadSlackMediaFile({
         file,
         url: freshUrl,
         token: params.token,
@@ -357,12 +452,11 @@ export async function resolveSlackMedia(params: {
         totalTimeoutMs: params.totalTimeoutMs,
         abortSignal: params.abortSignal,
       }).catch(() => null);
-      return retryResult ?? pMapSkip;
     },
-    { concurrency: MAX_SLACK_MEDIA_CONCURRENCY, stopOnError: true },
   );
 
-  return resolved.length > 0 ? resolved : null;
+  const results = resolved.filter((entry): entry is SlackMediaResult => Boolean(entry));
+  return results.length > 0 ? results : null;
 }
 
 /** Extracts text and media from forwarded-message attachments. Returns null when empty. */

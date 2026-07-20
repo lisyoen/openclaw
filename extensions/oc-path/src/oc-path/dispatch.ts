@@ -10,7 +10,7 @@
  * @module @openclaw/oc-path/dispatch
  */
 
-type OcKind = "md" | "jsonc" | "jsonl" | "yaml";
+export type OcKind = "md" | "jsonc" | "jsonl" | "yaml";
 
 /**
  * Recommend a kind from a filename. Pure convention helper — returns

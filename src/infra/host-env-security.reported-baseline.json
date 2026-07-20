@@ -147,8 +147,6 @@
     "CGO_LDFLAGS",
     "CLASSPATH",
     "COMPOSER_HOME",
-    "CONDA_DEFAULT_ENV",
-    "CONDA_PREFIX",
     "CORECLR_PROFILER_PATH",
     "CPATH",
     "CPLUS_INCLUDE_PATH",
@@ -269,5 +267,5 @@
     "YARN_RC_FILENAME",
     "ZDOTDIR"
   ],
-  "expectedTotalReportedEntries": 264
+  "expectedTotalReportedEntries": 262
 }

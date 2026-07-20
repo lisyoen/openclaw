@@ -2,7 +2,7 @@
 import { assertOkOrThrowProviderError } from "openclaw/plugin-sdk/provider-http";
 import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
-import { GRADIUM_API_HOSTNAME, normalizeGradiumBaseUrl } from "./shared.js";
+import { normalizeGradiumBaseUrl } from "./shared.js";
 
 const DEFAULT_TTS_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -26,6 +26,7 @@ export async function gradiumTTS(params: {
   } = params;
   const normalizedBaseUrl = normalizeGradiumBaseUrl(baseUrl);
   const url = `${normalizedBaseUrl}/api/post/speech/tts`;
+  const hostname = new URL(normalizedBaseUrl).hostname;
 
   const { response, release } = await fetchWithSsrFGuard({
     url,
@@ -44,10 +45,7 @@ export async function gradiumTTS(params: {
       }),
     },
     timeoutMs,
-    requireHttps: true,
-    // Keep the transport boundary independent from config normalization so a
-    // future validator relaxation cannot silently widen credential egress.
-    policy: { hostnameAllowlist: [GRADIUM_API_HOSTNAME] },
+    policy: { hostnameAllowlist: [hostname] },
     auditContext: "gradium.tts",
   });
 

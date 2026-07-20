@@ -1,5 +1,4 @@
 // Qa Lab plugin module implements tool coverage report behavior.
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import {
   isRecord,
   normalizeOptionalString as readString,
@@ -33,11 +32,11 @@ export type QaToolCoverageSuiteSummary = {
   };
 };
 
-type QaToolCoverageStatus = "pass" | "fail" | "missing" | "not-run";
-type QaToolCoverageDrift = RuntimeParityDrift | "not-run";
-type QaToolCoverageBucket = QaRuntimeToolBucket;
+export type QaToolCoverageStatus = "pass" | "fail" | "missing" | "not-run";
+export type QaToolCoverageDrift = RuntimeParityDrift | "not-run";
+export type QaToolCoverageBucket = QaRuntimeToolBucket;
 
-type QaToolCoverageRow = {
+export type QaToolCoverageRow = {
   tool: string;
   runtimeToolName?: string;
   bucket: QaToolCoverageBucket;
@@ -59,7 +58,7 @@ type QaToolCoverageRow = {
   details?: string;
 };
 
-type QaToolCoverageReport = {
+export type QaToolCoverageReport = {
   runtimePair: [RuntimeId, RuntimeId];
   generatedAt: string;
   evaluated: boolean;
@@ -204,11 +203,7 @@ function buildRow(params: {
   const metadata = params.group.scenarios
     .map(readScenarioRuntimeToolCoverageMetadata)
     .find((entry) => entry.required);
-  const firstScenario = expectDefined(
-    params.group.scenarios[0],
-    `QA tool fixture group ${params.group.tool} scenario`,
-  );
-  const fallbackMetadata = readScenarioRuntimeToolCoverageMetadata(firstScenario);
+  const fallbackMetadata = readScenarioRuntimeToolCoverageMetadata(params.group.scenarios[0]);
   const rowMetadata = metadata ?? fallbackMetadata;
   const runtimeToolName = params.group.scenarios.map(readScenarioRuntimeToolName).find(Boolean);
   return {
@@ -330,22 +325,9 @@ export function renderQaToolCoverageMarkdownReport(report: QaToolCoverageReport)
   ];
 
   for (const row of report.rows) {
-    const cells = [
-      row.tool,
-      row.bucket,
-      row.expectedLayer,
-      row.capabilityLayer,
-      row.required ? "yes" : "no",
-      row.fixtureCount.toString(),
-      row.openclaw,
-      row.codex,
-      row.drift,
-      row.codexDefaultImpact ?? "",
-      row.qaImpact ?? "",
-      row.action ?? "",
-      row.tracking ?? "",
-    ].map(escapeTableCell);
-    lines.push(`| ${cells.join(" | ")} |`);
+    lines.push(
+      `| ${row.tool} | ${row.bucket} | ${row.expectedLayer} | ${row.capabilityLayer} | ${row.required ? "yes" : "no"} | ${row.fixtureCount} | ${row.openclaw} | ${row.codex} | ${row.drift} | ${row.codexDefaultImpact ?? ""} | ${row.qaImpact ?? ""} | ${row.action ?? ""} | ${row.tracking ?? ""} |`,
+    );
   }
 
   if (report.failures.length > 0) {
@@ -361,8 +343,4 @@ export function renderQaToolCoverageMarkdownReport(report: QaToolCoverageReport)
   }
 
   return `${lines.join("\n").trimEnd()}\n`;
-}
-
-function escapeTableCell(value: string): string {
-  return value.replace(/\|/gu, "\\|").replace(/\s+/gu, " ").trim();
 }

@@ -1,12 +1,9 @@
 // Fetches and normalizes MiniMax provider usage records.
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import { readProviderJsonResponse } from "../agents/provider-http-errors.js";
 import { isRecord } from "../utils.js";
-import { readTrimmedStringAlias } from "../utils/string-readers.js";
 import {
   buildUsageHttpErrorSnapshot,
-  discardUsageResponseBody,
   fetchJson,
   parseFiniteNumber,
 } from "./provider-usage.fetch.shared.js";
@@ -186,7 +183,13 @@ function pickNumber(record: Record<string, unknown>, keys: readonly string[]): n
 }
 
 function pickString(record: Record<string, unknown>, keys: readonly string[]): string | undefined {
-  return readTrimmedStringAlias(record, keys);
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
 }
 
 function parseEpoch(value: unknown): number | undefined {
@@ -407,16 +410,13 @@ export async function fetchMinimaxUsage(
   );
 
   if (!res.ok) {
-    await discardUsageResponseBody(res);
     return buildUsageHttpErrorSnapshot({
       provider: "minimax",
       status: res.status,
     });
   }
 
-  const data = await readProviderJsonResponse<MinimaxUsageResponse>(res, "minimax usage").catch(
-    () => null,
-  );
+  const data = (await res.json().catch(() => null)) as MinimaxUsageResponse;
   if (!isRecord(data)) {
     return {
       provider: "minimax",

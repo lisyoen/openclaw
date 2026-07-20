@@ -1,17 +1,11 @@
 /**
- * Test helpers for subagent registry persistence scenarios. They seed minimal
- * SQLite-backed session entries and runtime dependency mocks without loading
+ * Test helpers for subagent registry persistence scenarios. They create
+ * minimal session-store files and runtime dependency mocks without loading
  * the production embedded-agent stack.
  */
+import fs from "node:fs/promises";
 import path from "node:path";
 import { vi } from "vitest";
-import type { SessionEntry } from "../config/sessions.js";
-import {
-  applySessionEntryLifecycleMutation,
-  listSessionEntries,
-  loadSessionEntry,
-  replaceSessionEntry,
-} from "../config/sessions/session-accessor.js";
 
 type SessionStore = Record<string, Record<string, unknown>>;
 
@@ -19,14 +13,21 @@ function resolveSubagentSessionStorePath(stateDir: string, agentId: string): str
   return path.join(stateDir, "agents", agentId, "sessions", "sessions.json");
 }
 
-/** Reads test session entries through the active SQLite accessor. */
+/** Reads a test session-store JSON file, returning an empty store on missing/invalid input. */
 export async function readSubagentSessionStore(storePath: string): Promise<SessionStore> {
-  return Object.fromEntries(
-    listSessionEntries({ storePath }).map(({ sessionKey, entry }) => [sessionKey, entry]),
-  ) as SessionStore;
+  try {
+    const raw = await fs.readFile(storePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as SessionStore;
+    }
+  } catch {
+    // ignore
+  }
+  return {};
 }
 
-/** Writes or updates one SQLite-backed subagent session entry for persistence tests. */
+/** Writes or updates one subagent session-store entry for persistence tests. */
 export async function writeSubagentSessionEntry(params: {
   stateDir: string;
   sessionKey: string;
@@ -37,31 +38,31 @@ export async function writeSubagentSessionEntry(params: {
   defaultSessionId: string;
 }): Promise<string> {
   const storePath = resolveSubagentSessionStorePath(params.stateDir, params.agentId);
-  const current = loadSessionEntry({ storePath, sessionKey: params.sessionKey });
-  const entry: SessionEntry = {
-    ...current,
+  const store = await readSubagentSessionStore(storePath);
+  store[params.sessionKey] = {
+    ...store[params.sessionKey],
     sessionId: params.sessionId ?? params.defaultSessionId,
     updatedAt: params.updatedAt ?? Date.now(),
     ...(typeof params.abortedLastRun === "boolean"
       ? { abortedLastRun: params.abortedLastRun }
       : {}),
   };
-  await replaceSessionEntry({ storePath, sessionKey: params.sessionKey }, entry);
+  await fs.mkdir(path.dirname(storePath), { recursive: true });
+  await fs.writeFile(storePath, `${JSON.stringify(store)}\n`, "utf8");
   return storePath;
 }
 
-/** Removes one SQLite-backed subagent session entry for persistence tests. */
+/** Removes one subagent session-store entry for persistence tests. */
 export async function removeSubagentSessionEntry(params: {
   stateDir: string;
   sessionKey: string;
   agentId: string;
 }): Promise<string> {
   const storePath = resolveSubagentSessionStorePath(params.stateDir, params.agentId);
-  await applySessionEntryLifecycleMutation({
-    storePath,
-    removals: [{ sessionKey: params.sessionKey }],
-    skipMaintenance: true,
-  });
+  const store = await readSubagentSessionStore(storePath);
+  delete store[params.sessionKey];
+  await fs.mkdir(path.dirname(storePath), { recursive: true });
+  await fs.writeFile(storePath, `${JSON.stringify(store)}\n`, "utf8");
   return storePath;
 }
 
@@ -75,11 +76,6 @@ export function createSubagentRegistryTestDeps(
     ensureContextEnginesInitialized: vi.fn(),
     ensureRuntimePluginsLoaded: vi.fn(),
     getRuntimeConfig: vi.fn(() => ({})),
-    getGatewayRecoveryRuntime: vi.fn(() => ({
-      dispatchAgent: vi.fn(),
-      waitForAgent: vi.fn(),
-      sendRecoveryNotice: vi.fn(),
-    })),
     resolveAgentTimeoutMs: vi.fn(() => 100),
     resolveContextEngine: vi.fn(async () => ({
       info: { id: "test", name: "Test", version: "0.0.1" },

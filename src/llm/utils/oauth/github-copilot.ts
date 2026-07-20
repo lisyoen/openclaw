@@ -4,27 +4,11 @@
 
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import {
-  assertOkOrThrowProviderError,
-  readProviderJsonResponse,
-} from "../../../agents/provider-http-errors.js";
-import {
   nonNegativeSecondsToSafeMilliseconds,
   positiveSecondsToSafeMilliseconds,
   resolveExpiresAtMsFromDurationSeconds,
   resolveExpiresAtMsFromEpochSeconds,
 } from "../../../infra/parse-finite-number.js";
-import {
-  isSupportedGithubCopilotDomain,
-  normalizeGithubCopilotDomain,
-} from "../../../plugin-sdk/github-copilot-domain.js";
-import { resolveGithubCopilotTokenEndpoint } from "../../../plugin-sdk/github-copilot-token-endpoint.js";
-import type {
-  CopilotModelListEntry,
-  CopilotRequestOptions,
-  DeviceCodeResponse,
-  DeviceTokenErrorResponse,
-  DeviceTokenSuccessResponse,
-} from "../../github-copilot-oauth-types.js";
 import type { Model } from "../../types.js";
 import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.js";
 
@@ -32,7 +16,8 @@ type CopilotCredentials = OAuthCredentials & {
   enterpriseUrl?: string;
 };
 
-const CLIENT_ID = "Iv1.b507a08c87ecfe98";
+const decode = (s: string) => atob(s);
+const CLIENT_ID = decode("SXYxLmI1MDdhMDhjODdlY2ZlOTg=");
 
 const COPILOT_HEADERS = {
   "User-Agent": "GitHubCopilotChat/0.35.0",
@@ -46,6 +31,38 @@ const SLOW_DOWN_POLL_INTERVAL_MULTIPLIER = 1.4;
 const COPILOT_ROUTER_ID_PREFIX = "accounts/";
 const COPILOT_REQUEST_TIMEOUT_MS = 30_000;
 
+type DeviceCodeResponse = {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  intervalMs: number;
+  expiresAt: number;
+};
+
+type DeviceTokenSuccessResponse = {
+  access_token: string;
+  token_type?: string;
+  scope?: string;
+};
+
+type DeviceTokenErrorResponse = {
+  error: string;
+  error_description?: string;
+  interval?: number;
+};
+
+type CopilotModelListEntry = {
+  id?: unknown;
+  object?: unknown;
+  capabilities?: {
+    type?: unknown;
+  };
+};
+type CopilotRequestOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
 function resolveExpiresAtFromDurationSeconds(value: unknown): number | undefined {
   return resolveExpiresAtMsFromDurationSeconds(value);
 }
@@ -54,7 +71,7 @@ function resolveExpiresAtFromEpochSeconds(value: unknown): number | undefined {
   return resolveExpiresAtMsFromEpochSeconds(value, { bufferMs: 5 * 60 * 1000 });
 }
 
-function normalizeDomain(input: string): string | null {
+export function normalizeDomain(input: string): string | null {
   const trimmed = input.trim();
   if (!trimmed) {
     return null;
@@ -72,35 +89,40 @@ function getUrls(domain: string): {
   accessTokenUrl: string;
   copilotTokenUrl: string;
 } {
-  const safeDomain = normalizeGithubCopilotDomain(domain);
   return {
-    deviceCodeUrl: `https://${safeDomain}/login/device/code`,
-    accessTokenUrl: `https://${safeDomain}/login/oauth/access_token`,
-    copilotTokenUrl: `https://api.${safeDomain}/copilot_internal/v2/token`,
+    deviceCodeUrl: `https://${domain}/login/device/code`,
+    accessTokenUrl: `https://${domain}/login/oauth/access_token`,
+    copilotTokenUrl: `https://api.${domain}/copilot_internal/v2/token`,
   };
 }
 
-function getGitHubCopilotBaseUrl(token?: string, enterpriseDomain?: string): string {
-  if (enterpriseDomain && !isSupportedGithubCopilotDomain(enterpriseDomain)) {
-    throw new Error(
-      `Refusing to route GitHub Copilot requests for unsupported enterprise domain "${enterpriseDomain}". Re-authenticate with a supported host (github.com or a *.ghe.com tenant).`,
-    );
+/**
+ * Parse the proxy-ep from a Copilot token and convert to API base URL.
+ * Token format: tid=...;exp=...;proxy-ep=proxy.individual.githubcopilot.com;...
+ * Returns API URL like https://api.individual.githubcopilot.com
+ */
+function getBaseUrlFromToken(token: string): string | null {
+  const match = token.match(/proxy-ep=([^;]+)/);
+  if (!match) {
+    return null;
   }
+  const proxyHost = match[1];
+  // Convert proxy.xxx to api.xxx
+  const apiHost = proxyHost.replace(/^proxy\./, "api.");
+  return `https://${apiHost}`;
+}
+
+export function getGitHubCopilotBaseUrl(token?: string, enterpriseDomain?: string): string {
   // If we have a token, extract the base URL from proxy-ep
   if (token) {
-    const tokenEndpoint = resolveGithubCopilotTokenEndpoint(token, enterpriseDomain);
-    if (tokenEndpoint.hasProxyEndpoint && !tokenEndpoint.baseUrl) {
-      throw new Error(
-        "Refusing to route GitHub Copilot requests to an unsupported proxy endpoint.",
-      );
-    }
-    if (tokenEndpoint.baseUrl) {
-      return tokenEndpoint.baseUrl;
+    const urlFromToken = getBaseUrlFromToken(token);
+    if (urlFromToken) {
+      return urlFromToken;
     }
   }
   // Fallback for enterprise or if token parsing fails
   if (enterpriseDomain) {
-    return `https://copilot-api.${normalizeGithubCopilotDomain(enterpriseDomain)}`;
+    return `https://copilot-api.${enterpriseDomain}`;
   }
   return "https://api.individual.githubcopilot.com";
 }
@@ -153,8 +175,6 @@ async function fetchResponse(
   }
 }
 
-// Shared 16 MiB bounded reader — a hostile OAuth endpoint cannot force the
-// runtime to buffer an unbounded body through `.text()` / `.json()`.
 async function fetchJson(
   url: string,
   init: RequestInit,
@@ -162,9 +182,11 @@ async function fetchJson(
   options: CopilotRequestOptions = {},
 ): Promise<unknown> {
   const response = await fetchResponse(url, init, operation, options);
-  const label = `GitHub Copilot ${operation}`;
-  await assertOkOrThrowProviderError(response, label);
-  return readProviderJsonResponse(response, label);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${text}`);
+  }
+  return response.json();
 }
 
 async function startDeviceFlow(
@@ -223,9 +245,7 @@ async function startDeviceFlow(
 }
 
 /**
- * Sleep that can be interrupted by an AbortSignal.
- * Resolve and abort both settle once and remove the abort listener so
- * multi-round device polling cannot accumulate listeners on a shared signal.
+ * Sleep that can be interrupted by an AbortSignal
  */
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -234,28 +254,16 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
       return;
     }
 
-    let settled = false;
-    const timeout = setTimeout(() => {
-      settle(resolve);
-    }, ms);
+    const timeout = setTimeout(resolve, ms);
 
-    const onAbort = () => {
-      settle(() => {
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timeout);
         reject(new Error("Login cancelled"));
-      });
-    };
-
-    function settle(action: () => void) {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", onAbort);
-      action();
-    }
-
-    signal?.addEventListener("abort", onAbort);
+      },
+      { once: true },
+    );
   });
 }
 
@@ -345,16 +353,11 @@ async function pollForGitHubAccessToken(
 /**
  * Refresh GitHub Copilot token
  */
-async function refreshGitHubCopilotToken(
+export async function refreshGitHubCopilotToken(
   refreshToken: string,
   enterpriseDomain?: string,
   options: CopilotRequestOptions = {},
 ): Promise<OAuthCredentials> {
-  if (enterpriseDomain && !isSupportedGithubCopilotDomain(enterpriseDomain)) {
-    throw new Error(
-      `Refusing to refresh GitHub Copilot token for unsupported enterprise domain "${enterpriseDomain}". Re-authenticate with a supported host (github.com or a *.ghe.com tenant).`,
-    );
-  }
   const domain = enterpriseDomain || "github.com";
   const urls = getUrls(domain);
 
@@ -402,10 +405,9 @@ async function enableGitHubCopilotModel(
 ): Promise<boolean> {
   const baseUrl = getGitHubCopilotBaseUrl(token, enterpriseDomain);
   const url = `${baseUrl}/models/${modelId}/policy`;
-  let response: Response | undefined;
 
   try {
-    response = await fetchResponse(
+    const response = await fetchResponse(
       url,
       {
         method: "POST",
@@ -424,8 +426,6 @@ async function enableGitHubCopilotModel(
     return response.ok;
   } catch {
     return false;
-  } finally {
-    await response?.body?.cancel().catch(() => undefined);
   }
 }
 
@@ -501,7 +501,7 @@ async function enableAllGitHubCopilotModels(
  * @param options.onProgress - Optional progress callback
  * @param options.signal - Optional AbortSignal for cancellation
  */
-async function loginGitHubCopilot(options: {
+export async function loginGitHubCopilot(options: {
   onAuth: (url: string, instructions?: string) => void;
   onPrompt: (prompt: {
     message: string;
@@ -525,11 +525,6 @@ async function loginGitHubCopilot(options: {
   const enterpriseDomain = normalizeDomain(input);
   if (trimmed && !enterpriseDomain) {
     throw new Error("Invalid GitHub Enterprise URL/domain");
-  }
-  if (!isSupportedGithubCopilotDomain(enterpriseDomain)) {
-    throw new Error(
-      `Unsupported GitHub Enterprise domain "${trimmed}". Use github.com or a *.ghe.com data-residency tenant.`,
-    );
   }
   const domain = enterpriseDomain || "github.com";
 
@@ -581,14 +576,13 @@ export const githubCopilotOAuthProvider: OAuthProviderInterface = {
     const domain = creds.enterpriseUrl
       ? (normalizeDomain(creds.enterpriseUrl) ?? undefined)
       : undefined;
-    const tokenEndpoint = resolveGithubCopilotTokenEndpoint(creds.access, domain);
-    if (
-      !isSupportedGithubCopilotDomain(creds.enterpriseUrl) ||
-      (tokenEndpoint.hasProxyEndpoint && !tokenEndpoint.baseUrl)
-    ) {
-      return models.filter((m) => m.provider !== "github-copilot");
-    }
-    const baseUrl = tokenEndpoint.baseUrl ?? getGitHubCopilotBaseUrl(undefined, domain);
+    const baseUrl = getGitHubCopilotBaseUrl(creds.access, domain);
     return models.map((m) => (m.provider === "github-copilot" ? { ...m, baseUrl } : m));
   },
+};
+
+export const testing = {
+  enableGitHubCopilotModel,
+  listGitHubCopilotModelIds,
+  startDeviceFlow,
 };

@@ -7,21 +7,17 @@ import crypto from "node:crypto";
 import { imageMimeFromFormat } from "@openclaw/media-core/mime";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import {
+  type CameraFacing,
   cameraTempPath,
   parseCameraClipPayload,
   parseCameraSnapPayload,
-  resolveCameraClipTarget,
-  resolveCameraSnapTargets,
   writeCameraClipPayloadToFile,
   writeCameraPayloadToFile,
 } from "../../cli/nodes-camera.js";
 import {
   parseScreenRecordPayload,
-  parseScreenSnapshotPayload,
   screenRecordTempPath,
-  screenSnapshotTempPath,
   writeScreenRecordToFile,
-  writeScreenSnapshotToFile,
 } from "../../cli/nodes-screen.js";
 import { parseDurationMs } from "../../cli/parse-duration.js";
 import type { ImageSanitizationLimits } from "../image-sanitization.js";
@@ -41,7 +37,6 @@ export const MEDIA_INVOKE_ACTIONS = {
   "camera.clip": "camera_clip",
   "photos.latest": "photos_latest",
   "screen.record": "screen_record",
-  "screen.snapshot": "screen_snapshot",
   // file-transfer commands: redirect to dedicated tools for better result
   // formatting and media-store handling. The gateway still enforces the
   // underlying node-invoke path policy for raw callers.
@@ -60,15 +55,8 @@ export const POLICY_REDIRECT_INVOKE_COMMANDS: ReadonlySet<string> = new Set([
   "file.write",
 ]);
 
-type NodeMediaAction =
-  | "camera_snap"
-  | "photos_latest"
-  | "camera_clip"
-  | "screen_record"
-  | "screen_snapshot";
+export type NodeMediaAction = "camera_snap" | "photos_latest" | "camera_clip" | "screen_record";
 const MAX_RECORDING_DURATION_MS = 300_000;
-const RECORDING_INVOKE_GRACE_MS = 30_000;
-const RECORDING_TRANSPORT_GRACE_MS = 30_000;
 
 type ExecuteNodeMediaActionParams = {
   action: NodeMediaAction;
@@ -77,24 +65,6 @@ type ExecuteNodeMediaActionParams = {
   modelHasVision?: boolean;
   imageSanitization: ImageSanitizationLimits;
 };
-
-function resolveRecordingTimeouts(params: {
-  input: Record<string, unknown>;
-  gatewayOpts: GatewayCallOptions;
-  durationMs: number;
-}): { gatewayOpts: GatewayCallOptions; invokeTimeoutMs: number } {
-  const invokeTimeoutMs =
-    readPositiveIntegerParam(params.input, "invokeTimeoutMs") ??
-    params.durationMs + RECORDING_INVOKE_GRACE_MS;
-  // The Gateway transport starts before the forwarded node timer and must outlive it.
-  // Keep explicit transport and invoke overrides independent so callers can cancel either layer.
-  const transportTimeoutMs =
-    params.gatewayOpts.timeoutMs ?? invokeTimeoutMs + RECORDING_TRANSPORT_GRACE_MS;
-  return {
-    gatewayOpts: { ...params.gatewayOpts, timeoutMs: transportTimeoutMs },
-    invokeTimeoutMs,
-  };
-}
 
 export async function executeNodeMediaAction(
   input: ExecuteNodeMediaActionParams,
@@ -108,8 +78,6 @@ export async function executeNodeMediaAction(
       return await executeCameraClip(input);
     case "screen_record":
       return await executeScreenRecord(input);
-    case "screen_snapshot":
-      return await executeScreenSnapshot(input);
   }
   throw new Error("Unsupported node media action");
 }
@@ -124,12 +92,14 @@ async function executeCameraSnap({
   const resolvedNode = await resolveNode(gatewayOpts, node);
   const nodeId = resolvedNode.nodeId;
   const facingRaw = normalizeLowercaseStringOrEmpty(params.facing) || "front";
-  const facing =
-    facingRaw === "both" || facingRaw === "front" || facingRaw === "back"
-      ? facingRaw
-      : (() => {
-          throw new Error("invalid facing (front|back|both)");
-        })();
+  const facings: CameraFacing[] =
+    facingRaw === "both"
+      ? ["front", "back"]
+      : facingRaw === "front" || facingRaw === "back"
+        ? [facingRaw]
+        : (() => {
+            throw new Error("invalid facing (front|back|both)");
+          })();
   const maxWidth = readPositiveIntegerParam(params, "maxWidth") ?? 1600;
   const quality =
     readFiniteNumberParam(params, "quality", {
@@ -142,24 +112,19 @@ async function executeCameraSnap({
     typeof params.deviceId === "string" && params.deviceId.trim()
       ? params.deviceId.trim()
       : undefined;
-  if (deviceId && facing === "both" && resolvedNode.platform?.toLowerCase() !== "linux") {
+  if (deviceId && facings.length > 1) {
     throw new Error("facing=both is not allowed when deviceId is set");
   }
-  const targets = resolveCameraSnapTargets({
-    facing,
-    platform: resolvedNode.platform,
-    deviceId,
-  });
 
   const content: AgentToolResult<unknown>["content"] = [];
   const details: Array<Record<string, unknown>> = [];
 
-  for (const target of targets) {
+  for (const facing of facings) {
     const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", gatewayOpts, {
       nodeId,
       command: "camera.snap",
       params: {
-        facing: target.requestFacing,
+        facing,
         maxWidth,
         quality,
         format: "jpg",
@@ -177,7 +142,7 @@ async function executeCameraSnap({
     const isJpeg = normalizedFormat === "jpg" || normalizedFormat === "jpeg";
     const filePath = cameraTempPath({
       kind: "snap",
-      facing: target.artifactFacing,
+      facing,
       ext: isJpeg ? "jpg" : "png",
     });
     await writeCameraPayloadToFile({
@@ -194,7 +159,7 @@ async function executeCameraSnap({
       });
     }
     details.push({
-      facing: target.artifactFacing,
+      facing,
       path: filePath,
       width: payload.width,
       height: payload.height,
@@ -336,7 +301,6 @@ async function executeCameraClip({
   if (facing !== "front" && facing !== "back") {
     throw new Error("invalid facing (front|back)");
   }
-  const target = resolveCameraClipTarget({ facing, platform: resolvedNode.platform });
   const durationMs = Math.min(
     readPositiveIntegerParam(params, "durationMs") ??
       (typeof params.duration === "string" ? parseDurationMs(params.duration) : 3000),
@@ -347,30 +311,28 @@ async function executeCameraClip({
     typeof params.deviceId === "string" && params.deviceId.trim()
       ? params.deviceId.trim()
       : undefined;
-  const timeouts = resolveRecordingTimeouts({ input: params, gatewayOpts, durationMs });
-  const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", timeouts.gatewayOpts, {
+  const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", gatewayOpts, {
     nodeId,
     command: "camera.clip",
     params: {
-      facing: target.requestFacing,
+      facing,
       durationMs,
       includeAudio,
       format: "mp4",
       deviceId,
     },
-    timeoutMs: timeouts.invokeTimeoutMs,
     idempotencyKey: crypto.randomUUID(),
   });
   const payload = parseCameraClipPayload(raw?.payload);
   const filePath = await writeCameraClipPayloadToFile({
     payload,
-    facing: target.artifactFacing,
+    facing,
     expectedHost: resolvedNode.remoteIp,
   });
   return {
     content: [{ type: "text", text: `FILE:${filePath}` }],
     details: {
-      facing: target.artifactFacing,
+      facing,
       path: filePath,
       durationMs: payload.durationMs,
       hasAudio: payload.hasAudio,
@@ -397,8 +359,7 @@ async function executeScreenRecord({
     }) ?? 10;
   const screenIndex = readNonNegativeIntegerParam(params, "screenIndex") ?? 0;
   const includeAudio = typeof params.includeAudio === "boolean" ? params.includeAudio : true;
-  const timeouts = resolveRecordingTimeouts({ input: params, gatewayOpts, durationMs });
-  const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", timeouts.gatewayOpts, {
+  const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", gatewayOpts, {
     nodeId,
     command: "screen.record",
     params: {
@@ -408,7 +369,6 @@ async function executeScreenRecord({
       format: "mp4",
       includeAudio,
     },
-    timeoutMs: timeouts.invokeTimeoutMs,
     idempotencyKey: crypto.randomUUID(),
   });
   const payload = parseScreenRecordPayload(raw?.payload);
@@ -425,47 +385,6 @@ async function executeScreenRecord({
       fps: payload.fps,
       screenIndex: payload.screenIndex,
       hasAudio: payload.hasAudio,
-    },
-  };
-}
-
-async function executeScreenSnapshot({
-  params,
-  gatewayOpts,
-}: ExecuteNodeMediaActionParams): Promise<AgentToolResult<unknown>> {
-  const node = requireString(params, "node");
-  const nodeId = await resolveNodeId(gatewayOpts, node);
-  const screenIndex = readNonNegativeIntegerParam(params, "screenIndex") ?? 0;
-  const maxWidth = readPositiveIntegerParam(params, "maxWidth");
-  const raw = await callGatewayTool<{ payload: unknown }>("node.invoke", gatewayOpts, {
-    nodeId,
-    command: "screen.snapshot",
-    params: { screenIndex, maxWidth },
-    idempotencyKey: crypto.randomUUID(),
-  });
-  const payload = parseScreenSnapshotPayload(raw?.payload);
-  const normalizedFormat = normalizeLowercaseStringOrEmpty(payload.format);
-  if (normalizedFormat !== "jpg" && normalizedFormat !== "jpeg" && normalizedFormat !== "png") {
-    throw new Error(`unsupported screen.snapshot format: ${payload.format}`);
-  }
-  const ext = normalizedFormat === "png" ? "png" : "jpg";
-  const filePath =
-    typeof params.outPath === "string" && params.outPath.trim()
-      ? params.outPath.trim()
-      : screenSnapshotTempPath({ ext });
-  const written = await writeScreenSnapshotToFile(filePath, payload.base64);
-  return {
-    content: [{ type: "text", text: `FILE:${written.path}` }],
-    details: {
-      path: written.path,
-      format: payload.format,
-      displayFrameId: payload.displayFrameId,
-      screenIndex: payload.screenIndex,
-      width: payload.width,
-      height: payload.height,
-      media: {
-        mediaUrl: written.path,
-      },
     },
   };
 }

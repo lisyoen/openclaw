@@ -9,10 +9,8 @@ public enum TalkPromptBuilder: Sendable {
         ]
 
         if includeVoiceDirectiveHint {
-            let directiveHint =
-                "You may optionally prefix the response with JSON (first line) to set ElevenLabs voice " +
-                "(id or alias), e.g. {\"voice\":\"<id>\",\"once\":true}."
-            lines.append(directiveHint)
+            lines.append(
+                "You may optionally prefix the response with JSON (first line) to set ElevenLabs voice (id or alias), e.g. {\"voice\":\"<id>\",\"once\":true}.")
         }
 
         if let interruptedAtSeconds {

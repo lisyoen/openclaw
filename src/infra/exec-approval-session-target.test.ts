@@ -4,12 +4,11 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
-import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import {
   parseRawSessionConversationRef,
   parseThreadSessionSuffix,
 } from "../sessions/session-key-utils.js";
-import { withTempDir } from "../test-helpers/temp-dir.js";
+import { withTempDirSync } from "../test-helpers/temp-dir.js";
 import {
   doesApprovalRequestMatchChannelAccount,
   resolveApprovalRequestAccountId,
@@ -63,26 +62,12 @@ const baseRequest: ExecApprovalRequest = {
   expiresAtMs: 6000,
 };
 
-async function writeStoreFile(
+function writeStoreFile(
   storePath: string,
   entries: Record<string, Partial<SessionEntry>>,
-): Promise<OpenClawConfig> {
+): OpenClawConfig {
   fs.mkdirSync(path.dirname(storePath), { recursive: true });
-  await Promise.all(
-    Object.entries(entries).map(([sessionKey, entry]) =>
-      replaceSessionEntry(
-        {
-          storePath,
-          sessionKey,
-        },
-        {
-          sessionId: entry.sessionId ?? sessionKey,
-          updatedAt: entry.updatedAt ?? Date.now(),
-          ...entry,
-        } as SessionEntry,
-      ),
-    ),
-  );
+  fs.writeFileSync(storePath, JSON.stringify(entries), "utf-8");
   return {
     session: { store: storePath },
   } as OpenClawConfig;
@@ -150,10 +135,10 @@ describe("exec approval session target", () => {
     expected: ReturnType<typeof resolveExecApprovalSessionTarget>;
   };
 
-  it("returns null for blank session keys, missing entries, and unresolved targets", async () => {
-    await withTempDir({ prefix: "openclaw-exec-approval-session-target-" }, async (tmpDir) => {
+  it("returns null for blank session keys, missing entries, and unresolved targets", () => {
+    withTempDirSync({ prefix: "openclaw-exec-approval-session-target-" }, (tmpDir) => {
       const storePath = path.join(tmpDir, "sessions.json");
-      const cfg = await writeStoreFile(storePath, {
+      const cfg = writeStoreFile(storePath, {
         "agent:main:main": {
           sessionId: "main",
           updatedAt: 1,
@@ -173,10 +158,10 @@ describe("exec approval session target", () => {
     });
   });
 
-  it("prefers turn-source routing over stale session delivery state", async () => {
-    await withTempDir({ prefix: "openclaw-exec-approval-session-target-" }, async (tmpDir) => {
+  it("prefers turn-source routing over stale session delivery state", () => {
+    withTempDirSync({ prefix: "openclaw-exec-approval-session-target-" }, (tmpDir) => {
       const storePath = path.join(tmpDir, "sessions.json");
-      const cfg = await writeStoreFile(storePath, {
+      const cfg = writeStoreFile(storePath, {
         "agent:main:main": {
           sessionId: "main",
           updatedAt: 1,
@@ -250,22 +235,19 @@ describe("exec approval session target", () => {
     },
   ] satisfies PlaceholderStoreCase[])(
     "$name",
-    async ({ relativeStoreDir, entries, request, expected }) => {
-      await withTempDir({ prefix: "openclaw-exec-approval-session-target-" }, async (tmpDir) => {
-        const cfg = await writeStoreFile(
-          path.join(tmpDir, relativeStoreDir, "sessions.json"),
-          entries,
-        );
+    ({ relativeStoreDir, entries, request, expected }) => {
+      withTempDirSync({ prefix: "openclaw-exec-approval-session-target-" }, (tmpDir) => {
+        const cfg = writeStoreFile(path.join(tmpDir, relativeStoreDir, "sessions.json"), entries);
         cfg.session = { store: path.join(tmpDir, "{agentId}", "sessions.json") };
         expect(expectResolvedSessionTarget(cfg, request)).toEqual(expected);
       });
     },
   );
 
-  it("preserves string thread ids from the session store", async () => {
-    await withTempDir({ prefix: "openclaw-exec-approval-session-target-" }, async (tmpDir) => {
+  it("preserves string thread ids from the session store", () => {
+    withTempDirSync({ prefix: "openclaw-exec-approval-session-target-" }, (tmpDir) => {
       const storePath = path.join(tmpDir, "sessions.json");
-      const cfg = await writeStoreFile(storePath, {
+      const cfg = writeStoreFile(storePath, {
         "agent:main:main": {
           sessionId: "main",
           updatedAt: 1,
@@ -365,24 +347,24 @@ describe("exec approval session target", () => {
     ).toBe(false);
   });
 
-  it("falls back to the stored session binding when turn source uses another channel", async () => {
-    await withTempDir({ prefix: "openclaw-exec-approval-session-target-" }, async (tmpDir) => {
+  it("falls back to the stored session binding when turn source uses another channel", () => {
+    withTempDirSync({ prefix: "openclaw-exec-approval-session-target-" }, (tmpDir) => {
       const storePath = path.join(tmpDir, "sessions.json");
-      const cfg = await writeStoreFile(storePath, {
-        "agent:main:main": {
+      const cfg = writeStoreFile(storePath, {
+        "agent:main:matrix:channel:!ops:example.org": {
           sessionId: "main",
           updatedAt: 1,
           origin: {
             provider: "matrix",
             accountId: "ops",
           },
-          lastChannel: "matrix",
+          lastChannel: "slack",
           lastTo: "channel:C123",
-          lastAccountId: "ops",
+          lastAccountId: "work",
         },
       });
       const request = buildRequest({
-        sessionKey: "agent:main:main",
+        sessionKey: "agent:main:matrix:channel:!ops:example.org",
         turnSourceChannel: "discord",
         turnSourceTo: "channel:D123",
         turnSourceAccountId: "work",
@@ -395,10 +377,10 @@ describe("exec approval session target", () => {
     });
   });
 
-  it("falls back to the session-bound account when no turn-source account is present", async () => {
-    await withTempDir({ prefix: "openclaw-exec-approval-session-target-" }, async (tmpDir) => {
+  it("falls back to the session-bound account when no turn-source account is present", () => {
+    withTempDirSync({ prefix: "openclaw-exec-approval-session-target-" }, (tmpDir) => {
       const storePath = path.join(tmpDir, "sessions.json");
-      const cfg = await writeStoreFile(storePath, {
+      const cfg = writeStoreFile(storePath, {
         "agent:main:main": {
           sessionId: "main",
           updatedAt: 1,
@@ -422,10 +404,10 @@ describe("exec approval session target", () => {
     });
   });
 
-  it("prefers explicit turn-source accounts over stale session account bindings", async () => {
-    await withTempDir({ prefix: "openclaw-exec-approval-session-target-" }, async (tmpDir) => {
+  it("prefers explicit turn-source accounts over stale session account bindings", () => {
+    withTempDirSync({ prefix: "openclaw-exec-approval-session-target-" }, (tmpDir) => {
       const storePath = path.join(tmpDir, "sessions.json");
-      const cfg = await writeStoreFile(storePath, {
+      const cfg = writeStoreFile(storePath, {
         "agent:main:main": {
           sessionId: "main",
           updatedAt: 1,
@@ -451,10 +433,10 @@ describe("exec approval session target", () => {
     });
   });
 
-  it("reconciles plugin-request turn source and session origin targets through the shared helper", async () => {
-    await withTempDir({ prefix: "openclaw-exec-approval-session-target-" }, async (tmpDir) => {
+  it("reconciles plugin-request turn source and session origin targets through the shared helper", () => {
+    withTempDirSync({ prefix: "openclaw-exec-approval-session-target-" }, (tmpDir) => {
       const storePath = path.join(tmpDir, "sessions.json");
-      const cfg = await writeStoreFile(storePath, {
+      const cfg = writeStoreFile(storePath, {
         "agent:main:main": {
           sessionId: "main",
           updatedAt: 1,
@@ -472,10 +454,10 @@ describe("exec approval session target", () => {
     });
   });
 
-  it("returns null when explicit turn source conflicts with the session-bound origin target", async () => {
-    await withTempDir({ prefix: "openclaw-exec-approval-session-target-" }, async (tmpDir) => {
+  it("returns null when explicit turn source conflicts with the session-bound origin target", () => {
+    withTempDirSync({ prefix: "openclaw-exec-approval-session-target-" }, (tmpDir) => {
       const storePath = path.join(tmpDir, "sessions.json");
-      const cfg = await writeStoreFile(storePath, {
+      const cfg = writeStoreFile(storePath, {
         "agent:main:main": {
           sessionId: "main",
           updatedAt: 1,

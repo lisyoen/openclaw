@@ -8,7 +8,7 @@ title: "Plugin bundles"
 ---
 
 OpenClaw can install plugins from three external ecosystems: **Codex**, **Claude**,
-and **Cursor**. These are called **bundles** - content and metadata packs that
+and **Cursor**. These are called **bundles** — content and metadata packs that
 OpenClaw maps into native features like skills, hooks, and MCP tools.
 
 <Info>
@@ -22,8 +22,8 @@ OpenClaw maps into native features like skills, hooks, and MCP tools.
 Many useful plugins are published in Codex, Claude, or Cursor format. Instead
 of requiring authors to rewrite them as native OpenClaw plugins, OpenClaw
 detects these formats and maps their supported content into the native feature
-set. You can install a Claude command pack or a Codex skill bundle and use it
-immediately.
+set. This means you can install a Claude command pack or a Codex skill bundle
+and use it immediately.
 
 ## Install a bundle
 
@@ -37,11 +37,9 @@ immediately.
     openclaw plugins install ./my-bundle.tgz
 
     # Claude marketplace
-    openclaw plugins marketplace list <source>
-    openclaw plugins install <plugin> --marketplace <source>
+    openclaw plugins marketplace list <marketplace-name>
+    openclaw plugins install <plugin-name>@<marketplace-name>
     ```
-
-    `<source>` is a local marketplace path/repo or a git/GitHub source.
 
   </Step>
 
@@ -51,8 +49,7 @@ immediately.
     openclaw plugins inspect <id>
     ```
 
-    Bundles show `Format: bundle` plus a `Bundle format:` value of `codex`,
-    `claude`, or `cursor`.
+    Bundles show as `Format: bundle` with a subtype of `codex`, `claude`, or `cursor`.
 
   </Step>
 
@@ -84,36 +81,37 @@ is detected but not yet wired.
 
 #### Skill content
 
-- Bundle skill roots load as normal OpenClaw skill roots.
-- Claude `commands/` roots are treated as additional skill roots.
-- Cursor `.cursor/commands/` roots are treated as additional skill roots.
+- bundle skill roots load as normal OpenClaw skill roots
+- Claude `commands` roots are treated as additional skill roots
+- Cursor `.cursor/commands` roots are treated as additional skill roots
 
-Claude markdown command files and Cursor command markdown both work through the
-normal OpenClaw skill loader.
+This means Claude markdown command files work through the normal OpenClaw skill
+loader. Cursor command markdown works through the same path.
 
 #### Hook packs
 
-Bundle hook roots work **only** when they use the normal OpenClaw hook-pack
-layout: `HOOK.md` plus `handler.ts` or `handler.js`. Today this is primarily
-the Codex-compatible case.
+- bundle hook roots work **only** when they use the normal OpenClaw hook-pack
+  layout. Today this is primarily the Codex-compatible case:
+  - `HOOK.md`
+  - `handler.ts` or `handler.js`
 
 #### MCP for embedded OpenClaw
 
-- Enabled bundles can contribute MCP server config.
-- OpenClaw merges bundle MCP config into the effective embedded OpenClaw
-  settings as `mcpServers`.
-- OpenClaw exposes supported bundle MCP tools during embedded OpenClaw agent
-  turns by launching stdio servers or connecting to HTTP servers.
-- The `coding` and `messaging` tool profiles include bundle MCP tools by
-  default; use `tools.deny: ["bundle-mcp"]` to opt out for an agent or gateway.
-- Project-local embedded agent settings still apply after bundle defaults, so
-  workspace settings can override bundle MCP entries when needed.
-- Bundle MCP tool catalogs are sorted deterministically before registration, so
-  upstream `listTools()` order changes do not thrash prompt-cache tool blocks.
+- enabled bundles can contribute MCP server config
+- OpenClaw merges bundle MCP config into the effective embedded OpenClaw settings as
+  `mcpServers`
+- OpenClaw exposes supported bundle MCP tools during embedded OpenClaw agent turns by
+  launching stdio servers or connecting to HTTP servers
+- the `coding` and `messaging` tool profiles include bundle MCP tools by
+  default; use `tools.deny: ["bundle-mcp"]` to opt out for an agent or gateway
+- project-local embedded agent settings still apply after bundle defaults, so workspace
+  settings can override bundle MCP entries when needed
+- bundle MCP tool catalogs are sorted deterministically before registration, so
+  upstream `listTools()` order changes do not thrash prompt-cache tool blocks
 
 ##### Transports
 
-MCP servers can use stdio or HTTP transport.
+MCP servers can use stdio or HTTP transport:
 
 **Stdio** launches a child process:
 
@@ -131,8 +129,7 @@ MCP servers can use stdio or HTTP transport.
 }
 ```
 
-**HTTP** connects to a running MCP server, defaulting to `sse` unless
-`streamable-http` is requested:
+**HTTP** connects to a running MCP server over `sse` by default, or `streamable-http` when requested:
 
 ```json
 {
@@ -151,16 +148,15 @@ MCP servers can use stdio or HTTP transport.
 }
 ```
 
-- `transport` accepts `"streamable-http"` or `"sse"`; omitted defaults to `sse`.
+- `transport` may be set to `"streamable-http"` or `"sse"`; when omitted, OpenClaw uses `sse`
 - `type: "http"` is a CLI-native downstream shape; use `transport: "streamable-http"` in OpenClaw config. `openclaw mcp set` and `openclaw doctor --fix` normalize the common alias.
-- Only `http:` and `https:` URL schemes are allowed.
-- `headers` values support `${ENV_VAR}` interpolation.
-- A server entry with both `command` and `url` is rejected.
+- only `http:` and `https:` URL schemes are allowed
+- `headers` values support `${ENV_VAR}` interpolation
+- a server entry with both `command` and `url` is rejected
 - URL credentials (userinfo and query params) are redacted from tool
-  descriptions and logs.
+  descriptions and logs
 - `connectionTimeoutMs` overrides the default 30-second connection timeout for
-  both stdio and HTTP transports. Request timeout defaults to 60 seconds and
-  can be overridden with `requestTimeoutMs`.
+  both stdio and HTTP transports
 
 ##### Tool naming
 
@@ -168,44 +164,45 @@ OpenClaw registers bundle MCP tools with provider-safe names in the form
 `serverName__toolName`. For example, a server keyed `"vigil-harbor"` exposing a
 `memory_search` tool registers as `vigil-harbor__memory_search`.
 
-- Characters outside `A-Za-z0-9_-` are replaced with `-`.
-- Fragments that would start with a non-letter get a letter prefix, so numeric
-  server keys such as `12306` become provider-safe tool prefixes.
-- Server prefixes are capped at 30 characters.
-- Full tool names are capped at 64 characters.
-- Empty server names fall back to `mcp`.
-- Colliding sanitized names are disambiguated with numeric suffixes.
-- Final exposed tool order is deterministic by safe name, keeping repeated
-  embedded-agent turns cache-stable.
-- Profile filtering treats every tool from one bundle MCP server as
-  plugin-owned by `bundle-mcp`, so profile allow/deny lists can reference
-  either individual exposed tool names or the `bundle-mcp` plugin key.
+- characters outside `A-Za-z0-9_-` are replaced with `-`
+- fragments that would start with a non-letter get a letter prefix, so numeric
+  server keys such as `12306` become provider-safe tool prefixes
+- server prefixes are capped at 30 characters
+- full tool names are capped at 64 characters
+- empty server names fall back to `mcp`
+- colliding sanitized names are disambiguated with numeric suffixes
+- final exposed tool order is deterministic by safe name to keep repeated embedded-agent
+  turns cache-stable
+- profile filtering treats all tools from one bundle MCP server as plugin-owned
+  by `bundle-mcp`, so profile allowlists and deny lists can include either
+  individual exposed tool names or the `bundle-mcp` plugin key
 
 #### Embedded OpenClaw settings
 
-Claude `settings.json` is imported as default embedded OpenClaw settings when
-the bundle is enabled. OpenClaw sanitizes shell override keys before applying
-them:
+- Claude `settings.json` is imported as default embedded OpenClaw settings when the
+  bundle is enabled
+- OpenClaw sanitizes shell override keys before applying them
+
+Sanitized keys:
 
 - `shellPath`
 - `shellCommandPrefix`
 
 #### Embedded OpenClaw LSP
 
-- Enabled Claude bundles can contribute LSP server config.
-- OpenClaw loads `.lsp.json` plus any manifest-declared `lspServers` paths.
-- Bundle LSP config is merged into the effective embedded OpenClaw LSP
-  defaults.
-- Only supported stdio-backed LSP servers are runnable today; unsupported
-  transports still show up in `openclaw plugins inspect <id>`.
+- enabled Claude bundles can contribute LSP server config
+- OpenClaw loads `.lsp.json` plus any manifest-declared `lspServers` paths
+- bundle LSP config is merged into the effective embedded OpenClaw LSP defaults
+- only supported stdio-backed LSP servers are runnable today; unsupported
+  transports still show up in `openclaw plugins inspect <id>`
 
 ### Detected but not executed
 
 These are recognized and shown in diagnostics, but OpenClaw does not run them:
 
-- Claude `agents`, `hooks/hooks.json` automation, `outputStyles`
+- Claude `agents`, `hooks.json` automation, `outputStyles`
 - Cursor `.cursor/agents`, `.cursor/hooks.json`, `.cursor/rules`
-- Codex `.app.json` metadata beyond capability reporting
+- Codex inline/app metadata beyond capability reporting
 
 ## Bundle formats
 
@@ -233,7 +230,7 @@ These are recognized and shown in diagnostics, but OpenClaw does not run them:
     - `.mcp.json` exposes supported stdio tools to embedded OpenClaw
     - `.lsp.json` plus manifest-declared `lspServers` paths load into embedded OpenClaw LSP defaults
     - `hooks/hooks.json` is detected but not executed
-    - Custom component paths in the manifest are additive; they extend defaults, not replace them
+    - Custom component paths in the manifest are additive (they extend defaults, not replace them)
 
   </Accordion>
 
@@ -252,8 +249,8 @@ These are recognized and shown in diagnostics, but OpenClaw does not run them:
 
 OpenClaw checks for native plugin format first:
 
-1. `openclaw.plugin.json` or a valid `package.json` with `openclaw.extensions` - treated as a **native plugin**
-2. Bundle markers (`.codex-plugin/`, `.claude-plugin/`, or default Claude/Cursor layout) - treated as a **bundle**
+1. `openclaw.plugin.json` or valid `package.json` with `openclaw.extensions` — treated as **native plugin**
+2. Bundle markers (`.codex-plugin/`, `.claude-plugin/`, or default Claude/Cursor layout) — treated as **bundle**
 
 If a directory contains both, OpenClaw uses the native path. This prevents
 dual-format packages from being partially installed as bundles.
@@ -266,18 +263,18 @@ dual-format packages from being partially installed as bundles.
 - OpenClaw-owned bundled plugins are either shipped lightweight in core or
   downloadable through the plugin installer. Gateway startup never runs a
   package manager for them.
-- `openclaw doctor --fix` removes stale local bundled-plugin install records
-  and can recover downloadable plugins that are missing from the local plugin
-  index when config still references them.
+- `openclaw doctor --fix` removes legacy staged dependency directories and can
+  recover downloadable plugins that are missing from the local plugin index when
+  config references them.
 
 ## Security
 
 Bundles have a narrower trust boundary than native plugins:
 
-- OpenClaw does **not** load arbitrary bundle runtime modules in-process.
-- Skills and hook-pack paths must stay inside the plugin root (boundary-checked).
-- Settings files are read with the same boundary checks.
-- Supported stdio MCP servers may be launched as subprocesses.
+- OpenClaw does **not** load arbitrary bundle runtime modules in-process
+- Skills and hook-pack paths must stay inside the plugin root (boundary-checked)
+- Settings files are read with the same boundary checks
+- Supported stdio MCP servers may be launched as subprocesses
 
 This makes bundles safer by default, but you should still treat third-party
 bundles as trusted content for the features they do expose.
@@ -287,7 +284,7 @@ bundles as trusted content for the features they do expose.
 <AccordionGroup>
   <Accordion title="Bundle is detected but capabilities do not run">
     Run `openclaw plugins inspect <id>`. If a capability is listed but marked as
-    not wired, that is a product limit, not a broken install.
+    not wired, that is a product limit — not a broken install.
   </Accordion>
 
   <Accordion title="Claude command files do not appear">
@@ -309,5 +306,5 @@ bundles as trusted content for the features they do expose.
 ## Related
 
 - [Install and Configure Plugins](/tools/plugin)
-- [Building Plugins](/plugins/building-plugins) - create a native plugin
-- [Plugin Manifest](/plugins/manifest) - native manifest schema
+- [Building Plugins](/plugins/building-plugins) — create a native plugin
+- [Plugin Manifest](/plugins/manifest) — native manifest schema

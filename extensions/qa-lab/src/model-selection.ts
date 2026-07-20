@@ -7,7 +7,7 @@ import {
 
 export type { QaProviderMode, QaProviderModeInput } from "./providers/index.js";
 
-type QaModelSelection = {
+export type QaModelSelection = {
   primaryModel: string;
   alternateModel: string;
 };

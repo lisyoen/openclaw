@@ -1,6 +1,5 @@
 // Diagnostic run activity helpers summarize run lifecycle activity for diagnostics.
 import {
-  getInternalDiagnosticEventSequence,
   onInternalDiagnosticEvent,
   type DiagnosticEventPayload,
   type DiagnosticSessionActiveWorkKind,
@@ -56,15 +55,6 @@ type DiagnosticRunProgressActivityEvent = Pick<
   "runId" | "sessionId" | "sessionKey" | "reason"
 >;
 
-// Quiet-but-alive tools are normal agent behavior; the CLI byte watchdog kills
-// truly silent children within its own deadline. This floor bounds every
-// staleness consumer (diagnostic recovery aborts, reply-run stale takeover,
-// steer gates): lowering it reopens #88870, removing it reopens #96168.
-export const BLOCKED_TOOL_CALL_ABORT_FLOOR_MS = 15 * 60_000;
-
-// Default quiet-run reclaim window for steer/takeover. Evidence clocks stay local.
-export const RUN_STALE_TAKEOVER_MS = 10 * 60_000;
-
 export type DiagnosticSessionActivitySnapshot = {
   activeWorkKind?: DiagnosticSessionActiveWorkKind;
   hasActiveEmbeddedRun?: boolean;
@@ -74,16 +64,6 @@ export type DiagnosticSessionActivitySnapshot = {
   lastProgressAgeMs?: number;
   lastProgressReason?: string;
 };
-
-// Quiet-but-alive tool phases get the blocked-tool floor so a human message
-// cannot reclaim a healthy long tool that stuck recovery would not touch yet.
-export function resolveRunStaleThresholdMs(
-  activity: Pick<DiagnosticSessionActivitySnapshot, "activeWorkKind">,
-): number {
-  return activity.activeWorkKind === "tool_call"
-    ? Math.max(RUN_STALE_TAKEOVER_MS, BLOCKED_TOOL_CALL_ABORT_FLOOR_MS)
-    : RUN_STALE_TAKEOVER_MS;
-}
 
 const activityByRef = new Map<string, SessionActivity>();
 const activityByRunId = new Map<string, SessionActivity>();
@@ -628,11 +608,11 @@ export function getDiagnosticEmbeddedRunActivitySequence(): number {
   return embeddedRunSequence;
 }
 
-function markDiagnosticRunProgressForTest(params: DiagnosticRunProgressActivityEvent): void {
+export function markDiagnosticRunProgressForTest(params: DiagnosticRunProgressActivityEvent): void {
   markDiagnosticRunProgress(params);
 }
 
-function markDiagnosticToolStartedForTest(params: {
+export function markDiagnosticToolStartedForTest(params: {
   sessionId?: string;
   sessionKey?: string;
   runId?: string;
@@ -642,27 +622,28 @@ function markDiagnosticToolStartedForTest(params: {
   recordToolStarted(params);
 }
 
-function markDiagnosticModelStartedForTest(params: DiagnosticModelStartedActivityEvent): void {
+export function markDiagnosticModelStartedForTest(
+  params: DiagnosticModelStartedActivityEvent,
+): void {
   recordModelStarted(params);
 }
 
 export function resetDiagnosticRunActivityForTest(): void {
-  stopDiagnosticRunActivityTracking();
+  activityByRef.clear();
+  activityByRunId.clear();
+  embeddedRunSequence = 0;
+  unregisterDiagnosticRunActivityListener?.();
+  unregisterDiagnosticRunActivityListener = undefined;
+  registerDiagnosticRunActivityListener();
 }
 
 let unregisterDiagnosticRunActivityListener: (() => void) | undefined;
 
-export function startDiagnosticRunActivityTracking(): void {
+function registerDiagnosticRunActivityListener(): void {
   if (unregisterDiagnosticRunActivityListener) {
     return;
   }
-  const startAfterEventSequence = getInternalDiagnosticEventSequence();
   unregisterDiagnosticRunActivityListener = onInternalDiagnosticEvent((event) => {
-    // A prior lifecycle can leave already-sequenced events in the async queue.
-    // Ignore them so a restart cannot recreate activity that stop cleared.
-    if (event.seq <= startAfterEventSequence) {
-      return;
-    }
     switch (event.type) {
       case "tool.execution.started":
         recordToolStarted(event);
@@ -690,20 +671,4 @@ export function startDiagnosticRunActivityTracking(): void {
   });
 }
 
-export function stopDiagnosticRunActivityTracking(): void {
-  unregisterDiagnosticRunActivityListener?.();
-  unregisterDiagnosticRunActivityListener = undefined;
-  activityByRef.clear();
-  activityByRunId.clear();
-  embeddedRunSequence = 0;
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for("openclaw.diagnosticRunActivityTestApi")
-  ] = {
-    markDiagnosticModelStartedForTest,
-    markDiagnosticRunProgressForTest,
-    markDiagnosticToolStartedForTest,
-  };
-}
+registerDiagnosticRunActivityListener();

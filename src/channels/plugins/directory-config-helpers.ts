@@ -86,6 +86,10 @@ function collectDirectoryIds(
   return ids;
 }
 
+function dedupeDirectoryIds(ids: string[]): string[] {
+  return uniqueStrings(ids);
+}
+
 /**
  * Collects unique normalized ids from multiple raw config sources.
  */
@@ -93,7 +97,7 @@ export function collectNormalizedDirectoryIds(params: {
   sources: Iterable<unknown>[];
   normalizeId: (entry: string) => string | null | undefined;
 }): string[] {
-  const ids: string[] = [];
+  const ids = new Set<string>();
   for (const source of params.sources) {
     for (const value of source) {
       const raw = normalizeOptionalString(value) ?? "";
@@ -103,11 +107,11 @@ export function collectNormalizedDirectoryIds(params: {
       const normalized = params.normalizeId(raw);
       const trimmed = normalizeOptionalString(normalized) ?? "";
       if (trimmed) {
-        ids.push(trimmed);
+        ids.add(trimmed);
       }
     }
   }
-  return uniqueStrings(ids);
+  return Array.from(ids);
 }
 
 /**
@@ -225,7 +229,7 @@ export function listDirectoryUserEntriesFromAllowFrom(params: {
   limit?: number | null;
   normalizeId?: (entry: string) => string | null | undefined;
 }): ChannelDirectoryEntry[] {
-  const ids = uniqueStrings(
+  const ids = dedupeDirectoryIds(
     collectDirectoryIdsFromEntries({
       entries: params.allowFrom,
       normalizeId: params.normalizeId,
@@ -245,7 +249,7 @@ export function listDirectoryUserEntriesFromAllowFromAndMapKeys(params: {
   normalizeAllowFromId?: (entry: string) => string | null | undefined;
   normalizeMapKeyId?: (entry: string) => string | null | undefined;
 }): ChannelDirectoryEntry[] {
-  const ids = uniqueStrings([
+  const ids = dedupeDirectoryIds([
     ...collectDirectoryIdsFromEntries({
       entries: params.allowFrom,
       normalizeId: params.normalizeAllowFromId,
@@ -267,7 +271,7 @@ export function listDirectoryGroupEntriesFromMapKeys(params: {
   limit?: number | null;
   normalizeId?: (entry: string) => string | null | undefined;
 }): ChannelDirectoryEntry[] {
-  const ids = uniqueStrings(
+  const ids = dedupeDirectoryIds(
     collectDirectoryIdsFromMapKeys({
       groups: params.groups,
       normalizeId: params.normalizeId,
@@ -287,7 +291,7 @@ export function listDirectoryGroupEntriesFromMapKeysAndAllowFrom(params: {
   normalizeMapKeyId?: (entry: string) => string | null | undefined;
   normalizeAllowFromId?: (entry: string) => string | null | undefined;
 }): ChannelDirectoryEntry[] {
-  const ids = uniqueStrings([
+  const ids = dedupeDirectoryIds([
     ...collectDirectoryIdsFromMapKeys({
       groups: params.groups,
       normalizeId: params.normalizeMapKeyId,

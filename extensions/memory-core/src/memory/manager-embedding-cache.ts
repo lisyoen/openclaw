@@ -7,20 +7,21 @@ import {
 
 type EmbeddingCacheDb = Pick<DatabaseSync, "prepare">;
 
-type EmbeddingProviderIdentity = {
-  provider: string;
+type EmbeddingProviderRef = {
+  id: string;
   model: string;
-  providerKey: string;
 };
 
 export function loadMemoryEmbeddingCache(params: {
   db: EmbeddingCacheDb;
   enabled: boolean;
-  providerIdentities: EmbeddingProviderIdentity[];
+  provider: EmbeddingProviderRef | null;
+  providerKey: string | null;
   hashes: string[];
   tableName?: string;
 }): Map<string, number[]> {
-  if (!params.enabled || params.providerIdentities.length === 0 || params.hashes.length === 0) {
+  const provider = params.provider;
+  if (!params.enabled || !provider || !params.providerKey || params.hashes.length === 0) {
     return new Map();
   }
   const unique: string[] = [];
@@ -36,25 +37,21 @@ export function loadMemoryEmbeddingCache(params: {
     return new Map();
   }
 
-  const tableName = params.tableName ?? "memory_embedding_cache";
+  const tableName = params.tableName ?? "embedding_cache";
   const out = new Map<string, number[]>();
+  const baseParams: SQLInputValue[] = [provider.id, provider.model, params.providerKey];
   const batchSize = 400;
-  for (const identity of params.providerIdentities) {
-    const baseParams: SQLInputValue[] = [identity.provider, identity.model, identity.providerKey];
-    for (let start = 0; start < unique.length; start += batchSize) {
-      const batch = unique.slice(start, start + batchSize);
-      const placeholders = batch.map(() => "?").join(", ");
-      const rows = params.db
-        .prepare(
-          `SELECT hash, embedding FROM ${tableName}\n` +
-            ` WHERE provider = ? AND model = ? AND provider_key = ? AND hash IN (${placeholders})`,
-        )
-        .all(...baseParams, ...batch) as Array<{ hash: string; embedding: string }>;
-      for (const row of rows) {
-        if (!out.has(row.hash)) {
-          out.set(row.hash, parseEmbedding(row.embedding));
-        }
-      }
+  for (let start = 0; start < unique.length; start += batchSize) {
+    const batch = unique.slice(start, start + batchSize);
+    const placeholders = batch.map(() => "?").join(", ");
+    const rows = params.db
+      .prepare(
+        `SELECT hash, embedding FROM ${tableName}\n` +
+          ` WHERE provider = ? AND model = ? AND provider_key = ? AND hash IN (${placeholders})`,
+      )
+      .all(...baseParams, ...batch) as Array<{ hash: string; embedding: string }>;
+    for (const row of rows) {
+      out.set(row.hash, parseEmbedding(row.embedding));
     }
   }
   return out;
@@ -63,7 +60,7 @@ export function loadMemoryEmbeddingCache(params: {
 export function upsertMemoryEmbeddingCache(params: {
   db: EmbeddingCacheDb;
   enabled: boolean;
-  provider: { id: string; model: string } | null;
+  provider: EmbeddingProviderRef | null;
   providerKey: string | null;
   entries: Array<{ hash: string; embedding: number[] }>;
   now?: number;
@@ -73,7 +70,7 @@ export function upsertMemoryEmbeddingCache(params: {
   if (!params.enabled || !provider || !params.providerKey || params.entries.length === 0) {
     return;
   }
-  const tableName = params.tableName ?? "memory_embedding_cache";
+  const tableName = params.tableName ?? "embedding_cache";
   const now = params.now ?? Date.now();
   const stmt = params.db.prepare(
     `INSERT INTO ${tableName} (provider, model, provider_key, hash, embedding, dims, updated_at)\n` +

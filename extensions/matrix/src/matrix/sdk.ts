@@ -11,10 +11,8 @@ import {
   type MatrixEvent,
 } from "matrix-js-sdk/lib/matrix.js";
 import type { Direction } from "matrix-js-sdk/lib/models/event-timeline.js";
-import type { Room } from "matrix-js-sdk/lib/models/room.js";
 import { VerificationMethod } from "matrix-js-sdk/lib/types.js";
 import { KeyedAsyncQueue } from "openclaw/plugin-sdk/keyed-async-queue";
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import type { PinnedDispatcherPolicy } from "openclaw/plugin-sdk/ssrf-dispatcher";
 import {
   normalizeNullableString,
@@ -235,7 +233,7 @@ export type MatrixRecoveryKeyVerificationResult = MatrixOwnDeviceVerificationSta
   error?: string;
 };
 
-type MatrixOwnCrossSigningPublicationStatus = {
+export type MatrixOwnCrossSigningPublicationStatus = {
   userId: string | null;
   masterKeyPublished: boolean;
   selfSigningKeyPublished: boolean;
@@ -283,7 +281,7 @@ export type MatrixOwnDeviceInfo = {
   current: boolean;
 };
 
-type MatrixRoomKeyBackupResetOptions = {
+export type MatrixRoomKeyBackupResetOptions = {
   rotateRecoveryKey?: boolean;
 };
 
@@ -296,13 +294,15 @@ export type MatrixOwnDeviceDeleteResult = {
 type MatrixCryptoRuntime = typeof import("./sdk/crypto-runtime.js");
 
 let loadedMatrixCryptoRuntime: MatrixCryptoRuntime | null = null;
+let matrixCryptoRuntimePromise: Promise<MatrixCryptoRuntime> | null = null;
 
-const loadMatrixCryptoRuntime = createLazyRuntimeModule(() =>
-  import("./sdk/crypto-runtime.js").then((runtime) => {
+async function loadMatrixCryptoRuntime(): Promise<MatrixCryptoRuntime> {
+  matrixCryptoRuntimePromise ??= import("./sdk/crypto-runtime.js").then((runtime) => {
     loadedMatrixCryptoRuntime = runtime;
     return runtime;
-  }),
-);
+  });
+  return await matrixCryptoRuntimePromise;
+}
 
 const normalizeOptionalString = normalizeNullableString;
 
@@ -484,39 +484,6 @@ export class MatrixClient {
     this.cryptoBootstrapper ??= new runtime.MatrixCryptoBootstrapper<MatrixRawEvent>({
       getUserId: () => this.getUserId(),
       getPassword: () => this.password,
-      canUnlockSecretStorage: async () => {
-        const secretStorage = (
-          this.client as {
-            secretStorage?: Partial<
-              Pick<MatrixJsClient["secretStorage"], "checkKey" | "getDefaultKeyId" | "getKey">
-            >;
-          }
-        ).secretStorage;
-        // Partial test/runtime facades can omit secretStorage; forced reset must fail closed
-        // without turning missing recovery access into a noisy caught TypeError.
-        if (
-          !secretStorage ||
-          typeof secretStorage.getDefaultKeyId !== "function" ||
-          typeof secretStorage.getKey !== "function" ||
-          typeof secretStorage.checkKey !== "function"
-        ) {
-          return false;
-        }
-        const defaultKeyId = await secretStorage.getDefaultKeyId();
-        if (!defaultKeyId) {
-          return false;
-        }
-        const keyTuple = await secretStorage.getKey(defaultKeyId);
-        const key = this.recoveryKeyStore.getSecretStorageKeyCandidate(defaultKeyId);
-        if (!keyTuple || !key) {
-          return false;
-        }
-        const keyInfo = keyTuple[1];
-        if (!keyInfo.iv?.trim() || !keyInfo.mac?.trim()) {
-          return false;
-        }
-        return await secretStorage.checkKey(key, keyInfo);
-      },
       getDeviceId: () => this.client.getDeviceId(),
       verificationManager: this.verificationManager,
       recoveryKeyStore: this.recoveryKeyStore,
@@ -529,7 +496,7 @@ export class MatrixClient {
         recoveryKeyStore: this.recoveryKeyStore,
         getRoomStateEvent: (roomId, eventType, stateKey = "") =>
           this.getRoomStateEvent(roomId, eventType, stateKey),
-        downloadContent: (mxcUrl, opts) => this.downloadContent(mxcUrl, opts),
+        downloadContent: (mxcUrl) => this.downloadContent(mxcUrl),
       });
     }
     if (!this.verificationSummaryListenerBound) {
@@ -780,9 +747,13 @@ export class MatrixClient {
           "Cross-signing/bootstrap is incomplete for an already owner-signed device; skipping automatic reset and preserving the current identity. Restore the recovery key or run an explicit verification bootstrap if repair is needed.",
         );
       } else {
-        // Forced reset validates the active SSSS recovery key before rotating local keys.
-        // Missing or stale recovery material fails without mutating crypto state.
+        // No password guard: passwordless token-auth bots should still attempt repair.
+        // UIA failures inside bootstrap() are caught below and logged as warnings.
         try {
+          // The repair path already force-resets cross-signing; allow secret storage
+          // recreation so the new keys can be persisted. Without this, a device that
+          // lost its recovery key enters a permanent failure loop because the new
+          // cross-signing keys have nowhere to be stored.
           const repaired = await cryptoBootstrapper.bootstrap(
             crypto,
             MATRIX_AUTOMATIC_REPAIR_BOOTSTRAP_OPTIONS,
@@ -881,7 +852,16 @@ export class MatrixClient {
   }
 
   hasSyncedJoinedRoomMember(roomId: string, userId: string): boolean {
-    return this.client.getRoom(roomId)?.getMember(userId)?.membership === "join";
+    const room = (
+      this.client as {
+        getRoom?: (roomId: string) => {
+          currentState?: {
+            getMember?: (userId: string) => { membership?: string | null } | null;
+          };
+        } | null;
+      }
+    ).getRoom?.(roomId);
+    return room?.currentState?.getMember?.(userId)?.membership === "join";
   }
 
   async getRoomStateEvent(
@@ -894,12 +874,8 @@ export class MatrixClient {
   }
 
   async getAccountData(eventType: string): Promise<Record<string, unknown> | undefined> {
-    return (
-      ((await this.client.getAccountDataFromServer(eventType as never)) as Record<
-        string,
-        unknown
-      > | null) ?? undefined
-    );
+    const event = this.client.getAccountData(eventType as never);
+    return (event?.getContent() as Record<string, unknown> | undefined) ?? undefined;
   }
 
   async setAccountData(eventType: string, content: Record<string, unknown>): Promise<void> {
@@ -2124,12 +2100,17 @@ export class MatrixClient {
     });
   }
 
-  private emitMembershipForRoom(room: Room): void {
-    const roomId = room.roomId.trim();
+  private emitMembershipForRoom(room: unknown): void {
+    const roomObj = room as {
+      roomId?: string;
+      getMyMembership?: () => string | null | undefined;
+      selfMembership?: string | null | undefined;
+    };
+    const roomId = roomObj.roomId?.trim();
     if (!roomId) {
       return;
     }
-    const membership = room.getMyMembership();
+    const membership = roomObj.getMyMembership?.() ?? roomObj.selfMembership ?? undefined;
     const selfUserId = this.client.getUserId() ?? this.selfUserId ?? "";
     if (!selfUserId) {
       return;
@@ -2153,7 +2134,15 @@ export class MatrixClient {
   }
 
   private emitOutstandingInviteEvents(): void {
-    for (const room of this.client.getRooms()) {
+    const listRooms = (this.client as { getRooms?: () => unknown[] }).getRooms;
+    if (typeof listRooms !== "function") {
+      return;
+    }
+    const rooms = listRooms.call(this.client);
+    if (!Array.isArray(rooms)) {
+      return;
+    }
+    for (const room of rooms) {
       this.emitMembershipForRoom(room);
     }
   }
@@ -2177,4 +2166,3 @@ export class MatrixClient {
     return true;
   }
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

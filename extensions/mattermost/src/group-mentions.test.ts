@@ -15,24 +15,17 @@ describe("resolveMattermostGroupRequireMention", () => {
     expect(requireMention).toBe(true);
   });
 
-  it("lets groups config beat chatmode and chatmode beat the final default", () => {
+  it("respects chatmode-derived account override", () => {
     const cfg: OpenClawConfig = {
       channels: {
         mattermost: {
           chatmode: "onmessage",
-          groups: {
-            calls: { requireMention: true },
-          },
         },
       },
     };
 
-    expect(
-      resolveMattermostGroupRequireMention({ cfg, accountId: "default", groupId: "calls" }),
-    ).toBe(true);
-    expect(
-      resolveMattermostGroupRequireMention({ cfg, accountId: "default", groupId: "other" }),
-    ).toBe(false);
+    const requireMention = resolveMattermostGroupRequireMention({ cfg, accountId: "default" });
+    expect(requireMention).toBe(false);
   });
 
   it("prefers an explicit runtime override when provided", () => {

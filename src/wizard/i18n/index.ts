@@ -9,7 +9,7 @@ import type {
   WizardTranslationTree,
 } from "./types.js";
 
-export type { WizardI18nParams };
+export type { WizardI18nParams, WizardLocale, WizardTranslationMap };
 
 // Wizard i18n uses dotted keys with English fallback. Locale selection is
 // intentionally small because setup copy is maintained in-tree.
@@ -21,7 +21,8 @@ const LOCALES: Record<WizardLocale, WizardTranslationMap> = {
   "zh-TW": zh_TW,
 };
 
-const WIZARD_DEFAULT_LOCALE: WizardLocale = "en";
+export const WIZARD_DEFAULT_LOCALE: WizardLocale = "en";
+export const WIZARD_SUPPORTED_LOCALES: readonly WizardLocale[] = ["en", "zh-CN", "zh-TW"];
 
 function normalizeLocaleToken(raw: string | undefined): string {
   return (raw ?? "").trim().split(".")[0]?.split("@")[0]?.replaceAll("_", "-") ?? "";
@@ -29,7 +30,7 @@ function normalizeLocaleToken(raw: string | undefined): string {
 
 // Resolve shell/browser locale strings such as zh_Hant_TW.UTF-8 into supported
 // setup locales, falling back to English for unknown languages.
-function resolveWizardLocale(value: string | undefined): WizardLocale {
+export function resolveWizardLocale(value: string | undefined): WizardLocale {
   const normalized = normalizeLocaleToken(value);
   if (!normalized) {
     return WIZARD_DEFAULT_LOCALE;
@@ -48,11 +49,8 @@ function resolveWizardLocale(value: string | undefined): WizardLocale {
   return WIZARD_DEFAULT_LOCALE;
 }
 
-function resolveWizardLocaleFromEnv(env: NodeJS.ProcessEnv = process.env): WizardLocale {
-  const locale = [env.OPENCLAW_LOCALE, env.LC_ALL, env.LC_MESSAGES, env.LANG].find((value) =>
-    value?.trim(),
-  );
-  return resolveWizardLocale(locale);
+export function resolveWizardLocaleFromEnv(env: NodeJS.ProcessEnv = process.env): WizardLocale {
+  return resolveWizardLocale(env.OPENCLAW_LOCALE ?? env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG);
 }
 
 function readKey(map: WizardTranslationMap, key: string): string | undefined {
@@ -103,4 +101,20 @@ export function createSetupTranslator(options?: {
         : key;
     return wizardT(resolvedKey, params, { locale: options?.locale });
   };
+}
+
+function collectLeafKeys(tree: WizardTranslationTree, prefix = "", out: string[] = []): string[] {
+  for (const [key, value] of Object.entries(tree)) {
+    const next = prefix ? `${prefix}.${key}` : key;
+    if (typeof value === "string") {
+      out.push(next);
+    } else {
+      collectLeafKeys(value, next, out);
+    }
+  }
+  return out;
+}
+
+export function listWizardI18nKeys(locale: WizardLocale = WIZARD_DEFAULT_LOCALE): string[] {
+  return collectLeafKeys(LOCALES[locale]).toSorted();
 }

@@ -1,5 +1,4 @@
 // Code region helpers find fenced and inline code spans in Markdown text.
-import { expectDefined } from "@openclaw/normalization-core";
 export interface CodeRegion {
   start: number;
   end: number;
@@ -11,12 +10,8 @@ export function findCodeRegions(text: string): CodeRegion[] {
 
   const fencedRe = /(^|\n)(```|~~~)[^\n]*\n[\s\S]*?(?:\n\2|$)/g;
   for (const match of text.matchAll(fencedRe)) {
-    const start =
-      (match.index ?? 0) + expectDefined(match[1], "code regions regex capture 1").length;
-    regions.push({
-      start,
-      end: start + match[0].length - expectDefined(match[1], "code regions regex capture 1").length,
-    });
+    const start = (match.index ?? 0) + match[1].length;
+    regions.push({ start, end: start + match[0].length - match[1].length });
   }
 
   const inlineRe = /`+[^`]+`+/g;

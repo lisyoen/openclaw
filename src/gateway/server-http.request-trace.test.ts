@@ -11,6 +11,7 @@ import {
 } from "../infra/diagnostic-events.js";
 import {
   getActiveDiagnosticTraceContext,
+  resetDiagnosticTraceContextForTest,
   type DiagnosticTraceContext,
 } from "../infra/diagnostic-trace-context.js";
 import { getLogger, resetLogger, setLoggerOverride } from "../logging.js";
@@ -37,6 +38,7 @@ async function closeServer(server: ReturnType<typeof createGatewayHttpServer>): 
 
 afterEach(() => {
   resetDiagnosticEventsForTest();
+  resetDiagnosticTraceContextForTest();
   setLoggerOverride(null);
   resetLogger();
 });

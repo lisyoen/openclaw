@@ -65,7 +65,6 @@ function createOwnerDerivedApprovalChannelPlugin(params: {
       id: params.id,
       label: params.id,
     }),
-    messaging: { targetPrefixes: params.ownerPrefixes },
     approvalCapability: {
       native: {
         describeDeliveryCapabilities: vi.fn(({ cfg }) => {
@@ -268,7 +267,7 @@ describe("resolvePrivateCommandRouteTargets", () => {
     ]);
   });
 
-  it("routes a Discord group command through Telegram's declared tg owner prefix", async () => {
+  it("routes a Discord group command to the Telegram owner without Telegram exec approvers", async () => {
     registerApprovalChannelPlugins([
       createApprovalChannelPlugin({
         id: "discord",
@@ -283,7 +282,7 @@ describe("resolvePrivateCommandRouteTargets", () => {
     const targets = await resolvePrivateCommandRouteTargets({
       commandParams: buildCommandParams({
         commands: {
-          ownerAllowFrom: ["tg:849985193"],
+          ownerAllowFrom: ["telegram:849985193"],
         },
         channels: {
           telegram: {

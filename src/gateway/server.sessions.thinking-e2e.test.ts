@@ -6,8 +6,6 @@
  * 2. Anthropic sessions don't leak DeepSeek levels from defaults
  * 3. Sessions matching the default model correctly inherit defaults
  */
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { expect, test, vi } from "vitest";
 import { formatThinkingLevels } from "../auto-reply/thinking.js";
 import { testState, writeSessionStore } from "./test-helpers.js";
@@ -117,10 +115,7 @@ async function listMainSessionWithThinking(params: {
   const respond = vi.fn();
   const sessionsHandlers = await getSessionsHandlers();
   const { getRuntimeConfig } = await getGatewayConfigModule();
-  await expectDefined(
-    sessionsHandlers["sessions.list"],
-    'sessionsHandlers["sessions.list"] test invariant',
-  )({
+  await sessionsHandlers["sessions.list"]({
     req: { type: "req", id: params.reqId, method: "sessions.list", params: {} },
     params: {},
     respond,

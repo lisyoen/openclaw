@@ -37,9 +37,6 @@ function parseGeoUri(value: string): GeoUriParams | null {
   }
   const payload = trimmed.slice(4);
   const [coordsPart, ...paramParts] = payload.split(";");
-  if (!coordsPart) {
-    return null;
-  }
   const coords = coordsPart.split(",");
   if (coords.length < 2) {
     return null;

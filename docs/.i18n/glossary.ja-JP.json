@@ -98,13 +98,5 @@
   {
     "source": "wizard",
     "target": "ウィザード"
-  },
-  {
-    "source": "Pull request review flow",
-    "target": "プルリクエストレビューの流れ"
-  },
-  {
-    "source": "CI pipeline",
-    "target": "CI パイプライン"
   }
 ]

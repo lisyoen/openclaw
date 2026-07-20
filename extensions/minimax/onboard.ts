@@ -1,6 +1,4 @@
 // Minimax setup module handles plugin onboarding behavior.
-
-import { normalizeProviderId } from "openclaw/plugin-sdk/provider-model-shared";
 import {
   applyAgentDefaultModelPrimary,
   applyOnboardAuthAgentModelsAndProviders,
@@ -25,12 +23,7 @@ function applyMinimaxApiProviderConfigWithBaseUrl(
   params: MinimaxApiProviderConfigParams,
 ): OpenClawConfig {
   const providers = { ...cfg.models?.providers } as Record<string, ModelProviderConfig>;
-  const normalizedProviderId = normalizeProviderId(params.providerId);
-  const existingProvider =
-    providers[params.providerId] ??
-    Object.entries(providers).find(
-      ([providerId]) => normalizeProviderId(providerId) === normalizedProviderId,
-    )?.[1];
+  const existingProvider = providers[params.providerId];
   const existingModels = existingProvider?.models ?? [];
   const apiModel = buildMinimaxApiModelDefinition(params.modelId);
   const hasApiModel = existingModels.some((model) => model.id === params.modelId);
@@ -39,18 +32,14 @@ function applyMinimaxApiProviderConfigWithBaseUrl(
     baseUrl: params.baseUrl,
     models: [],
   };
-  const preservedApiKey =
-    typeof existingApiKey === "string"
-      ? existingApiKey.trim() === "" || existingApiKey.trim() === "minimax"
-        ? undefined
-        : existingApiKey
-      : existingApiKey;
+  const resolvedApiKey = typeof existingApiKey === "string" ? existingApiKey : undefined;
+  const normalizedApiKey = resolvedApiKey?.trim() === "minimax" ? "" : resolvedApiKey;
   providers[params.providerId] = {
     ...existingProviderRest,
     baseUrl: params.baseUrl,
     api: "anthropic-messages",
     authHeader: true,
-    ...(preservedApiKey ? { apiKey: preservedApiKey } : {}),
+    ...(normalizedApiKey?.trim() ? { apiKey: normalizedApiKey } : {}),
     models: mergedModels.length > 0 ? mergedModels : [apiModel],
   };
 

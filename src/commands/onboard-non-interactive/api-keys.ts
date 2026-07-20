@@ -9,7 +9,6 @@ import {
   resolveApiKeyForProfile,
   resolveAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
-import { isMalformedApiKeyInput } from "../../agents/auth-profiles/credential-state.js";
 import { resolveEnvApiKey } from "../../agents/model-auth.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -18,7 +17,7 @@ import { normalizeOptionalSecretInput } from "../../utils/normalize-secret-input
 import type { SecretInputMode } from "../onboard-types.js";
 
 /** Source that supplied a non-interactive provider API key. */
-type NonInteractiveApiKeySource = "flag" | "env" | "profile";
+export type NonInteractiveApiKeySource = "flag" | "env" | "profile";
 
 function parseEnvVarNameFromSourceLabel(source: string | undefined): string | undefined {
   if (!source) {
@@ -125,11 +124,6 @@ export async function resolveNonInteractiveApiKey(params: {
   }
 
   if (flagKey) {
-    if (isMalformedApiKeyInput(flagKey)) {
-      params.runtime.error("Paste the API key value, not an OpenClaw onboarding command.");
-      params.runtime.exit(1);
-      return null;
-    }
     return { key: flagKey, source: "flag" };
   }
 

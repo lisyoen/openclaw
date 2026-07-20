@@ -5,9 +5,10 @@ import {
   buildPortHints,
   classifyPortListener,
   formatPortDiagnostics,
+  formatPortListener,
   isDualStackLoopbackGatewayListeners,
   isExpectedGatewayListeners,
-  isSameProcessSpecificIpv4WithLoopbackListeners,
+  isSingleExpectedGatewayListener,
 } from "./ports-format.js";
 
 const gatewayAlreadyRunningHint = `Gateway already running locally. Stop it (${formatCliCommand("openclaw gateway stop")}) or use a different port.`;
@@ -85,74 +86,19 @@ describe("ports-format", () => {
     expect(buildPortHints(listeners, 18789)).toEqual([]);
   });
 
-  it("treats a single-process specific IPv4 plus loopback alias as benign", () => {
-    const listeners = [
-      { pid: 4242, commandLine: "openclaw-gateway", address: "100.64.0.1:18789" },
-      { pid: 4242, commandLine: "openclaw-gateway", address: "127.0.0.1:18789" },
-    ];
-
-    expect(isExpectedGatewayListeners(listeners, 18789)).toBe(true);
-    expect(isSameProcessSpecificIpv4WithLoopbackListeners(listeners, 18789, "100.64.0.1")).toBe(
-      true,
-    );
-    expect(isSameProcessSpecificIpv4WithLoopbackListeners(listeners, 18789, "10.0.0.5")).toBe(
-      false,
-    );
-    expect(buildPortHints(listeners, 18789)).toEqual([]);
-  });
-
-  it("checks exact alias ownership without relying on process display metadata", () => {
-    const listeners = [
-      { pid: 4242, commandLine: "opaque-wrapper", address: "100.64.0.1:18789" },
-      { pid: 4242, commandLine: "opaque-wrapper", address: "127.0.0.1:18789" },
-    ];
-
-    expect(isExpectedGatewayListeners(listeners, 18789)).toBe(false);
-    expect(isSameProcessSpecificIpv4WithLoopbackListeners(listeners, 18789, "100.64.0.1")).toBe(
-      true,
-    );
-  });
-
   it.each([
-    [
-      "mixed process ids",
-      [
-        { pid: 4242, commandLine: "openclaw-gateway", address: "100.64.0.1:18789" },
-        { pid: 4243, commandLine: "openclaw-gateway", address: "127.0.0.1:18789" },
-      ],
-    ],
-    [
-      "an IPv6 selected address",
-      [
-        { pid: 4242, commandLine: "openclaw-gateway", address: "[fd7a:115c:a1e0::1]:18789" },
-        { pid: 4242, commandLine: "openclaw-gateway", address: "127.0.0.1:18789" },
-      ],
-    ],
-    [
-      "a missing loopback alias",
-      [{ pid: 4242, commandLine: "openclaw-gateway", address: "100.64.0.1:18789" }],
-    ],
-    [
-      "missing process metadata",
-      [
-        { commandLine: "openclaw-gateway", address: "100.64.0.1:18789" },
-        { commandLine: "openclaw-gateway", address: "127.0.0.1:18789" },
-      ],
-    ],
-    [
-      "an extra listener",
-      [
-        { pid: 4242, commandLine: "openclaw-gateway", address: "100.64.0.1:18789" },
-        { pid: 4242, commandLine: "openclaw-gateway", address: "127.0.0.1:18789" },
-        { pid: 4242, commandLine: "openclaw-gateway", address: "[::1]:18789" },
-      ],
-    ],
-  ])("rejects specific-address ownership with %s", (_label, listeners) => {
-    expect(isExpectedGatewayListeners(listeners, 18789)).toBe(false);
-    expect(isSameProcessSpecificIpv4WithLoopbackListeners(listeners, 18789, "100.64.0.1")).toBe(
-      false,
-    );
-    expect(buildPortHints(listeners, 18789)).toContain(gatewayAlreadyRunningHint);
+    "127.0.0.1:18789",
+    "[::1]:18789",
+    "localhost:18789",
+    "0.0.0.0:18789",
+    "[::]:18789",
+    "*:18789",
+  ])("treats a single expected Gateway listener on %s as benign", (address) => {
+    const listeners = [{ pid: 4242, commandLine: "openclaw-gateway", address }];
+
+    expect(isSingleExpectedGatewayListener(listeners, 18789)).toBe(true);
+    expect(isExpectedGatewayListeners(listeners, 18789)).toBe(true);
+    expect(buildPortHints(listeners, 18789)).toEqual([]);
   });
 
   it("keeps Gateway conflict hints for ambiguous Gateway listeners", () => {
@@ -165,6 +111,17 @@ describe("ports-format", () => {
         18789,
       ),
     ).toEqual([gatewayAlreadyRunningHint, multipleListenersHint]);
+  });
+
+  it.each([
+    [
+      { pid: 123, user: "alice", commandLine: "ssh -N", address: "::1" },
+      "pid 123 alice: ssh -N (::1)",
+    ],
+    [{ command: "ssh", address: "127.0.0.1:18789" }, "pid ?: ssh (127.0.0.1:18789)"],
+    [{}, "pid ?: unknown"],
+  ] as const)("formats port listener %j", (listener, expected) => {
+    expect(formatPortListener(listener)).toBe(expected);
   });
 
   it("formats free and busy port diagnostics", () => {

@@ -1,13 +1,19 @@
 // Irc plugin module implements gateway behavior.
-import { runPassiveAccountLifecycle } from "openclaw/plugin-sdk/channel-outbound";
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
+import { runStoppablePassiveMonitor } from "openclaw/plugin-sdk/extension-shared";
 import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/status-helpers";
 import type { ResolvedIrcAccount } from "./accounts.js";
 import { createAccountStatusSink } from "./channel-api.js";
 import type { RuntimeEnv } from "./runtime-api.js";
 import type { CoreConfig } from "./types.js";
 
-const loadIrcChannelRuntime = createLazyRuntimeModule(() => import("./channel-runtime.js"));
+type IrcChannelRuntimeModule = typeof import("./channel-runtime.js");
+
+let ircChannelRuntimePromise: Promise<IrcChannelRuntimeModule> | undefined;
+
+async function loadIrcChannelRuntime(): Promise<IrcChannelRuntimeModule> {
+  ircChannelRuntimePromise ??= import("./channel-runtime.js");
+  return await ircChannelRuntimePromise;
+}
 
 export async function startIrcGatewayAccount(ctx: {
   cfg: CoreConfig;
@@ -34,7 +40,7 @@ export async function startIrcGatewayAccount(ctx: {
     `[${account.accountId}] starting IRC provider (${account.host}:${account.port}${account.tls ? " tls" : ""})`,
   );
   const { monitorIrcProvider } = await loadIrcChannelRuntime();
-  await runPassiveAccountLifecycle({
+  await runStoppablePassiveMonitor({
     abortSignal: ctx.abortSignal,
     start: async () =>
       await monitorIrcProvider({
@@ -44,8 +50,5 @@ export async function startIrcGatewayAccount(ctx: {
         abortSignal: ctx.abortSignal,
         statusSink,
       }),
-    stop: async (monitor) => {
-      await monitor.stop();
-    },
   });
 }

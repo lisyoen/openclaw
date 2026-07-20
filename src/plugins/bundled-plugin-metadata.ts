@@ -39,7 +39,7 @@ type BundledPluginPathPair = {
 };
 
 /** Metadata collected from a bundled plugin package and manifest. */
-type BundledPluginMetadata = {
+export type BundledPluginMetadata = {
   dirName: string;
   idHint: string;
   source: BundledPluginPathPair;
@@ -204,6 +204,29 @@ export function findBundledPluginMetadataById(
   },
 ): BundledPluginMetadata | undefined {
   return listBundledPluginMetadata(params).find((entry) => entry.manifest.id === pluginId);
+}
+
+/** Resolves the source directory for a bundled plugin in the current workspace. */
+export function resolveBundledPluginWorkspaceSourcePath(params: {
+  rootDir: string;
+  scanDir?: string;
+  pluginId: string;
+}): string | null {
+  const metadata = findBundledPluginMetadataById(params.pluginId, {
+    ...resolveBundledPluginLookupParams({
+      rootDir: params.rootDir,
+      scanDir: params.scanDir,
+    }),
+    includeChannelConfigs: false,
+    includeSyntheticChannelConfigs: false,
+  });
+  if (!metadata) {
+    return null;
+  }
+  if (params.scanDir) {
+    return path.resolve(params.scanDir, metadata.dirName);
+  }
+  return path.resolve(params.rootDir, "extensions", metadata.dirName);
 }
 
 function listBundledPluginEntryBaseDirs(params: {

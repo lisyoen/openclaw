@@ -113,15 +113,14 @@ function asProviderBaseUrl(value: unknown): string | undefined {
 
 const TALK_ADMIN_SCOPE = "operator.admin";
 
-function requiresAdminToSetVoice(params: {
-  senderIsOwner?: boolean;
-  gatewayClientScopes?: readonly string[];
-}): boolean {
-  const { senderIsOwner, gatewayClientScopes } = params;
+function requiresAdminToSetVoice(
+  channel: string,
+  gatewayClientScopes?: readonly string[],
+): boolean {
   if (Array.isArray(gatewayClientScopes)) {
     return !gatewayClientScopes.includes(TALK_ADMIN_SCOPE);
   }
-  return senderIsOwner !== true;
+  return channel === "webchat";
 }
 
 export default definePluginEntry({
@@ -136,7 +135,6 @@ export default definePluginEntry({
       },
       description: "List/set Talk provider voices (affects iOS Talk playback).",
       acceptsArgs: true,
-      exposeSenderIsOwner: true,
       handler: async (ctx) => {
         const commandLabel = resolveCommandLabel(ctx.channel);
         const args = ctx.args?.trim() ?? "";
@@ -189,14 +187,9 @@ export default definePluginEntry({
         }
 
         if (action === "set") {
-          // Persistent Talk voice changes are gateway config writes, so the
-          // mutating subcommand requires explicit admin or owner authority.
-          if (
-            requiresAdminToSetVoice({
-              senderIsOwner: ctx.senderIsOwner,
-              gatewayClientScopes: ctx.gatewayClientScopes,
-            })
-          ) {
+          // Gateway callers can override messageChannel, so scope presence is
+          // the reliable signal for internal admin-only mutations.
+          if (requiresAdminToSetVoice(ctx.channel, ctx.gatewayClientScopes)) {
             return { text: `⚠️ ${commandLabel} set requires operator.admin.` };
           }
 

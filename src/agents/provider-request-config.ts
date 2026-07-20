@@ -358,7 +358,7 @@ export function sanitizeConfiguredModelProviderRequest(
 }
 
 /** Merges provider request overrides with later entries taking precedence. */
-function mergeProviderRequestOverrides(
+export function mergeProviderRequestOverrides(
   ...overrides: Array<ProviderRequestTransportOverrides | undefined>
 ): ProviderRequestTransportOverrides | undefined {
   const merged: ProviderRequestTransportOverrides = {};
@@ -531,7 +531,7 @@ function resolveAuthOverride(params: {
 }
 
 /** Sanitizes runtime-only provider request overrides for auth request paths. */
-function sanitizeRuntimeProviderRequestOverrides(
+export function sanitizeRuntimeProviderRequestOverrides(
   request: ProviderRequestTransportOverrides | undefined,
 ): ProviderRequestTransportOverrides | undefined {
   if (!request) {
@@ -694,6 +694,13 @@ export function buildProviderRequestDispatcherPolicy(
   };
 }
 
+/** Builds direct TLS client options for providers that own their transport client. */
+export function buildProviderRequestTlsClientOptions(
+  request: Pick<ResolvedProviderRequestConfig, "tls">,
+): Record<string, unknown> | undefined {
+  return toTlsConnectOptions(request.tls);
+}
+
 /** Resolves the full provider request policy, headers, auth, proxy, and TLS config. */
 export function resolveProviderRequestPolicyConfig(
   params: ResolveProviderRequestPolicyConfigParams,
@@ -844,4 +851,3 @@ export function getModelProviderRequestTransport(
 ): ModelProviderRequestTransportOverrides | undefined {
   return (model as ModelWithProviderRequestTransport)[MODEL_PROVIDER_REQUEST_TRANSPORT_SYMBOL];
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

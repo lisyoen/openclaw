@@ -14,10 +14,9 @@ import {
 import type { GatewayStatusProbedTarget } from "./probe-run.js";
 
 /** Warning emitted when gateway status finds degraded or surprising probe state. */
-type GatewayStatusWarning = {
+export type GatewayStatusWarning = {
   code: string;
   message: string;
-  details?: string[];
   targetIds?: string[];
 };
 
@@ -261,9 +260,6 @@ export function writeGatewayStatusText(params: {
     params.runtime.log(colorize(params.rich, theme.warn, "Warning:"));
     for (const warning of params.warnings) {
       params.runtime.log(`- ${warning.message}`);
-      for (const detail of warning.details ?? []) {
-        params.runtime.log(`  ${detail}`);
-      }
     }
   }
 

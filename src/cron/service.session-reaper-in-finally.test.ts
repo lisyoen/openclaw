@@ -2,15 +2,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { listSessionEntries, replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import {
   createNoopLogger,
   createCronStoreHarness,
   withCronServiceStateForTest,
 } from "./service.test-harness.js";
 import { createCronServiceState } from "./service/state.js";
-import { onTimer } from "./service/timer.test-support.js";
-import { resetReaperThrottle } from "./session-reaper.test-support.js";
+import { onTimer } from "./service/timer.js";
+import { resetReaperThrottle } from "./session-reaper.js";
 import { saveCronStore } from "./store.js";
 import type { CronJob } from "./types.js";
 
@@ -133,12 +132,16 @@ describe("CronService - session reaper runs in finally block (#31946)", () => {
     await fs.writeFile(store.storePath, "{invalid-json", "utf-8");
 
     // Seed an expired cron-run session entry that should be pruned by the reaper.
-    await replaceSessionEntry(
-      { storePath: sessionStorePath, sessionKey: "agent:agent-default:cron:failing-job:run:stale" },
-      {
-        sessionId: "session-stale",
-        updatedAt: now - 3 * 24 * 3_600_000,
-      },
+    await fs.mkdir(path.dirname(sessionStorePath), { recursive: true });
+    await fs.writeFile(
+      sessionStorePath,
+      JSON.stringify({
+        "agent:agent-default:cron:failing-job:run:stale": {
+          sessionId: "session-stale",
+          updatedAt: now - 3 * 24 * 3_600_000,
+        },
+      }),
+      "utf-8",
     );
 
     const state = createCronServiceState({
@@ -155,7 +158,10 @@ describe("CronService - session reaper runs in finally block (#31946)", () => {
     await withCronServiceStateForTest(state, async () => {
       await expect(onTimer(state)).resolves.toBeUndefined();
 
-      expect(listSessionEntries({ storePath: sessionStorePath })).toStrictEqual([]);
+      const updatedSessionStore = JSON.parse(
+        await fs.readFile(sessionStorePath, "utf-8"),
+      ) as Record<string, unknown>;
+      expect(updatedSessionStore).toStrictEqual({});
       expect(state.running).toBe(false);
     });
   });

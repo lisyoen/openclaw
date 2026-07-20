@@ -5,12 +5,12 @@ import type { GatewayEvent } from "./types.js";
 type Listener<T> = (event: T) => void;
 
 /** Replay settings for EventHub streams. */
-type EventHubOptions = {
+export type EventHubOptions = {
   replayLimit?: number;
 };
 
 /** Per-stream options for including replayed events. */
-type EventStreamOptions = {
+export type EventStreamOptions = {
   replay?: boolean;
 };
 

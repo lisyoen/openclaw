@@ -7,14 +7,10 @@ import type { SessionEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import type { ExecApprovalRequest } from "../../infra/exec-approvals.js";
-import type {
-  LegacyInteractiveReply,
-  MessagePresentationAction,
-} from "../../interactive/payload.js";
+import type { InteractiveReply, MessagePresentationAction } from "../../interactive/payload.js";
 import { executePluginCommand, matchPluginCommand } from "../../plugins/commands.js";
 import type { PluginCommandDiagnosticsSession, PluginCommandResult } from "../../plugins/types.js";
 import type { ReplyPayload } from "../types.js";
-import { rejectNonOwnerCommand } from "./command-gates.js";
 import {
   buildCurrentOpenClawCliCommand,
   buildCurrentOpenClawCliExecEnv,
@@ -23,7 +19,6 @@ import {
   deliverPrivateCommandReply,
   readCommandDeliveryTarget,
   readCommandMessageThreadId,
-  resolveCommandExecApprovalRoute,
   resolvePrivateCommandApprovalRouteExpiresAtMs,
   resolvePrivateCommandRouteTargets,
   type PrivateCommandRouteTarget,
@@ -68,7 +63,7 @@ const defaultDiagnosticsCommandDeps: DiagnosticsCommandDeps = {
 };
 
 /** Creates a diagnostics command handler with injectable private-route dependencies. */
-function createDiagnosticsCommandHandler(
+export function createDiagnosticsCommandHandler(
   deps: Partial<DiagnosticsCommandDeps> = {},
 ): CommandHandler {
   const resolvedDeps: DiagnosticsCommandDeps = {
@@ -100,10 +95,6 @@ async function handleDiagnosticsCommandWithDeps(
     );
     return { shouldContinue: false };
   }
-  const nonOwner = rejectNonOwnerCommand(params, DIAGNOSTICS_COMMAND);
-  if (nonOwner) {
-    return nonOwner;
-  }
   if (isCodexDiagnosticsConfirmationAction(args)) {
     const codexResult = await executeCodexDiagnosticsAddon(params, args);
     const reply = codexResult
@@ -119,7 +110,14 @@ async function handleDiagnosticsCommandWithDeps(
   }
 
   if (params.isGroup) {
-    const privateTarget = (await deps.resolvePrivateDiagnosticsTargets(params))[0];
+    const targets = await deps.resolvePrivateDiagnosticsTargets(params);
+    if (targets.length === 0) {
+      return {
+        shouldContinue: false,
+        reply: { text: DIAGNOSTICS_PRIVATE_ROUTE_UNAVAILABLE },
+      };
+    }
+    const privateTarget = targets[0];
     if (!privateTarget) {
       return {
         shouldContinue: false,
@@ -136,7 +134,17 @@ async function handleDiagnosticsCommandWithDeps(
         reply: { text: DIAGNOSTICS_PRIVATE_ROUTE_ACK },
       };
     }
-    return await deliverGroupDiagnosticsReplyPrivately(deps, params, privateReply, privateTarget);
+    const delivered = await deps.deliverPrivateDiagnosticsReply({
+      commandParams: params,
+      targets: [privateTarget],
+      reply: privateReply,
+    });
+    return {
+      shouldContinue: false,
+      reply: {
+        text: delivered ? DIAGNOSTICS_PRIVATE_ROUTE_ACK : DIAGNOSTICS_PRIVATE_ROUTE_UNAVAILABLE,
+      },
+    };
   }
 
   const reply = await buildDiagnosticsReply(deps, params, args);
@@ -169,10 +177,16 @@ async function deliverGroupDiagnosticsReplyPrivately(
   deps: DiagnosticsCommandDeps,
   params: HandleCommandsParams,
   reply: ReplyPayload,
-  privateTarget?: PrivateCommandRouteTarget,
 ) {
-  const target = privateTarget ?? (await deps.resolvePrivateDiagnosticsTargets(params))[0];
-  if (!target) {
+  const targets = await deps.resolvePrivateDiagnosticsTargets(params);
+  if (targets.length === 0) {
+    return {
+      shouldContinue: false,
+      reply: { text: DIAGNOSTICS_PRIVATE_ROUTE_UNAVAILABLE },
+    };
+  }
+  const privateTarget = targets[0];
+  if (!privateTarget) {
     return {
       shouldContinue: false,
       reply: { text: DIAGNOSTICS_PRIVATE_ROUTE_UNAVAILABLE },
@@ -180,7 +194,7 @@ async function deliverGroupDiagnosticsReplyPrivately(
   }
   const delivered = await deps.deliverPrivateDiagnosticsReply({
     commandParams: params,
-    targets: [target],
+    targets: [privateTarget],
     reply,
   });
   return {
@@ -278,6 +292,7 @@ async function requestGatewayDiagnosticsExportApproval(
       sessionKey: params.sessionKey,
       config: params.cfg,
     });
+  const messageThreadId = readCommandMessageThreadId(params);
   const command = buildGatewayDiagnosticsExportJsonCommand();
   try {
     const execTool = deps.createExecTool({
@@ -296,10 +311,16 @@ async function requestGatewayDiagnosticsExportApproval(
       sessionKey: params.sessionKey,
       mainKey: params.cfg.session?.mainKey,
       sessionScope: params.cfg.session?.scope,
-      ...resolveCommandExecApprovalRoute({
-        commandParams: params,
-        privateApprovalTarget: options.privateApprovalTarget,
-      }),
+      messageProvider: options.privateApprovalTarget?.channel ?? params.command.channel,
+      currentChannelId: options.privateApprovalTarget?.to ?? readCommandDeliveryTarget(params),
+      currentThreadTs: options.privateApprovalTarget
+        ? options.privateApprovalTarget.threadId == null
+          ? undefined
+          : String(options.privateApprovalTarget.threadId)
+        : messageThreadId,
+      accountId: options.privateApprovalTarget
+        ? (options.privateApprovalTarget.accountId ?? undefined)
+        : (params.ctx.AccountId ?? undefined),
       notifyOnExit: params.cfg.tools?.exec?.notifyOnExit,
       notifyOnExitEmptySuccess: params.cfg.tools?.exec?.notifyOnExitEmptySuccess,
     });
@@ -582,7 +603,7 @@ function rewriteCodexDiagnosticsResult(result: PluginCommandResult): PluginComma
   };
 }
 
-function rewriteInteractive(interactive: LegacyInteractiveReply): LegacyInteractiveReply {
+function rewriteInteractive(interactive: InteractiveReply): InteractiveReply {
   return {
     blocks: interactive.blocks.map((block) => {
       if (block.type === "buttons") {
@@ -600,7 +621,7 @@ function rewriteInteractive(interactive: LegacyInteractiveReply): LegacyInteract
           ...block,
           options: block.options.map((option) => ({
             ...option,
-            ...(option.action ? { action: rewriteSelectPresentationAction(option.action) } : {}),
+            ...(option.action ? { action: rewritePresentationAction(option.action) } : {}),
             ...(option.value ? { value: rewriteCodexDiagnosticsCommandPrefix(option.value) } : {}),
           })),
         };
@@ -617,27 +638,10 @@ function rewritePresentationAction(action: MessagePresentationAction): MessagePr
       command: rewriteCodexDiagnosticsCommandPrefix(action.command),
     };
   }
-  if (action.type === "callback") {
-    return {
-      type: "callback",
-      value: rewriteCodexDiagnosticsCommandPrefix(action.value),
-    };
-  }
-  return action;
-}
-
-function rewriteSelectPresentationAction(
-  action: Extract<MessagePresentationAction, { type: "command" | "callback" }>,
-): Extract<MessagePresentationAction, { type: "command" | "callback" }> {
-  return action.type === "command"
-    ? {
-        type: "command",
-        command: rewriteCodexDiagnosticsCommandPrefix(action.command),
-      }
-    : {
-        type: "callback",
-        value: rewriteCodexDiagnosticsCommandPrefix(action.value),
-      };
+  return {
+    type: "callback",
+    value: rewriteCodexDiagnosticsCommandPrefix(action.value),
+  };
 }
 
 function rewriteCodexDiagnosticsCommandPrefix(value: string): string {

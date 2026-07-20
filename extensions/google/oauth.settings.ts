@@ -16,8 +16,6 @@ const defaultFs: OAuthSettingsFs = {
   homedir,
 };
 
-const OAUTH_SETTINGS_TEST_API_KEY = Symbol.for("openclaw.google.oauthSettingsTestApi");
-
 let oauthSettingsFs: OAuthSettingsFs = defaultFs;
 
 type GeminiCliAuthSettings = {
@@ -44,11 +42,11 @@ function readSettingsFile(): GeminiCliAuthSettings | null {
   }
 }
 
-function setOAuthSettingsFsForTest(overrides?: Partial<OAuthSettingsFs>): void {
+export function setOAuthSettingsFsForTest(overrides?: Partial<OAuthSettingsFs>): void {
   oauthSettingsFs = overrides ? { ...defaultFs, ...overrides } : defaultFs;
 }
 
-function resolveGeminiCliSelectedAuthType(): string | undefined {
+export function resolveGeminiCliSelectedAuthType(): string | undefined {
   const settings = readSettingsFile();
   if (settings) {
     const security = isRecord(settings.security) ? settings.security : undefined;
@@ -72,10 +70,4 @@ function resolveGeminiCliSelectedAuthType(): string | undefined {
 
 export function isGeminiCliPersonalOAuth(): boolean {
   return resolveGeminiCliSelectedAuthType() === "oauth-personal";
-}
-
-if (process.env.VITEST) {
-  (globalThis as Record<PropertyKey, unknown>)[OAUTH_SETTINGS_TEST_API_KEY] = {
-    setFs: setOAuthSettingsFsForTest,
-  };
 }

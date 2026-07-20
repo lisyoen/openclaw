@@ -1,6 +1,6 @@
 // Verifies summary instruction policy for preserving opaque identifiers.
 import { describe, expect, it } from "vitest";
-import { buildCompactionSummarizationInstructions } from "./compaction.test-support.js";
+import { buildCompactionSummarizationInstructions } from "./compaction.js";
 
 describe("compaction identifier policy", () => {
   it("defaults to strict identifier preservation", () => {

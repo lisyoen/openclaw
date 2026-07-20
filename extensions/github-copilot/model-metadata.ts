@@ -47,7 +47,6 @@ const STATIC_MODEL_OVERRIDES = new Map<string, Partial<ModelDefinitionConfig>>([
       name: "GPT-5.5",
       reasoning: true,
       contextWindow: 400_000,
-      contextTokens: 272_000,
       maxTokens: 128_000,
     },
   ],

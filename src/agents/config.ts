@@ -34,7 +34,7 @@ export const isBunBinary =
  * - For Node.js (dist/): returns currentDir (the dist/ directory)
  * - For tsx (src/): returns parent directory (the package root)
  */
-function getPackageDir(): string {
+export function getPackageDir(): string {
   // Allow override via environment variable (useful for Nix/Guix where store paths tokenize poorly)
   const envDir = process.env.OPENCLAW_PACKAGE_DIR;
   if (envDir) {
@@ -63,8 +63,27 @@ function getPackageDir(): string {
   return currentDir;
 }
 
+function getPackageSourceOrDistDir(): string {
+  const packageDir = getPackageDir();
+  const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
+  return join(packageDir, srcOrDist);
+}
+
+/**
+ * Get path to built-in themes directory (shipped with package)
+ * - For Bun binary: theme/ next to executable
+ * - For Node.js (dist/): dist/agents/modes/interactive/theme/
+ * - For tsx (src/): src/agents/modes/interactive/theme/
+ */
+export function getThemesDir(): string {
+  if (isBunBinary) {
+    return join(getPackageDir(), "theme");
+  }
+  return join(getPackageSourceOrDistDir(), "agents", "modes", "interactive", "theme");
+}
+
 /** Get path to package.json */
-function getPackageJsonPath(): string {
+export function getPackageJsonPath(): string {
   return join(getPackageDir(), "package.json");
 }
 
@@ -103,9 +122,9 @@ export const APP_NAME: string = openClawConfigName || "openclaw";
 export const CONFIG_DIR_NAME: string = pkg.openclawConfig?.configDir || ".openclaw";
 export const VERSION: string = pkg.version || "0.0.0";
 
-const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_AGENT_DIR`;
+export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_AGENT_DIR`;
 
-function expandTildePath(path: string): string {
+export function expandTildePath(path: string): string {
   if (path === "~") {
     return homedir();
   }
@@ -126,6 +145,11 @@ export function getAgentDir(): string {
     return expandTildePath(envDir);
   }
   return join(homedir(), CONFIG_DIR_NAME, "agent");
+}
+
+/** Get path to user's custom themes directory */
+export function getCustomThemesDir(): string {
+  return join(getAgentDir(), "themes");
 }
 
 /** Get path to managed binaries directory (fd, rg) */

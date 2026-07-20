@@ -27,7 +27,6 @@ import {
 
 /** Provider setup choice paired with install metadata for the owning plugin. */
 export type ProviderInstallCatalogEntry = ProviderAuthChoiceMetadata & {
-  providerAliases?: string[];
   label: string;
   origin: PluginOrigin;
   install: PluginPackageInstall;
@@ -333,13 +332,6 @@ function resolveOfficialExternalProviderInstallCatalogEntries(params: {
       if (!providerId || !label) {
         continue;
       }
-      const providerAliases = [
-        ...new Set(
-          (provider.aliases ?? [])
-            .map((alias) => alias.trim())
-            .filter((alias) => alias && alias !== providerId),
-        ),
-      ];
       for (const choice of provider.authChoices ?? []) {
         const methodId = choice.method?.trim();
         const choiceId = choice.choiceId?.trim();
@@ -350,7 +342,6 @@ function resolveOfficialExternalProviderInstallCatalogEntries(params: {
         entries.push({
           pluginId,
           providerId,
-          ...(providerAliases.length > 0 ? { providerAliases } : {}),
           methodId,
           choiceId,
           choiceLabel,
@@ -367,9 +358,6 @@ function resolveOfficialExternalProviderInstallCatalogEntries(params: {
             cliDescription: choice.cliDescription,
             onboardingScopes: normalizeProviderAuthChoiceScopes(choice.onboardingScopes),
           }),
-          ...(choice.deprecatedChoiceIds?.length
-            ? { deprecatedChoiceIds: [...choice.deprecatedChoiceIds] }
-            : {}),
           label,
           origin: "bundled",
           install,
@@ -437,19 +425,5 @@ export function resolveProviderInstallCatalogEntry(
   }
   return resolveProviderInstallCatalogEntries(params).find(
     (entry) => entry.choiceId === normalizedChoiceId,
-  );
-}
-
-/** Resolves an uninstalled provider's deprecated setup choice to its replacement entry. */
-export function resolveDeprecatedProviderInstallCatalogEntry(
-  choiceId: string,
-  params?: ProviderInstallCatalogParams,
-): ProviderInstallCatalogEntry | undefined {
-  const normalizedChoiceId = choiceId.trim();
-  if (!normalizedChoiceId) {
-    return undefined;
-  }
-  return resolveProviderInstallCatalogEntries(params).find((entry) =>
-    entry.deprecatedChoiceIds?.includes(normalizedChoiceId),
   );
 }

@@ -12,7 +12,7 @@ import { runExec } from "../process/exec.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { createIcaclsResetCommand, formatIcaclsResetCommand, type ExecFn } from "./windows-acl.js";
 
-type SecurityFixChmodAction = {
+export type SecurityFixChmodAction = {
   kind: "chmod";
   path: string;
   mode: number;
@@ -21,7 +21,7 @@ type SecurityFixChmodAction = {
   error?: string;
 };
 
-type SecurityFixIcaclsAction = {
+export type SecurityFixIcaclsAction = {
   kind: "icacls";
   path: string;
   command: string;
@@ -30,9 +30,9 @@ type SecurityFixIcaclsAction = {
   error?: string;
 };
 
-type SecurityFixAction = SecurityFixChmodAction | SecurityFixIcaclsAction;
+export type SecurityFixAction = SecurityFixChmodAction | SecurityFixIcaclsAction;
 
-type SecurityFixResult = {
+export type SecurityFixResult = {
   ok: boolean;
   stateDir: string;
   configPath: string;
@@ -42,7 +42,7 @@ type SecurityFixResult = {
   errors: string[];
 };
 
-type SecurityPermissionTarget = {
+export type SecurityPermissionTarget = {
   path: string;
   mode: number;
   require: "dir" | "file";
@@ -252,7 +252,7 @@ function applyConfigFixes(params: { cfg: OpenClawConfig; env: NodeJS.ProcessEnv 
   return { cfg: next, changes };
 }
 
-async function applySecurityFixConfigMutations(params: {
+export async function applySecurityFixConfigMutations(params: {
   cfg: OpenClawConfig;
   env: NodeJS.ProcessEnv;
   channelPlugins?: ChannelPlugin[];
@@ -310,7 +310,7 @@ async function collectChannelSecurityConfigFixMutation(params: {
   return { cfg: nextCfg, changes };
 }
 
-async function collectSecurityPermissionTargets(params: {
+export async function collectSecurityPermissionTargets(params: {
   env: NodeJS.ProcessEnv;
   stateDir: string;
   configPath: string;
@@ -449,7 +449,6 @@ export async function fixSecurityFootguns(opts?: {
     includePaths = await collectIncludePathsRecursive({
       configPath: snap.path,
       parsed: snap.parsed,
-      env,
     }).catch(() => []);
   }
 

@@ -9,21 +9,21 @@ interface PrlctlVmListItem {
   status?: string;
 }
 
-interface WaitForVmStatusOptions {
+export interface WaitForVmStatusOptions {
   probeTimeoutMs?: () => number | undefined;
 }
 
-interface EnsureVmRunningOptions extends WaitForVmStatusOptions {
+export interface EnsureVmRunningOptions extends WaitForVmStatusOptions {
   transitionTimeoutMs?: () => number | undefined;
 }
 
-function listVmNames(): string[] {
+export function listVmNames(): string[] {
   return listVms()
     .map((item) => (item.name ?? "").trim())
     .filter(Boolean);
 }
 
-function vmStatus(vmName: string, timeoutMs?: number): string {
+export function vmStatus(vmName: string, timeoutMs?: number): string {
   return listVms(timeoutMs).find((vm) => vm.name === vmName)?.status || "missing";
 }
 
@@ -89,11 +89,15 @@ export function resolveUbuntuVmName(requested: string, explicit = false): string
   }
   const fallback =
     names
-      .map((name) => ({ name, parts: parseUbuntuVersionParts(name) }))
-      .filter((item): item is { name: string; parts: number[] } => Boolean(item.parts))
-      .filter((item) => item.parts[0] !== undefined && item.parts[0] >= 24)
+      .map((name) => ({ name, version: /ubuntu\s+(\d+(?:\.\d+)*)/i.exec(name)?.[1] }))
+      .filter((item): item is { name: string; version: string } => Boolean(item.version))
+      .map((item) => ({
+        name: item.name,
+        parts: item.version.split(".").map(Number),
+      }))
+      .filter((item) => item.parts[0] >= 24)
       .toSorted((a, b) => compareVersions(b.parts, a.parts))[0]?.name ??
-    names.find(isSafeUbuntuFallbackName);
+    names.find((name) => /ubuntu/i.test(name));
   if (!fallback) {
     die(`VM not found: ${requested}`);
   }
@@ -124,23 +128,6 @@ function listVms(timeoutMs = PRLCTL_STATUS_TIMEOUT_MS): PrlctlVmListItem[] {
       timeoutMs,
     }).stdout,
   ) as PrlctlVmListItem[];
-}
-
-function parseUbuntuVersionParts(name: string): number[] | undefined {
-  const version = /ubuntu\s+(\d+(?:\.\d+)*)/i.exec(name)?.[1];
-  const parts = version?.split(".").map((part) => Number(part));
-  if (!parts?.every((part) => Number.isSafeInteger(part))) {
-    return undefined;
-  }
-  return parts;
-}
-
-function isSafeUbuntuFallbackName(name: string): boolean {
-  if (!/ubuntu/i.test(name)) {
-    return false;
-  }
-  const hasVersion = /ubuntu\s+\d+(?:\.\d+)*/i.test(name);
-  return !hasVersion || Boolean(parseUbuntuVersionParts(name));
 }
 
 function compareVersions(a: number[], b: number[]): number {

@@ -1,10 +1,9 @@
 // Config evaluation helpers load dynamic config modules with guarded evaluation.
 import fs from "node:fs";
 import path from "node:path";
-import { isBlockedObjectKey } from "../infra/prototype-keys.js";
 
 /** Normalizes primitive config values into the truthiness rules used by requirements checks. */
-function isTruthy(value: unknown): boolean {
+export function isTruthy(value: unknown): boolean {
   if (value === undefined || value === null) {
     return false;
   }
@@ -21,26 +20,16 @@ function isTruthy(value: unknown): boolean {
 }
 
 /** Resolves dotted config paths, tolerating extra dots and missing branches. */
-function resolveConfigPath(config: unknown, pathStr: string): unknown {
+export function resolveConfigPath(config: unknown, pathStr: string): unknown {
   const parts = pathStr.split(".").filter(Boolean);
   let current: unknown = config;
   for (const part of parts) {
     if (typeof current !== "object" || current === null) {
       return undefined;
     }
-    if (isBlockedObjectKey(part)) {
-      return undefined;
-    }
     current = (current as Record<string, unknown>)[part];
   }
   return current;
-}
-
-function hasBlockedConfigPathSegment(pathStr: string): boolean {
-  return pathStr
-    .split(".")
-    .filter(Boolean)
-    .some((part) => isBlockedObjectKey(part));
 }
 
 /** Checks a config path with fallback defaults only when the path is unresolved. */
@@ -50,17 +39,13 @@ export function isConfigPathTruthyWithDefaults(
   defaults: Record<string, boolean>,
 ): boolean {
   const value = resolveConfigPath(config, pathStr);
-  if (
-    value === undefined &&
-    !hasBlockedConfigPathSegment(pathStr) &&
-    Object.hasOwn(defaults, pathStr)
-  ) {
+  if (value === undefined && pathStr in defaults) {
     return defaults[pathStr] ?? false;
   }
   return isTruthy(value);
 }
 
-type RuntimeRequires = {
+export type RuntimeRequires = {
   bins?: string[];
   anyBins?: string[];
   env?: string[];
@@ -77,7 +62,7 @@ type RuntimeRequirementEvalParams = {
 };
 
 /** Evaluates binary/env/config requirements against local and optional remote capabilities. */
-function evaluateRuntimeRequires(params: RuntimeRequirementEvalParams): boolean {
+export function evaluateRuntimeRequires(params: RuntimeRequirementEvalParams): boolean {
   const requires = params.requires;
   if (!requires) {
     return true;
@@ -156,7 +141,7 @@ export function evaluateRuntimeEligibility(
 }
 
 /** Returns the current Node runtime platform used by eligibility checks. */
-function resolveRuntimePlatform(): string {
+export function resolveRuntimePlatform(): string {
   return process.platform;
 }
 

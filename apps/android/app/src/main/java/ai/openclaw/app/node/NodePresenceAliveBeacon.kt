@@ -1,6 +1,5 @@
 package ai.openclaw.app.node
 
-import ai.openclaw.app.takeUtf16Safe
 import android.os.Build
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -53,7 +52,7 @@ internal object NodePresenceAliveBeacon {
   }
 
   /** Human-readable Android version label included in presence payloads. */
-  fun androidPlatformMetadata(): String {
+  fun androidPlatformLabel(): String {
     val release =
       Build.VERSION.RELEASE
         ?.trim()
@@ -110,6 +109,6 @@ internal object NodePresenceAliveBeacon {
     return value
       .map { ch -> if (ch.isISOControl()) ' ' else ch }
       .joinToString("")
-      .takeUtf16Safe(200)
+      .take(200)
   }
 }

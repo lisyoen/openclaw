@@ -8,19 +8,16 @@ struct IPadActivityScreen: View {
     @State private var sessions: [OpenClawChatSessionEntry] = []
     @State private var isLoading = false
     @State private var loadErrorText: String?
-    let headerSidebarAction: OpenClawSidebarHeaderAction?
-    let usesNativeNavigationChrome: Bool
+    let headerLeadingAction: OpenClawSidebarHeaderAction?
     let openChat: () -> Void
     let openSettings: () -> Void
 
     init(
-        headerSidebarAction: OpenClawSidebarHeaderAction? = nil,
-        usesNativeNavigationChrome: Bool = false,
+        headerLeadingAction: OpenClawSidebarHeaderAction? = nil,
         openChat: @escaping () -> Void,
         openSettings: @escaping () -> Void)
     {
-        self.headerSidebarAction = headerSidebarAction
-        self.usesNativeNavigationChrome = usesNativeNavigationChrome
+        self.headerLeadingAction = headerLeadingAction
         self.openChat = openChat
         self.openSettings = openSettings
     }
@@ -29,8 +26,7 @@ struct IPadActivityScreen: View {
         IPadSidebarScreenChrome(
             title: "Activity",
             subtitle: "Live device and gateway activity.",
-            headerSidebarAction: self.headerSidebarAction,
-            usesNativeNavigationChrome: self.usesNativeNavigationChrome,
+            headerLeadingAction: self.headerLeadingAction,
             gatewayAction: self.openSettings)
         {
             ProMetricGrid(metrics: self.metrics)
@@ -55,12 +51,12 @@ struct IPadActivityScreen: View {
                 icon: "person.2.fill",
                 title: "Agents",
                 value: self.gatewayConnected ? "\(self.appModel.gatewayAgents.count)" : "offline",
-                color: OpenClawBrand.accentForeground),
+                color: OpenClawBrand.accent),
             ProMetric(
                 icon: "bubble.left.and.text.bubble.right",
                 title: "Sessions",
                 value: self.isLoading ? "..." : "\(self.sessionRows.count)",
-                color: OpenClawBrand.accentHotForeground),
+                color: OpenClawBrand.accentHot),
         ]
     }
 
@@ -79,8 +75,7 @@ struct IPadActivityScreen: View {
                     ProStatusRow(
                         icon: "hand.raised.fill",
                         title: "Approval needed",
-                        detail: .verbatim(
-                            pendingExecApprovalPrompt.commandPreview ?? pendingExecApprovalPrompt.commandText),
+                        detail: pendingExecApprovalPrompt.commandPreview ?? pendingExecApprovalPrompt.commandText,
                         value: "pending",
                         color: OpenClawBrand.warn,
                         actionTitle: nil,
@@ -91,7 +86,7 @@ struct IPadActivityScreen: View {
                 ProStatusRow(
                     icon: self.gatewayConnected ? "network" : "wifi.slash",
                     title: "Gateway",
-                    detail: .verbatim(self.gatewayDetailText),
+                    detail: self.gatewayDetailText,
                     value: self.gatewayStateText.lowercased(),
                     color: self.gatewayConnected ? OpenClawBrand.ok : .secondary,
                     actionTitle: self.gatewayConnected ? nil : "Settings",
@@ -102,9 +97,9 @@ struct IPadActivityScreen: View {
                 ProStatusRow(
                     icon: "square.and.arrow.down",
                     title: "Share intake",
-                    detail: .verbatim(self.appModel.lastShareEventText),
+                    detail: self.appModel.lastShareEventText,
                     value: "iPad",
-                    color: OpenClawBrand.accentForeground,
+                    color: OpenClawBrand.accent,
                     actionTitle: nil,
                     action: nil)
 
@@ -115,7 +110,7 @@ struct IPadActivityScreen: View {
                         title: "Loading sessions",
                         detail: "Fetching recent activity from the gateway.",
                         value: "loading",
-                        color: OpenClawBrand.accentForeground,
+                        color: OpenClawBrand.accent,
                         actionTitle: nil,
                         action: nil)
                 } else if let loadErrorText {
@@ -123,7 +118,7 @@ struct IPadActivityScreen: View {
                     ProStatusRow(
                         icon: "exclamationmark.triangle.fill",
                         title: "Sessions unavailable",
-                        detail: .verbatim(loadErrorText),
+                        detail: loadErrorText,
                         value: "error",
                         color: OpenClawBrand.warn,
                         actionTitle: nil,
@@ -145,8 +140,8 @@ struct IPadActivityScreen: View {
                         Divider().padding(.leading, 58)
                         ProStatusRow(
                             icon: row.icon,
-                            title: .localized(row.title),
-                            detail: .localized(row.detail),
+                            title: row.title,
+                            detail: row.detail,
                             value: row.state,
                             color: row.color,
                             actionTitle: "Open",
@@ -185,11 +180,12 @@ struct IPadActivityScreen: View {
     }
 
     private var sessionsAvailable: Bool {
-        self.appModel.isLocalChatFixtureEnabled || self.appModel.isOperatorGatewayConnected
+        self.appModel.isAppleReviewDemoModeEnabled || self.appModel.isOperatorGatewayConnected
     }
 
     private var sessionsMode: String {
-        self.appModel.chatViewModelIdentityID
+        if self.appModel.isAppleReviewDemoModeEnabled { return "demo" }
+        return self.appModel.isOperatorGatewayConnected ? "operator" : "offline"
     }
 
     private var sessionRows: [CommandCenterTab.WorkItem] {
@@ -209,7 +205,7 @@ struct IPadActivityScreen: View {
     private func refreshSessions() async {
         guard self.scenePhase == .active else { return }
         guard self.sessionsAvailable else {
-            self.sessions = await self.appModel.loadCachedChatSessions()
+            self.sessions = []
             self.loadErrorText = nil
             return
         }
@@ -219,20 +215,21 @@ struct IPadActivityScreen: View {
         defer { self.isLoading = false }
 
         do {
-            let transport = self.appModel.makeChatTransport()
+            let transport: any OpenClawChatTransport = self.appModel.isAppleReviewDemoModeEnabled
+                ? AppleReviewDemoChatTransport()
+                : IOSGatewayChatTransport(gateway: self.appModel.operatorSession)
             let response = try await transport.listSessions(limit: CommandCenterTab.recentSessionsFetchLimit)
             self.sessions = response.sessions
-            await self.appModel.storeCachedChatSessions(response.sessions)
         } catch {
-            self.sessions = await self.appModel.loadCachedChatSessions()
-            self.loadErrorText = self.sessions.isEmpty ? "Try again after the gateway reconnects." : nil
+            self.sessions = []
+            self.loadErrorText = "Try again after the gateway reconnects."
         }
     }
 
     private func open(_ item: CommandCenterTab.WorkItem) {
         switch item.route {
         case let .chat(sessionKey):
-            self.appModel.openChat(sessionKey: sessionKey, unread: item.isUnread)
+            self.appModel.openChat(sessionKey: sessionKey)
             self.openChat()
         case .settings:
             self.openSettings()

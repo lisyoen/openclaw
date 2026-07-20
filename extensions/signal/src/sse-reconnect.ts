@@ -21,7 +21,7 @@ type RunSignalSseLoopParams = {
   account?: string;
   abortSignal?: AbortSignal;
   runtime: RuntimeEnv;
-  onEvent: (event: SignalSseEvent) => unknown;
+  onEvent: (event: SignalSseEvent) => void;
   timeoutMs?: number;
   apiMode?: SignalApiMode;
   policy?: Partial<BackoffPolicy>;
@@ -61,9 +61,9 @@ export async function runSignalSseLoop({
         abortSignal,
         timeoutMs,
         apiMode,
-        onEvent: async (event: SignalSseEvent) => {
+        onEvent: (event: SignalSseEvent) => {
           reconnectAttempts = 0;
-          await onEvent(event);
+          onEvent(event);
         },
         logger: {
           log: runtime.log,

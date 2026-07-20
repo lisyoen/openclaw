@@ -48,25 +48,11 @@ describe("memory batch state", () => {
     });
   });
 
-  it("counts a failed timeout retry as two attempts", () => {
-    expect(
-      recordMemoryBatchFailure(
-        { enabled: true, count: 0 },
-        { provider: "openai", message: "retry failed", attempts: 2 },
-      ),
-    ).toEqual({
-      enabled: false,
-      count: MEMORY_BATCH_FAILURE_LIMIT,
-      lastError: "retry failed",
-      lastProvider: "openai",
-    });
-  });
-
   it("force-disables batching immediately", () => {
     expect(
       recordMemoryBatchFailure(
         { enabled: true, count: 0 },
-        { provider: "gemini", message: "not available", attempts: 1, forceDisable: true },
+        { provider: "gemini", message: "not available", forceDisable: true },
       ),
     ).toEqual({
       enabled: false,
@@ -80,7 +66,7 @@ describe("memory batch state", () => {
     expect(
       recordMemoryBatchFailure(
         { enabled: false, count: MEMORY_BATCH_FAILURE_LIMIT, lastError: "x", lastProvider: "y" },
-        { provider: "openai", message: "ignored", attempts: 1 },
+        { provider: "openai", message: "ignored" },
       ),
     ).toEqual({
       enabled: false,

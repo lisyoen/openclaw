@@ -3,7 +3,6 @@
  */
 import { vi } from "vitest";
 import type { Mock } from "vitest";
-import type { ChatAbortMarker } from "../server-chat-state.js";
 import type { GatewayRequestHandler, RespondFn } from "./types.js";
 
 export function createActiveRun(
@@ -13,7 +12,6 @@ export function createActiveRun(
     agentId?: string;
     controlUiVisible?: boolean;
     owner?: { connId?: string; deviceId?: string };
-    turnKind?: "main" | "btw";
   } = {},
 ) {
   const now = Date.now();
@@ -27,13 +25,11 @@ export function createActiveRun(
     controlUiVisible: params.controlUiVisible,
     ownerConnId: params.owner?.connId,
     ownerDeviceId: params.owner?.deviceId,
-    turnKind: params.turnKind,
   };
 }
 
 type ChatAbortTestContext = Record<string, unknown> & {
   chatAbortControllers: Map<string, ReturnType<typeof createActiveRun>>;
-  chatQueuedTurns: Map<string, import("../chat-queued-turns.js").QueuedChatTurnEntry>;
   chatRunBuffers: Map<string, string>;
   chatDeltaSentAt: Map<string, number>;
   chatDeltaLastBroadcastLen: Map<string, number>;
@@ -41,7 +37,7 @@ type ChatAbortTestContext = Record<string, unknown> & {
   dedupe: Map<string, unknown>;
   agentDeltaSentAt: Map<string, number>;
   bufferedAgentEvents: Map<string, unknown>;
-  chatAbortedRuns: Map<string, ChatAbortMarker>;
+  chatAbortedRuns: Map<string, number>;
   clearChatRunState: (runId: string) => void;
   removeChatRun: (
     ...args: unknown[]
@@ -59,7 +55,6 @@ export function createChatAbortContext(
 ): ChatAbortTestContext {
   const context = {
     chatAbortControllers: new Map(),
-    chatQueuedTurns: new Map(),
     chatRunBuffers: new Map(),
     chatDeltaSentAt: new Map(),
     chatDeltaLastBroadcastLen: new Map(),
@@ -67,7 +62,7 @@ export function createChatAbortContext(
     dedupe: new Map(),
     agentDeltaSentAt: new Map(),
     bufferedAgentEvents: new Map(),
-    chatAbortedRuns: new Map<string, ChatAbortMarker>(),
+    chatAbortedRuns: new Map<string, number>(),
     removeChatRun: vi
       .fn()
       .mockImplementation((run: string) => ({ sessionKey: "main", clientRunId: run })),
@@ -97,12 +92,7 @@ export function createChatAbortContext(
 export async function invokeChatAbortHandler(params: {
   handler: GatewayRequestHandler;
   context: ChatAbortTestContext;
-  request: {
-    sessionKey: string;
-    agentId?: string;
-    runId?: string;
-    preserveSideRuns?: boolean;
-  };
+  request: { sessionKey: string; agentId?: string; runId?: string };
   client?: {
     connId?: string;
     connect?: {

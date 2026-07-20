@@ -5,10 +5,7 @@ type MockManifestRegistry = {
   plugins: Array<{
     id: string;
     origin: string;
-    packageChannel?: {
-      id: string;
-      configuredState?: { env?: { allOf?: string[]; anyOf?: string[] } };
-    };
+    channelEnvVars?: Record<string, string[]>;
   }>;
   diagnostics: unknown[];
 };
@@ -44,7 +41,7 @@ vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
   loadPluginMetadataSnapshot: pluginRegistryMocks.loadPluginMetadataSnapshot,
 }));
 
-describe("channel env vars dynamic package metadata", () => {
+describe("channel env vars dynamic manifest metadata", () => {
   beforeEach(() => {
     vi.resetModules();
     pluginRegistryMocks.loadPluginManifestRegistryForInstalledIndex.mockReset();
@@ -63,11 +60,8 @@ describe("channel env vars dynamic package metadata", () => {
         {
           id: "external-mattermost",
           origin: "global",
-          packageChannel: {
-            id: "mattermost",
-            configuredState: {
-              env: { anyOf: ["MATTERMOST_BOT_TOKEN", "MATTERMOST_URL"] },
-            },
+          channelEnvVars: {
+            mattermost: ["MATTERMOST_BOT_TOKEN", "MATTERMOST_URL"],
           },
         },
       ],

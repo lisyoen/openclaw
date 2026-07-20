@@ -2,21 +2,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { readStateDirDotEnvVarsFromStateDir } from "./state-dir-dotenv.js";
 
-const logWarnSpy = vi.hoisted(() => vi.fn());
-
-vi.mock("../logging/subsystem.js", () => ({
-  createSubsystemLogger: () => ({ warn: logWarnSpy }),
-}));
-
-import { readStateDirDotEnvFromStateDir } from "./state-dir-dotenv.js";
-
-describe("readStateDirDotEnvFromStateDir", () => {
-  afterEach(() => {
-    logWarnSpy.mockClear();
-  });
-
+describe("readStateDirDotEnvVarsFromStateDir", () => {
   async function withDotEnv<T>(content: string, run: (dir: string) => T | Promise<T>): Promise<T> {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-dotenv-test-"));
     await fs.writeFile(path.join(dir, ".env"), content, "utf8");
@@ -29,7 +18,7 @@ describe("readStateDirDotEnvFromStateDir", () => {
 
   it("returns real credential values from the state-dir dotenv", async () => {
     await withDotEnv("SUPERMEMORY_API_KEY=sm_real_credential_value\n", async (dir) => {
-      const result = readStateDirDotEnvFromStateDir(dir).entries;
+      const result = readStateDirDotEnvVarsFromStateDir(dir);
       expect(result["SUPERMEMORY_API_KEY"]).toBe("sm_real_credential_value");
     });
   });
@@ -51,7 +40,7 @@ describe("readStateDirDotEnvFromStateDir", () => {
     ].join("\n");
 
     await withDotEnv(content, async (dir) => {
-      const result = readStateDirDotEnvFromStateDir(dir).entries;
+      const result = readStateDirDotEnvVarsFromStateDir(dir);
       expect(Object.keys(result)).not.toContain("SUPERMEMORY_OPENCLAW_API_KEY");
       expect(Object.keys(result)).not.toContain("QUOTED_SUPERMEMORY_OPENCLAW_API_KEY");
       expect(Object.keys(result)).not.toContain("QUOTED_CURLY_KEY");
@@ -81,7 +70,7 @@ describe("readStateDirDotEnvFromStateDir", () => {
     ].join("\n");
 
     await withDotEnv(content, async (dir) => {
-      const result = readStateDirDotEnvFromStateDir(dir).entries;
+      const result = readStateDirDotEnvVarsFromStateDir(dir);
       expect(result["PASSWORD"]).toBe("abc$2!xyz");
       expect(result["TOKEN"]).toBe("tok_$prod_v2");
       expect(result["PRICE"]).toBe("\\$100");
@@ -97,36 +86,7 @@ describe("readStateDirDotEnvFromStateDir", () => {
   it("returns empty object when .env is missing", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-dotenv-missing-"));
     try {
-      expect(readStateDirDotEnvFromStateDir(dir).entries).toEqual({});
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("reads a symlinked .env file", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-dotenv-symlink-"));
-    try {
-      const realPath = path.join(dir, "real.env");
-      await fs.writeFile(realPath, "REAL_KEY=from_symlink_target\n", "utf8");
-      await fs.symlink(realPath, path.join(dir, ".env"));
-      const result = readStateDirDotEnvFromStateDir(dir).entries;
-      expect(result["REAL_KEY"]).toBe("from_symlink_target");
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("warns when an oversized .env is skipped", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-dotenv-oversized-"));
-    try {
-      const large = Buffer.alloc(2 * 1024 * 1024, "x");
-      large.write("KEY=value\n", 0, "utf8");
-      await fs.writeFile(path.join(dir, ".env"), large);
-      const result = readStateDirDotEnvFromStateDir(dir).entries;
-      expect(result).toEqual({});
-      expect(logWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("skipping oversized state-directory .env file"),
-      );
+      expect(readStateDirDotEnvVarsFromStateDir(dir)).toEqual({});
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

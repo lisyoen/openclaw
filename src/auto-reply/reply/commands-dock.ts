@@ -175,10 +175,7 @@ export const handleDockCommand: CommandHandler = async (params, allowTextCommand
   sessionEntry.lastTo = target.peerId;
   sessionEntry.lastAccountId = resolveTargetChannelAccountId(params, targetChannel);
   params.sessionEntry = sessionEntry;
-  const persisted = await persistSessionEntry({
-    ...params,
-    touchedFields: ["lastChannel", "lastTo", "lastAccountId"],
-  });
+  const persisted = await persistSessionEntry(params);
   if (!persisted) {
     return {
       shouldContinue: false,

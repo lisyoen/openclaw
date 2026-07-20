@@ -38,7 +38,7 @@ type CallRecordEventChunk = {
 };
 
 /** Call record plus stable ordering metadata read from persistence. */
-type PersistedCallRecord = {
+export type PersistedCallRecord = {
   call: CallRecord;
   persistedAt: number;
   sequence: number;
@@ -117,8 +117,7 @@ function buildNewEventKey(order: { persistedAt: number; sequence: number }): str
 /** Recover the sequence segment from newer event keys. */
 function parseEventKeySequence(key: string): number {
   const match = /^event:[^:]+:(\d+):/.exec(key);
-  const sequence = match?.[1];
-  return sequence ? Number.parseInt(sequence, 10) : 0;
+  return match ? Number.parseInt(match[1], 10) : 0;
 }
 
 /** Parse a stored call record line from v2 envelope or legacy raw-call JSON. */
@@ -324,6 +323,11 @@ export function persistCallRecord(storePath: string, call: CallRecord): void {
   }
 }
 
+/** Test hook for older async persistence call sites. */
+export async function flushPendingCallRecordWritesForTest(): Promise<void> {
+  await Promise.resolve();
+}
+
 /** Restore nonterminal active calls and provider/event indexes from persisted records. */
 export function loadActiveCallsFromStore(storePath: string): {
   activeCalls: Map<CallId, CallRecord>;
@@ -372,30 +376,6 @@ export function loadActiveCallsFromStore(storePath: string): {
   return { activeCalls, providerCallIdMap, processedEventIds, rejectedProviderCallIds };
 }
 
-function readCallHistoryFromStore(storePath: string): CallRecord[] {
-  const stores = tryCreateCallRecordStateStores(storePath);
-  if (stores) {
-    try {
-      return readCallRecordEvents(stores);
-    } catch (err) {
-      console.error("[voice-call] Failed to read SQLite call history:", err);
-    }
-  }
-  return [];
-}
-
-/** Find the newest retained snapshots matching each call identifier namespace. */
-export async function findCallMatchesInStore(
-  storePath: string,
-  callId: string,
-): Promise<{ byCallId?: CallRecord; byProviderCallId?: CallRecord }> {
-  const calls = readCallHistoryFromStore(storePath);
-  return {
-    byCallId: calls.findLast((call) => call.callId === callId),
-    byProviderCallId: calls.findLast((call) => call.providerCallId === callId),
-  };
-}
-
 /** Return the newest persisted call history rows up to the requested limit. */
 export async function getCallHistoryFromStore(
   storePath: string,
@@ -404,5 +384,13 @@ export async function getCallHistoryFromStore(
   if (limit <= 0) {
     return [];
   }
-  return readCallHistoryFromStore(storePath).slice(-limit);
+  const stores = tryCreateCallRecordStateStores(storePath);
+  if (stores) {
+    try {
+      return readCallRecordEvents(stores).slice(-limit);
+    } catch (err) {
+      console.error("[voice-call] Failed to read SQLite call history:", err);
+    }
+  }
+  return [];
 }

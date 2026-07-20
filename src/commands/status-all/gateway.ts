@@ -1,20 +1,26 @@
 // Gateway log-tail helpers for status diagnostics.
 // Summaries compact repeated auth/runtime failures while preserving enough context for operators.
 
+import fs from "node:fs/promises";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { classifyOAuthRefreshFailureReason } from "../../agents/auth-profiles/oauth-refresh-failure.js";
-import { readGatewayLogTailLines } from "../../daemon/diagnostics.js";
-import { extractBalancedJsonPrefix } from "../../shared/balanced-json.js";
 
 /** Reads the last non-empty lines from a gateway log file, returning an empty list on read failure. */
 export async function readFileTailLines(filePath: string, maxLines: number): Promise<string[]> {
-  const lines = await readGatewayLogTailLines(filePath).catch(() => []);
-  if (lines.length === 0) {
+  const raw = await fs.readFile(filePath, "utf8").catch(() => "");
+  if (!raw.trim()) {
     return [];
   }
+  const lines = raw.replace(/\r/g, "").split("\n");
   const out = lines.slice(Math.max(0, lines.length - maxLines));
   return out.map((line) => line.trimEnd()).filter((line) => line.trim().length > 0);
+}
+
+function countMatches(haystack: string, needle: string): number {
+  if (!haystack || !needle) {
+    return 0;
+  }
+  return haystack.split(needle).length - 1;
 }
 
 function shorten(message: string, maxLen: number): string {
@@ -22,7 +28,7 @@ function shorten(message: string, maxLen: number): string {
   if (cleaned.length <= maxLen) {
     return cleaned;
   }
-  return `${truncateUtf16Safe(cleaned, Math.max(0, maxLen - 1))}…`;
+  return `${cleaned.slice(0, Math.max(0, maxLen - 1))}…`;
 }
 
 function normalizeGwsLine(line: string): string {
@@ -45,15 +51,16 @@ function consumeJsonBlock(
     return null;
   }
 
-  const raw = [startLine.slice(braceAt), ...lines.slice(startIndex + 1)].join("\n");
-  const fragment = extractBalancedJsonPrefix(raw);
-  if (!fragment) {
-    // A bounded tail can end mid-object. Consume the rest so orphaned JSON
-    // fields do not escape into the user-facing diagnosis as ordinary lines.
-    return { json: raw, endIndex: lines.length - 1 };
+  const parts: string[] = [startLine.slice(braceAt)];
+  let depth = countMatches(parts[0] ?? "", "{") - countMatches(parts[0] ?? "", "}");
+  let i = startIndex;
+  while (depth > 0 && i + 1 < lines.length) {
+    i += 1;
+    const next = lines[i] ?? "";
+    parts.push(next);
+    depth += countMatches(next, "{") - countMatches(next, "}");
   }
-  const consumedLineOffset = fragment.json.split("\n").length - 1;
-  return { json: fragment.json, endIndex: startIndex + consumedLineOffset };
+  return { json: parts.join("\n"), endIndex: i };
 }
 
 /** Summarizes gateway log tail lines, grouping repeated failures and trimming long output. */

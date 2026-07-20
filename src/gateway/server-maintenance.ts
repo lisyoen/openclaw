@@ -1,27 +1,15 @@
 // Gateway maintenance timers.
 // Starts periodic health, dedupe, abort, and media cleanup loops.
 import { isFutureDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
-import { createManagedWorktreeOwnerProtection } from "../agents/worktrees/owner-protection.js";
-import {
-  managedWorktrees,
-  resolveWorktreeCleanupLimits,
-  WORKTREE_GC_INTERVAL_MS,
-} from "../agents/worktrees/service.js";
 import type { HealthSummary } from "../commands/health.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { sweepStaleRunContexts } from "../infra/agent-events.js";
-import { pruneOrphanedDeliveryQueueMedia } from "../infra/outbound/delivery-queue-media-spool.js";
 import { cleanOldMedia } from "../media/store.js";
-import { startSkillCuratorMaintenance } from "../skills/workshop/curator.js";
 import {
   abortTrackedChatRunById,
   type ChatAbortControllerEntry,
-  removeChatAbortControllerEntry,
   type RestartRecoveryCandidate,
 } from "./chat-abort.js";
-import type { QueuedChatTurnMap } from "./chat-queued-turns.js";
 import { pruneStaleControlPlaneBuckets } from "./control-plane-rate-limit.js";
-import { chatAbortMarkerTimestampMs } from "./server-chat-state.js";
 import type { ChatRunState } from "./server-chat-state.js";
 import type { ChatRunEntry } from "./server-chat.js";
 import {
@@ -30,13 +18,9 @@ import {
   HEALTH_REFRESH_INTERVAL_MS,
   TICK_INTERVAL_MS,
 } from "./server-constants.js";
-import { PENDING_CHAT_SEND_DEDUPE_PREFIX, type DedupeEntry } from "./server-shared.js";
+import type { DedupeEntry } from "./server-shared.js";
 import { formatError } from "./server-utils.js";
 import { setBroadcastHealthUpdate } from "./server/health-state.js";
-
-// Hourly sweep plus a one-day grace bounds orphan storage without racing the
-// stage-before-row-commit window.
-const DELIVERY_QUEUE_MEDIA_GC_INTERVAL_MS = 60 * 60_000;
 
 export function startGatewayMaintenanceTimers(params: {
   broadcast: (
@@ -57,7 +41,6 @@ export function startGatewayMaintenanceTimers(params: {
   logHealth: { error: (msg: string) => void };
   dedupe: Map<string, DedupeEntry>;
   chatAbortControllers: Map<string, ChatAbortControllerEntry>;
-  chatQueuedTurns: QueuedChatTurnMap;
   restartRecoveryCandidates: Map<string, RestartRecoveryCandidate>;
   chatRunState: Pick<
     ChatRunState,
@@ -79,19 +62,11 @@ export function startGatewayMaintenanceTimers(params: {
   agentRunSeq: Map<string, number>;
   nodeSendToSession: (sessionKey: string, event: string, payload: unknown) => void;
   mediaCleanupTtlMs?: number;
-  getRuntimeConfig: () => OpenClawConfig;
-  runWorktreeGc?: () => Promise<unknown>;
-  runDeliveryQueueMediaGc?: () => Promise<unknown>;
-  enableSkillCurator?: boolean;
-  runSkillCuratorSweep?: () => Promise<unknown>;
-  registerSkillUsageTracking?: () => () => void;
 }): {
   tickInterval: ReturnType<typeof setInterval>;
   healthInterval: ReturnType<typeof setInterval>;
   dedupeCleanup: ReturnType<typeof setInterval>;
   mediaCleanup: ReturnType<typeof setInterval> | null;
-  worktreeCleanup: ReturnType<typeof setInterval>;
-  skillCuratorCleanup: () => void;
 } {
   setBroadcastHealthUpdate((snap: HealthSummary) => {
     params.broadcast("health", snap, {
@@ -123,73 +98,18 @@ export function startGatewayMaintenanceTimers(params: {
     .refreshGatewayHealthSnapshot({ probe: false })
     .catch((err: unknown) => params.logHealth.error(`initial refresh failed: ${formatError(err)}`));
 
-  const runWorktreeGc =
-    params.runWorktreeGc ??
-    (() => {
-      const cfg = params.getRuntimeConfig();
-      return managedWorktrees.gc({
-        // Chat runs avoid registry acquire/bump writes; recent session metadata substitutes for
-        // worktree activity so idle GC cannot remove a checkout still used by the session.
-        shouldProtectOwner: createManagedWorktreeOwnerProtection(cfg),
-        // Read limits per run so a config edit applies at the next hourly sweep.
-        limits: resolveWorktreeCleanupLimits(),
-      });
-    });
-  const performWorktreeGc = () =>
-    runWorktreeGc().catch((err: unknown) => {
-      params.logHealth.error(`managed worktree cleanup failed: ${formatError(err)}`);
-    });
-  const worktreeCleanup = setInterval(() => void performWorktreeGc(), WORKTREE_GC_INTERVAL_MS);
-  void performWorktreeGc();
-
-  // Queue media has its own reference-aware retention policy and runs even when
-  // the general media TTL sweep is disabled.
-  const runDeliveryQueueMediaGc =
-    params.runDeliveryQueueMediaGc ?? (() => pruneOrphanedDeliveryQueueMedia());
-  let deliveryQueueMediaGcInFlight: Promise<void> | null = null;
-  let deliveryQueueMediaGcStartedAtMs = 0;
-  const performDeliveryQueueMediaGc = () => {
-    if (deliveryQueueMediaGcInFlight) {
-      return deliveryQueueMediaGcInFlight;
-    }
-    deliveryQueueMediaGcStartedAtMs = Date.now();
-    deliveryQueueMediaGcInFlight = Promise.resolve()
-      .then(async () => {
-        await runDeliveryQueueMediaGc();
-      })
-      .catch((err: unknown) => {
-        params.logHealth.error(`delivery queue media cleanup failed: ${formatError(err)}`);
-      })
-      .finally(() => {
-        deliveryQueueMediaGcInFlight = null;
-      });
-    return deliveryQueueMediaGcInFlight;
-  };
-  void performDeliveryQueueMediaGc();
-
-  let skillCuratorCleanup = () => {};
-  if (params.enableSkillCurator) {
-    skillCuratorCleanup = startSkillCuratorMaintenance({
-      onError: (err) => params.logHealth.error(`skill curator sweep failed: ${formatError(err)}`),
-      registerUsageTracking: params.registerSkillUsageTracking,
-      runSweep: params.runSkillCuratorSweep,
-    });
-  }
-
   // dedupe cache cleanup
   const dedupeCleanup = setInterval(() => {
     const AGENT_RUN_SEQ_MAX = 10_000;
     const now = Date.now();
-    if (now - deliveryQueueMediaGcStartedAtMs >= DELIVERY_QUEUE_MEDIA_GC_INTERVAL_MS) {
-      void performDeliveryQueueMediaGc();
-    }
     const resolveDedupeRunId = (key: string, entry: DedupeEntry) => {
       if (!key.startsWith("agent:") && !key.startsWith("chat:")) {
         return undefined;
       }
       const keyRunId = key.slice(key.indexOf(":") + 1);
       if (keyRunId) {
-        if (params.chatAbortControllers.has(keyRunId) || params.chatQueuedTurns.has(keyRunId)) {
+        const directEntry = params.chatAbortControllers.get(keyRunId);
+        if (directEntry) {
           return keyRunId;
         }
       }
@@ -200,8 +120,8 @@ export function startGatewayMaintenanceTimers(params: {
           : undefined
         : undefined;
     };
-    const isPendingAcceptedRunDedupeKey = (key: string, dedupeEntry: DedupeEntry) => {
-      if (!key.startsWith("agent:") && !key.startsWith(PENDING_CHAT_SEND_DEDUPE_PREFIX)) {
+    const isPendingAcceptedAgentDedupeKey = (key: string, dedupeEntry: DedupeEntry) => {
+      if (!key.startsWith("agent:")) {
         return false;
       }
       const payload = dedupeEntry.payload;
@@ -217,20 +137,18 @@ export function startGatewayMaintenanceTimers(params: {
     const isActiveRunDedupeKey = (key: string, dedupeEntry: DedupeEntry) => {
       // Keep idempotency records for active runs so retries cannot create
       // duplicate chat/agent work while a command is still draining.
-      const isAgentKey = key.startsWith("agent:");
-      const isChatKey = key.startsWith("chat:");
-      if (!isAgentKey && !isChatKey) {
+      if (!key.startsWith("agent:") && !key.startsWith("chat:")) {
         return false;
       }
       const runId = resolveDedupeRunId(key, dedupeEntry);
       const entry = runId ? params.chatAbortControllers.get(runId) : undefined;
-      if (entry) {
-        return isAgentKey ? entry.kind === "agent" : entry.kind !== "agent";
+      if (!entry) {
+        return false;
       }
-      return Boolean(isChatKey && runId && params.chatQueuedTurns.has(runId));
+      return key.startsWith("agent:") ? entry.kind === "agent" : entry.kind !== "agent";
     };
     for (const [k, v] of params.dedupe) {
-      if (isActiveRunDedupeKey(k, v) || isPendingAcceptedRunDedupeKey(k, v)) {
+      if (isActiveRunDedupeKey(k, v) || isPendingAcceptedAgentDedupeKey(k, v)) {
         continue;
       }
       if (now - v.ts > DEDUPE_TTL_MS) {
@@ -242,7 +160,7 @@ export function startGatewayMaintenanceTimers(params: {
       const oldestKeys = [...params.dedupe.entries()]
         .filter(
           ([key, entry]) =>
-            !isActiveRunDedupeKey(key, entry) && !isPendingAcceptedRunDedupeKey(key, entry),
+            !isActiveRunDedupeKey(key, entry) && !isPendingAcceptedAgentDedupeKey(key, entry),
         )
         .toSorted(([, left], [, right]) => left.ts - right.ts)
         .slice(0, excess)
@@ -294,11 +212,11 @@ export function startGatewayMaintenanceTimers(params: {
             observedAt: entry.projectSessionTerminalObservedAt,
           });
         }
-        removeChatAbortControllerEntry(params.chatAbortControllers, runId, entry);
+        params.chatAbortControllers.delete(runId);
         continue;
       }
       if (entry.projectSessionActive === false) {
-        removeChatAbortControllerEntry(params.chatAbortControllers, runId, entry);
+        params.chatAbortControllers.delete(runId);
         continue;
       }
       abortTrackedChatRunById(params, {
@@ -309,8 +227,8 @@ export function startGatewayMaintenanceTimers(params: {
     }
 
     const ABORTED_RUN_TTL_MS = 60 * 60_000;
-    for (const [runId, abortMarker] of params.chatRunState.abortedRuns) {
-      if (now - chatAbortMarkerTimestampMs(abortMarker) <= ABORTED_RUN_TTL_MS) {
+    for (const [runId, abortedAt] of params.chatRunState.abortedRuns) {
+      if (now - abortedAt <= ABORTED_RUN_TTL_MS) {
         continue;
       }
       params.chatRunState.abortedRuns.delete(runId);
@@ -366,14 +284,7 @@ export function startGatewayMaintenanceTimers(params: {
   }, 60_000);
 
   if (typeof params.mediaCleanupTtlMs !== "number") {
-    return {
-      tickInterval,
-      healthInterval,
-      dedupeCleanup,
-      mediaCleanup: null,
-      worktreeCleanup,
-      skillCuratorCleanup,
-    };
+    return { tickInterval, healthInterval, dedupeCleanup, mediaCleanup: null };
   }
 
   let mediaCleanupInFlight: Promise<void> | null = null;
@@ -400,12 +311,5 @@ export function startGatewayMaintenanceTimers(params: {
 
   void runMediaCleanup();
 
-  return {
-    tickInterval,
-    healthInterval,
-    dedupeCleanup,
-    mediaCleanup,
-    worktreeCleanup,
-    skillCuratorCleanup,
-  };
+  return { tickInterval, healthInterval, dedupeCleanup, mediaCleanup };
 }

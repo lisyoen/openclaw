@@ -172,7 +172,7 @@ export function isTelegramSupportedReactionEmoji(emoji: string): emoji is Telegr
   return TELEGRAM_SUPPORTED_REACTION_EMOJIS.has(emoji as TelegramReactionEmoji);
 }
 
-function extractTelegramAllowedEmojiReactions(
+export function extractTelegramAllowedEmojiReactions(
   chat: TelegramChatDetails | null | undefined,
 ): Set<TelegramReactionEmoji> | null | undefined {
   if (!chat) {

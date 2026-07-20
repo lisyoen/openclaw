@@ -10,7 +10,7 @@ export type PluginSourceRoots = {
   workspace?: string;
 };
 
-type PluginCacheInputs = {
+export type PluginCacheInputs = {
   roots: PluginSourceRoots;
   loadPaths: string[];
 };

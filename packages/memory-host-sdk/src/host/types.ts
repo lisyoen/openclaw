@@ -32,59 +32,12 @@ export type MemorySyncProgressUpdate = {
   label?: string;
 };
 
-export type MemorySessionSyncTarget = {
-  /** Owning OpenClaw agent. Omit only when the active manager scope already supplies it. */
-  agentId?: string;
-  /** Storage-neutral transcript/session identity. */
-  sessionId: string;
-  /** Optional visible session-store key for callers that already carry it. */
-  sessionKey?: string;
-};
-
-export type MemorySyncParams = {
-  reason?: string;
-  force?: boolean;
-  /** Storage-neutral session transcript targets to refresh. */
-  sessions?: MemorySessionSyncTarget[];
-  /** Archive/support transcript files to refresh without treating paths as active session identity. */
-  archiveFiles?: string[];
-  progress?: (update: MemorySyncProgressUpdate) => void;
-};
-
-/** @public Runtime backend/mode diagnostics for memory search. */
-export type MemorySearchRuntimeQmdCollectionValidationDebug = {
-  cacheState?: "hit" | "miss" | "write" | "bypass-force" | "error";
-  elapsedMs: number;
-  collectionCount: number;
-  listCalls?: number;
-  showCalls?: number;
-};
-
-/** @public */ export type MemorySearchRuntimeQmdMultiCollectionProbeDebug = {
-  cacheState?: "hit" | "miss" | "write" | "error";
-  elapsedMs: number;
-  supported: boolean;
-};
-
-/** @public */ export type MemorySearchRuntimeQmdSearchPlanDebug = {
-  command?: "query" | "search" | "vsearch";
-  collectionCount?: number;
-  groupCount?: number;
-  sources?: MemorySource[];
-};
-
-/** @public */ export type MemorySearchRuntimeQmdDebug = {
-  collectionValidation?: MemorySearchRuntimeQmdCollectionValidationDebug;
-  multiCollectionProbe?: MemorySearchRuntimeQmdMultiCollectionProbeDebug;
-  searchPlan?: MemorySearchRuntimeQmdSearchPlanDebug;
-};
-
+/** Runtime backend/mode diagnostics for memory search. */
 export type MemorySearchRuntimeDebug = {
   backend: "builtin" | "qmd";
   configuredMode?: string;
   effectiveMode?: string;
   fallback?: string;
-  qmd?: MemorySearchRuntimeQmdDebug;
 };
 
 /** Result of reading a memory file, optionally paginated/truncated. */
@@ -154,7 +107,12 @@ export interface MemorySearchManager {
   ): Promise<MemorySearchResult[]>;
   readFile(params: { relPath: string; from?: number; lines?: number }): Promise<MemoryReadResult>;
   status(): MemoryProviderStatus;
-  sync?(params?: MemorySyncParams): Promise<void>;
+  sync?(params?: {
+    reason?: string;
+    force?: boolean;
+    sessionFiles?: string[];
+    progress?: (update: MemorySyncProgressUpdate) => void;
+  }): Promise<void>;
   getCachedEmbeddingAvailability?(): MemoryEmbeddingProbeResult | null;
   probeEmbeddingAvailability(): Promise<MemoryEmbeddingProbeResult>;
   probeVectorStoreAvailability?(): Promise<boolean>;

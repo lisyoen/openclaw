@@ -4,7 +4,6 @@ import { hasSessionAutoModelFallbackProvenance } from "../../agents/agent-scope.
 import {
   modelKey,
   normalizeModelRef,
-  normalizeStoredOverrideModel,
   resolvePersistedOverrideModelRef,
 } from "../../agents/model-selection.js";
 import { resolveSessionParentSessionKey } from "../../channels/plugins/session-conversation.js";
@@ -34,21 +33,16 @@ function resolveParentSessionKeyCandidate(params: {
 
 /** Resolves the persisted model override visible to the current session. */
 export function resolveStoredModelOverride(params: {
-  loadSessionEntry?: (sessionKey: string) => SessionEntry | undefined;
   sessionEntry?: SessionEntry;
   sessionStore?: Record<string, SessionEntry>;
   sessionKey?: string;
   parentSessionKey?: string;
   defaultProvider: string;
 }): StoredModelOverride | null {
-  const directOverride = normalizeStoredOverrideModel({
-    providerOverride: params.sessionEntry?.providerOverride,
-    modelOverride: params.sessionEntry?.modelOverride,
-  });
   const direct = resolvePersistedOverrideModelRef({
     defaultProvider: params.defaultProvider,
-    overrideProvider: directOverride.providerOverride,
-    overrideModel: directOverride.modelOverride,
+    overrideProvider: params.sessionEntry?.providerOverride,
+    overrideModel: params.sessionEntry?.modelOverride,
   });
   if (direct) {
     return { ...direct, source: "session" };
@@ -57,18 +51,14 @@ export function resolveStoredModelOverride(params: {
     sessionKey: params.sessionKey,
     parentSessionKey: params.parentSessionKey,
   });
-  if (!parentKey) {
+  if (!parentKey || !params.sessionStore) {
     return null;
   }
-  const parentEntry = params.loadSessionEntry?.(parentKey) ?? params.sessionStore?.[parentKey];
-  const normalizedParentOverride = normalizeStoredOverrideModel({
-    providerOverride: parentEntry?.providerOverride,
-    modelOverride: parentEntry?.modelOverride,
-  });
+  const parentEntry = params.sessionStore[parentKey];
   const parentOverride = resolvePersistedOverrideModelRef({
     defaultProvider: params.defaultProvider,
-    overrideProvider: normalizedParentOverride.providerOverride,
-    overrideModel: normalizedParentOverride.modelOverride,
+    overrideProvider: parentEntry?.providerOverride,
+    overrideModel: parentEntry?.modelOverride,
   });
   if (!parentOverride) {
     return null;
@@ -81,20 +71,12 @@ function resolveModelRefKey(params: {
   overrideProvider?: string;
   overrideModel?: string;
 }): string | null {
-  const normalizedOverride = normalizeStoredOverrideModel({
-    providerOverride: params.overrideProvider,
-    modelOverride: params.overrideModel,
-  });
-  const ref = resolvePersistedOverrideModelRef({
-    defaultProvider: params.defaultProvider,
-    overrideProvider: normalizedOverride.providerOverride,
-    overrideModel: normalizedOverride.modelOverride,
-  });
+  const ref = resolvePersistedOverrideModelRef(params);
   if (!ref) {
     return null;
   }
-  const normalizedRef = normalizeModelRef(ref.provider, ref.model);
-  return modelKey(normalizedRef.provider, normalizedRef.model);
+  const normalized = normalizeModelRef(ref.provider, ref.model);
+  return modelKey(normalized.provider, normalized.model);
 }
 
 /** Detects heartbeat auto-fallback overrides that no longer match the primary model. */

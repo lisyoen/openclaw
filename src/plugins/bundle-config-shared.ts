@@ -12,7 +12,7 @@ type ReadBundleJsonResult =
   | { ok: true; raw: Record<string, unknown> }
   | { ok: false; error: string };
 
-type BundleServerRuntimeSupport = {
+export type BundleServerRuntimeSupport = {
   hasSupportedServer: boolean;
   supportedServerNames: string[];
   unsupportedServerNames: string[];

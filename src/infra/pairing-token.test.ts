@@ -15,10 +15,12 @@ vi.mock("node:crypto", async () => {
 type PairingTokenModule = typeof import("./pairing-token.js");
 
 let generatePairingToken: PairingTokenModule["generatePairingToken"];
+let PAIRING_TOKEN_BYTES: PairingTokenModule["PAIRING_TOKEN_BYTES"];
 let verifyPairingToken: PairingTokenModule["verifyPairingToken"];
 
 beforeAll(async () => {
-  ({ generatePairingToken, verifyPairingToken } = await import("./pairing-token.js"));
+  ({ generatePairingToken, PAIRING_TOKEN_BYTES, verifyPairingToken } =
+    await import("./pairing-token.js"));
 });
 
 beforeEach(() => {
@@ -26,11 +28,11 @@ beforeEach(() => {
 });
 
 describe("generatePairingToken", () => {
-  it("uses 32 random bytes and returns a base64url token", () => {
+  it("uses the configured byte count and returns a base64url token", () => {
     randomBytesMock.mockReturnValueOnce(Buffer.from([0xfb, 0xff, 0x00]));
 
     expect(generatePairingToken()).toBe("-_8A");
-    expect(randomBytesMock).toHaveBeenCalledWith(32);
+    expect(randomBytesMock).toHaveBeenCalledWith(PAIRING_TOKEN_BYTES);
   });
 });
 

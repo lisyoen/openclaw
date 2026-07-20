@@ -82,7 +82,12 @@ function escapePowerShellSingleQuotedString(value: string): string {
   return value.replace(/'/g, "''");
 }
 
-function formatCompletionSourceLine(shell: CompletionShell, cachePath: string): string {
+/** Formats the profile line that sources the cached completion script for a shell. */
+export function formatCompletionSourceLine(
+  shell: CompletionShell,
+  _binName: string,
+  cachePath: string,
+): string {
   if (shell === "powershell") {
     return `. '${escapePowerShellSingleQuotedString(cachePath)}'`;
   }
@@ -253,7 +258,7 @@ export async function installCompletion(shell: string, yes: boolean, binName = "
   switch (shell) {
     case "zsh":
       profilePath = resolveCompletionProfilePath("zsh");
-      sourceLine = formatCompletionSourceLine("zsh", cachePath);
+      sourceLine = formatCompletionSourceLine("zsh", binName, cachePath);
       break;
     case "bash":
       profilePath = resolveCompletionProfilePath("bash");
@@ -263,15 +268,15 @@ export async function installCompletion(shell: string, yes: boolean, binName = "
         const home = process.env.HOME || os.homedir();
         profilePath = path.join(home, ".bash_profile");
       }
-      sourceLine = formatCompletionSourceLine("bash", cachePath);
+      sourceLine = formatCompletionSourceLine("bash", binName, cachePath);
       break;
     case "fish":
       profilePath = resolveCompletionProfilePath("fish");
-      sourceLine = formatCompletionSourceLine("fish", cachePath);
+      sourceLine = formatCompletionSourceLine("fish", binName, cachePath);
       break;
     case "powershell":
       profilePath = resolveCompletionProfilePath("powershell");
-      sourceLine = formatCompletionSourceLine("powershell", cachePath);
+      sourceLine = formatCompletionSourceLine("powershell", binName, cachePath);
       break;
   }
 

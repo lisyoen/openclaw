@@ -1,5 +1,6 @@
 // Qa Lab plugin module implements bus state behavior.
 import { randomUUID } from "node:crypto";
+import { sanitizeQaBusToolCalls } from "openclaw/plugin-sdk/qa-channel-protocol";
 import {
   buildQaBusSnapshot,
   cloneMessage,
@@ -7,11 +8,9 @@ import {
   normalizeConversationFromTarget,
   pollQaBusEvents,
   readQaBusMessage,
-  requireQaBusMessageForAccount,
   searchQaBusMessages,
 } from "./bus-queries.js";
 import { createQaBusWaiterStore } from "./bus-waiters.js";
-import { sanitizeQaBusToolCalls } from "./qa-bus-protocol.js";
 import type {
   QaBusAttachment,
   QaBusConversation,
@@ -26,7 +25,6 @@ import type {
   QaBusReadMessageInput,
   QaBusReactToMessageInput,
   QaBusSearchMessagesInput,
-  QaBusSnapshotConversation,
   QaBusStateSnapshot,
   QaBusThread,
   QaBusToolCall,
@@ -71,11 +69,10 @@ type QaBusEventSeed =
     };
 
 export function createQaBusState() {
-  const conversations = new Map<string, QaBusSnapshotConversation>();
+  const conversations = new Map<string, QaBusConversation>();
   const threads = new Map<string, QaBusThread>();
   const messages = new Map<string, QaBusMessage>();
   const events: QaBusEvent[] = [];
-  const acknowledgedPollCursors = new Map<string, number>();
   let cursor = 0;
   const waiters = createQaBusWaiterStore(() =>
     buildQaBusSnapshot({
@@ -96,20 +93,16 @@ export function createQaBusState() {
     return finalized;
   };
 
-  const ensureConversation = (
-    accountId: string,
-    conversation: QaBusConversation,
-  ): QaBusSnapshotConversation => {
-    const key = JSON.stringify([accountId, conversation.kind, conversation.id]);
-    const existing = conversations.get(key);
+  const ensureConversation = (conversation: QaBusConversation): QaBusConversation => {
+    const existing = conversations.get(conversation.id);
     if (existing) {
       if (!existing.title && conversation.title) {
         existing.title = conversation.title;
       }
       return existing;
     }
-    const created = { ...conversation, accountId };
-    conversations.set(key, created);
+    const created = { ...conversation };
+    conversations.set(created.id, created);
     return created;
   };
 
@@ -125,20 +118,15 @@ export function createQaBusState() {
     threadTitle?: string;
     replyToId?: string;
     attachments?: QaBusAttachment[];
-    nativeCommand?: QaBusInboundMessageInput["nativeCommand"];
     toolCalls?: QaBusToolCall[];
   }): QaBusMessage => {
-    const storedConversation = ensureConversation(params.accountId, params.conversation);
+    const conversation = ensureConversation(params.conversation);
     const toolCalls = sanitizeQaBusToolCalls(params.toolCalls);
     const message: QaBusMessage = {
       id: randomUUID(),
       accountId: params.accountId,
       direction: params.direction,
-      conversation: {
-        id: storedConversation.id,
-        kind: storedConversation.kind,
-        ...(storedConversation.title ? { title: storedConversation.title } : {}),
-      },
+      conversation,
       senderId: params.senderId,
       senderName: params.senderName,
       text: params.text,
@@ -147,7 +135,6 @@ export function createQaBusState() {
       threadTitle: params.threadTitle,
       replyToId: params.replyToId,
       attachments: params.attachments?.map((attachment) => ({ ...attachment })) ?? [],
-      ...(params.nativeCommand ? { nativeCommand: { ...params.nativeCommand } } : {}),
       ...(toolCalls ? { toolCalls } : {}),
       reactions: [],
     };
@@ -162,7 +149,7 @@ export function createQaBusState() {
       messages.clear();
       events.length = 0;
       // Keep the cursor monotonic across resets so long-poll clients do not
-      // miss fresh events and retained restart acknowledgements remain valid.
+      // miss fresh events after the bus is cleared mid-session.
       waiters.reset();
     },
     getSnapshot() {
@@ -188,7 +175,6 @@ export function createQaBusState() {
         threadTitle: input.threadTitle,
         replyToId: input.replyToId,
         attachments: input.attachments,
-        nativeCommand: input.nativeCommand,
         toolCalls: input.toolCalls,
       });
       pushEvent({
@@ -232,7 +218,7 @@ export function createQaBusState() {
         createdBy: input.createdBy?.trim() || DEFAULT_BOT_ID,
       };
       threads.set(thread.id, thread);
-      ensureConversation(accountId, {
+      ensureConversation({
         id: input.conversationId,
         kind: "channel",
       });
@@ -245,7 +231,10 @@ export function createQaBusState() {
     },
     reactToMessage(input: QaBusReactToMessageInput) {
       const accountId = normalizeAccountId(input.accountId);
-      const message = requireQaBusMessageForAccount({ messages, input });
+      const message = messages.get(input.messageId);
+      if (!message) {
+        throw new Error(`qa-bus message not found: ${input.messageId}`);
+      }
       const reaction = {
         emoji: input.emoji,
         senderId: input.senderId?.trim() || DEFAULT_BOT_ID,
@@ -263,7 +252,10 @@ export function createQaBusState() {
     },
     editMessage(input: QaBusEditMessageInput) {
       const accountId = normalizeAccountId(input.accountId);
-      const message = requireQaBusMessageForAccount({ messages, input });
+      const message = messages.get(input.messageId);
+      if (!message) {
+        throw new Error(`qa-bus message not found: ${input.messageId}`);
+      }
       message.text = input.text;
       message.editedAt = input.timestamp ?? Date.now();
       pushEvent({
@@ -275,7 +267,10 @@ export function createQaBusState() {
     },
     deleteMessage(input: QaBusDeleteMessageInput) {
       const accountId = normalizeAccountId(input.accountId);
-      const message = requireQaBusMessageForAccount({ messages, input });
+      const message = messages.get(input.messageId);
+      if (!message) {
+        throw new Error(`qa-bus message not found: ${input.messageId}`);
+      }
       message.deleted = true;
       pushEvent({
         kind: "message-deleted",
@@ -289,20 +284,6 @@ export function createQaBusState() {
     },
     searchMessages(input: QaBusSearchMessagesInput) {
       return searchQaBusMessages({ messages, input });
-    },
-    resolvePollCursor(input: QaBusPollInput = {}) {
-      const accountId = normalizeAccountId(input.accountId);
-      const requestedCursor = input.cursor ?? 0;
-      const acknowledgedCursor = acknowledgedPollCursors.get(accountId) ?? 0;
-      if (requestedCursor > acknowledgedCursor && requestedCursor <= cursor) {
-        acknowledgedPollCursors.set(accountId, requestedCursor);
-      }
-      // A restarted channel consumer begins at zero. Resume its account cursor
-      // so retained events are not replayed, while still returning unacked work.
-      return requestedCursor === 0 ? acknowledgedCursor : requestedCursor;
-    },
-    getAcknowledgedPollCursor(accountId?: string) {
-      return acknowledgedPollCursors.get(normalizeAccountId(accountId)) ?? 0;
     },
     poll(input: QaBusPollInput = {}) {
       return pollQaBusEvents({ events, cursor, input });

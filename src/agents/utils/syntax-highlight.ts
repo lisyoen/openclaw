@@ -4,47 +4,16 @@
  * Highlight.js emits HTML spans; this module walks that small HTML subset and
  * maps active scopes to caller-provided text formatters.
  */
-import { createRequire } from "node:module";
-import { decodeHtmlEntities } from "../../shared/html-entities.js";
-
-type HighlightJs = {
-  getLanguage(name: string): unknown;
-  highlight(
-    code: string,
-    options: { language: string; ignoreIllegals?: boolean },
-  ): { value: string };
-  highlightAuto(code: string, languageSubset?: string[]): { value: string };
-};
-
-function isHighlightJs(value: unknown): value is HighlightJs {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "getLanguage" in value &&
-    typeof value.getLanguage === "function" &&
-    "highlight" in value &&
-    typeof value.highlight === "function" &&
-    "highlightAuto" in value &&
-    typeof value.highlightAuto === "function"
-  );
-}
-
-// highlight.js ships `/// <reference lib="dom" />` in its d.ts, which would
-// silently re-inject DOM globals into the DOM-free core program. Load it
-// untyped and validate the narrow API we use instead of importing its types.
-const highlightJsModule: unknown = createRequire(import.meta.url)("highlight.js");
-if (!isHighlightJs(highlightJsModule)) {
-  throw new TypeError("highlight.js did not expose the expected Node API");
-}
-const hljs = highlightJsModule;
+import hljs from "highlight.js";
+import { decodeHtmlEntityAt } from "./html.js";
 
 /** Formatter applied to highlighted text segments. */
-type HighlightFormatter = (text: string) => string;
+export type HighlightFormatter = (text: string) => string;
 /** Mapping from highlight.js scope names to text formatters. */
-type HighlightTheme = Partial<Record<string, HighlightFormatter>>;
+export type HighlightTheme = Partial<Record<string, HighlightFormatter>>;
 
 /** Options used when highlighting code and rendering themed text. */
-interface HighlightOptions {
+export interface HighlightOptions {
   language?: string;
   ignoreIllegals?: boolean;
   languageSubset?: string[];
@@ -127,7 +96,7 @@ function isSpanOpenTagStart(html: string, index: number): boolean {
 }
 
 /** Renders highlight.js span HTML into themed plain text. */
-function renderHighlightedHtml(html: string, theme: HighlightTheme = {}): string {
+export function renderHighlightedHtml(html: string, theme: HighlightTheme = {}): string {
   let output = "";
   let textBuffer = "";
   const scopes: Array<string | undefined> = [];
@@ -136,9 +105,8 @@ function renderHighlightedHtml(html: string, theme: HighlightTheme = {}): string
     if (!textBuffer) {
       return;
     }
-    const decodedText = decodeHtmlEntities(textBuffer);
     const formatter = getActiveFormatter(scopes, theme);
-    output += formatter ? formatter(decodedText) : decodedText;
+    output += formatter ? formatter(textBuffer) : textBuffer;
     textBuffer = "";
   };
 
@@ -164,6 +132,15 @@ function renderHighlightedHtml(html: string, theme: HighlightTheme = {}): string
       }
       index += SPAN_CLOSE.length;
       continue;
+    }
+
+    if (html[index] === "&") {
+      const decoded = decodeHtmlEntityAt(html, index);
+      if (decoded) {
+        textBuffer += decoded.text;
+        index += decoded.length;
+        continue;
+      }
     }
 
     textBuffer += html[index];

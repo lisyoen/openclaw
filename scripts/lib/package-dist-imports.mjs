@@ -11,10 +11,6 @@ function stripSpecifierSuffix(value) {
   return value.replace(/[?#].*$/u, "");
 }
 
-function hasJavaScriptFileExtension(value) {
-  return /\.(?:cjs|js|mjs)$/u.test(path.posix.basename(stripSpecifierSuffix(value)));
-}
-
 function resolveDistImportPath(importerPath, specifier) {
   if (!specifier.startsWith(".")) {
     return null;
@@ -48,20 +44,6 @@ function isImportSpecifierContext(source, index) {
     /^(?:import|export)\b[\s\S]*\bfrom\s*$/u.test(statementPrefix) ||
     /^import\s*$/u.test(statementPrefix)
   );
-}
-
-function isRequireSpecifierContext(source, index) {
-  const prefix = source.slice(Math.max(0, index - 32), index);
-  return /\brequire\s*\(\s*$/u.test(prefix);
-}
-
-function isImportMetaUrlContext(source, quoteStart, quoteEnd) {
-  const prefix = source.slice(Math.max(0, quoteStart - 32), quoteStart);
-  if (!/\bnew\s+URL\s*\(\s*$/u.test(prefix)) {
-    return false;
-  }
-  const suffix = source.slice(quoteEnd + 1, quoteEnd + 96);
-  return /^\s*,\s*import\.meta\.url\s*,?\s*\)/u.test(suffix);
 }
 
 function collectImportSpecifiers(source) {
@@ -118,11 +100,7 @@ function collectImportSpecifiers(source) {
     }
 
     if (value.startsWith(".")) {
-      const isDistDependency =
-        isImportSpecifierContext(source, index) ||
-        isRequireSpecifierContext(source, index) ||
-        (isImportMetaUrlContext(source, index, cursor) && hasJavaScriptFileExtension(value));
-      if (isDistDependency) {
+      if (isImportSpecifierContext(source, index)) {
         specifiers.push(value);
       }
     }

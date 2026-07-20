@@ -20,7 +20,7 @@ const acpResetTargetDeps = {
   resolveConfiguredBindingRecord,
 };
 
-const acpResetTargetTestApi = {
+export const testing = {
   setDepsForTest(
     overrides?: Partial<{
       getSessionBindingService: typeof getSessionBindingService;
@@ -35,11 +35,6 @@ const acpResetTargetTestApi = {
       overrides?.resolveConfiguredBindingRecord ?? resolveConfiguredBindingRecord;
   },
 };
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.acpResetTargetTestApi")] =
-    acpResetTargetTestApi;
-}
 
 function resolveResetTargetAccountId(params: {
   cfg: OpenClawConfig;
@@ -188,3 +183,4 @@ export function resolveEffectiveResetTargetSessionKey(params: {
   }
   return activeAcpSessionKey;
 }
+export { testing as __testing };

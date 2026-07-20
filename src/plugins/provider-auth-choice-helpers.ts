@@ -137,18 +137,6 @@ function normalizeAgentModelMapForWrite(value: unknown): unknown {
   return normalizeAgentModelMapForConfig(value);
 }
 
-function normalizeAgentModelPolicyForWrite(value: unknown): unknown {
-  if (!isPlainRecord(value) || !Array.isArray(value.allow)) {
-    return value;
-  }
-  return {
-    ...value,
-    allow: value.allow.map((ref) =>
-      typeof ref === "string" ? normalizeAgentModelRefForConfig(ref) : ref,
-    ),
-  };
-}
-
 function normalizeProviderCatalogModelIdForWrite(provider: string, modelId: string): string {
   const trimmed = modelId.trim();
   if (!trimmed) {
@@ -179,10 +167,7 @@ function normalizeProviderCatalogModelIdsForWrite(
   return mutated ? { ...providerConfig, models: nextModels } : providerConfig;
 }
 
-function normalizeModelProviderConfigsForWrite(
-  cfg: OpenClawConfig,
-  providerConfigNormalizer: typeof normalizeProviderConfigForConfigDefaults,
-): OpenClawConfig {
+function normalizeModelProviderConfigsForWrite(cfg: OpenClawConfig): OpenClawConfig {
   const providers = cfg.models?.providers;
   if (!providers) {
     return cfg;
@@ -193,7 +178,7 @@ function normalizeModelProviderConfigsForWrite(
   for (const [provider, providerConfig] of Object.entries(providers)) {
     const normalizedProviderConfig = normalizeProviderCatalogModelIdsForWrite(
       provider,
-      providerConfigNormalizer({
+      normalizeProviderConfigForConfigDefaults({
         provider,
         providerConfig,
       }),
@@ -244,24 +229,14 @@ function normalizeAgentListForWrite(value: unknown): unknown {
         mutated = true;
       }
     }
-    if (Object.hasOwn(agent, "modelPolicy")) {
-      const normalizedModelPolicy = normalizeAgentModelPolicyForWrite(agent.modelPolicy);
-      if (normalizedModelPolicy !== agent.modelPolicy) {
-        nextAgent = { ...nextAgent, modelPolicy: normalizedModelPolicy };
-        mutated = true;
-      }
-    }
     return nextAgent;
   });
 
   return mutated ? next : value;
 }
 
-function normalizeConfigModelRefsForWrite(
-  cfg: OpenClawConfig,
-  providerConfigNormalizer: typeof normalizeProviderConfigForConfigDefaults,
-): OpenClawConfig {
-  const providerNormalized = normalizeModelProviderConfigsForWrite(cfg, providerConfigNormalizer);
+function normalizeConfigModelRefsForWrite(cfg: OpenClawConfig): OpenClawConfig {
+  const providerNormalized = normalizeModelProviderConfigsForWrite(cfg);
   const defaults = providerNormalized.agents?.defaults;
   const agentsList = providerNormalized.agents?.list;
 
@@ -277,11 +252,6 @@ function normalizeConfigModelRefsForWrite(
       nextDefaults.models = normalizeAgentModelMapForWrite(
         defaults.models,
       ) as typeof defaults.models;
-    }
-    if (defaults.modelPolicy !== undefined) {
-      nextDefaults.modelPolicy = normalizeAgentModelPolicyForWrite(
-        defaults.modelPolicy,
-      ) as typeof defaults.modelPolicy;
     }
   }
 
@@ -303,16 +273,10 @@ function normalizeConfigModelRefsForWrite(
 export function applyProviderAuthConfigPatch(
   cfg: OpenClawConfig,
   patch: unknown,
-  options?: {
-    replaceDefaultModels?: boolean;
-    providerConfigNormalizer?: typeof normalizeProviderConfigForConfigDefaults;
-  },
+  options?: { replaceDefaultModels?: boolean },
 ): OpenClawConfig {
-  const providerConfigNormalizer =
-    options?.providerConfigNormalizer ?? normalizeProviderConfigForConfigDefaults;
   const merged = normalizeConfigModelRefsForWrite(
     deleteUndefinedPatchLeaves(mergeConfigPatch(cfg, patch), patch),
-    providerConfigNormalizer,
   );
   if (!options?.replaceDefaultModels || !isPlainRecord(patch)) {
     return merged;
@@ -324,22 +288,19 @@ export function applyProviderAuthConfigPatch(
     return merged;
   }
 
-  return normalizeConfigModelRefsForWrite(
-    {
-      ...merged,
-      agents: {
-        ...merged.agents,
-        defaults: {
-          ...merged.agents?.defaults,
-          // Opt-in replacement for migrations that rename/remove model keys.
-          models: sanitizeConfigPatchValue(patchModels) as NonNullable<
-            NonNullable<OpenClawConfig["agents"]>["defaults"]
-          >["models"],
-        },
+  return normalizeConfigModelRefsForWrite({
+    ...merged,
+    agents: {
+      ...merged.agents,
+      defaults: {
+        ...merged.agents?.defaults,
+        // Opt-in replacement for migrations that rename/remove model keys.
+        models: sanitizeConfigPatchValue(patchModels) as NonNullable<
+          NonNullable<OpenClawConfig["agents"]>["defaults"]
+        >["models"],
       },
     },
-    providerConfigNormalizer,
-  );
+  });
 }
 
 /**

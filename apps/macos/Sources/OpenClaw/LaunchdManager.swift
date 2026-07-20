@@ -12,4 +12,9 @@ enum LaunchdManager {
         let userTarget = "gui/\(getuid())/\(launchdLabel)"
         self.runLaunchctl(["kickstart", "-k", userTarget])
     }
+
+    static func stopOpenClaw() {
+        let userTarget = "gui/\(getuid())/\(launchdLabel)"
+        self.runLaunchctl(["stop", userTarget])
+    }
 }

@@ -8,7 +8,7 @@ import type {
 
 export { getDiscordGatewayEmitter } from "./monitor/gateway-supervisor.js";
 
-type WaitForDiscordGatewayStopParams = {
+export type WaitForDiscordGatewayStopParams = {
   gateway?: DiscordGatewayHandle;
   abortSignal?: AbortSignal;
   gatewaySupervisor?: Pick<DiscordGatewaySupervisor, "attachLifecycle" | "detachLifecycle">;

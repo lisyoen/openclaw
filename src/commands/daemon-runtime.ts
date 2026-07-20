@@ -1,5 +1,5 @@
 // Gateway daemon runtime option definitions used by install/configure flows.
-export type GatewayDaemonRuntime = "node";
+export type GatewayDaemonRuntime = "node" | "bun";
 
 export const DEFAULT_GATEWAY_DAEMON_RUNTIME: GatewayDaemonRuntime = "node";
 
@@ -10,12 +10,12 @@ export const GATEWAY_DAEMON_RUNTIME_OPTIONS: Array<{
 }> = [
   {
     value: "node",
-    label: "Node",
-    hint: "Required for OpenClaw's SQLite-backed runtime state.",
+    label: "Node (recommended)",
+    hint: "Required for WhatsApp + Telegram. Bun can corrupt memory on reconnect.",
   },
 ];
 
 /** Narrow arbitrary input to a supported Gateway daemon runtime id. */
 export function isGatewayDaemonRuntime(value: string | undefined): value is GatewayDaemonRuntime {
-  return value === "node";
+  return value === "node" || value === "bun";
 }

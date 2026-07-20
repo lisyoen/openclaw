@@ -21,7 +21,7 @@ const LEGACY_RUNTIME_MODEL_PROVIDER_ALIASES = [
     provider: "openai",
     runtime: "codex",
     cli: false,
-    requiresRuntimePolicy: true,
+    requiresRuntimePolicy: false,
   },
   {
     legacyProvider: "codex-cli",

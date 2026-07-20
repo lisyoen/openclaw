@@ -28,7 +28,6 @@ export function buildGatewayConnectionDetailsWithResolvers(
     configPath?: string;
     urlSource?: "cli" | "env";
     ignoreEnvUrlOverride?: boolean;
-    localPortOverride?: number;
   } = {},
   resolvers: GatewayConnectionDetailResolvers = {},
 ): GatewayConnectionDetails {
@@ -41,15 +40,13 @@ export function buildGatewayConnectionDetailsWithResolvers(
   const remote = isRemoteMode ? config.gateway?.remote : undefined;
   const tlsEnabled = config.gateway?.tls?.enabled === true;
   const localPort =
-    options.localPortOverride ??
-    resolvers.resolveGatewayPort?.(config, process.env) ??
-    resolveGatewayPort(config);
+    resolvers.resolveGatewayPort?.(config, process.env) ?? resolveGatewayPort(config);
   const bindMode = config.gateway?.bind ?? "loopback";
   const scheme = tlsEnabled ? "wss" : "ws";
   const localUrl = `${scheme}://127.0.0.1:${localPort}`;
   const cliUrlOverride = normalizeOptionalString(options.url);
   const envUrlOverride =
-    cliUrlOverride || options.ignoreEnvUrlOverride || options.localPortOverride !== undefined
+    cliUrlOverride || options.ignoreEnvUrlOverride
       ? undefined
       : normalizeOptionalString(process.env.OPENCLAW_GATEWAY_URL);
   const urlOverride = cliUrlOverride ?? envUrlOverride;

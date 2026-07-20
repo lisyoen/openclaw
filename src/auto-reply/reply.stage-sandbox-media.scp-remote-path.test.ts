@@ -13,8 +13,8 @@ import {
 const sandboxMocks = vi.hoisted(() => ({
   ensureSandboxWorkspaceForSession: vi.fn(),
 }));
-const processExecMocks = vi.hoisted(() => ({
-  runCommandWithTimeout: vi.fn(),
+const childProcessMocks = vi.hoisted(() => ({
+  spawn: vi.fn(),
 }));
 const mediaRootMocks = vi.hoisted(() => ({
   resolveChannelRemoteInboundAttachmentRoots: vi.fn(),
@@ -22,19 +22,23 @@ const mediaRootMocks = vi.hoisted(() => ({
 
 vi.mock("../agents/sandbox.js", () => sandboxMocks);
 vi.mock("../media/channel-inbound-roots.js", () => mediaRootMocks);
-vi.mock("../process/exec.js", async () => {
-  const actual = await vi.importActual<typeof import("../process/exec.js")>("../process/exec.js");
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
   return {
     ...actual,
-    runCommandWithTimeout: processExecMocks.runCommandWithTimeout,
+    spawn: childProcessMocks.spawn,
   };
 });
 
-import { stageSandboxMedia } from "./reply/stage-sandbox-media.js";
+import {
+  appendScpStderrTail,
+  SCP_STDERR_TAIL_CHARS,
+  stageSandboxMedia,
+} from "./reply/stage-sandbox-media.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
-  processExecMocks.runCommandWithTimeout.mockReset();
+  childProcessMocks.spawn.mockClear();
   mediaRootMocks.resolveChannelRemoteInboundAttachmentRoots.mockReset();
 });
 
@@ -85,6 +89,14 @@ function requireFirstMockCall(mock: { mock: { calls: unknown[][] } }, label: str
 }
 
 describe("stageSandboxMedia scp remote paths", () => {
+  it("keeps only the tail of noisy scp stderr", () => {
+    const stderr = appendScpStderrTail("start-", `${"x".repeat(SCP_STDERR_TAIL_CHARS)}-end`);
+
+    expect(stderr).toHaveLength(SCP_STDERR_TAIL_CHARS);
+    expect(stderr).toContain("-end");
+    expect(stderr).not.toContain("start-");
+  });
+
   it("rejects remote attachment filenames with shell metacharacters before spawning scp", async () => {
     await withSandboxMediaTempHome("openclaw-triggers-", async (home) => {
       const { cfg, workspaceDir, sessionKey, remoteCacheDir } = createRemoteStageParams(home);
@@ -99,7 +111,7 @@ describe("stageSandboxMedia scp remote paths", () => {
         workspaceDir,
       });
 
-      expect(processExecMocks.runCommandWithTimeout).not.toHaveBeenCalled();
+      expect(childProcessMocks.spawn).not.toHaveBeenCalled();
       await expectPathMissing(join(remoteCacheDir, basename(remotePath)));
       expect(ctx.MediaPath).toBe(remotePath);
       expect(sessionCtx.MediaPath).toBe(remotePath);
@@ -114,7 +126,9 @@ describe("stageSandboxMedia scp remote paths", () => {
       const sessionKey = "agent:main:explicit:../../escape";
       const remotePath = "/Users/demo/Library/Messages/Attachments/ab/cd/photo.jpg";
       const { ctx, sessionCtx } = createRemoteContexts(remotePath);
-      processExecMocks.runCommandWithTimeout.mockRejectedValue(new Error("stop before scp"));
+      childProcessMocks.spawn.mockImplementation(() => {
+        throw new Error("stop before scp");
+      });
 
       await stageSandboxMedia({
         ctx,
@@ -124,8 +138,8 @@ describe("stageSandboxMedia scp remote paths", () => {
         workspaceDir,
       });
 
-      const [command] = requireFirstMockCall(processExecMocks.runCommandWithTimeout, "scp command");
-      expect(command).toEqual(expect.arrayContaining(["scp"]));
+      const [command] = requireFirstMockCall(childProcessMocks.spawn, "scp spawn");
+      expect(command).toBe("scp");
       const remoteCacheRoot = join(CONFIG_DIR, "media", "remote-cache");
       const expectedSafeDir = join(remoteCacheRoot, slugifySessionKey(sessionKey));
       try {
@@ -135,103 +149,6 @@ describe("stageSandboxMedia scp remote paths", () => {
       } finally {
         await fs.rm(expectedSafeDir, { recursive: true, force: true });
       }
-    });
-  });
-
-  it("rewrites remote iMessage attachment metadata to the staged local cache path", async () => {
-    await withSandboxMediaTempHome("openclaw-triggers-", async (home) => {
-      const { cfg, workspaceDir, sessionKey } = createRemoteStageParams(home);
-      const remotePath = "/Users/demo/Library/Messages/Attachments/ab/cd/photo.jpg";
-      const { ctx, sessionCtx } = createRemoteContexts(remotePath);
-      ctx.MediaPaths = [remotePath];
-      sessionCtx.MediaPaths = [remotePath];
-      processExecMocks.runCommandWithTimeout.mockImplementation(async (argvUnknown) => {
-        const argv = argvUnknown as string[];
-        const localPath = argv.at(-1);
-        if (!localPath) {
-          throw new Error("missing scp destination");
-        }
-        await fs.writeFile(localPath, "staged-image-bytes");
-        return { code: 0, stdout: "", stderr: "" };
-      });
-
-      const result = await stageSandboxMedia({
-        ctx,
-        sessionCtx,
-        cfg,
-        sessionKey,
-        workspaceDir,
-      });
-
-      const stagedPath = join(
-        CONFIG_DIR,
-        "media",
-        "remote-cache",
-        slugifySessionKey(sessionKey),
-        basename(remotePath),
-      );
-      expect(result.staged.get(remotePath)).toBe(stagedPath);
-      expect(ctx.MediaPath).toBe(stagedPath);
-      expect(ctx.MediaPaths).toEqual([stagedPath]);
-      expect(ctx.MediaUrl).toBe(stagedPath);
-      expect(sessionCtx.MediaPath).toBe(stagedPath);
-      expect(sessionCtx.MediaPaths).toEqual([stagedPath]);
-      expect(sessionCtx.MediaUrl).toBe(stagedPath);
-      expect(await fs.readFile(stagedPath, "utf8")).toBe("staged-image-bytes");
-      await fs.rm(join(CONFIG_DIR, "media", "remote-cache", slugifySessionKey(sessionKey)), {
-        recursive: true,
-        force: true,
-      });
-    });
-  });
-
-  it("uses absolute remote cache paths in cache mode even when sandbox staging is available", async () => {
-    await withSandboxMediaTempHome("openclaw-triggers-", async (home) => {
-      const { cfg, workspaceDir, sessionKey } = createRemoteStageParams(home);
-      const sandboxWorkspace = join(home, "sandbox-workspace");
-      vi.mocked(sandboxMocks.ensureSandboxWorkspaceForSession).mockResolvedValue({
-        workspaceDir: sandboxWorkspace,
-        workspaceAccess: "workspace-write",
-      });
-      const remotePath = "/Users/demo/Library/Messages/Attachments/ab/cd/photo.jpg";
-      const { ctx, sessionCtx } = createRemoteContexts(remotePath);
-      ctx.MediaPaths = [remotePath];
-      sessionCtx.MediaPaths = [remotePath];
-      processExecMocks.runCommandWithTimeout.mockImplementation(async (argvUnknown) => {
-        const argv = argvUnknown as string[];
-        const localPath = argv.at(-1);
-        if (!localPath) {
-          throw new Error("missing scp destination");
-        }
-        await fs.writeFile(localPath, "staged-image-bytes");
-        return { code: 0, stdout: "", stderr: "" };
-      });
-
-      const result = await stageSandboxMedia({
-        ctx,
-        sessionCtx,
-        cfg,
-        sessionKey,
-        workspaceDir,
-        remoteMediaMode: "cache",
-      });
-
-      const stagedPath = join(
-        CONFIG_DIR,
-        "media",
-        "remote-cache",
-        slugifySessionKey(sessionKey),
-        basename(remotePath),
-      );
-      expect(result.staged.get(remotePath)).toBe(stagedPath);
-      expect(ctx.MediaPath).toBe(stagedPath);
-      expect(ctx.MediaPaths).toEqual([stagedPath]);
-      await expectPathMissing(join(sandboxWorkspace, "media", "inbound", basename(remotePath)));
-      expect(await fs.readFile(stagedPath, "utf8")).toBe("staged-image-bytes");
-      await fs.rm(join(CONFIG_DIR, "media", "remote-cache", slugifySessionKey(sessionKey)), {
-        recursive: true,
-        force: true,
-      });
     });
   });
 });

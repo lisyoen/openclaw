@@ -3,7 +3,6 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { getFinishedSession, getSession } from "../../agents/bash-process-registry.js";
 import { createExecTool } from "../../agents/bash-tools.js";
@@ -55,7 +54,7 @@ function formatSessionSnippet(sessionId: string) {
   if (trimmed.length <= 12) {
     return trimmed;
   }
-  return `${truncateUtf16Safe(trimmed, 8)}…`;
+  return `${trimmed.slice(0, 8)}…`;
 }
 
 function formatOutputBlock(text: string) {

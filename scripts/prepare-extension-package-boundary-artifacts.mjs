@@ -1,18 +1,10 @@
 // Prepares declaration and entry-shim artifacts that prove plugin package
 // boundary imports resolve through public package surfaces.
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path, { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import {
-  ensureRepoToolNodeModulesLink,
-  isLocalCheckEnabled,
-  resolveRepoToolBinPath,
-} from "./lib/local-heavy-check-runtime.mjs";
+import { isLocalCheckEnabled } from "./lib/local-heavy-check-runtime.mjs";
 import { parsePositiveInt } from "./lib/numeric-options.mjs";
-import { pluginSdkEntrypoints, productionPluginSdkEntrypoints } from "./lib/plugin-sdk-entries.mjs";
-import { resolveWindowsTaskkillPath } from "./lib/windows-taskkill.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const runTsgoScript = path.join(repoRoot, "scripts/run-tsgo.mjs");
@@ -23,30 +15,18 @@ const ROOT_SHIMS_MAX_OLD_SPACE_SIZE =
   process.env.OPENCLAW_ROOT_SHIMS_MAX_OLD_SPACE_SIZE?.trim() || "8192";
 const ROOT_SHIMS_NODE_OPTIONS =
   `${process.env.NODE_OPTIONS ?? ""} --max-old-space-size=${ROOT_SHIMS_MAX_OLD_SPACE_SIZE}`.trim();
-const DEFAULT_NODE_STEP_ABORT_KILL_GRACE_MS = 1_000;
-const MAX_TIMER_TIMEOUT_MS = 2_147_000_000;
+const NODE_STEP_ABORT_KILL_GRACE_MS = 1_000;
 const NODE_STEP_PARENT_SIGNALS = ["SIGHUP", "SIGINT", "SIGTERM"];
 const NODE_STEP_PARENT_SIGNAL_EXIT_CODES = new Map([
   ["SIGHUP", 129],
   ["SIGINT", 130],
   ["SIGTERM", 143],
 ]);
-const ACTIVE_NODE_STEP_KILLERS = new Map();
+const ACTIVE_NODE_STEP_KILLERS = new Set();
 let nodeStepParentSignalForwardersInstalled = false;
 let exitingAfterParentSignal = false;
 let parentSignalExitCode = 1;
 let parentSignalExitTimer;
-
-/** Resolve tsx's loader through the selected checkout toolchain. */
-export function resolveTsxImportSpecifier({
-  resolveTool = resolveRepoToolBinPath,
-  createRequireFrom = createRequire,
-  ensureToolchain = ensureRepoToolNodeModulesLink,
-} = {}) {
-  const tsxBinPath = resolveTool("tsx");
-  ensureToolchain(tsxBinPath);
-  return pathToFileURL(createRequireFrom(tsxBinPath).resolve("tsx")).href;
-}
 
 function listPackageDtsOutputsFromExports({ packageDir, outputPrefix }) {
   const packageJson = JSON.parse(
@@ -69,39 +49,11 @@ function listPackageDtsOutputsFromExports({ packageDir, outputPrefix }) {
     .toSorted((a, b) => a.localeCompare(b));
 }
 
-function listSourceDtsOutputs({ sourceDir, outputPrefix }) {
-  const outputs = [];
-
-  function visit(relativeDir) {
-    const absoluteDir = path.join(repoRoot, sourceDir, relativeDir);
-    for (const entry of fs.readdirSync(absoluteDir, { withFileTypes: true })) {
-      const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        visit(relativePath);
-        continue;
-      }
-      if (
-        !entry.name.endsWith(".ts") ||
-        entry.name.endsWith(".test.ts") ||
-        entry.name.endsWith(".test-helpers.ts")
-      ) {
-        continue;
-      }
-      outputs.push(`${outputPrefix}/${relativePath.replace(/\.ts$/u, ".d.ts")}`);
-    }
-  }
-
-  visit("");
-  return outputs.toSorted((a, b) => a.localeCompare(b));
-}
-
 const PLUGIN_SDK_TYPE_INPUTS = [
   "tsconfig.json",
   "src/plugin-sdk",
-  "src/plugins/provider-runtime-model.types.ts",
   "src/plugins/types.ts",
   "src/auto-reply",
-  "packages/ai/src",
   "packages/llm-core/src",
   "packages/markdown-core/src",
   "packages/media-core/src",
@@ -110,7 +62,6 @@ const PLUGIN_SDK_TYPE_INPUTS = [
   "packages/media-generation-core/src",
   "packages/media-understanding-common/src",
   "packages/normalization-core/src",
-  "packages/retry/src",
   "packages/acp-core/src",
   "packages/terminal-core/src",
   "src/video-generation/dashscope-compatible.ts",
@@ -123,12 +74,7 @@ const ACP_CORE_REQUIRED_DTS_OUTPUTS = listPackageDtsOutputsFromExports({
   packageDir: "acp-core",
   outputPrefix: "dist/plugin-sdk/packages/acp-core/src",
 });
-const AI_REQUIRED_DTS_OUTPUTS = listSourceDtsOutputs({
-  sourceDir: "packages/ai/src",
-  outputPrefix: "dist/plugin-sdk/packages/ai/src",
-});
 const ROOT_DTS_REQUIRED_OUTPUTS = [
-  ...AI_REQUIRED_DTS_OUTPUTS,
   "dist/plugin-sdk/packages/memory-host-sdk/src/engine-embeddings.d.ts",
   "dist/plugin-sdk/packages/memory-host-sdk/src/secret.d.ts",
   "dist/plugin-sdk/packages/memory-host-sdk/src/status.d.ts",
@@ -160,6 +106,7 @@ const ROOT_DTS_REQUIRED_OUTPUTS = [
   "dist/plugin-sdk/packages/media-core/src/media-source-url.d.ts",
   "dist/plugin-sdk/packages/media-core/src/mime.d.ts",
   "dist/plugin-sdk/packages/media-core/src/read-byte-stream-with-limit.d.ts",
+  "dist/plugin-sdk/packages/media-core/src/read-response-with-limit.d.ts",
   ...ACP_CORE_REQUIRED_DTS_OUTPUTS,
   "dist/plugin-sdk/packages/terminal-core/src/ansi.d.ts",
   "dist/plugin-sdk/packages/terminal-core/src/decorative-emoji.d.ts",
@@ -186,7 +133,6 @@ const ROOT_DTS_REQUIRED_OUTPUTS = [
   "dist/plugin-sdk/packages/model-catalog-core/src/provider-id.d.ts",
   "dist/plugin-sdk/packages/model-catalog-core/src/provider-model-id-normalization.d.ts",
   "dist/plugin-sdk/packages/model-catalog-core/src/provider-model-id-normalize.d.ts",
-  "dist/plugin-sdk/packages/retry/src/index.d.ts",
   "dist/plugin-sdk/error-runtime.d.ts",
   "dist/plugin-sdk/plugin-entry.d.ts",
   "dist/plugin-sdk/provider-auth.d.ts",
@@ -198,12 +144,7 @@ const ACP_CORE_REQUIRED_PACKAGE_DTS_OUTPUTS = listPackageDtsOutputsFromExports({
   packageDir: "acp-core",
   outputPrefix: "packages/plugin-sdk/dist/packages/acp-core/src",
 });
-const AI_REQUIRED_PACKAGE_DTS_OUTPUTS = listSourceDtsOutputs({
-  sourceDir: "packages/ai/src",
-  outputPrefix: "packages/plugin-sdk/dist/packages/ai/src",
-});
 const PACKAGE_DTS_REQUIRED_OUTPUTS = [
-  ...AI_REQUIRED_PACKAGE_DTS_OUTPUTS,
   "packages/plugin-sdk/dist/packages/markdown-core/src/code-spans.d.ts",
   "packages/plugin-sdk/dist/packages/markdown-core/src/fences.d.ts",
   "packages/plugin-sdk/dist/packages/markdown-core/src/frontmatter.d.ts",
@@ -227,6 +168,7 @@ const PACKAGE_DTS_REQUIRED_OUTPUTS = [
   "packages/plugin-sdk/dist/packages/media-core/src/media-source-url.d.ts",
   "packages/plugin-sdk/dist/packages/media-core/src/mime.d.ts",
   "packages/plugin-sdk/dist/packages/media-core/src/read-byte-stream-with-limit.d.ts",
+  "packages/plugin-sdk/dist/packages/media-core/src/read-response-with-limit.d.ts",
   ...ACP_CORE_REQUIRED_PACKAGE_DTS_OUTPUTS,
   "packages/plugin-sdk/dist/packages/model-catalog-core/src/configured-model-refs.d.ts",
   "packages/plugin-sdk/dist/packages/model-catalog-core/src/model-catalog-normalize.d.ts",
@@ -236,12 +178,10 @@ const PACKAGE_DTS_REQUIRED_OUTPUTS = [
   "packages/plugin-sdk/dist/packages/model-catalog-core/src/provider-model-id-normalization.d.ts",
   "packages/plugin-sdk/dist/packages/model-catalog-core/src/provider-model-id-normalize.d.ts",
   "packages/plugin-sdk/dist/packages/normalization-core/src/index.d.ts",
-  "packages/plugin-sdk/dist/packages/normalization-core/src/boolean-coercion.d.ts",
   "packages/plugin-sdk/dist/packages/normalization-core/src/number-coercion.d.ts",
   "packages/plugin-sdk/dist/packages/normalization-core/src/record-coerce.d.ts",
   "packages/plugin-sdk/dist/packages/normalization-core/src/string-coerce.d.ts",
   "packages/plugin-sdk/dist/packages/normalization-core/src/string-normalization.d.ts",
-  "packages/plugin-sdk/dist/packages/retry/src/index.d.ts",
   "packages/plugin-sdk/dist/packages/terminal-core/src/ansi.d.ts",
   "packages/plugin-sdk/dist/packages/terminal-core/src/decorative-emoji.d.ts",
   "packages/plugin-sdk/dist/packages/terminal-core/src/health-style.d.ts",
@@ -274,13 +214,6 @@ const QA_CHANNEL_DTS_INPUTS = [
 ];
 const QA_CHANNEL_DTS_STAMP = "dist/plugin-sdk/extensions/qa-channel/.boundary-dts.stamp";
 const QA_CHANNEL_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/qa-channel/api.d.ts"];
-const MATRIX_DTS_INPUTS = [
-  "extensions/matrix/test-api.ts",
-  "extensions/matrix/src",
-  "extensions/matrix/tsconfig.json",
-];
-const MATRIX_DTS_STAMP = "dist/plugin-sdk/extensions/matrix/.boundary-dts.stamp";
-const MATRIX_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/matrix/test-api.d.ts"];
 const DISCORD_DTS_INPUTS = [
   "extensions/discord/api.ts",
   "extensions/discord/src/api.ts",
@@ -295,9 +228,6 @@ const SLACK_DTS_INPUTS = [
 ];
 const SLACK_DTS_STAMP = "dist/plugin-sdk/extensions/slack/.boundary-dts.stamp";
 const SLACK_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/slack/api.d.ts"];
-const TELEGRAM_DTS_INPUTS = ["extensions/telegram/api.ts", "extensions/telegram/tsconfig.json"];
-const TELEGRAM_DTS_STAMP = "dist/plugin-sdk/extensions/telegram/.boundary-dts.stamp";
-const TELEGRAM_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/telegram/api.d.ts"];
 const WHATSAPP_DTS_INPUTS = [
   "extensions/whatsapp/api.ts",
   "extensions/whatsapp/src/qa-driver.runtime.ts",
@@ -311,19 +241,6 @@ const ENTRY_SHIMS_INPUTS = [
   "scripts/lib/plugin-sdk-entrypoints.json",
   "scripts/lib/plugin-sdk-entries.mjs",
 ];
-/**
- * Lists entry-shim artifacts written by scripts/write-plugin-sdk-entry-dts.ts.
- */
-export function resolveBoundaryEntryShimRequiredOutputs(env = process.env) {
-  const entries =
-    env.OPENCLAW_BUILD_PRIVATE_QA === "1" ? pluginSdkEntrypoints : productionPluginSdkEntrypoints;
-  return entries
-    .flatMap((entry) => [
-      `dist/plugin-sdk/${entry}.d.ts`,
-      `packages/plugin-sdk/dist/src/plugin-sdk/${entry}.d.ts`,
-    ])
-    .toSorted((a, b) => a.localeCompare(b));
-}
 
 function isRelevantTypeInput(filePath) {
   const basename = path.basename(filePath);
@@ -465,16 +382,8 @@ function abortSiblingSteps(abortController) {
   }
 }
 
-export function signalNodeStep(
-  child,
-  signal,
-  {
-    platform = process.platform,
-    runTaskkill = spawnSync,
-    useProcessGroup = platform !== "win32",
-  } = {},
-) {
-  if (useProcessGroup && typeof child.pid === "number") {
+function signalNodeStep(child, signal) {
+  if (process.platform !== "win32" && typeof child.pid === "number") {
     try {
       process.kill(-child.pid, signal);
       return;
@@ -482,36 +391,13 @@ export function signalNodeStep(
       // The child process group can already be gone by the time cleanup runs.
     }
   }
-  if (platform === "win32" && typeof child.pid === "number") {
-    const args = ["/PID", String(child.pid), "/T"];
-    if (signal === "SIGKILL") {
-      args.push("/F");
-    }
-    const taskkillPath = resolveWindowsTaskkillPath();
-    const result = runTaskkill(taskkillPath, args, { stdio: "ignore" });
-    if (!result?.error && result?.status === 0) {
-      return;
-    }
-    if (signal !== "SIGKILL") {
-      const forceResult = runTaskkill(taskkillPath, [...args, "/F"], { stdio: "ignore" });
-      if (!forceResult?.error && forceResult?.status === 0) {
-        return;
-      }
-    }
-  }
   child.kill(signal);
 }
 
 function signalActiveNodeSteps(signal) {
-  for (const killNodeStep of ACTIVE_NODE_STEP_KILLERS.keys()) {
+  for (const killNodeStep of ACTIVE_NODE_STEP_KILLERS) {
     killNodeStep(signal);
   }
-}
-
-function activeNodeStepKillGraceMs() {
-  return ACTIVE_NODE_STEP_KILLERS.size > 0
-    ? Math.max(...ACTIVE_NODE_STEP_KILLERS.values())
-    : DEFAULT_NODE_STEP_ABORT_KILL_GRACE_MS;
 }
 
 function installNodeStepParentSignalForwarders() {
@@ -531,7 +417,7 @@ function installNodeStepParentSignalForwarders() {
       signalActiveNodeSteps(signal);
       parentSignalExitTimer ??= setTimeout(
         () => process.exit(parentSignalExitCode),
-        activeNodeStepKillGraceMs(),
+        NODE_STEP_ABORT_KILL_GRACE_MS,
       );
     });
   }
@@ -540,23 +426,10 @@ function installNodeStepParentSignalForwarders() {
   });
 }
 
-function resolveNodeStepTimerTimeoutMs(valueMs) {
-  const value = Number(valueMs);
-  if (!Number.isFinite(value)) {
-    return MAX_TIMER_TIMEOUT_MS;
-  }
-  return Math.min(Math.max(Math.floor(value), 1), MAX_TIMER_TIMEOUT_MS);
-}
-
 /**
  * Runs one artifact step with timeout, abort propagation, and prefixed output.
  */
 export function runNodeStep(label, args, timeoutMs, params = {}) {
-  const resolvedTimeoutMs = resolveNodeStepTimerTimeoutMs(timeoutMs);
-  const abortKillGraceMs = Math.max(
-    0,
-    Math.floor(params.abortKillGraceMs ?? DEFAULT_NODE_STEP_ABORT_KILL_GRACE_MS),
-  );
   const abortController = params.abortController;
   const spawnImpl = params.spawnImpl ?? spawn;
   installNodeStepParentSignalForwarders();
@@ -571,56 +444,20 @@ export function runNodeStep(label, args, timeoutMs, params = {}) {
     let settled = false;
     let canceled = false;
     let killTimer;
-    let killDeadlineAt = 0;
     const stdoutWriter = createPrefixedOutputWriter(label, process.stdout);
     const stderrWriter = createPrefixedOutputWriter(label, process.stderr);
-    const useProcessGroup = process.platform !== "win32";
-    const killNodeStep = (signal) => signalNodeStep(child, signal, { useProcessGroup });
-    const processGroupAlive = () => {
-      if (!useProcessGroup || !child.pid) {
-        return false;
-      }
-      try {
-        process.kill(-child.pid, 0);
-        return true;
-      } catch (error) {
-        return Boolean(error && error.code === "EPERM");
-      }
-    };
-    const waitForProcessGroupExit = async (waitMs) => {
-      const deadlineAt = Date.now() + waitMs;
-      while (Date.now() < deadlineAt) {
-        if (!processGroupAlive()) {
-          return true;
-        }
-        await new Promise((resolvePoll) => {
-          setTimeout(resolvePoll, 25);
-        });
-      }
-      return !processGroupAlive();
-    };
-    const waitForCanceledStepTeardown = async () => {
-      const remainingGraceMs = Math.max(0, killDeadlineAt - Date.now());
-      if (remainingGraceMs > 0) {
-        await waitForProcessGroupExit(remainingGraceMs);
-      }
-      if (processGroupAlive()) {
-        killNodeStep("SIGKILL");
-        await waitForProcessGroupExit(100);
-      }
-    };
-    ACTIVE_NODE_STEP_KILLERS.set(killNodeStep, abortKillGraceMs);
+    const killNodeStep = (signal) => signalNodeStep(child, signal);
+    ACTIVE_NODE_STEP_KILLERS.add(killNodeStep);
     const abortStep = () => {
       if (settled || canceled) {
         return;
       }
       canceled = true;
       killNodeStep("SIGTERM");
-      killDeadlineAt = Date.now() + abortKillGraceMs;
       killTimer = setTimeout(() => {
         killTimer = undefined;
         killNodeStep("SIGKILL");
-      }, abortKillGraceMs);
+      }, NODE_STEP_ABORT_KILL_GRACE_MS);
       killTimer.unref?.();
     };
     function cleanup() {
@@ -639,8 +476,8 @@ export function runNodeStep(label, args, timeoutMs, params = {}) {
       stdoutWriter.flush();
       stderrWriter.flush();
       abortSiblingSteps(abortController);
-      rejectPromise(new Error(`${label} timed out after ${resolvedTimeoutMs}ms`));
-    }, resolvedTimeoutMs);
+      rejectPromise(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
     abortController?.signal.addEventListener("abort", abortStep, { once: true });
 
     child.stdout.setEncoding("utf8");
@@ -671,29 +508,27 @@ export function runNodeStep(label, args, timeoutMs, params = {}) {
       if (settled) {
         return;
       }
-      void (async () => {
-        settled = true;
-        stdoutWriter.flush();
-        stderrWriter.flush();
-        if (exitingAfterParentSignal) {
-          killNodeStep("SIGKILL");
-          cleanup();
-          return;
-        }
-        if (canceled) {
-          await waitForCanceledStepTeardown();
-          cleanup();
-          rejectPromise(new Error(`${label} canceled after sibling failure`));
-          return;
-        }
+      settled = true;
+      stdoutWriter.flush();
+      stderrWriter.flush();
+      if (exitingAfterParentSignal) {
+        killNodeStep("SIGKILL");
         cleanup();
-        if (code === 0) {
-          resolvePromise();
-          return;
-        }
-        abortSiblingSteps(abortController);
-        rejectPromise(new Error(`${label} failed with exit code ${code ?? 1}`));
-      })();
+        return;
+      }
+      if (canceled) {
+        killNodeStep("SIGKILL");
+        cleanup();
+        rejectPromise(new Error(`${label} canceled after sibling failure`));
+        return;
+      }
+      cleanup();
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      abortSiblingSteps(abortController);
+      rejectPromise(new Error(`${label} failed with exit code ${code ?? 1}`));
     });
   });
 }
@@ -705,11 +540,7 @@ export async function runNodeStepsInParallel(steps) {
   const abortController = new AbortController();
   const results = await Promise.allSettled(
     steps.map((step) =>
-      runNodeStep(step.label, step.args, step.timeoutMs, {
-        abortController,
-        abortKillGraceMs: step.abortKillGraceMs,
-        env: step.env,
-      }),
+      runNodeStep(step.label, step.args, step.timeoutMs, { abortController, env: step.env }),
     ),
   );
   const firstFailure = results.find((result) => result.status === "rejected");
@@ -753,10 +584,7 @@ async function main(argv = process.argv.slice(2)) {
         "dist/plugin-sdk/.tsbuildinfo",
         "packages/plugin-sdk/dist/.tsbuildinfo",
       ],
-      outputPaths: [
-        "dist/plugin-sdk/.boundary-entry-shims.stamp",
-        ...resolveBoundaryEntryShimRequiredOutputs(),
-      ],
+      outputPaths: ["dist/plugin-sdk/.boundary-entry-shims.stamp"],
     });
     const qaChannelDtsFresh =
       isArtifactSetFresh({
@@ -764,12 +592,6 @@ async function main(argv = process.argv.slice(2)) {
         outputPaths: [QA_CHANNEL_DTS_STAMP, ...QA_CHANNEL_DTS_REQUIRED_OUTPUTS],
         includeFile: isRelevantTypeInput,
       }) && !hasMissingOutput(QA_CHANNEL_DTS_REQUIRED_OUTPUTS);
-    const matrixDtsFresh =
-      isArtifactSetFresh({
-        inputPaths: MATRIX_DTS_INPUTS,
-        outputPaths: [MATRIX_DTS_STAMP, ...MATRIX_DTS_REQUIRED_OUTPUTS],
-        includeFile: isRelevantTypeInput,
-      }) && !hasMissingOutput(MATRIX_DTS_REQUIRED_OUTPUTS);
     const discordDtsFresh =
       isArtifactSetFresh({
         inputPaths: DISCORD_DTS_INPUTS,
@@ -782,12 +604,6 @@ async function main(argv = process.argv.slice(2)) {
         outputPaths: [SLACK_DTS_STAMP, ...SLACK_DTS_REQUIRED_OUTPUTS],
         includeFile: isRelevantTypeInput,
       }) && !hasMissingOutput(SLACK_DTS_REQUIRED_OUTPUTS);
-    const telegramDtsFresh =
-      isArtifactSetFresh({
-        inputPaths: TELEGRAM_DTS_INPUTS,
-        outputPaths: [TELEGRAM_DTS_STAMP, ...TELEGRAM_DTS_REQUIRED_OUTPUTS],
-        includeFile: isRelevantTypeInput,
-      }) && !hasMissingOutput(TELEGRAM_DTS_REQUIRED_OUTPUTS);
     const whatsappDtsFresh =
       isArtifactSetFresh({
         inputPaths: WHATSAPP_DTS_INPUTS,
@@ -860,37 +676,6 @@ async function main(argv = process.argv.slice(2)) {
         });
       } else {
         process.stdout.write("[qa-channel boundary dts] fresh; skipping\n");
-      }
-      if (!matrixDtsFresh) {
-        removeIncrementalStateForMissingOutput({
-          outputPaths: MATRIX_DTS_REQUIRED_OUTPUTS,
-          tsBuildInfoPath: "dist/plugin-sdk/extensions/matrix/.tsbuildinfo",
-        });
-        dependentSteps.push({
-          label: "matrix boundary dts",
-          args: [
-            runTsgoScript,
-            "-p",
-            "extensions/matrix/tsconfig.json",
-            "--declaration",
-            "true",
-            "--emitDeclarationOnly",
-            "true",
-            "--noEmit",
-            "false",
-            "--outDir",
-            "dist/plugin-sdk/extensions/matrix",
-            "--rootDir",
-            "extensions/matrix",
-            "--tsBuildInfoFile",
-            "dist/plugin-sdk/extensions/matrix/.tsbuildinfo",
-          ],
-          env: { OPENCLAW_TSGO_HEAVY_CHECK_LOCK_HELD: "1" },
-          timeoutMs: 300_000,
-          stampPath: MATRIX_DTS_STAMP,
-        });
-      } else {
-        process.stdout.write("[matrix boundary dts] fresh; skipping\n");
       }
       if (!discordDtsFresh) {
         removeIncrementalStateForMissingOutput({
@@ -985,37 +770,6 @@ async function main(argv = process.argv.slice(2)) {
       } else {
         process.stdout.write("[whatsapp boundary dts] fresh; skipping\n");
       }
-      if (!telegramDtsFresh) {
-        removeIncrementalStateForMissingOutput({
-          outputPaths: TELEGRAM_DTS_REQUIRED_OUTPUTS,
-          tsBuildInfoPath: "dist/plugin-sdk/extensions/telegram/.tsbuildinfo",
-        });
-        dependentSteps.push({
-          label: "telegram boundary dts",
-          args: [
-            runTsgoScript,
-            "-p",
-            "extensions/telegram/tsconfig.json",
-            "--declaration",
-            "true",
-            "--emitDeclarationOnly",
-            "true",
-            "--noEmit",
-            "false",
-            "--outDir",
-            "dist/plugin-sdk/extensions/telegram",
-            "--rootDir",
-            "extensions/telegram",
-            "--tsBuildInfoFile",
-            "dist/plugin-sdk/extensions/telegram/.tsbuildinfo",
-          ],
-          env: { OPENCLAW_TSGO_HEAVY_CHECK_LOCK_HELD: "1" },
-          timeoutMs: 300_000,
-          stampPath: TELEGRAM_DTS_STAMP,
-        });
-      } else {
-        process.stdout.write("[telegram boundary dts] fresh; skipping\n");
-      }
     }
 
     if (prerequisiteSteps.length > 0) {
@@ -1030,11 +784,7 @@ async function main(argv = process.argv.slice(2)) {
     if (mode === "all" && (!entryShimsFresh || prerequisiteSteps.length > 0)) {
       await runNodeStep(
         "plugin-sdk boundary root shims",
-        [
-          "--import",
-          resolveTsxImportSpecifier(),
-          resolve(repoRoot, "scripts/write-plugin-sdk-entry-dts.ts"),
-        ],
+        ["--import", "tsx", resolve(repoRoot, "scripts/write-plugin-sdk-entry-dts.ts")],
         ROOT_SHIMS_TIMEOUT_MS,
         { env: { NODE_OPTIONS: ROOT_SHIMS_NODE_OPTIONS } },
       );

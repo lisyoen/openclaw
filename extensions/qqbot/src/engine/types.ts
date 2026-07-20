@@ -265,10 +265,12 @@ export interface QQBotAccountConfigView {
   dmPolicy?: QQBotDmPolicy;
   groupPolicy?: QQBotGroupPolicy;
   groups?: Record<string, Record<string, unknown>>;
-  streaming?: {
-    mode?: string;
-    nativeTransport?: boolean;
-  };
+  streaming?:
+    | boolean
+    | {
+        mode?: string;
+        c2cStreamApi?: boolean;
+      };
   audioFormatPolicy?: {
     uploadDirectFormats?: string[];
     transcodeEnabled?: boolean;
@@ -295,11 +297,13 @@ export interface GatewayAccount {
     groupAllowFrom?: Array<string | number>;
     dmPolicy?: "open" | "allowlist" | "disabled";
     groupPolicy?: "open" | "allowlist" | "disabled";
-    streaming?: {
-      mode?: string;
-      /** When true, use QQ's official C2C `stream_messages` API for DMs. */
-      nativeTransport?: boolean;
-    };
+    streaming?:
+      | boolean
+      | {
+          mode?: string;
+          /** When true, use QQ C2C `stream_messages` for DMs. Boolean `true` is equivalent. */
+          c2cStreamApi?: boolean;
+        };
     audioFormatPolicy?: {
       uploadDirectFormats?: string[];
       transcodeEnabled?: boolean;

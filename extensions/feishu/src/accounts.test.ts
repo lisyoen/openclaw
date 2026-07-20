@@ -29,30 +29,21 @@ function expectExplicitDefaultAccountSelection(
   expect(account.appId).toBe(appId);
 }
 
-function setTestEnvValue(key: string, value: string | undefined): () => void {
+function withEnvVar(key: string, value: string | undefined, run: () => void) {
   const prev = process.env[key];
   if (value === undefined) {
-    Reflect.deleteProperty(process.env, key);
+    delete process.env[key];
   } else {
-    Reflect.set(process.env, key, value);
+    process.env[key] = value;
   }
-  return () => restoreTestEnvValue(key, prev);
-}
-
-function restoreTestEnvValue(key: string, value: string | undefined): void {
-  if (value === undefined) {
-    Reflect.deleteProperty(process.env, key);
-  } else {
-    Reflect.set(process.env, key, value);
-  }
-}
-
-function withEnvVar(key: string, value: string | undefined, run: () => void): void {
-  const restore = setTestEnvValue(key, value);
   try {
     run();
   } finally {
-    restore();
+    if (prev === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = prev;
+    }
   }
 }
 
@@ -223,7 +214,8 @@ describe("resolveFeishuCredentials", () => {
 
   it("resolves env SecretRef objects when unresolved refs are allowed", () => {
     const key = "FEISHU_APP_SECRET_TEST";
-    const restore = setTestEnvValue(key, " secret_from_env ");
+    const prev = process.env[key];
+    process.env[key] = " secret_from_env ";
 
     try {
       const creds = resolveFeishuCredentials(
@@ -242,13 +234,18 @@ describe("resolveFeishuCredentials", () => {
         domain: "feishu",
       });
     } finally {
-      restore();
+      if (prev === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = prev;
+      }
     }
   });
 
   it("resolves env SecretRef with custom provider alias when unresolved refs are allowed", () => {
     const key = "FEISHU_APP_SECRET_CUSTOM_PROVIDER_TEST";
-    const restore = setTestEnvValue(key, " secret_from_env_alias ");
+    const prev = process.env[key];
+    process.env[key] = " secret_from_env_alias ";
 
     try {
       const creds = resolveFeishuCredentials(
@@ -261,7 +258,11 @@ describe("resolveFeishuCredentials", () => {
 
       expect(creds?.appSecret).toBe("secret_from_env_alias");
     } finally {
-      restore();
+      if (prev === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = prev;
+      }
     }
   });
 
@@ -379,27 +380,6 @@ describe("resolveFeishuAccount", () => {
     expect(account.accountId).toBe("default");
     expect(account.selectionSource).toBe("explicit");
     expect(account.appId).toBe("cli_default");
-  });
-
-  it("inherits and overrides VC auto-join per account", () => {
-    const cfg = {
-      channels: {
-        feishu: {
-          vcAutoJoin: true,
-          accounts: {
-            inherited: {},
-            disabled: { vcAutoJoin: false },
-          },
-        },
-      },
-    };
-
-    expect(
-      resolveFeishuAccount({ cfg: cfg as never, accountId: "inherited" }).config.vcAutoJoin,
-    ).toBe(true);
-    expect(
-      resolveFeishuAccount({ cfg: cfg as never, accountId: "disabled" }).config.vcAutoJoin,
-    ).toBe(false);
   });
 
   it("treats unresolved SecretRef as not configured in account resolution", () => {

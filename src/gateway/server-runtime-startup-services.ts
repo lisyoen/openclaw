@@ -1,7 +1,6 @@
 // Gateway startup-time runtime services.
 // Starts mode-dependent background monitors with inert handles for disabled paths.
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { isTruthyEnvValue } from "../infra/env.js";
 import type { ChannelHealthMonitor } from "./channel-health-monitor.js";
 import { startChannelHealthMonitor } from "./channel-health-monitor.js";
 import {
@@ -20,19 +19,20 @@ export type GatewayChannelManager = Parameters<
 export function startGatewayChannelHealthMonitor(params: {
   cfg: OpenClawConfig;
   channelManager: GatewayChannelManager;
-  env?: NodeJS.ProcessEnv;
 }): ChannelHealthMonitor | null {
-  const env = params.env ?? process.env;
-  // Process-level channel suppression also owns recovery: otherwise the health
-  // monitor restarts configured transports after the startup grace period.
-  if (
-    isTruthyEnvValue(env.OPENCLAW_SKIP_CHANNELS) ||
-    isTruthyEnvValue(env.OPENCLAW_SKIP_PROVIDERS)
-  ) {
+  const healthCheckMinutes = params.cfg.gateway?.channelHealthCheckMinutes;
+  if (healthCheckMinutes === 0) {
     return null;
   }
+  const staleEventThresholdMinutes = params.cfg.gateway?.channelStaleEventThresholdMinutes;
+  const maxRestartsPerHour = params.cfg.gateway?.channelMaxRestartsPerHour;
   return startChannelHealthMonitor({
     channelManager: params.channelManager,
+    checkIntervalMs: (healthCheckMinutes ?? 5) * 60_000,
+    ...(staleEventThresholdMinutes != null && {
+      staleEventThresholdMs: staleEventThresholdMinutes * 60_000,
+    }),
+    ...(maxRestartsPerHour != null && { maxRestartsPerHour }),
   });
 }
 

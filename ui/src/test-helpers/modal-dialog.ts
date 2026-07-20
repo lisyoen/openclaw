@@ -1,8 +1,6 @@
-import type WaDialog from "@awesome.me/webawesome/dist/components/dialog/dialog.js";
 // Control UI test helper supports modal dialog setup.
 import { expect } from "vitest";
-
-type OpenClawModalDialog = HTMLElement & { updateComplete: Promise<boolean> };
+import type { OpenClawModalDialog } from "../ui/components/modal-dialog.ts";
 
 type DialogMethodName = "showModal" | "close";
 type DialogDescriptorSnapshot = Record<DialogMethodName, PropertyDescriptor | undefined>;
@@ -52,18 +50,10 @@ export async function getRenderedModalDialog(container: HTMLElement) {
   }
   await modal.updateComplete;
   await nextFrame();
-  const webAwesomeDialog = modal.shadowRoot?.querySelector<WaDialog>("wa-dialog");
-  expect(webAwesomeDialog).toBeInstanceOf(HTMLElement);
-  if (!webAwesomeDialog) {
-    throw new Error("Expected rendered Web Awesome dialog");
-  }
-  await webAwesomeDialog.updateComplete;
-  await nextFrame();
-  const dialog = webAwesomeDialog.shadowRoot?.querySelector("dialog");
+  const dialog = modal.shadowRoot?.querySelector("dialog");
   expect(dialog).toBeInstanceOf(HTMLDialogElement);
   if (!(dialog instanceof HTMLDialogElement)) {
     throw new Error("Expected rendered dialog");
   }
-  await nextFrame();
-  return { modal, webAwesomeDialog, dialog };
+  return { modal, dialog };
 }

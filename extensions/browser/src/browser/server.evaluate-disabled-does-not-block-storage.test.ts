@@ -9,21 +9,13 @@ let prevGatewayPort: string | undefined;
 let prevGatewayToken: string | undefined;
 let prevGatewayPassword: string | undefined;
 
-const pwMocks = vi.hoisted(() => {
-  const closePlaywrightBrowserConnection = vi.fn(async (_opts?: { cdpUrl?: string }) => {});
-  return {
-    closePlaywrightBrowserConnection,
-    cookiesGetViaPlaywright: vi.fn(async () => ({
-      cookies: [{ name: "session", value: "abc123" }],
-    })),
-    storageGetViaPlaywright: vi.fn(async () => ({ values: { token: "value" } })),
-    evaluateViaPlaywright: vi.fn(async () => "ok"),
-    retirePlaywrightBrowserConnectionExact: vi.fn((opts: { cdpUrl: string }) => ({
-      retired: true,
-      close: async () => await closePlaywrightBrowserConnection(opts),
-    })),
-  };
-});
+const pwMocks = vi.hoisted(() => ({
+  cookiesGetViaPlaywright: vi.fn(async () => ({
+    cookies: [{ name: "session", value: "abc123" }],
+  })),
+  storageGetViaPlaywright: vi.fn(async () => ({ values: { token: "value" } })),
+  evaluateViaPlaywright: vi.fn(async () => "ok"),
+}));
 
 const routeCtxMocks = vi.hoisted(() => {
   const profileCtx = {
@@ -66,7 +58,6 @@ vi.mock("../config/config.js", async () => {
 });
 
 vi.mock("./pw-ai-module.js", () => ({
-  getLoadedPwAiModule: () => pwMocks,
   getPwAiModule: vi.fn(async () => pwMocks),
 }));
 

@@ -1,6 +1,7 @@
 // Skill prompt versions are deterministic content markers for model-visible skill catalogs.
-import { sha256HexPrefix } from "../../infra/crypto-digest.js";
+import crypto from "node:crypto";
 
 export function computeSkillPromptVersion(content: string): string {
-  return `sha256:${sha256HexPrefix(content, 16)}`;
+  const digest = crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
+  return `sha256:${digest}`;
 }

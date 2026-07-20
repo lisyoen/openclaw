@@ -1,198 +1,94 @@
 // Post-selection model/auth sanity checks shown during onboarding and agent setup.
-import { normalizeProviderIdForAuth } from "@openclaw/model-catalog-core/provider-id";
-import {
-  resolveAgentDir,
-  resolveAgentWorkspaceDir,
-  resolveDefaultAgentDir,
-  resolveDefaultAgentId,
-} from "../agents/agent-scope.js";
-import { ensureAuthProfileStore } from "../agents/auth-profiles.js";
-import { createModelAuthAvailabilityResolver } from "../agents/model-auth-availability.js";
-import type { ModelCatalogEntry } from "../agents/model-catalog.js";
+import { ensureAuthProfileStore, listProfilesForProvider } from "../agents/auth-profiles.js";
+import type { AuthProfileCredential } from "../agents/auth-profiles/types.js";
+import { resolveAgentHarnessPolicy } from "../agents/harness/policy.js";
+import { hasUsableCustomProviderApiKey, resolveEnvApiKey } from "../agents/model-auth.js";
+import { loadModelCatalog } from "../agents/model-catalog.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
-import { publishPreparedModelRuntimeSnapshot } from "../agents/prepared-model-runtime.js";
+import {
+  listOpenAIAuthProfileProvidersForAgentRuntime,
+  openAIProviderUsesCodexRuntimeByDefault,
+} from "../agents/openai-routing.js";
 import { buildProviderAuthRecoveryHint } from "../agents/provider-auth-recovery-hint.js";
-import { canonicalizeProviderModelId } from "../agents/provider-model-route.js";
-import type { ModelApi } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { ProviderModelRouteAuthRequirement } from "../plugin-sdk/provider-model-types.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 
-type ModelRouteObservation = {
-  api?: ModelApi | null;
-  baseUrl?: unknown;
-};
-
-type DefaultModelAuthStatus = {
+function resolveAuthProviderCandidates(params: {
+  config: OpenClawConfig;
   provider: string;
-  model: string;
-} & (
-  | { status: "ready"; hasAuth: true }
-  | {
-      status: "missing";
-      hasAuth: false;
-      authRequirement?: ProviderModelRouteAuthRequirement;
-    }
-  | { status: "indeterminate"; hasAuth: false }
-  | { status: "incompatible"; hasAuth: false; code: string; message: string }
-);
+  modelId: string;
+  agentId?: string;
+}): string[] {
+  const harnessPolicy = resolveAgentHarnessPolicy({
+    provider: params.provider,
+    modelId: params.modelId,
+    config: params.config,
+    agentId: params.agentId,
+  });
+  return [
+    ...new Set([
+      params.provider,
+      ...listOpenAIAuthProfileProvidersForAgentRuntime({
+        provider: params.provider,
+        harnessRuntime: harnessPolicy.runtime,
+        config: params.config,
+      }),
+    ]),
+  ];
+}
 
-/**
- * Resolve the default model ref and its auth readiness. A catalog observation
- * makes transport-specific auth exact; absent observations remain
- * indeterminate when provider facts cannot choose one route. Shared by the
- * onboarding model check and the finalize hatch gating.
- */
-export function resolveDefaultModelAuthStatus(
-  config: OpenClawConfig,
-  options?: {
-    agentId?: string;
-    agentDir?: string;
-    env?: NodeJS.ProcessEnv;
-    observedRoutes?: readonly ModelRouteObservation[];
-  },
-): DefaultModelAuthStatus {
-  const ref = resolveDefaultModelForAgent({
-    cfg: config,
-    agentId: options?.agentId,
-  });
-  const store = ensureAuthProfileStore(options?.agentDir, {
-    allowKeychainPrompt: false,
-    config,
-    ...(ref.provider === "openai" ? { externalCliProviderIds: ["openai"] } : {}),
-    readOnly: true,
-  });
-  const evaluation = createModelAuthAvailabilityResolver({
-    cfg: config,
-    authStore: store,
-    ...(options?.agentDir ? { agentDir: options.agentDir } : {}),
-    ...(options?.env ? { env: options.env } : {}),
-  }).evaluateModelAuth(ref.provider, {
-    modelId: ref.model,
-    ...(options?.observedRoutes?.length ? { observedRoutes: options.observedRoutes } : {}),
-  });
-  if (evaluation.routeResolution?.kind === "incompatible") {
-    return {
-      provider: ref.provider,
-      model: ref.model,
-      status: "incompatible",
-      hasAuth: false,
-      code: evaluation.routeResolution.code,
-      message: evaluation.routeResolution.message,
-    };
-  }
-  const availability = evaluation.availability;
-  const authRequirement = evaluation.selectedRoute?.authRequirement;
-  if (availability === true) {
-    return { provider: ref.provider, model: ref.model, status: "ready", hasAuth: true };
-  }
+function resolveAcceptedAuthProfileTypes(params: {
+  config: OpenClawConfig;
+  provider: string;
+}): readonly AuthProfileCredential["type"][] | undefined {
   if (
-    availability === undefined &&
-    (normalizeProviderIdForAuth(ref.provider) === "openai" ||
-      evaluation.routeResolution !== null ||
-      evaluation.evidence !== undefined)
+    openAIProviderUsesCodexRuntimeByDefault({
+      provider: params.provider,
+      config: params.config,
+    })
   ) {
-    return { provider: ref.provider, model: ref.model, status: "indeterminate", hasAuth: false };
-  }
-  return {
-    provider: ref.provider,
-    model: ref.model,
-    status: "missing",
-    hasAuth: false,
-    ...(authRequirement ? { authRequirement } : {}),
-  };
-}
-
-function catalogRouteObservation(
-  entry: ModelCatalogEntry | undefined,
-): ModelRouteObservation | undefined {
-  if (!entry) {
     return undefined;
   }
-  const baseUrl = entry.baseUrl;
-  if (entry.api === undefined && baseUrl === undefined) {
-    return undefined;
-  }
-  return {
-    ...(entry.api !== undefined ? { api: entry.api } : {}),
-    ...(baseUrl !== undefined ? { baseUrl } : {}),
-  };
+  return params.provider === "openai" ? ["api_key"] : undefined;
 }
 
-type DefaultModelCatalogFacts = {
-  found: boolean;
-  observedRoutes?: readonly ModelRouteObservation[];
-};
-
-/** Resolve logical model identity and every physical route represented by a catalog. */
-export function resolveDefaultModelCatalogFacts(
-  config: OpenClawConfig,
-  catalog: readonly ModelCatalogEntry[],
-  options?: { agentId?: string; routeVariants?: readonly ModelCatalogEntry[] },
-): DefaultModelCatalogFacts {
-  const ref = resolveDefaultModelForAgent({ cfg: config, agentId: options?.agentId });
-  const provider = normalizeProviderIdForAuth(ref.provider);
-  const modelId = canonicalizeProviderModelId(provider, ref.model);
-  const matches = (entry: ModelCatalogEntry) =>
-    normalizeProviderIdForAuth(entry.provider) === provider &&
-    canonicalizeProviderModelId(provider, entry.id) === modelId;
-  const routeVariants = options?.routeVariants ?? catalog;
-  const observedRoutes = routeVariants
-    .filter(matches)
-    .map(catalogRouteObservation)
-    .filter((route): route is ModelRouteObservation => route !== undefined);
-  return {
-    found: catalog.some(matches) || routeVariants.some(matches),
-    ...(observedRoutes.length > 0 ? { observedRoutes } : {}),
-  };
+function hasProfileForProvider(params: {
+  store: ReturnType<typeof ensureAuthProfileStore>;
+  provider: string;
+  acceptedTypes?: readonly AuthProfileCredential["type"][];
+}): boolean {
+  const profileIds = listProfilesForProvider(params.store, params.provider);
+  if (!params.acceptedTypes) {
+    return profileIds.length > 0;
+  }
+  const acceptedTypes = new Set(params.acceptedTypes);
+  return profileIds.some((profileId) => {
+    const profile = params.store.profiles[profileId];
+    return profile ? acceptedTypes.has(profile.type) : false;
+  });
 }
 
 /** Warn when the selected default model is unknown or has no usable credentials. */
 export async function warnIfModelConfigLooksOff(
   config: OpenClawConfig,
   prompter: WizardPrompter,
-  options?: {
-    agentId?: string;
-    agentDir?: string;
-    validateCatalog?: boolean;
-    env?: NodeJS.ProcessEnv;
-    observedRoutes?: readonly ModelRouteObservation[];
-  },
+  options?: { agentId?: string; agentDir?: string; validateCatalog?: boolean },
 ) {
   const ref = resolveDefaultModelForAgent({
     cfg: config,
     agentId: options?.agentId,
   });
   const warnings: string[] = [];
-  const validationAgentId = options?.agentId ?? resolveDefaultAgentId(config);
-  const snapshot =
-    options?.validateCatalog === false
-      ? { entries: [], routeVariants: [] }
-      : (
-          await publishPreparedModelRuntimeSnapshot(
-            {
-              config,
-              agentId: validationAgentId,
-              agentDir:
-                options?.agentDir ??
-                (options?.agentId
-                  ? resolveAgentDir(config, options.agentId)
-                  : resolveDefaultAgentDir(config)),
-              inheritedAuthDir: resolveDefaultAgentDir(config),
-              workspaceDir: resolveAgentWorkspaceDir(config, validationAgentId),
-            },
-            { force: true, provenance: "explicit" },
-          )
-        ).modelCatalog;
-  const catalog = snapshot.entries;
-  const catalogFacts = resolveDefaultModelCatalogFacts(config, catalog, {
-    ...(options?.agentId ? { agentId: options.agentId } : {}),
-    routeVariants: snapshot.routeVariants,
-  });
-  const observedRoutes = options?.observedRoutes ?? catalogFacts.observedRoutes;
   if (options?.validateCatalog !== false) {
+    const catalog = await loadModelCatalog({
+      config,
+      useCache: false,
+    });
     if (catalog.length > 0) {
-      if (!catalogFacts.found) {
+      const known = catalog.some(
+        (entry) => entry.provider === ref.provider && entry.id === ref.model,
+      );
+      if (!known) {
         warnings.push(
           `Model not found: ${ref.provider}/${ref.model}. Update agents.defaults.model or run /models list.`,
         );
@@ -200,29 +96,30 @@ export async function warnIfModelConfigLooksOff(
     }
   }
 
-  const authStatus = resolveDefaultModelAuthStatus(config, {
-    ...(options?.agentId ? { agentId: options.agentId } : {}),
-    ...(options?.agentDir ? { agentDir: options.agentDir } : {}),
-    ...(options?.env ? { env: options.env } : {}),
-    ...(observedRoutes ? { observedRoutes } : {}),
+  const store = ensureAuthProfileStore(options?.agentDir);
+  const authProviders = resolveAuthProviderCandidates({
+    config,
+    provider: ref.provider,
+    modelId: ref.model,
+    agentId: options?.agentId,
   });
-  if (authStatus.status === "missing") {
+  const acceptedTypes = resolveAcceptedAuthProfileTypes({
+    config,
+    provider: ref.provider,
+  });
+  const hasAuth =
+    authProviders.some((provider) => hasProfileForProvider({ store, provider, acceptedTypes })) ||
+    authProviders.some((provider) => resolveEnvApiKey(provider)) ||
+    authProviders.some((provider) => hasUsableCustomProviderApiKey(config, provider));
+  if (!hasAuth) {
     warnings.push(
       `No auth configured for provider "${ref.provider}". The agent may fail until credentials are added. ${buildProviderAuthRecoveryHint(
         {
           provider: ref.provider,
           config,
-          includeEnvVar: authStatus.authRequirement !== "subscription",
+          includeEnvVar: true,
         },
       )}`,
-    );
-  } else if (authStatus.status === "incompatible") {
-    warnings.push(
-      `Model route is incompatible for "${ref.provider}/${ref.model}": ${authStatus.message}`,
-    );
-  } else if (authStatus.status === "indeterminate") {
-    warnings.push(
-      `Auth readiness could not be confirmed for "${ref.provider}/${ref.model}". Verify the selected model route and credential source before continuing.`,
     );
   }
 

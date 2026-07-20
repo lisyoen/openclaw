@@ -40,24 +40,16 @@ set -e
 
 if [ "$status" -ne 0 ]; then
   echo "Docker plugin binding command escape smoke failed"
-  docker_e2e_print_log "$RUN_LOG"
+  cat "$RUN_LOG"
   exit "$status"
 fi
 
 if ! node - "$RUN_LOG" <<'NODE'
 const fs = require("node:fs");
 const logPath = process.argv[2];
-const scanBytes = 65536;
-const stat = fs.statSync(logPath);
-const length = Math.min(stat.size, scanBytes);
-const buffer = Buffer.alloc(length);
-const fd = fs.openSync(logPath, "r");
-try {
-  fs.readSync(fd, buffer, 0, length, stat.size - length);
-} finally {
-  fs.closeSync(fd);
-}
-const text = buffer.toString("utf8").replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
+const text = fs
+  .readFileSync(logPath, "utf8")
+  .replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
 
 if (!/(?:^|\n)\s*Tests\s+3 passed\b/u.test(text)) {
   console.error("expected focused Vitest summary for exactly 3 passed tests");
@@ -67,7 +59,7 @@ if (!/(?:^|\n)\s*Tests\s+3 passed\b/u.test(text)) {
 NODE
 then
   echo "Docker plugin binding command escape smoke did not stay focused"
-  docker_e2e_print_log "$RUN_LOG"
+  cat "$RUN_LOG"
   exit 1
 fi
 

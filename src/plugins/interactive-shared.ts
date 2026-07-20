@@ -20,7 +20,7 @@ export function validatePluginInteractiveNamespace(namespace: string): string | 
 }
 
 export function resolvePluginInteractiveMatch<TRegistration>(params: {
-  interactiveHandlers: Pick<ReadonlyMap<string, TRegistration>, "get">;
+  interactiveHandlers: Map<string, TRegistration>;
   channel: string;
   data: string;
 }): { registration: TRegistration; namespace: string; payload: string } | null {

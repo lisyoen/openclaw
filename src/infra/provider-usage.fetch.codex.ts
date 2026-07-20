@@ -3,7 +3,6 @@ import { resolveProviderRequestHeaders } from "../agents/provider-request-config
 import { parseStrictFiniteNumber } from "./parse-finite-number.js";
 import {
   buildUsageHttpErrorSnapshot,
-  discardUsageResponseBody,
   fetchJson,
   readUsageJson,
 } from "./provider-usage.fetch.shared.js";
@@ -89,7 +88,6 @@ export async function fetchCodexUsage(
   );
 
   if (!res.ok) {
-    await discardUsageResponseBody(res);
     return buildUsageHttpErrorSnapshot({
       provider: "openai",
       status: res.status,
@@ -129,16 +127,13 @@ export async function fetchCodexUsage(
     });
   }
 
-  const plan = data.plan_type;
-  let billing: ProviderUsageSnapshot["billing"];
+  let plan = data.plan_type;
   if (data.credits?.balance !== undefined && data.credits.balance !== null) {
     const balance =
       typeof data.credits.balance === "number"
         ? data.credits.balance
-        : parseStrictFiniteNumber(data.credits.balance);
-    if (balance !== undefined && balance >= 0) {
-      billing = [{ type: "balance", amount: balance, unit: "credits" }];
-    }
+        : (parseStrictFiniteNumber(data.credits.balance) ?? 0);
+    plan = plan ? `${plan} ($${balance.toFixed(2)})` : `$${balance.toFixed(2)}`;
   }
 
   return {
@@ -146,6 +141,5 @@ export async function fetchCodexUsage(
     displayName: PROVIDER_LABELS.openai,
     windows,
     plan,
-    ...(billing ? { billing } : {}),
   };
 }

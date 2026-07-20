@@ -6,7 +6,6 @@
 import {
   addTimerTimeoutGraceMs,
   asDateTimestampMs,
-  asPositiveSafeInteger,
   clampTimerTimeoutMs,
   parseFiniteNumber,
   resolveDateTimestampMs,
@@ -14,13 +13,7 @@ import {
 } from "@openclaw/normalization-core/number-coercion";
 import { callGateway } from "../gateway/call.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { hasRetryableConnectionErrorCode } from "../infra/retryable-network-errors.js";
 import { normalizeBlockedLivenessWaitStatus } from "../shared/agent-liveness.js";
-import {
-  isOpenClawInternalSourceReplyMirrorAssistantMessage,
-  isOpenClawMessageToolMirrorAssistantMessage,
-  isTranscriptOnlyOpenClawAssistantMessage,
-} from "../shared/transcript-only-openclaw-assistant.js";
 import {
   buildAgentRunTerminalOutcomeFromWaitResult,
   type AgentRunTerminalOutcome,
@@ -33,6 +26,14 @@ import {
 import { extractAssistantText, stripToolMessages } from "./tools/chat-history-text.js";
 
 type GatewayCaller = typeof callGateway;
+
+const defaultRunWaitDeps = {
+  callGateway,
+};
+
+let runWaitDeps: {
+  callGateway: GatewayCaller;
+} = defaultRunWaitDeps;
 
 function resolveRunWaitTimeoutMs(value: number | undefined): number {
   return clampTimerTimeoutMs(parseFiniteNumber(value) ?? 1) ?? 1;
@@ -69,7 +70,7 @@ export type AgentWaitResult = {
 };
 
 /** Summary returned after waiting for a dynamic set of pending runs to drain. */
-type AgentRunsDrainResult = {
+export type AgentRunsDrainResult = {
   timedOut: boolean;
   pendingRunIds: string[];
   deadlineAtMs: number;
@@ -132,6 +133,7 @@ const RECOVERABLE_AGENT_WAIT_ERROR_PATTERNS: readonly RegExp[] = [
   /gateway not connected/i,
   /no active .* listener/i,
   /socket hang up/i,
+  /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EHOSTUNREACH|ENETUNREACH)\b/i,
 ];
 
 /** Return true for transient gateway/transport failures that callers may retry. */
@@ -143,10 +145,7 @@ export function isRecoverableAgentWaitError(error: string | undefined): boolean 
   if (message.includes("gateway timeout")) {
     return false;
   }
-  return (
-    hasRetryableConnectionErrorCode(message) ||
-    RECOVERABLE_AGENT_WAIT_ERROR_PATTERNS.some((pattern) => pattern.test(message))
-  );
+  return RECOVERABLE_AGENT_WAIT_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 function normalizePendingRunIds(runIds: Iterable<string>): string[] {
@@ -161,177 +160,37 @@ function normalizePendingRunIds(runIds: Iterable<string>): string[] {
   return [...seen];
 }
 
-function isWaitedReplyTranscriptArtifact(message: unknown): boolean {
-  return (
-    isTranscriptOnlyOpenClawAssistantMessage(message) ||
-    isOpenClawMessageToolMirrorAssistantMessage(message) ||
-    isInterSessionInputMessage(message)
-  );
-}
-
-function isInterSessionInputMessage(message: unknown): boolean {
-  if (!message || typeof message !== "object" || Array.isArray(message)) {
-    return false;
-  }
-  const provenance = (message as { provenance?: unknown }).provenance;
-  return (
-    Boolean(provenance) &&
-    typeof provenance === "object" &&
-    !Array.isArray(provenance) &&
-    (provenance as { kind?: unknown }).kind === "inter_session"
-  );
-}
-
-function isWaitedReplyTurnBoundary(message: unknown): boolean {
-  if (!message || typeof message !== "object" || Array.isArray(message)) {
-    return false;
-  }
-  return (message as { role?: unknown }).role === "user" || isInterSessionInputMessage(message);
-}
-
-function snapshotAssistantReply(message: unknown): AssistantReplySnapshot | undefined {
-  const text = extractAssistantText(message);
-  if (!text?.trim()) {
-    return undefined;
-  }
-  let fingerprint: string | undefined;
-  try {
-    fingerprint = JSON.stringify(message);
-  } catch {
-    fingerprint = text;
-  }
-  return { text, fingerprint };
-}
-
-function readTranscriptMessageSeq(message: unknown): number | undefined {
-  if (!message || typeof message !== "object" || Array.isArray(message)) {
-    return undefined;
-  }
-  const meta = (message as { __openclaw?: unknown })["__openclaw"];
-  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
-    return undefined;
-  }
-  return asPositiveSafeInteger((meta as { seq?: unknown }).seq);
-}
-
-function readInternalSourceReplyMessageSeq(message: unknown): number | undefined {
-  if (!message || typeof message !== "object" || Array.isArray(message)) {
-    return undefined;
-  }
-  const marker = (message as { openclawMessageToolMirror?: unknown }).openclawMessageToolMirror;
-  if (!marker || typeof marker !== "object" || Array.isArray(marker)) {
-    return undefined;
-  }
-  return asPositiveSafeInteger((marker as { sourceMessageSeq?: unknown }).sourceMessageSeq);
-}
-
-function resolveLatestAssistantReplySnapshot(
-  messages: unknown[],
-  opts?: { stopAtTranscriptArtifact?: boolean },
-): AssistantReplySnapshot {
-  let latestReply: AssistantReplySnapshot = {};
-  const internalSourceReplies: Array<{
-    snapshot: AssistantReplySnapshot;
-    sourceMessageSeq?: number;
-  }> = [];
-  let sawTranscriptArtifact = false;
+function resolveLatestAssistantReplySnapshot(messages: unknown[]): AssistantReplySnapshot {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const candidate = messages[i];
     if (!candidate || typeof candidate !== "object") {
       continue;
     }
-    if (opts?.stopAtTranscriptArtifact === true && isWaitedReplyTurnBoundary(candidate)) {
-      const boundarySeq = readTranscriptMessageSeq(candidate);
-      const currentInternalSourceReply = boundarySeq
-        ? internalSourceReplies.find(
-            (reply) => reply.sourceMessageSeq !== undefined && reply.sourceMessageSeq > boundarySeq,
-          )
-        : undefined;
-      if (currentInternalSourceReply) {
-        return currentInternalSourceReply.snapshot;
-      }
-      if (!boundarySeq && internalSourceReplies.length > 0) {
-        sawTranscriptArtifact = true;
-      }
-      internalSourceReplies.length = 0;
-      break;
-    }
     if ((candidate as { role?: unknown }).role !== "assistant") {
       continue;
     }
-    if (
-      opts?.stopAtTranscriptArtifact === true &&
-      isOpenClawInternalSourceReplyMirrorAssistantMessage(candidate)
-    ) {
-      // Internal source replies still need the outer A2A flow to deliver them.
-      // The source seq prevents a late old result from crossing a new turn.
-      const snapshot = snapshotAssistantReply(candidate);
-      const sourceMessageSeq = readInternalSourceReplyMessageSeq(candidate);
-      if (snapshot) {
-        internalSourceReplies.push({ snapshot, sourceMessageSeq });
-      }
-      if (!sourceMessageSeq) {
-        sawTranscriptArtifact = true;
-      }
+    const text = extractAssistantText(candidate);
+    if (!text?.trim()) {
       continue;
     }
-    if (isWaitedReplyTranscriptArtifact(candidate)) {
-      if (opts?.stopAtTranscriptArtifact === true) {
-        sawTranscriptArtifact = true;
-      }
-      continue;
+    let fingerprint: string | undefined;
+    try {
+      fingerprint = JSON.stringify(candidate);
+    } catch {
+      fingerprint = text;
     }
-    const snapshot = snapshotAssistantReply(candidate);
-    if (!snapshot) {
-      continue;
-    }
-    if (opts?.stopAtTranscriptArtifact !== true) {
-      return snapshot;
-    }
-    if (!latestReply.text) {
-      latestReply = snapshot;
-    }
+    return { text, fingerprint };
   }
-  if (opts?.stopAtTranscriptArtifact === true) {
-    if (internalSourceReplies.length > 0) {
-      sawTranscriptArtifact = true;
-    }
-    if (sawTranscriptArtifact) {
-      return {};
-    }
-  }
-  return latestReply;
-}
-
-export function hasUpdatedAssistantReplySnapshot(
-  latestReply: AssistantReplySnapshot,
-  baseline: AssistantReplySnapshot | undefined,
-): boolean {
-  if (!latestReply.text) {
-    return false;
-  }
-  if (!baseline) {
-    return true;
-  }
-  if (baseline.fingerprint !== undefined) {
-    return latestReply.fingerprint !== baseline.fingerprint;
-  }
-  if (baseline.text !== undefined) {
-    return latestReply.text !== baseline.text;
-  }
-  return true;
+  return {};
 }
 
 /** Read the latest non-tool assistant message for a session. */
 export async function readLatestAssistantReplySnapshot(params: {
   sessionKey: string;
   limit?: number;
-  // Waited reply paths stop at transcript artifacts so they do not resurrect
-  // an older assistant message as a fresh post-run reply.
-  stopAtTranscriptArtifact?: boolean;
   callGateway?: GatewayCaller;
 }): Promise<AssistantReplySnapshot> {
-  const history = await (params.callGateway ?? callGateway)<{
+  const history = await (params.callGateway ?? runWaitDeps.callGateway)<{
     messages: Array<unknown>;
   }>({
     method: "chat.history",
@@ -339,7 +198,6 @@ export async function readLatestAssistantReplySnapshot(params: {
   });
   return resolveLatestAssistantReplySnapshot(
     stripToolMessages(Array.isArray(history?.messages) ? history.messages : []),
-    { stopAtTranscriptArtifact: params.stopAtTranscriptArtifact },
   );
 }
 
@@ -366,7 +224,7 @@ export async function waitForAgentRun(params: {
 }): Promise<AgentWaitResult> {
   const timeoutMs = resolveRunWaitTimeoutMs(params.timeoutMs);
   try {
-    const wait = await (params.callGateway ?? callGateway)({
+    const wait = await (params.callGateway ?? runWaitDeps.callGateway)({
       method: "agent.wait",
       params: {
         runId: params.runId,
@@ -414,14 +272,15 @@ export async function waitForAgentRunAndReadUpdatedAssistantReply(params: {
   const latestReply = await readLatestAssistantReplySnapshot({
     sessionKey: params.sessionKey,
     limit: params.limit,
-    stopAtTranscriptArtifact: true,
     callGateway: params.callGateway,
   });
-  const replyText = hasUpdatedAssistantReplySnapshot(latestReply, params.baseline)
-    ? latestReply.text
-    : undefined;
+  const baselineFingerprint = params.baseline?.fingerprint;
+  const replyText =
+    latestReply.text && (!baselineFingerprint || latestReply.fingerprint !== baselineFingerprint)
+      ? latestReply.text
+      : undefined;
   return {
-    ...wait,
+    status: "ok",
     replyText,
   };
 }
@@ -461,3 +320,16 @@ export async function waitForAgentRunsToDrain(params: {
     deadlineAtMs,
   };
 }
+
+/** Test-only dependency injection for gateway calls. */
+export const testing = {
+  setDepsForTest(overrides?: Partial<{ callGateway: GatewayCaller }>) {
+    runWaitDeps = overrides
+      ? {
+          ...defaultRunWaitDeps,
+          ...overrides,
+        }
+      : defaultRunWaitDeps;
+  },
+};
+export { testing as __testing };

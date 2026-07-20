@@ -14,14 +14,6 @@ function requireFirstNoteText(noteFn: ReturnType<typeof vi.fn>): string {
   return String(message);
 }
 
-function requireNoteTextContaining(noteFn: ReturnType<typeof vi.fn>, expected: string): string {
-  const call = noteFn.mock.calls.find(([message]) => String(message).includes(expected));
-  if (!call) {
-    throw new Error(`expected browser doctor note containing ${expected}`);
-  }
-  return String(call[0]);
-}
-
 describe("browser doctor readiness", () => {
   it("does nothing when Chrome MCP is not configured", async () => {
     const noteFn = vi.fn();
@@ -172,16 +164,14 @@ describe("browser doctor readiness", () => {
       {
         noteFn,
         platform: "darwin",
-        homeDir: "/__openclaw_browser_doctor_missing_home__",
         resolveChromeExecutable: () => null,
       },
     );
 
-    const chromeNote = requireNoteTextContaining(noteFn, "Google Chrome was not found");
-    expect(chromeNote).toContain("brave://inspect/#remote-debugging");
-    const importNote = requireNoteTextContaining(noteFn, "System browser profile cookie import");
-    expect(importNote).toContain("enabled");
-    expect(importNote).toContain("Importable Chrome-family profile cookie databases found: 0");
+    expect(noteFn).toHaveBeenCalledTimes(1);
+    const note = requireFirstNoteText(noteFn);
+    expect(note).toContain("Google Chrome was not found");
+    expect(note).toContain("brave://inspect/#remote-debugging");
   });
 
   it("warns when detected Chrome is too old for Chrome MCP", async () => {

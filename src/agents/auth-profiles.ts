@@ -12,9 +12,11 @@ export type { AuthProfileEligibilityReasonCode } from "./auth-profiles/order.js"
 export { resolveAuthProfileDisplayLabel } from "./auth-profiles/display.js";
 export { formatAuthDoctorHint } from "./auth-profiles/doctor.js";
 export {
+  externalCliDiscoveryExisting,
   externalCliDiscoveryForConfigStatus,
   externalCliDiscoveryForProviderAuth,
   externalCliDiscoveryForProviders,
+  externalCliDiscoveryNone,
   externalCliDiscoveryScoped,
   type ExternalCliAuthDiscovery,
 } from "./auth-profiles/external-cli-discovery.js";
@@ -36,9 +38,7 @@ export {
   dedupeProfileIds,
   listProfilesForProvider,
   markAuthProfileSuccess,
-  removeAuthProfilesWithLock,
   removeProviderAuthProfilesWithLock,
-  resolveSubscriptionAuthModeForProfiles,
   setAuthProfileOrder,
   upsertAuthProfile,
   upsertAuthProfileWithLock,
@@ -48,19 +48,17 @@ export {
   suggestOAuthProfileIdForLegacyDefault,
 } from "./auth-profiles/repair.js";
 export {
-  buildPortableAuthProfileStoreForAgentCopy,
+  buildPortableAuthProfileSecretsStoreForAgentCopy,
   isAuthProfileCredentialPortableForAgentCopy,
   resolveAuthProfilePortability,
   type AuthProfilePortability,
   type AuthProfilePortabilityReason,
 } from "./auth-profiles/portability.js";
 export {
-  clearRuntimeAuthProfileStoreSnapshot,
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
   ensureAuthProfileStoreWithoutExternalProfiles,
   getRuntimeAuthProfileStoreSnapshot,
-  hasAuthProfileStoreSourceForProvider,
   hasAnyAuthProfileStoreSource,
   hasLocalAuthProfileStoreSource,
   loadAuthProfileStoreForSecretsRuntime,

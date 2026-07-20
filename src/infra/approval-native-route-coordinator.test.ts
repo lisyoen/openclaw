@@ -1,23 +1,12 @@
 // Covers native approval route reporting behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createApprovalNativeRouteCoordinator,
-  createApprovalNativeRouteReporter as createApprovalNativeRouteReporterRaw,
+  clearApprovalNativeRouteStateForTest,
+  createApprovalNativeRouteReporter,
 } from "./approval-native-route-coordinator.js";
 
-const approvalRouteReporters: Array<ReturnType<typeof createApprovalNativeRouteReporterRaw>> = [];
-
-function createApprovalNativeRouteReporter(
-  params: Parameters<typeof createApprovalNativeRouteReporterRaw>[0],
-) {
-  const reporter = createApprovalNativeRouteReporterRaw(params);
-  approvalRouteReporters.push(reporter);
-  return reporter;
-}
-
-afterEach(async () => {
-  await Promise.all(approvalRouteReporters.splice(0).map((reporter) => reporter.stop()));
-  vi.useRealTimers();
+afterEach(() => {
+  clearApprovalNativeRouteStateForTest();
 });
 
 function createGatewayRequestMock() {
@@ -28,87 +17,6 @@ function createGatewayRequestMock() {
 }
 
 describe("createApprovalNativeRouteReporter", () => {
-  it("isolates active routes and cleanup between Gateway instances", () => {
-    const first = createApprovalNativeRouteCoordinator();
-    const second = createApprovalNativeRouteCoordinator();
-    const firstReporter = first.createReporter({
-      handledKinds: new Set(["exec"]),
-      channel: "telegram",
-      accountId: "default",
-      requestGateway: createGatewayRequestMock(),
-    });
-    const secondReporter = second.createReporter({
-      handledKinds: new Set(["exec"]),
-      channel: "discord",
-      accountId: "default",
-      requestGateway: createGatewayRequestMock(),
-    });
-    firstReporter.start();
-    secondReporter.start();
-
-    expect(
-      first.hasActiveRuntime({
-        approvalKind: "exec",
-        channel: "telegram",
-        accountId: "default",
-      }),
-    ).toBe(true);
-    expect(
-      second.hasActiveRuntime({
-        approvalKind: "exec",
-        channel: "telegram",
-        accountId: "default",
-      }),
-    ).toBe(false);
-
-    first.close();
-    expect(first.hasActiveRuntime({ approvalKind: "exec", channel: "telegram" })).toBe(false);
-    expect(second.hasActiveRuntime({ approvalKind: "exec", channel: "discord" })).toBe(true);
-    second.close();
-  });
-
-  it("cannot revive routes or notices after the owning Gateway closes", async () => {
-    vi.useFakeTimers();
-    const coordinator = createApprovalNativeRouteCoordinator();
-    const requestGateway = createGatewayRequestMock();
-    const reporter = coordinator.createReporter({
-      handledKinds: new Set(["exec"]),
-      channel: "telegram",
-      accountId: "default",
-      requestGateway,
-    });
-    const request = {
-      id: "approval-after-close",
-      request: {
-        command: "echo hi",
-        turnSourceChannel: "telegram",
-        turnSourceTo: "chat:123",
-      },
-      createdAtMs: 0,
-      expiresAtMs: Date.now() + 60_000,
-    } as const;
-
-    reporter.start();
-    coordinator.close();
-    reporter.start();
-    reporter.observeRequest({ approvalKind: "exec", request });
-    await reporter.reportSkipped({ approvalKind: "exec", request });
-
-    const lateReporter = coordinator.createReporter({
-      handledKinds: new Set(["exec"]),
-      channel: "telegram",
-      accountId: "default",
-      requestGateway,
-    });
-    lateReporter.start();
-    lateReporter.observeRequest({ approvalKind: "exec", request });
-    await lateReporter.reportSkipped({ approvalKind: "exec", request });
-
-    expect(coordinator.hasActiveRuntime({ approvalKind: "exec", channel: "telegram" })).toBe(false);
-    expect(requestGateway).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
   it("caps route-notice cleanup timers to five minutes", () => {
     vi.useFakeTimers();
     try {

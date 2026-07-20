@@ -2,21 +2,23 @@
 import { Buffer } from "node:buffer";
 import type WebSocket from "ws";
 
-// ws emits raw payloads as buffers, ArrayBuffers, or buffer fragments.
+// WebSocket.RawData can arrive as strings, buffers, ArrayBuffers, or buffer
+// fragments depending on ws internals and caller options.
 export function rawDataToString(
   data: WebSocket.RawData,
   encoding: BufferEncoding = "utf8",
 ): string {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (Buffer.isBuffer(data)) {
+    return data.toString(encoding);
+  }
   if (Array.isArray(data)) {
     return Buffer.concat(data).toString(encoding);
   }
-  return data instanceof ArrayBuffer
-    ? Buffer.from(data).toString(encoding)
-    : data.toString(encoding);
-}
-
-export function rawDataByteLength(data: WebSocket.RawData): number {
-  return Array.isArray(data)
-    ? data.reduce((total, chunk) => total + chunk.byteLength, 0)
-    : data.byteLength;
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString(encoding);
+  }
+  return Buffer.from(String(data)).toString(encoding);
 }

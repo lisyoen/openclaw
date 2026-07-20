@@ -52,7 +52,7 @@ function resolveProviderDiscoveryDependencyRoot(rootDir: string): string {
   return rootDir;
 }
 
-function clearProviderDiscoveryModuleLoaders(): void {
+export function clearProviderDiscoveryModuleLoaders(): void {
   providerDiscoveryModuleLoaders.clear();
   for (const [modulePath, rootDir] of providerDiscoveryModuleRoots) {
     clearNativeRequireJavaScriptModuleCache(modulePath, { dependencyRoot: rootDir });
@@ -109,7 +109,9 @@ function loadProviderDiscoveryModule(params: {
 }
 
 function hasLiveProviderDiscoveryHook(provider: ProviderPlugin): boolean {
-  return typeof provider.catalog?.run === "function";
+  return (
+    typeof provider.catalog?.run === "function" || typeof provider.discovery?.run === "function"
+  );
 }
 
 function hasProviderCatalogHook(provider: ProviderPlugin): boolean {
@@ -122,7 +124,10 @@ function hasProviderAuthEnvCredential(
   plugin: PluginManifestRecord,
   env: NodeJS.ProcessEnv,
 ): boolean {
-  const envVars = (plugin.setup?.providers ?? []).flatMap((provider) => provider.envVars ?? []);
+  const envVars = [
+    ...(plugin.setup?.providers ?? []).flatMap((provider) => provider.envVars ?? []),
+    ...Object.values(plugin.providerAuthEnvVars ?? {}).flat(),
+  ];
   return envVars.some((name) => {
     const value = env[name]?.trim();
     return value !== undefined && value !== "";
@@ -176,7 +181,6 @@ function modelDefinitionFromManifestRow(
     contextWindow: row.contextWindow,
     ...(row.contextTokens ? { contextTokens: row.contextTokens } : {}),
     maxTokens: row.maxTokens,
-    ...(row.thinkingLevelMap ? { thinkingLevelMap: { ...row.thinkingLevelMap } } : {}),
     ...(row.headers ? { headers: row.headers } : {}),
     ...(row.compat ? { compat: row.compat } : {}),
     ...(row.mediaInput ? { mediaInput: row.mediaInput } : {}),
@@ -213,11 +217,7 @@ function resolveManifestModelCatalogProviders(
     }
     const plan = planManifestModelCatalogRows({ registry: { plugins: [plugin] } });
     for (const entry of plan.entries) {
-      if (
-        entry.rows.length === 0 ||
-        entry.discovery === "runtime" ||
-        entry.discovery === "refreshable"
-      ) {
+      if (entry.rows.length === 0 || entry.discovery === "runtime") {
         continue;
       }
       const providerConfig = providerConfigFromManifestRows(entry.rows);
@@ -249,8 +249,7 @@ function resolveRuntimeManifestCatalogPluginIds(
     );
     const ownsRuntimeDiscovery = Object.entries(plugin.modelCatalog?.discovery ?? {}).some(
       ([provider, discovery]) =>
-        (discovery === "runtime" || discovery === "refreshable") &&
-        ownedProviders.has(normalizeProviderId(provider)),
+        discovery === "runtime" && ownedProviders.has(normalizeProviderId(provider)),
     );
     if (ownsRuntimeDiscovery) {
       pluginIds.add(plugin.id);
@@ -260,11 +259,7 @@ function resolveRuntimeManifestCatalogPluginIds(
       continue;
     }
     const plan = planManifestModelCatalogRows({ registry: { plugins: [plugin] } });
-    if (
-      plan.entries.some(
-        (entry) => entry.discovery === "runtime" || entry.discovery === "refreshable",
-      )
-    ) {
+    if (plan.entries.some((entry) => entry.discovery === "runtime")) {
       pluginIds.add(plugin.id);
     }
   }

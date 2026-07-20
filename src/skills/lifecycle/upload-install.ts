@@ -15,7 +15,7 @@ import {
 } from "./upload-store.js";
 
 /** Error classes exposed by uploaded skill archive install attempts. */
-type UploadedSkillInstallErrorKind = "invalid-request" | "unavailable";
+export type UploadedSkillInstallErrorKind = "invalid-request" | "unavailable";
 
 /** User-facing disabled message for archive upload installs. */
 export const UPLOADED_SKILL_ARCHIVES_DISABLED_MESSAGE =
@@ -25,7 +25,7 @@ export function areUploadedSkillArchivesEnabled(config: OpenClawConfig): boolean
   return config.skills?.install?.allowUploadedArchives === true;
 }
 
-type UploadedSkillInstallResult =
+export type UploadedSkillInstallResult =
   | {
       ok: true;
       message: string;

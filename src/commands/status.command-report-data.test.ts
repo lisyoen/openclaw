@@ -1,5 +1,4 @@
 // Status command report data tests cover report data assembly from shared status fixtures.
-import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it } from "vitest";
 import { buildStatusCommandReportData } from "./status.command-report-data.ts";
 import { createStatusCommandReportDataParams } from "./status.test-support.ts";
@@ -19,10 +18,7 @@ describe("buildStatusCommandReportData", () => {
             ...baseParams.summary.sessions,
             recent: [
               {
-                ...expectDefined(
-                  baseParams.summary.sessions.recent[0],
-                  "baseParams.summary.sessions.recent[0] test invariant",
-                ),
+                ...baseParams.summary.sessions.recent[0],
                 key: "session-key",
                 kind: "direct",
                 updatedAt: 1,
@@ -152,10 +148,7 @@ describe("buildStatusCommandReportData", () => {
             ...baseParams.summary.sessions,
             recent: [
               {
-                ...expectDefined(
-                  baseParams.summary.sessions.recent[0],
-                  "baseParams.summary.sessions.recent[0] test invariant",
-                ),
+                ...baseParams.summary.sessions.recent[0],
                 configuredModel: "zhipu/glm-4.5-air",
                 selectedModel: "deepseek/deepseek-v4-flash",
                 modelSelectionReason: "session override",

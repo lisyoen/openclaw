@@ -1,7 +1,6 @@
+// Telegram plugin module implements group migration behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { TelegramGroupConfig } from "openclaw/plugin-sdk/config-contracts";
-// Telegram plugin module implements group migration behavior.
-import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import { normalizeAccountId } from "openclaw/plugin-sdk/routing";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 
@@ -37,7 +36,7 @@ function resolveAccountGroups(
   return { groups: matchKey ? accounts[matchKey]?.groups : undefined };
 }
 
-function migrateTelegramGroupsInPlace(
+export function migrateTelegramGroupsInPlace(
   groups: TelegramGroups | undefined,
   oldChatId: string,
   newChatId: string,
@@ -54,7 +53,7 @@ function migrateTelegramGroupsInPlace(
   if (Object.hasOwn(groups, newChatId)) {
     return { migrated: false, skippedExisting: true };
   }
-  groups[newChatId] = expectDefined(groups[oldChatId], "owned Telegram group config key");
+  groups[newChatId] = groups[oldChatId];
   delete groups[oldChatId];
   return { migrated: true, skippedExisting: false };
 }

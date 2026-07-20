@@ -214,15 +214,6 @@ function renderSignalText(ir: MarkdownIR): SignalFormattedText {
       return { start: span.start, end: span.end, style: mapped };
     })
     .filter((span): span is SignalStyleSpan => span !== null);
-  for (const annotation of ir.annotations ?? []) {
-    if (annotation.type === "assistant_transcript_role") {
-      mappedStyles.push({
-        start: annotation.start,
-        end: annotation.end,
-        style: "MONOSPACE",
-      });
-    }
-  }
 
   const adjusted = applyInsertionsToStyles(mappedStyles, insertions);
   const trimmedText = out.trimEnd();
@@ -247,7 +238,6 @@ export function markdownToSignalText(
   options: SignalMarkdownOptions = {},
 ): SignalFormattedText {
   const ir = markdownToIR(markdown ?? "", {
-    assistantTranscriptRoleHeaders: true,
     linkify: true,
     enableSpoilers: true,
     headingStyle: "bold",
@@ -263,7 +253,6 @@ export function markdownToSignalTextChunks(
   options: SignalMarkdownOptions = {},
 ): SignalFormattedText[] {
   const ir = markdownToIR(markdown ?? "", {
-    assistantTranscriptRoleHeaders: true,
     linkify: true,
     enableSpoilers: true,
     headingStyle: "bold",
@@ -273,7 +262,6 @@ export function markdownToSignalTextChunks(
   return renderMarkdownIRChunksWithinLimit({
     ir,
     limit,
-    assistantTranscriptRoleMessageBoundaries: true,
     renderChunk: renderSignalText,
     measureRendered: (rendered) => rendered.text.length,
   }).map(({ rendered }) => rendered);

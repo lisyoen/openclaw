@@ -3,7 +3,7 @@ import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-pay
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import type { LineChannelData } from "./types.js";
 
-type LineDurableReplyOptions = {
+export type LineDurableReplyOptions = {
   to: string;
 };
 

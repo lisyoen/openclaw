@@ -1,11 +1,13 @@
 // Discord plugin module implements proxy request client behavior.
 import { RequestClient, type RequestClientOptions } from "./internal/discord.js";
 
+type ProxyRequestClientOptions = RequestClientOptions;
+
 export const DISCORD_REST_TIMEOUT_MS = 15_000;
 
 export function createDiscordRequestClient(
   token: string,
-  options?: RequestClientOptions,
+  options?: ProxyRequestClientOptions,
 ): RequestClient {
   if (!options?.fetch) {
     return new RequestClient(token, options);

@@ -3,15 +3,6 @@ import net from "node:net";
 import { clearTimeout as clearNodeTimeout, setTimeout as setNodeTimeout } from "node:timers";
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 
-const JSONL_SOCKET_MAX_LINE_BYTES = 16 * 1024 * 1024;
-
-type JsonlSocketRequest<T> = {
-  socketPath: string;
-  requestLine: string;
-  timeoutMs: number;
-  accept: (msg: unknown) => T | null | undefined;
-};
-
 /**
  * Sends one JSONL request line, half-closes the write side, and waits for an accepted response line.
  */
@@ -19,19 +10,18 @@ function resolveJsonlSocketTimeoutMs(timeoutMs: number): number {
   return resolveTimerTimeoutMs(timeoutMs, 1);
 }
 
-async function requestJsonlSocketWithMaxLineBytes<T>(
-  params: JsonlSocketRequest<T>,
-  maxLineBytes: number,
-): Promise<T | null> {
+export async function requestJsonlSocket<T>(params: {
+  socketPath: string;
+  requestLine: string;
+  timeoutMs: number;
+  accept: (msg: unknown) => T | null | undefined;
+}): Promise<T | null> {
   const { socketPath, requestLine, accept } = params;
   const timeoutMs = resolveJsonlSocketTimeoutMs(params.timeoutMs);
   return await new Promise((resolve) => {
     const client = new net.Socket();
     let settled = false;
-    // Keep raw bytes until a line is complete so chunk boundaries cannot split
-    // a UTF-8 code point before JSON parsing.
-    let lineChunks: Buffer[] = [];
-    let lineBytes = 0;
+    let buffer = "";
 
     const finish = (value: T | null) => {
       if (settled) {
@@ -47,25 +37,6 @@ async function requestJsonlSocketWithMaxLineBytes<T>(
       resolve(value);
     };
 
-    const appendLineChunk = (chunk: Buffer): boolean => {
-      if (lineBytes + chunk.byteLength > maxLineBytes) {
-        finish(null);
-        return false;
-      }
-      if (chunk.byteLength > 0) {
-        lineChunks.push(chunk);
-        lineBytes += chunk.byteLength;
-      }
-      return true;
-    };
-
-    const takeLine = (): string => {
-      const line = Buffer.concat(lineChunks, lineBytes).toString("utf8").trim();
-      lineChunks = [];
-      lineBytes = 0;
-      return line;
-    };
-
     const timer = setNodeTimeout(() => finish(null), timeoutMs);
 
     client.on("error", () => finish(null));
@@ -74,21 +45,13 @@ async function requestJsonlSocketWithMaxLineBytes<T>(
     client.connect(socketPath, () => {
       client.end(`${requestLine}\n`);
     });
-    client.on("data", (data: Buffer) => {
-      let offset = 0;
-      while (offset < data.byteLength) {
-        const newlineIndex = data.indexOf(0x0a, offset);
-        if (newlineIndex === -1) {
-          appendLineChunk(data.subarray(offset));
-          return;
-        }
-        // Bound bytes before concatenating or parsing; both complete and unterminated
-        // peer-controlled lines must stay below the same allocation ceiling.
-        if (!appendLineChunk(data.subarray(offset, newlineIndex))) {
-          return;
-        }
-        const line = takeLine();
-        offset = newlineIndex + 1;
+    client.on("data", (data) => {
+      buffer += data.toString("utf8");
+      let idx = buffer.indexOf("\n");
+      while (idx !== -1) {
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        idx = buffer.indexOf("\n");
         if (!line) {
           continue;
         }
@@ -108,6 +71,5 @@ async function requestJsonlSocketWithMaxLineBytes<T>(
   });
 }
 
-export async function requestJsonlSocket<T>(params: JsonlSocketRequest<T>): Promise<T | null> {
-  return await requestJsonlSocketWithMaxLineBytes(params, JSONL_SOCKET_MAX_LINE_BYTES);
-}
+export const testApi = { resolveJsonlSocketTimeoutMs };
+export { testApi as __test__ };

@@ -5,11 +5,12 @@ import type { TelegramNetworkConfig } from "openclaw/plugin-sdk/config-contracts
 import { isTruthyEnvValue, isWSL2Sync } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 
-const TELEGRAM_DISABLE_AUTO_SELECT_FAMILY_ENV = "OPENCLAW_TELEGRAM_DISABLE_AUTO_SELECT_FAMILY";
-const TELEGRAM_ENABLE_AUTO_SELECT_FAMILY_ENV = "OPENCLAW_TELEGRAM_ENABLE_AUTO_SELECT_FAMILY";
+export const TELEGRAM_DISABLE_AUTO_SELECT_FAMILY_ENV =
+  "OPENCLAW_TELEGRAM_DISABLE_AUTO_SELECT_FAMILY";
+export const TELEGRAM_ENABLE_AUTO_SELECT_FAMILY_ENV = "OPENCLAW_TELEGRAM_ENABLE_AUTO_SELECT_FAMILY";
 export const TELEGRAM_DNS_RESULT_ORDER_ENV = "OPENCLAW_TELEGRAM_DNS_RESULT_ORDER";
 
-type TelegramAutoSelectFamilyDecision = {
+export type TelegramAutoSelectFamilyDecision = {
   value: boolean | null;
   source?: string;
 };
@@ -24,7 +25,7 @@ function isWSL2SyncCached(): boolean {
   return wsl2SyncCache;
 }
 
-type TelegramDnsResultOrderDecision = {
+export type TelegramDnsResultOrderDecision = {
   value: string | null;
   source?: string;
 };
@@ -111,4 +112,8 @@ export function resolveTelegramDnsResultOrderDecision(params?: {
   }
 
   return { value: null };
+}
+
+export function resetTelegramNetworkConfigStateForTests(): void {
+  wsl2SyncCache = undefined;
 }

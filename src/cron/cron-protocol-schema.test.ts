@@ -1,12 +1,8 @@
 // Cron protocol schema tests cover runtime validation for cron protocol payloads.
 import { describe, expect, it } from "vitest";
-import {
-  CronJobStateSchema,
-  CronPacingSchema,
-} from "../../packages/gateway-protocol/src/schema.js";
+import { CronJobStateSchema } from "../../packages/gateway-protocol/src/schema.js";
 
 type SchemaLike = {
-  description?: string;
   properties?: Record<string, unknown>;
   deprecated?: boolean;
 };
@@ -26,11 +22,5 @@ describe("cron protocol schema", () => {
     expect(properties.lastFailureNotificationDelivered).toBeDefined();
     expect(properties.lastFailureNotificationDeliveryStatus).toBeDefined();
     expect(properties.lastFailureNotificationDeliveryError).toBeDefined();
-  });
-
-  it("documents that pacing requires at least one bound", () => {
-    expect((CronPacingSchema as SchemaLike).description).toContain(
-      "at least one of min or max is required",
-    );
   });
 });

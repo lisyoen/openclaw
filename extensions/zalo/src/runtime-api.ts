@@ -63,6 +63,7 @@ export {
   isNumericTargetId,
   sendPayloadWithChunkedTextAndMedia,
 } from "./runtime-support.js";
+export { resolveInboundRouteEnvelopeBuilderWithRuntime } from "./runtime-support.js";
 export { waitForAbortSignal } from "./runtime-support.js";
 export {
   WEBHOOK_ANOMALY_COUNTER_DEFAULTS,

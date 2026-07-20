@@ -12,8 +12,6 @@ import { modelKey } from "./shared.js";
 export async function loadListModelRegistry(
   cfg: OpenClawConfig,
   opts?: {
-    agentId?: string;
-    agentDir?: string;
     providerFilter?: string;
     normalizeModels?: boolean;
     loadAvailability?: boolean;
@@ -50,30 +48,20 @@ function findConfiguredRegistryModel(params: {
 }
 
 /** Loads only configured registry entries and their auth availability. */
-export async function loadConfiguredListModelRegistry(
+export function loadConfiguredListModelRegistry(
   cfg: OpenClawConfig,
   entries: ConfiguredEntry[],
-  opts?: {
-    agentId?: string;
-    agentDir?: string;
-    providerFilter?: string;
-    workspaceDir?: string;
-  },
+  opts?: { providerFilter?: string; workspaceDir?: string },
 ) {
-  const registryOptions = {
-    ...(opts?.agentId ? { agentId: opts.agentId } : {}),
-    ...(opts?.agentDir ? { agentDir: opts.agentDir } : {}),
-    ...(opts?.workspaceDir ? { workspaceDir: opts.workspaceDir } : {}),
-    ...(opts?.providerFilter ? { providerFilter: opts.providerFilter } : {}),
-  };
-  // Preparation and the synchronous fork must address the same credential-aware owner.
-  // Configured-only rows use registry auth state to report local availability.
-  const { config: runtimeConfig, registry } = await loadAgentModelRegistry(cfg, registryOptions);
+  const { registry } = loadAgentModelRegistry(cfg, {
+    workspaceDir: opts?.workspaceDir,
+    providerFilter: opts?.providerFilter,
+  });
   const discoveredKeys = new Set<string>();
   const availableKeys = new Set<string>();
 
   for (const entry of entries) {
-    const model = findConfiguredRegistryModel({ registry, entry, cfg: runtimeConfig });
+    const model = findConfiguredRegistryModel({ registry, entry, cfg });
     if (!model) {
       continue;
     }

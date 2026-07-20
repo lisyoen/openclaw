@@ -47,7 +47,7 @@ function isAdvisoryStep(step: { advisory?: UpdateStepAdvisory }): boolean {
 }
 
 /** Convert updater failure reasons and stderr tails into operator-facing recovery hints. */
-function inferUpdateFailureHints(result: UpdateRunResult): string[] {
+export function inferUpdateFailureHints(result: UpdateRunResult): string[] {
   if (result.status !== "error") {
     return [];
   }
@@ -115,7 +115,7 @@ function inferUpdateFailureHints(result: UpdateRunResult): string[] {
 }
 
 /** Runner-facing progress callbacks plus terminal spinner cleanup. */
-type ProgressController = {
+export type ProgressController = {
   progress: UpdateStepProgress;
   stop: () => void;
 };

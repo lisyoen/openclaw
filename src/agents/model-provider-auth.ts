@@ -8,7 +8,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { hashRuntimeConfigValue } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { toErrorObject } from "../infra/errors.js";
 import {
   listAgentIds,
   resolveAgentDir,
@@ -25,17 +24,12 @@ import {
   type AuthProfileStore,
 } from "./auth-profiles.js";
 import {
-  createModelAuthAvailabilityResolver,
-  type ModelAuthAvailabilityEvaluation,
-  type ModelAuthAvailabilityRef,
-  type ModelAuthAvailabilityResolver,
-} from "./model-auth-availability.js";
-import {
   createRuntimeProviderAuthLookup,
   hasAvailableAuthForProvider,
   hasRuntimeAvailableProviderAuth,
   type RuntimeProviderAuthLookup,
 } from "./model-auth.js";
+import { loadModelCatalog } from "./model-catalog.js";
 import {
   cancelCurrentProviderAuthWarmWorker,
   claimCurrentProviderAuthStateGeneration,
@@ -50,6 +44,8 @@ import {
 } from "./model-provider-auth-state.js";
 import { normalizeProviderId } from "./model-selection.js";
 import { resolveDefaultAgentWorkspaceDir } from "./workspace.js";
+
+export type { ProviderAuthWarmSnapshot } from "./model-provider-auth-state.js";
 
 type ProviderAuthWarmWorkerResult =
   | {
@@ -223,17 +219,7 @@ export async function hasAuthForModelProvider(params: {
   return false;
 }
 
-export type ProviderModelAuthChecker = ((
-  provider: string,
-  ref?: ModelAuthAvailabilityRef,
-) => Promise<boolean>) & {
-  evaluateModelAuth(
-    provider: string,
-    ref?: ModelAuthAvailabilityRef,
-  ): Promise<ModelAuthAvailabilityEvaluation>;
-};
-
-/** Creates a cached provider-auth evaluator bound to one agent/runtime context. */
+/** Creates a cached provider-auth checker bound to one agent/runtime context. */
 export function createProviderAuthChecker(params: {
   cfg?: OpenClawConfig;
   workspaceDir?: string;
@@ -243,104 +229,38 @@ export function createProviderAuthChecker(params: {
   allowPluginSyntheticAuth?: boolean;
   discoverExternalCliAuth?: boolean;
   allowPreparedRuntimeAuth?: boolean;
-}): ProviderModelAuthChecker {
-  const authCache = new Map<string, Promise<ModelAuthAvailabilityEvaluation>>();
+}): (provider: string, modelApi?: string) => Promise<boolean> {
+  const authCache = new Map<string, boolean>();
   let runtimeAuthLookup: RuntimeProviderAuthLookup | undefined;
-  let modelAuthResolver: ModelAuthAvailabilityResolver | undefined;
-  const resolveModelAuthResolver = () => {
-    if (modelAuthResolver) {
-      return modelAuthResolver;
-    }
-    const agentDir =
-      params.agentDir ??
-      (params.agentId && params.cfg
-        ? resolveAgentDir(params.cfg, params.agentId, params.env)
-        : undefined);
-    const authStore = ensureAuthProfileStoreWithoutExternalProfiles(agentDir, {
-      allowKeychainPrompt: false,
-    });
-    runtimeAuthLookup ??= createRuntimeProviderAuthLookup({
-      cfg: params.cfg,
-      workspaceDir: params.workspaceDir,
-      env: params.env,
-      includePluginSyntheticAuth: params.allowPluginSyntheticAuth !== false,
-    });
-    modelAuthResolver = createModelAuthAvailabilityResolver({
-      cfg: params.cfg ?? {},
-      authStore,
-      agentDir,
-      workspaceDir: params.workspaceDir,
-      env: params.env,
-      skipSetupProviderFallback: true,
-      allowPreparedRuntimeAuth:
-        params.allowPreparedRuntimeAuth === true ||
-        (params.discoverExternalCliAuth !== false && params.allowPluginSyntheticAuth !== false),
-      syntheticAuthProviderRefs: runtimeAuthLookup.syntheticAuthProviderRefs,
-      ...(params.discoverExternalCliAuth === false ? {} : { externalCliProviderIds: ["openai"] }),
-    });
-    return modelAuthResolver;
-  };
-  const evaluateModelAuth = (
-    provider: string,
-    ref: ModelAuthAvailabilityRef = {},
-  ): Promise<ModelAuthAvailabilityEvaluation> => {
+  return async (provider: string, modelApi?: string) => {
     const key = normalizeProviderId(provider);
-    const hasRouteFacts =
-      ref.modelId !== undefined ||
-      ref.api !== undefined ||
-      ref.baseUrl !== undefined ||
-      ref.observedRoutes !== undefined;
-    const cacheKey = hasRouteFacts
-      ? `${key}\0${hashRuntimeConfigValue(ref as unknown as OpenClawConfig)}`
-      : key;
+    const cacheKey = modelApi === undefined ? key : `${key}\0${modelApi}`;
     const cached = authCache.get(cacheKey);
-    if (cached) {
+    if (cached !== undefined) {
       return cached;
     }
-    const resolveLegacyProviderAuth = () =>
-      hasAuthForModelProvider({
-        provider: key,
-        modelApi: typeof ref.api === "string" ? ref.api : undefined,
-        cfg: params.cfg,
-        workspaceDir: params.workspaceDir,
-        agentDir: params.agentDir,
-        agentId: params.agentId,
-        env: params.env,
-        allowPluginSyntheticAuth: params.allowPluginSyntheticAuth,
-        discoverExternalCliAuth: params.discoverExternalCliAuth,
-        allowPreparedRuntimeAuth: params.allowPreparedRuntimeAuth,
-        resolveRuntimeAuthLookup: () =>
-          (runtimeAuthLookup ??= createRuntimeProviderAuthLookup({
-            cfg: params.cfg,
-            workspaceDir: params.workspaceDir,
-            env: params.env,
-            includePluginSyntheticAuth: params.allowPluginSyntheticAuth !== false,
-          })),
-      });
-    const evaluation = Promise.resolve().then(
-      async (): Promise<ModelAuthAvailabilityEvaluation> => {
-        if (hasRouteFacts) {
-          return resolveModelAuthResolver().evaluateModelAuth(key, ref);
-        }
-        return {
-          availability: await resolveLegacyProviderAuth(),
-          routeResolution: null,
-        };
-      },
-    );
-    authCache.set(cacheKey, evaluation);
-    void evaluation.catch(() => {
-      if (authCache.get(cacheKey) === evaluation) {
-        authCache.delete(cacheKey);
-      }
+    const value = await hasAuthForModelProvider({
+      provider: key,
+      modelApi,
+      cfg: params.cfg,
+      workspaceDir: params.workspaceDir,
+      agentDir: params.agentDir,
+      agentId: params.agentId,
+      env: params.env,
+      allowPluginSyntheticAuth: params.allowPluginSyntheticAuth,
+      discoverExternalCliAuth: params.discoverExternalCliAuth,
+      allowPreparedRuntimeAuth: params.allowPreparedRuntimeAuth,
+      resolveRuntimeAuthLookup: () =>
+        (runtimeAuthLookup ??= createRuntimeProviderAuthLookup({
+          cfg: params.cfg,
+          workspaceDir: params.workspaceDir,
+          env: params.env,
+          includePluginSyntheticAuth: params.allowPluginSyntheticAuth !== false,
+        })),
     });
-    return evaluation;
+    authCache.set(cacheKey, value);
+    return value;
   };
-  return Object.assign(
-    async (provider: string, ref: ModelAuthAvailabilityRef = {}) =>
-      (await evaluateModelAuth(provider, ref)).availability === true,
-    { evaluateModelAuth },
-  );
 }
 
 function serializeProviderAuthStates(
@@ -398,31 +318,26 @@ export async function buildCurrentProviderAuthStateSnapshot(
   } = {},
 ): Promise<ProviderAuthWarmSnapshot> {
   const isWarmStale = () => options.isCancelled?.() === true;
+  const catalog = await loadModelCatalog({ config: cfg, readOnly: true });
+  if (isWarmStale()) {
+    return { agents: [] };
+  }
+  const providers = new Set<string>();
+  for (const entry of catalog) {
+    providers.add(normalizeProviderId(entry.provider));
+  }
+  const providerList = [...providers];
   const configFingerprint = resolveProviderAuthConfigFingerprint(cfg) ?? "";
   const states = new Map<string, PreparedProviderAuthState>();
-  // Catalog generations are agent-scoped because provider plugins and auth stores can differ.
-  // Keep each auth snapshot paired with the same lifecycle owner that supplied its model rows.
+  // Warm one entry per configured agent so callers hit the prepared map for
+  // any agentId. The catalog above is shared across agents; the per-agent
+  // work is the auth-discovery sweep against that agent's store.
   for (const agentId of listAgentIds(cfg)) {
     if (isWarmStale()) {
       return { agents: [] };
     }
+    const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     const agentDir = resolveAgentDir(cfg, agentId);
-    // Worker warmup is the only path that may need to construct a read-only catalog generation.
-    // Keep the lifecycle graph out of foreground provider-auth module initialization.
-    const { loadPreparedModelCatalogOwnerSnapshot } = await import("./prepared-model-catalog.js");
-    const preparedOwner = await loadPreparedModelCatalogOwnerSnapshot({
-      config: cfg,
-      agentId,
-      agentDir,
-      readOnly: true,
-    });
-    const workspaceDir = preparedOwner.workspaceDir ?? resolveAgentWorkspaceDir(cfg, agentId);
-    const catalog = preparedOwner.modelCatalog.entries;
-    if (isWarmStale()) {
-      return { agents: [] };
-    }
-    const providers = new Set(catalog.map((entry) => normalizeProviderId(entry.provider)));
-    const providerList = [...providers];
     const runtimeAuthLookup =
       options.runtimeAuthLookups?.get(agentId) ??
       createRuntimeProviderAuthLookup({
@@ -479,6 +394,30 @@ export async function buildCurrentProviderAuthStateSnapshot(
     });
   }
   return serializeProviderAuthStates(states);
+}
+
+/** Warms process-current provider auth state on the main thread. */
+export async function warmCurrentProviderAuthState(
+  cfg: OpenClawConfig,
+  options: { isCancelled?: () => boolean } = {},
+): Promise<void> {
+  // Claim a fresh generation; any concurrent warm or clear bumps this and
+  // turns our published state stale.
+  const ownGeneration = claimCurrentProviderAuthStateGeneration();
+  const isWarmStale = () =>
+    options.isCancelled?.() === true || !isCurrentProviderAuthStateGeneration(ownGeneration);
+  const snapshot = await buildCurrentProviderAuthStateSnapshot(cfg, {
+    isCancelled: isWarmStale,
+  });
+  if (isWarmStale()) {
+    return;
+  }
+  if (options.isCancelled?.() || !isCurrentProviderAuthStateGeneration(ownGeneration)) {
+    // A newer warm or clear ran while we were building; skip publication so
+    // the newer answer wins.
+    return;
+  }
+  publishProviderAuthWarmSnapshot(snapshot);
 }
 
 function resolveProviderAuthWarmWorkerUrl(currentModuleUrl: string): URL {
@@ -669,7 +608,7 @@ function runProviderAuthWarmWorker(params: {
           resolve({ agents: [] });
           return;
         }
-        reject(toErrorObject(error, "Non-Error rejection"));
+        reject(toLintErrorObject(error, "Non-Error rejection"));
       });
     });
     worker.once("exit", (code) => {
@@ -724,4 +663,18 @@ export async function warmCurrentProviderAuthStateOffMainThread(
     return;
   }
   publishProviderAuthWarmSnapshot(snapshot);
+}
+
+function toLintErrorObject(value: unknown, fallbackMessage: string): Error {
+  if (value instanceof Error) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return new Error(value);
+  }
+  const error = new Error(fallbackMessage, { cause: value });
+  if ((typeof value === "object" && value !== null) || typeof value === "function") {
+    Object.assign(error, value);
+  }
+  return error;
 }

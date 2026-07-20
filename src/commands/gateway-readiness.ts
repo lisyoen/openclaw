@@ -16,7 +16,7 @@ const daemonLifecycleModuleLoader = createLazyImportLoader(
 );
 
 /** Result returned after checking, optionally installing, and optionally starting the gateway. */
-type GatewayReadinessResult =
+export type GatewayReadinessResult =
   | {
       ready: true;
       status: DaemonStatus;
@@ -37,7 +37,7 @@ type GatewayReadinessDeps = {
 };
 
 /** Inputs controlling readiness checks, recovery prompts, and injectable test seams. */
-type GatewayReadinessOptions = {
+export type GatewayReadinessOptions = {
   runtime: RuntimeEnv;
   operation: string;
   yes?: boolean;

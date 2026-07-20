@@ -23,7 +23,7 @@ export function usage() {
 /**
  * Parses aggregate check runner arguments.
  */
-function parseCheckArgs(argv) {
+export function parseCheckArgs(argv) {
   const args = {
     help: false,
     includeArchitecture: false,
@@ -87,9 +87,7 @@ export async function main(argv = process.argv.slice(2)) {
       parallel: true,
       commands: [
         { name: "conflict markers", args: ["check:no-conflict-markers"] },
-        { name: "max-lines suppression ratchet", args: ["check:max-lines-ratchet"] },
         { name: "changelog attributions", args: ["check:changelog-attributions"] },
-        { name: "database-first legacy-store guard", args: ["check:database-first-legacy-stores"] },
         {
           name: "guarded extension wildcard re-exports",
           args: ["lint:extensions:no-guarded-wildcard-reexports"],
@@ -110,27 +108,22 @@ export async function main(argv = process.argv.slice(2)) {
         { name: "duplicate scan target coverage", args: ["dup:check:coverage"] },
         { name: "npm shrinkwrap guard", args: ["deps:shrinkwrap:check"] },
         { name: "package patch guard", args: ["deps:patches:check"] },
-        { name: "script declaration contracts", args: ["check:script-declarations"] },
       ],
     },
     {
       name: "typecheck",
       parallel: false,
-      commands: args.includeTestTypes
-        ? [{ name: "typecheck all", args: ["tsgo:all"] }]
-        : [
-            { name: "typecheck prod", args: ["tsgo:prod"] },
-            { name: "typecheck scripts", args: ["tsgo:scripts"] },
-            { name: "typecheck test root", args: ["tsgo:test:root"] },
-          ],
+      commands: [
+        {
+          name: args.includeTestTypes ? "typecheck all" : "typecheck prod",
+          args: [args.includeTestTypes ? "tsgo:all" : "tsgo:prod"],
+        },
+      ],
     },
     {
       name: "lint",
       parallel: false,
-      commands: [
-        { name: "lint", args: ["lint"] },
-        { name: "format", args: ["format:check"] },
-      ],
+      commands: [{ name: "lint", args: ["lint"] }],
     },
     {
       name: "policy guards",

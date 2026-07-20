@@ -86,6 +86,17 @@ export function applyXiaomiConfig(cfg: OpenClawConfig): OpenClawConfig {
   return xiaomiPresetAppliers.applyConfig(cfg);
 }
 
+export function applyXiaomiTokenPlanProviderConfig(
+  cfg: OpenClawConfig,
+  region: XiaomiTokenPlanRegion,
+): OpenClawConfig {
+  return withProviderBaseUrl(
+    xiaomiTokenPlanPresetAppliers.applyProviderConfig(cfg),
+    XIAOMI_TOKEN_PLAN_PROVIDER_ID,
+    resolveXiaomiTokenPlanBaseUrl(region),
+  );
+}
+
 export function applyXiaomiTokenPlanConfig(
   cfg: OpenClawConfig,
   region: XiaomiTokenPlanRegion,

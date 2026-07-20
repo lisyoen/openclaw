@@ -16,15 +16,11 @@ class A2UIHandler(
   fun isTrustedCanvasActionUrl(rawUrl: String?): Boolean = CanvasActionTrust.isTrustedCanvasActionUrl(rawUrl)
 
   suspend fun ensureA2uiReady(): Boolean {
-    val alreadyOnA2uiHost = canvas.currentUrl()?.trim() == CanvasActionTrust.localA2uiAssetUrl
-    if (!canvas.showAndAwaitHost()) return false
-    if (!alreadyOnA2uiHost) {
-      canvas.showLocalA2ui()
-    }
-    if (alreadyOnA2uiHost && isA2uiReady()) {
+    if (canvas.currentUrl()?.trim() == CanvasActionTrust.localA2uiAssetUrl && isA2uiReady()) {
       return true
     }
 
+    canvas.showLocalA2ui()
     // The bundled A2UI host bootstraps asynchronously after navigation; poll briefly before failing the command.
     repeat(50) {
       if (isA2uiReady()) return true

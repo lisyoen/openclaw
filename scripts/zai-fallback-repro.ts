@@ -53,6 +53,11 @@ type RunZaiFallbackReproDeps = {
   writeFile?: typeof fs.writeFile;
 };
 
+function resolveEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const key = Object.keys(env).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  return key === undefined ? undefined : env[key];
+}
+
 export function appendBoundedReproOutput(
   capture: OutputCapture,
   chunk: unknown,
@@ -119,7 +124,7 @@ export function resolveZaiFallbackPnpmCommand(
 ): PnpmCommand {
   const env = options.env ?? process.env;
   const command = resolvePnpmRunner({
-    comSpec: options.comSpec,
+    comSpec: options.comSpec ?? resolveEnvValue(env, "ComSpec"),
     env,
     npmExecPath: options.npmExecPath ?? env.npm_execpath,
     nodeExecPath: options.execPath ?? process.execPath,

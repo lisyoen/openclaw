@@ -178,7 +178,9 @@ describe("defineSingleProviderPluginEntry", () => {
           }),
           allowExplicitBaseUrl: true,
         },
-        preserveLiteralProviderPrefix: true,
+        capabilities: {
+          transcriptToolCallIdMode: "strict9",
+        },
       },
       register(api) {
         api.registerWebSearchProvider({
@@ -221,7 +223,7 @@ describe("defineSingleProviderPluginEntry", () => {
     expect(provider?.label).toBe("Gateway");
     expect(provider?.aliases).toEqual(["gw"]);
     expect(provider?.envVars).toEqual(["GATEWAY_KEY", "SECONDARY_KEY"]);
-    expect(provider?.preserveLiteralProviderPrefix).toBe(true);
+    expect(provider?.capabilities?.transcriptToolCallIdMode).toBe("strict9");
     expect(provider?.auth[0]?.wizard?.choiceId).toBe("gateway-api-key");
     expect(provider?.auth[0]?.wizard?.groupId).toBe("shared-gateway");
     expect(provider?.auth[0]?.wizard?.groupLabel).toBe("Shared Gateway");

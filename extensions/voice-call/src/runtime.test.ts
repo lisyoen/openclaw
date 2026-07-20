@@ -29,42 +29,22 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./config.js", () => ({
   resolveVoiceCallSessionKey: (params: {
-    config: Pick<VoiceCallConfig, "agentId" | "sessionScope">;
+    config: Pick<VoiceCallConfig, "sessionScope">;
     callId: string;
     phone?: string;
     explicitSessionKey?: string;
   }) => {
     const explicit = params.explicitSessionKey?.trim();
     if (explicit) {
-      const lower = explicit.toLowerCase();
-      return lower === "global" || lower === "unknown" || lower.startsWith("agent:")
-        ? explicit
-        : `agent:${params.config.agentId?.trim().toLowerCase() || "main"}:${explicit}`;
+      return explicit;
     }
-    const agentId = params.config.agentId?.trim().toLowerCase() || "main";
-    const prefix = `agent:${agentId}:voice`;
     if (params.config.sessionScope === "per-call") {
-      return `${prefix}:call:${params.callId}`.toLowerCase();
+      return `voice:call:${params.callId}`;
     }
     const normalizedPhone = params.phone?.replace(/\D/g, "");
-    return (
-      normalizedPhone ? `${prefix}:${normalizedPhone}` : `${prefix}:${params.callId}`
-    ).toLowerCase();
+    return normalizedPhone ? `voice:${normalizedPhone}` : `voice:${params.callId}`;
   },
-  resolveVoiceCallNumberRouteKeyForCall: (call: {
-    direction?: "inbound" | "outbound";
-    to?: string;
-    metadata?: { numberRouteKey?: unknown };
-  }) =>
-    call.direction === "inbound"
-      ? typeof call.metadata?.numberRouteKey === "string"
-        ? call.metadata.numberRouteKey
-        : call.to
-      : undefined,
-  resolveVoiceCallEffectiveConfig: (config: VoiceCallConfig, numberRouteKey?: string) => {
-    const route = numberRouteKey ? config.numbers[numberRouteKey] : undefined;
-    return route ? { config: { ...config, ...route }, numberRouteKey } : { config };
-  },
+  resolveVoiceCallEffectiveConfig: (config: VoiceCallConfig) => ({ config }),
   resolveVoiceCallConfig: mocks.resolveVoiceCallConfig,
   resolveTwilioAuthToken: mocks.resolveTwilioAuthToken,
   validateProviderConfig: mocks.validateProviderConfig,
@@ -323,67 +303,6 @@ describe("createVoiceCallRuntime lifecycle", () => {
     expect(mocks.webhookCtorArgs[0]?.[4]).toBe(fullConfig);
   });
 
-  it("builds realtime instructions for the agent frozen on each call", async () => {
-    const config = createBaseConfig();
-    config.realtime.enabled = true;
-    config.realtime.agentContext = {
-      enabled: true,
-      maxChars: 6000,
-      includeIdentity: true,
-      includeWorkspaceFiles: false,
-      files: ["SOUL.md"],
-    };
-    const fullConfig = {
-      agents: { list: [{ id: "operator", default: true }, { id: "support" }] },
-    } as OpenClawConfig;
-    const resolveAgentIdentity = vi.fn((_cfg: OpenClawConfig, agentId: string) => ({
-      name: agentId === "support" ? "Support Voice" : "Main Voice",
-    }));
-
-    const runtime = await createVoiceCallRuntime({
-      config,
-      coreConfig: {} as CoreConfig,
-      fullConfig,
-      agentRuntime: {
-        resolveAgentIdentity,
-      } as never,
-    });
-
-    const resolveInstructions = mocks.realtimeHandlerCtorArgs[0]?.[7];
-    if (typeof resolveInstructions !== "function") {
-      throw new Error("expected per-call realtime instruction resolver");
-    }
-    expect(runtime.config.agentId).toBe("operator");
-    const defaultInstructions = resolveInstructions({
-      callId: "call-default",
-      direction: "outbound",
-      from: "+15550001111",
-      to: "+15550002222",
-    });
-    expect(defaultInstructions).toContain("- Agent id: operator");
-    expect(resolveAgentIdentity).toHaveBeenCalledWith(fullConfig, "operator");
-
-    const supportInstructions = resolveInstructions({
-      callId: "call-support",
-      agentId: "support",
-      direction: "outbound",
-      from: "+15550001111",
-      to: "+15550002222",
-    });
-    expect(supportInstructions).toContain("- Agent id: support");
-    expect(supportInstructions).toContain("- Name: Support Voice");
-    expect(supportInstructions).not.toContain("Main Voice");
-
-    const unknownInstructions = resolveInstructions({
-      callId: "call-unknown",
-      agentId: "unknown",
-      direction: "outbound",
-      from: "+15550001111",
-      to: "+15550002222",
-    });
-    expect(unknownInstructions).not.toContain("OpenClaw agent voice context:");
-  });
-
   it.each(["twilio", "telnyx", "plivo"] as const)(
     "fails closed when %s falls back to a local-only webhook",
     async (provider) => {
@@ -459,13 +378,9 @@ describe("createVoiceCallRuntime lifecycle", () => {
     await runtime.stop();
   });
 
-  it("wires realtime consults and keeps outbound calls off inbound number routes", async () => {
+  it("wires the shared realtime agent consult tool and handler", async () => {
     const config = createBaseConfig();
     config.inboundPolicy = "allowlist";
-    config.numbers["+15550009999"] = {
-      agentId: "inbound-route",
-      responseModel: "openai/gpt-5.5",
-    };
     config.realtime.enabled = true;
     config.realtime.tools = [
       {
@@ -493,7 +408,6 @@ describe("createVoiceCallRuntime lifecycle", () => {
     };
     mocks.managerGetCall.mockReturnValue({
       callId: "call-1",
-      agentId: "support",
       direction: "outbound",
       from: "+15550001234",
       to: "+15550009999",
@@ -532,8 +446,7 @@ describe("createVoiceCallRuntime lifecycle", () => {
       firstCallParam(runEmbeddedAgent.mock.calls as unknown[][], "embedded OpenClaw consult"),
       "embedded OpenClaw consult params",
     );
-    expect(consultParams.agentId).toBe("support");
-    expect(consultParams.sessionKey).toBe("agent:support:voice:15550009999");
+    expect(consultParams.sessionKey).toBe("voice:15550009999");
     expect(consultParams.spawnedBy).toBe("agent:main:discord:channel:general");
     expect(consultParams.messageProvider).toBe("voice");
     expect(consultParams.lane).toBe("voice");
@@ -552,7 +465,7 @@ describe("createVoiceCallRuntime lifecycle", () => {
     expect(consultParams.prompt).toContain("Caller: Also check the ETA.");
   });
 
-  it("canonicalizes restored legacy per-call keys for realtime consults", async () => {
+  it("uses persisted per-call session keys for realtime consults", async () => {
     const config = createBaseConfig();
     config.inboundPolicy = "allowlist";
     config.realtime.enabled = true;
@@ -600,51 +513,7 @@ describe("createVoiceCallRuntime lifecycle", () => {
       ),
       "per-call embedded OpenClaw consult params",
     );
-    expect(consultParams.sessionKey).toBe("agent:main:voice:call:call-1");
-  });
-
-  it("blocks locked Codex realtime consults before fast context or model dispatch", async () => {
-    const config = createBaseConfig();
-    config.realtime.enabled = true;
-    const sessionStore: Record<string, unknown> = {
-      "agent:main:voice:15550001234": {
-        sessionId: "locked-codex-session",
-        updatedAt: 1,
-        agentHarnessId: "codex",
-        modelSelectionLocked: true,
-      },
-    };
-    const runEmbeddedAgent = vi.fn();
-    const agentRuntime = {
-      resolveAgentDir: vi.fn(() => "/tmp/agent"),
-      resolveAgentWorkspaceDir: vi.fn(() => "/tmp/workspace"),
-      resolveAgentIdentity: vi.fn(),
-      resolveThinkingDefault: vi.fn(() => "high"),
-      resolveAgentTimeoutMs: vi.fn(() => 30_000),
-      ensureAgentWorkspace: vi.fn(async () => {}),
-      session: createMockSessionRuntime(sessionStore),
-      runEmbeddedAgent,
-    };
-    mocks.managerGetCall.mockReturnValue({
-      callId: "call-locked",
-      direction: "inbound",
-      from: "+15550001234",
-      to: "+15550009999",
-      transcript: [],
-    });
-
-    await createVoiceCallRuntime({
-      config,
-      coreConfig: {} as CoreConfig,
-      agentRuntime: agentRuntime as never,
-    });
-
-    const handler = requireRealtimeConsultToolHandler();
-    await expect(handler({ question: "Continue this session." }, "call-locked")).rejects.toThrow(
-      "Model selection is locked for this session.",
-    );
-    expect(mocks.resolveRealtimeFastContextConsult).not.toHaveBeenCalled();
-    expect(runEmbeddedAgent).not.toHaveBeenCalled();
+    expect(consultParams.sessionKey).toBe("voice:call:call-1");
   });
 
   it("answers realtime consults from fast memory context before starting the full agent", async () => {
@@ -713,7 +582,7 @@ describe("createVoiceCallRuntime lifecycle", () => {
         error: console.error,
         debug: console.debug,
       },
-      sessionKey: "agent:main:voice:15550001234",
+      sessionKey: "voice:15550001234",
     });
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
@@ -722,7 +591,7 @@ describe("createVoiceCallRuntime lifecycle", () => {
     const config = createBaseConfig();
     config.inboundPolicy = "allowlist";
     config.realtime.enabled = true;
-    config.realtime.consultThinkingLevel = "ultra";
+    config.realtime.consultThinkingLevel = "low";
     config.realtime.consultFastMode = true;
     const sessionStore: Record<string, unknown> = {};
     const runEmbeddedAgent = vi.fn(async () => ({
@@ -768,7 +637,7 @@ describe("createVoiceCallRuntime lifecycle", () => {
       ),
       "configured embedded OpenClaw consult params",
     );
-    expect(consultParams.thinkLevel).toBe("ultra");
+    expect(consultParams.thinkLevel).toBe("low");
     expect(consultParams.fastMode).toBe(true);
   });
 });

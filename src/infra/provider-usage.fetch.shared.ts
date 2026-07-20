@@ -1,11 +1,7 @@
 // Shared fetch and parsing helpers for provider usage endpoints.
-import {
-  asDateTimestampMs,
-  resolveTimerTimeoutMs,
-} from "@openclaw/normalization-core/number-coercion";
-import { readProviderJsonResponse } from "../agents/provider-http-errors.js";
+import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 import { parseFiniteNumber as parseFiniteNumberish } from "./parse-finite-number.js";
-import { resolveProviderUsageDisplayName } from "./provider-usage.shared.js";
+import { PROVIDER_LABELS } from "./provider-usage.shared.js";
 import type { ProviderUsageSnapshot, UsageProviderId } from "./provider-usage.types.js";
 
 /** Fetches JSON-compatible provider usage endpoints with an abort timeout. */
@@ -16,29 +12,17 @@ export async function fetchJson(
   fetchFn: typeof fetch,
 ): Promise<Response> {
   const safeTimeoutMs = resolveTimerTimeoutMs(timeoutMs, 1);
-  const timeoutSignal = AbortSignal.timeout(safeTimeoutMs);
-  const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
-  // Keep the signal alive after headers so stalled response bodies cannot outlive
-  // the deadline or caller cancellation. fetch binds it to request and body reads.
-  return await fetchFn(url, { ...init, signal });
-}
-
-export async function discardUsageResponseBody(response: Response): Promise<void> {
-  if (!response.bodyUsed) {
-    await response.body?.cancel().catch(() => undefined);
+  const controller = new AbortController();
+  const timer = setTimeout(controller.abort.bind(controller), safeTimeoutMs);
+  try {
+    return await fetchFn(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 export function parseFiniteNumber(value: unknown): number | undefined {
   return parseFiniteNumberish(value);
-}
-
-/** Parses a provider reset-time string without leaking an invalid Date timestamp. */
-export function parseUsageResetAt(value: unknown): number | undefined {
-  if (typeof value !== "string" || !value.trim()) {
-    return undefined;
-  }
-  return asDateTimestampMs(Date.parse(value));
 }
 
 type BuildUsageHttpErrorSnapshotOptions = {
@@ -55,7 +39,7 @@ export function buildUsageErrorSnapshot(
 ): ProviderUsageSnapshot {
   return {
     provider,
-    displayName: resolveProviderUsageDisplayName(provider),
+    displayName: PROVIDER_LABELS[provider],
     windows: [],
     error,
   };
@@ -77,8 +61,7 @@ export async function readUsageJson(
   response: Response,
 ): Promise<{ ok: true; data: unknown } | { ok: false; snapshot: ProviderUsageSnapshot }> {
   try {
-    const data = await readProviderJsonResponse<unknown>(response, `${provider} usage`);
-    return { ok: true, data };
+    return { ok: true, data: await response.json() };
   } catch {
     return {
       ok: false,

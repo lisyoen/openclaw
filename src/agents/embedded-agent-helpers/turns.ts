@@ -3,7 +3,6 @@
  */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { AgentMessage } from "../runtime/index.js";
-import { isThinkingLikeBlock } from "../thinking-block.js";
 import { extractToolCallsFromAssistant, extractToolResultId } from "../tool-call-id.js";
 
 type AnthropicContentBlock = {
@@ -21,6 +20,14 @@ type UserContentBlock = Extract<
 
 function isToolCallBlock(block: AnthropicContentBlock): boolean {
   return block.type === "toolUse" || block.type === "toolCall" || block.type === "functionCall";
+}
+
+function isThinkingLikeBlock(block: unknown): boolean {
+  if (!block || typeof block !== "object") {
+    return false;
+  }
+  const type = (block as { type?: unknown }).type;
+  return type === "thinking" || type === "redacted_thinking";
 }
 
 function isAbortedAssistantTurn(message: AgentMessage): boolean {
@@ -172,11 +179,9 @@ function collectFutureToolResultIds(messages: AgentMessage[], startIndex: number
 function stripDanglingAnthropicToolUses(messages: AgentMessage[]): AgentMessage[] {
   const result: AgentMessage[] = [];
 
-  for (const [i, msg] of messages.entries()) {
-    if (!msg) {
-      continue;
-    }
-    if (typeof msg !== "object") {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== "object") {
       result.push(msg);
       continue;
     }
@@ -348,7 +353,7 @@ export function validateGeminiTurns(messages: AgentMessage[]): AgentMessage[] {
 }
 
 /** Merge adjacent user turns into a single provider-compatible user message. */
-function mergeConsecutiveUserTurns(
+export function mergeConsecutiveUserTurns(
   previous: Extract<AgentMessage, { role: "user" }>,
   current: Extract<AgentMessage, { role: "user" }>,
 ): Extract<AgentMessage, { role: "user" }> {

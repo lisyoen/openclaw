@@ -2,6 +2,10 @@
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { readCliStartupMetadata } from "./startup-metadata.js";
 
+function dedupe(values: string[]): string[] {
+  return uniqueStrings(values.filter(Boolean));
+}
+
 let precomputedChannelOptions: string[] | null | undefined;
 
 function loadPrecomputedChannelOptions(): string[] | null {
@@ -11,10 +15,8 @@ function loadPrecomputedChannelOptions(): string[] | null {
   try {
     const parsed = readCliStartupMetadata(import.meta.url) as { channelOptions?: unknown } | null;
     if (parsed && Array.isArray(parsed.channelOptions)) {
-      precomputedChannelOptions = uniqueStrings(
-        parsed.channelOptions.filter(
-          (value): value is string => typeof value === "string" && Boolean(value),
-        ),
+      precomputedChannelOptions = dedupe(
+        parsed.channelOptions.filter((value): value is string => typeof value === "string"),
       );
       return precomputedChannelOptions;
     }
@@ -35,13 +37,9 @@ export function formatCliChannelOptions(extra: string[] = []): string {
   return options.length > 0 ? options.join("|") : "channel";
 }
 
-const testing = {
+export const testing = {
   resetPrecomputedChannelOptionsForTests(): void {
     precomputedChannelOptions = undefined;
   },
 };
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.cliChannelOptionsTestApi")] =
-    testing;
-}
+export { testing as __testing };

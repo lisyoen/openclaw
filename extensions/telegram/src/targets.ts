@@ -105,12 +105,7 @@ export function parseTelegramTarget(to: string): TelegramTarget {
 
   const topicMatch = /^(.+?):topic:(\d+)$/.exec(normalized);
   if (topicMatch) {
-    const chatId = topicMatch[1];
-    const threadIdText = topicMatch[2];
-    if (chatId === undefined || threadIdText === undefined) {
-      return { chatId: normalized, chatType: resolveTelegramChatType(normalized) };
-    }
-    const messageThreadId = parseStrictNonNegativeInteger(threadIdText);
+    const messageThreadId = parseStrictNonNegativeInteger(topicMatch[2]);
     if (messageThreadId === undefined) {
       return {
         chatId: normalized,
@@ -118,20 +113,15 @@ export function parseTelegramTarget(to: string): TelegramTarget {
       };
     }
     return {
-      chatId,
+      chatId: topicMatch[1],
       messageThreadId,
-      chatType: resolveTelegramChatType(chatId),
+      chatType: resolveTelegramChatType(topicMatch[1]),
     };
   }
 
   const colonMatch = /^(.+):(\d+)$/.exec(normalized);
   if (colonMatch) {
-    const chatId = colonMatch[1];
-    const threadIdText = colonMatch[2];
-    if (chatId === undefined || threadIdText === undefined) {
-      return { chatId: normalized, chatType: resolveTelegramChatType(normalized) };
-    }
-    const messageThreadId = parseStrictNonNegativeInteger(threadIdText);
+    const messageThreadId = parseStrictNonNegativeInteger(colonMatch[2]);
     if (messageThreadId === undefined) {
       return {
         chatId: normalized,
@@ -139,9 +129,9 @@ export function parseTelegramTarget(to: string): TelegramTarget {
       };
     }
     return {
-      chatId,
+      chatId: colonMatch[1],
       messageThreadId,
-      chatType: resolveTelegramChatType(chatId),
+      chatType: resolveTelegramChatType(colonMatch[1]),
     };
   }
 

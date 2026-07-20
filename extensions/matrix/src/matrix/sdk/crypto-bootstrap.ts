@@ -17,10 +17,9 @@ import type {
 } from "./verification-manager.js";
 import { isMatrixDeviceOwnerVerified } from "./verification-status.js";
 
-type MatrixCryptoBootstrapperDeps<TRawEvent extends MatrixRawEvent> = {
+export type MatrixCryptoBootstrapperDeps<TRawEvent extends MatrixRawEvent> = {
   getUserId: () => Promise<string>;
   getPassword?: () => string | undefined;
-  canUnlockSecretStorage: () => Promise<boolean>;
   getDeviceId: () => string | null | undefined;
   verificationManager: MatrixVerificationManager;
   recoveryKeyStore: MatrixRecoveryKeyStore;
@@ -52,17 +51,11 @@ export class MatrixCryptoBootstrapper<TRawEvent extends MatrixRawEvent> {
     options: MatrixCryptoBootstrapOptions = {},
   ): Promise<MatrixCryptoBootstrapResult> {
     const strict = options.strict === true;
-    const forceReset = options.forceResetCrossSigning === true;
-    const deferSecretStorageBootstrapUntilAfterCrossSigning = forceReset;
-    if (forceReset && !(await this.deps.canUnlockSecretStorage())) {
-      throw new Error(
-        "Forced cross-signing reset requires the active Matrix recovery key; supply it before retrying",
-      );
-    }
+    const deferSecretStorageBootstrapUntilAfterCrossSigning =
+      options.forceResetCrossSigning === true;
     // Register verification listeners before expensive bootstrap work so incoming requests
     // are not missed during startup.
     this.registerVerificationRequestHandler(crypto);
-
     if (!deferSecretStorageBootstrapUntilAfterCrossSigning) {
       await this.bootstrapSecretStorage(crypto, {
         strict,
@@ -70,33 +63,30 @@ export class MatrixCryptoBootstrapper<TRawEvent extends MatrixRawEvent> {
           options.allowSecretStorageRecreateWithoutRecoveryKey === true,
       });
     }
-
-    const crossSigning = await this.bootstrapCrossSigning(crypto, {
-      forceResetCrossSigning: forceReset,
+    let crossSigning = await this.bootstrapCrossSigning(crypto, {
+      forceResetCrossSigning: options.forceResetCrossSigning === true,
       allowAutomaticCrossSigningReset: options.allowAutomaticCrossSigningReset !== false,
-      // A repair retry would generate another identity after the SDK already rotated local keys.
-      // Fail closed instead; the server identity and existing recovery material remain authoritative.
-      allowSecretStorageRecreateWithoutRecoveryKey: forceReset
-        ? false
-        : options.allowSecretStorageRecreateWithoutRecoveryKey === true,
+      allowSecretStorageRecreateWithoutRecoveryKey:
+        options.allowSecretStorageRecreateWithoutRecoveryKey === true,
       strict,
     });
-
-    if (forceReset && (!crossSigning.ready || !crossSigning.published)) {
-      return {
-        crossSigningReady: crossSigning.ready,
-        crossSigningPublished: crossSigning.published,
-        ownDeviceVerified: null,
-      };
-    }
-
-    // Second SSSS pass to pick up cross-signing keys published during bootstrap.
+    // Forced repair may need password UIA to upload new cross-signing keys. Delay any
+    // secret-storage repair/recreation until after that step succeeds so passwordless bots do
+    // not partially mutate SSSS on homeservers that require password-based UIA.
     await this.bootstrapSecretStorage(crypto, {
       strict,
       allowSecretStorageRecreateWithoutRecoveryKey:
         options.allowSecretStorageRecreateWithoutRecoveryKey === true,
     });
-
+    if (deferSecretStorageBootstrapUntilAfterCrossSigning) {
+      crossSigning = await this.bootstrapCrossSigning(crypto, {
+        forceResetCrossSigning: false,
+        allowAutomaticCrossSigningReset: false,
+        allowSecretStorageRecreateWithoutRecoveryKey:
+          options.allowSecretStorageRecreateWithoutRecoveryKey === true,
+        strict,
+      });
+    }
     const ownDeviceVerified = await this.ensureOwnDeviceTrust(crypto, {
       strict,
     });
@@ -244,12 +234,6 @@ export class MatrixCryptoBootstrapper<TRawEvent extends MatrixRawEvent> {
         }
         LogService.warn("MatrixClientLite", "Forced cross-signing reset failed:", err);
         if (options.strict) {
-          if (isRepairableSecretStorageAccessError(err)) {
-            throw new Error(
-              "Forced cross-signing reset cannot access secret storage; restore the Matrix recovery key before retrying",
-              { cause: err },
-            );
-          }
           throw err instanceof Error ? err : new Error(String(err));
         }
         return { ready: false, published: false };

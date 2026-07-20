@@ -74,18 +74,6 @@ describe("shouldBypassAcpDispatchForCommand", () => {
     expect(shouldBypassAcpDispatchForCommand(ctx, {} as OpenClawConfig)).toBe(true);
   });
 
-  it("returns true for local status plugin commands", () => {
-    const ctx = buildTestCtx({
-      Provider: "discord",
-      Surface: "discord",
-      CommandBody: "/STATUS plugins",
-      BodyForCommands: "/STATUS plugins",
-      BodyForAgent: "/STATUS plugins",
-    });
-
-    expect(shouldBypassAcpDispatchForCommand(ctx, {} as OpenClawConfig)).toBe(true);
-  });
-
   it("returns true for registry-backed local help commands", () => {
     const ctx = buildTestCtx({
       Provider: "whatsapp",

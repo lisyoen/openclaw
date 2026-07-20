@@ -40,7 +40,7 @@ type ParsedBindMount = {
   writable: boolean;
 };
 
-function parseSandboxBindMount(spec: string): ParsedBindMount | null {
+export function parseSandboxBindMount(spec: string): ParsedBindMount | null {
   const trimmed = spec.trim();
   if (!trimmed) {
     return null;

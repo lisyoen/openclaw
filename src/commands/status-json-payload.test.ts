@@ -86,7 +86,7 @@ describe("status-json-payload", () => {
         pluginCompatibility: [
           {
             pluginId: "legacy",
-            code: "deprecated-memory-embedding-provider-api",
+            code: "legacy-before-agent-start",
             severity: "warn",
             message: "warn",
           },
@@ -129,7 +129,7 @@ describe("status-json-payload", () => {
         warnings: [
           {
             pluginId: "legacy",
-            code: "deprecated-memory-embedding-provider-api",
+            code: "legacy-before-agent-start",
             severity: "warn",
             message: "warn",
           },

@@ -1,4 +1,3 @@
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 // Xai plugin module implements web search behavior.
 import type {
   WebSearchProviderPlugin,
@@ -6,9 +5,14 @@ import type {
 } from "openclaw/plugin-sdk/provider-web-search-config-contract";
 import { buildXaiWebSearchProviderBase } from "./web-search-provider-shared.js";
 
-const loadXaiWebSearchProviderRuntime = createLazyRuntimeModule(
-  () => import("./src/web-search-provider.runtime.js"),
-);
+type XaiWebSearchProviderRuntime = typeof import("./src/web-search-provider.runtime.js");
+
+let xaiWebSearchProviderRuntimePromise: Promise<XaiWebSearchProviderRuntime> | undefined;
+
+function loadXaiWebSearchProviderRuntime(): Promise<XaiWebSearchProviderRuntime> {
+  xaiWebSearchProviderRuntimePromise ??= import("./src/web-search-provider.runtime.js");
+  return xaiWebSearchProviderRuntimePromise;
+}
 
 const GenericXaiSearchSchema = {
   type: "object",

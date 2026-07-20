@@ -22,10 +22,6 @@ import {
 import type { TelegramTransport } from "./fetch.js";
 import { resolveTelegramToken } from "./token.js";
 
-type CredentialUnavailableDiagnostic = NonNullable<
-  ReturnType<typeof resolveTelegramToken>["credentialDiagnostics"]
->[number];
-
 export { mergeTelegramAccountConfig, resolveTelegramAccountConfig } from "./account-config.js";
 
 let log: ReturnType<typeof createSubsystemLogger> | null = null;
@@ -60,8 +56,6 @@ export type ResolvedTelegramAccount = {
   name?: string;
   token: string;
   tokenSource: "env" | "tokenFile" | "config" | "none";
-  tokenStatus: "available" | "configured_unavailable" | "missing";
-  credentialDiagnostics?: CredentialUnavailableDiagnostic[];
   config: TelegramAccountConfig;
 };
 
@@ -170,21 +164,15 @@ export function resolveTelegramAccount(params: {
       name: normalizeOptionalString(merged.name),
       token: tokenResolution.token,
       tokenSource: tokenResolution.source,
-      tokenStatus: tokenResolution.credentialDiagnostics?.length
-        ? "configured_unavailable"
-        : tokenResolution.token
-          ? "available"
-          : "missing",
-      ...(tokenResolution.credentialDiagnostics
-        ? { credentialDiagnostics: tokenResolution.credentialDiagnostics }
-        : {}),
       config: merged,
     } satisfies ResolvedTelegramAccount;
   };
 
-  const resolvedAccountId = params.accountId ?? resolveDefaultTelegramAccountId(params.cfg);
+  // If accountId is omitted, prefer a configured account token over failing on
+  // the implicit "default" account. This keeps env-based setups working while
+  // making config-only tokens work for things like heartbeats.
   return resolveAccountWithDefaultFallback({
-    accountId: resolvedAccountId,
+    accountId: params.accountId,
     normalizeAccountId,
     resolvePrimary: resolve,
     hasCredential: (account) => account.tokenSource !== "none",

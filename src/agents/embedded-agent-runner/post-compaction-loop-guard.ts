@@ -1,6 +1,7 @@
 /**
  * Guards against repeated tool-loop compactions that never make progress.
  */
+import type { ToolLoopPostCompactionGuardConfig } from "../../config/types.tools.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 
 /**
@@ -13,13 +14,13 @@ const log = createSubsystemLogger("agents/post-compaction-guard");
 
 const DEFAULT_WINDOW_SIZE = 3;
 
-type PostCompactionGuardObservation = {
+export type PostCompactionGuardObservation = {
   toolName: string;
   argsHash: string;
   resultHash: string;
 };
 
-type PostCompactionGuardVerdict =
+export type PostCompactionGuardVerdict =
   | { shouldAbort: false; armed: boolean; remainingAttempts: number }
   | {
       shouldAbort: true;
@@ -31,7 +32,7 @@ type PostCompactionGuardVerdict =
       message: string;
     };
 
-type PostCompactionLoopGuard = {
+export type PostCompactionLoopGuard = {
   armPostCompaction: () => void;
   observe: (call: PostCompactionGuardObservation) => PostCompactionGuardVerdict;
   snapshot: () => { armed: boolean; remainingAttempts: number };
@@ -44,13 +45,21 @@ type GuardState = {
   history: PostCompactionGuardObservation[];
 };
 
+function asPositiveInt(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    return fallback;
+  }
+  return value;
+}
+
 /** Creates a stateful post-compaction loop detector for one embedded run. */
-export function createPostCompactionLoopGuard(options?: {
-  enabled?: boolean;
-}): PostCompactionLoopGuard {
+export function createPostCompactionLoopGuard(
+  config?: ToolLoopPostCompactionGuardConfig,
+  options?: { enabled?: boolean },
+): PostCompactionLoopGuard {
   const state: GuardState = {
     enabled: options?.enabled ?? true,
-    windowSize: DEFAULT_WINDOW_SIZE,
+    windowSize: asPositiveInt(config?.windowSize, DEFAULT_WINDOW_SIZE),
     remainingAttempts: 0,
     history: [],
   };

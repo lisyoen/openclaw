@@ -7,14 +7,11 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import {
   MatrixVerificationManager,
+  type MatrixShowQrCodeCallbacks,
+  type MatrixShowSasCallbacks,
   type MatrixVerificationRequestLike,
+  type MatrixVerifierLike,
 } from "./verification-manager.js";
-
-type MatrixVerifierLike = Awaited<ReturnType<MatrixVerificationRequestLike["startVerification"]>>;
-type MatrixShowSasCallbacks = NonNullable<ReturnType<MatrixVerifierLike["getShowSasCallbacks"]>>;
-type MatrixShowQrCodeCallbacks = NonNullable<
-  ReturnType<MatrixVerifierLike["getReciprocateQrCodeCallbacks"]>
->;
 
 class MockVerifier extends EventEmitter implements MatrixVerifierLike {
   constructor(

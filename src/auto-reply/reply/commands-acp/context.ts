@@ -45,6 +45,12 @@ export function resolveAcpCommandConversationId(params: HandleCommandsParams): s
   return resolveAcpCommandConversationRef(params)?.conversationId;
 }
 
+export function resolveAcpCommandParentConversationId(
+  params: HandleCommandsParams,
+): string | undefined {
+  return resolveAcpCommandConversationRef(params)?.parentConversationId;
+}
+
 export function resolveAcpCommandBindingContext(params: HandleCommandsParams): {
   channel: string;
   accountId: string;

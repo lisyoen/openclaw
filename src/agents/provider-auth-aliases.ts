@@ -58,15 +58,8 @@ function buildProviderAuthAliasMapCacheKey(
 }
 
 /** Clear provider auth alias cache for tests that mutate plugin metadata. */
-function resetProviderAuthAliasMapCacheForTest(): void {
+export function resetProviderAuthAliasMapCacheForTest(): void {
   providerAuthAliasMapCache = new WeakMap<NodeJS.ProcessEnv, Map<string, Record<string, string>>>();
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.providerAuthAliasesTestApi")] =
-    {
-      resetProviderAuthAliasMapCacheForTest,
-    };
 }
 
 function resolveProviderAuthAliasOriginPriority(origin: PluginOrigin | undefined): number {

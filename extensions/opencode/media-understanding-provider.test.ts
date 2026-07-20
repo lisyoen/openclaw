@@ -1,43 +1,19 @@
 // Opencode tests cover media understanding provider plugin behavior.
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mocks = vi.hoisted(() => ({
-  describeImageWithModelPayloadTransform:
-    vi.fn<
-      (request: unknown, onPayload: (payload: unknown) => unknown) => Promise<{ text: string }>
-    >(),
-}));
-
-vi.mock("openclaw/plugin-sdk/media-understanding", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("openclaw/plugin-sdk/media-understanding")>()),
-  describeImageWithModelPayloadTransform: mocks.describeImageWithModelPayloadTransform,
-}));
-
-import { opencodeMediaUnderstandingProvider } from "./media-understanding-provider.js";
-
-beforeEach(() => {
-  mocks.describeImageWithModelPayloadTransform.mockReset();
-});
-
-async function applyImagePayloadTransform(payload: Record<string, unknown>): Promise<void> {
-  mocks.describeImageWithModelPayloadTransform.mockImplementationOnce(
-    async (_request, onPayload) => {
-      await onPayload(payload);
-      return { text: "ok" };
-    },
-  );
-  await opencodeMediaUnderstandingProvider.describeImage?.({} as never);
-}
+import { describe, expect, it } from "vitest";
+import {
+  opencodeMediaUnderstandingProvider,
+  stripOpencodeDisabledResponsesReasoningPayload,
+} from "./media-understanding-provider.js";
 
 describe("opencode media understanding provider", () => {
-  it("strips disabled Responses reasoning payloads", async () => {
+  it("strips disabled Responses reasoning payloads", () => {
     const payload = {
       reasoning: { effort: "none" },
       include: ["reasoning.encrypted_content"],
       store: false,
     };
 
-    await applyImagePayloadTransform(payload);
+    stripOpencodeDisabledResponsesReasoningPayload(payload);
 
     expect(payload).toEqual({
       include: ["reasoning.encrypted_content"],
@@ -45,13 +21,13 @@ describe("opencode media understanding provider", () => {
     });
   });
 
-  it("keeps supported Responses reasoning payloads", async () => {
+  it("keeps supported Responses reasoning payloads", () => {
     const payload = {
       reasoning: { effort: "low" },
       store: false,
     };
 
-    await applyImagePayloadTransform(payload);
+    stripOpencodeDisabledResponsesReasoningPayload(payload);
 
     expect(payload).toEqual({
       reasoning: { effort: "low" },

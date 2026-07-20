@@ -1,27 +1,28 @@
-import { expectDefined } from "@openclaw/normalization-core";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import { toRetryError } from "@openclaw/retry";
+// Memory Host SDK module implements embeddings behavior.
 import { DEFAULT_LOCAL_MODEL } from "./embedding-defaults.js";
 import { sanitizeAndNormalizeEmbedding } from "./embedding-vectors.js";
 import { createLocalEmbeddingWorkerProvider } from "./embeddings-worker.js";
 import type { EmbeddingProvider, EmbeddingProviderOptions } from "./embeddings.types.js";
-import {
-  attachLocalEmbeddingRuntimeFacts,
-  type LocalEmbeddingRuntimeFacts,
-} from "./local-embedding-runtime-facts.js";
 import {
   importNodeLlamaCpp,
   type Llama,
   type LlamaEmbeddingContext,
   type LlamaModel,
 } from "./node-llama.js";
-// Memory Host SDK module implements embeddings behavior.
+import { normalizeOptionalString } from "./string-utils.js";
 
 type DisposableResource = {
   dispose?: () => Promise<void> | void;
 };
 
-export type { EmbeddingProvider } from "./embeddings.types.js";
+export type {
+  EmbeddingProvider,
+  EmbeddingProviderFallback,
+  EmbeddingProviderId,
+  EmbeddingProviderOptions,
+  EmbeddingProviderRequest,
+  GeminiTaskType,
+} from "./embeddings.types.js";
 
 export { DEFAULT_LOCAL_MODEL } from "./embedding-defaults.js";
 
@@ -29,15 +30,6 @@ export type LocalEmbeddingProviderRuntimeOptions = {
   workerScriptPath?: string;
   nodeLlamaCppImportUrl?: string;
 };
-
-function copyEmbeddingVector(vector: ArrayLike<number>, maxLength?: number): number[] {
-  const length = Math.min(maxLength ?? vector.length, vector.length);
-  const values: number[] = [];
-  for (let index = 0; index < length; index += 1) {
-    values.push(expectDefined(vector[index], `embedding value ${index}`));
-  }
-  return values;
-}
 
 async function disposeResources(
   resources: Array<DisposableResource | null | undefined>,
@@ -51,42 +43,8 @@ async function disposeResources(
     }
   }
   if (firstError) {
-    throw toRetryError(firstError);
+    throw toLintErrorObject(firstError, "Non-Error thrown");
   }
-}
-
-async function readLlamaRuntimeFacts(llama: Llama): Promise<LocalEmbeddingRuntimeFacts> {
-  const facts: LocalEmbeddingRuntimeFacts = {
-    engine: "llama.cpp",
-    state: "failed",
-    backend: llama.gpu || "cpu",
-    buildType: llama.buildType,
-    offload: {
-      supported: llama.supportsGpuOffloading,
-    },
-  };
-  try {
-    facts.deviceNames = await llama.getGpuDeviceNames();
-  } catch {
-    // Diagnostics must not prevent a model that otherwise works from loading.
-  }
-  try {
-    const memory = await llama.getVramState();
-    facts.memory = {
-      totalBytes: memory.total,
-      usedBytes: memory.used,
-      freeBytes: memory.free,
-      unifiedBytes: memory.unifiedSize,
-      observedAtMs: Date.now(),
-    };
-  } catch {
-    // Some backends cannot report memory state; keep the other runtime facts.
-  }
-  return facts;
-}
-
-function formatRuntimeLoadError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export async function createLocalEmbeddingProvider(
@@ -117,7 +75,6 @@ export async function createLocalEmbeddingProviderInProcess(
   let initPromise: Promise<LlamaEmbeddingContext> | null = null;
   let initAbortController: AbortController | null = null;
   let closePromise: Promise<void> | null = null;
-  let runtimeFacts: LocalEmbeddingRuntimeFacts | undefined;
   let closed = false;
 
   const throwIfClosed = () => {
@@ -151,10 +108,6 @@ export async function createLocalEmbeddingProviderInProcess(
             logLevel: LlamaLogLevel.error,
           });
           llama = await disposeAndThrowIfClosed(nextLlama);
-          runtimeFacts = {
-            ...(await readLlamaRuntimeFacts(llama)),
-            context: { requestedSize: contextSize },
-          };
         }
         if (!embeddingModel) {
           const resolved = await resolveModelFile(modelPath, {
@@ -165,28 +118,8 @@ export async function createLocalEmbeddingProviderInProcess(
           const nextModel = await llama.loadModel({
             modelPath: resolved,
             loadSignal: abortController.signal,
-            ...(typeof contextSize === "number"
-              ? {
-                  gpuLayers: {
-                    fitContext: {
-                      contextSize,
-                      embeddingContext: true,
-                    },
-                  },
-                }
-              : {}),
           });
           embeddingModel = await disposeAndThrowIfClosed(nextModel);
-          runtimeFacts = {
-            ...runtimeFacts,
-            engine: "llama.cpp",
-            state: "failed",
-            offload: {
-              supported: llama.supportsGpuOffloading,
-              offloadedLayers: embeddingModel.gpuLayers,
-              totalLayers: embeddingModel.fileInsights.totalLayers,
-            },
-          };
         }
         if (!embeddingContext) {
           const nextContext = await embeddingModel.createEmbeddingContext({
@@ -194,30 +127,9 @@ export async function createLocalEmbeddingProviderInProcess(
             createSignal: abortController.signal,
           });
           embeddingContext = await disposeAndThrowIfClosed(nextContext);
-          const refreshedRuntimeFacts = await readLlamaRuntimeFacts(llama);
-          runtimeFacts = {
-            ...runtimeFacts,
-            ...refreshedRuntimeFacts,
-            engine: "llama.cpp",
-            state: "ready",
-            offload: {
-              supported: llama.supportsGpuOffloading,
-              offloadedLayers: embeddingModel.gpuLayers,
-              totalLayers: embeddingModel.fileInsights.totalLayers,
-            },
-            context: { requestedSize: contextSize },
-            loadError: undefined,
-          };
         }
         return embeddingContext;
       } catch (err) {
-        runtimeFacts = {
-          ...runtimeFacts,
-          engine: "llama.cpp",
-          state: "failed",
-          context: { requestedSize: contextSize },
-          loadError: formatRuntimeLoadError(err),
-        };
         initPromise = null;
         throw err;
       } finally {
@@ -229,12 +141,7 @@ export async function createLocalEmbeddingProviderInProcess(
     return initPromise;
   };
 
-  const outputDimensionality =
-    typeof options.outputDimensionality === "number" ? options.outputDimensionality : undefined;
-  const normalize = (vector: ArrayLike<number>): number[] =>
-    sanitizeAndNormalizeEmbedding(copyEmbeddingVector(vector, outputDimensionality));
-
-  const provider: EmbeddingProvider = {
+  return {
     id: "local",
     model: modelPath,
     embedQuery: async (text, optionsValue) => {
@@ -244,7 +151,7 @@ export async function createLocalEmbeddingProviderInProcess(
       throwIfClosed();
       optionsValue?.signal?.throwIfAborted();
       const embedding = await ctx.getEmbeddingFor(text);
-      return normalize(embedding.vector);
+      return sanitizeAndNormalizeEmbedding(Array.from(embedding.vector));
     },
     embedBatch: async (texts, optionsLocal) => {
       throwIfClosed();
@@ -257,7 +164,7 @@ export async function createLocalEmbeddingProviderInProcess(
         throwIfClosed();
         optionsLocal?.signal?.throwIfAborted();
         const embedding = await ctx.getEmbeddingFor(text);
-        embeddings.push(normalize(embedding.vector));
+        embeddings.push(sanitizeAndNormalizeEmbedding(Array.from(embedding.vector)));
       }
       return embeddings;
     },
@@ -281,6 +188,18 @@ export async function createLocalEmbeddingProviderInProcess(
       return closePromise;
     },
   };
-  attachLocalEmbeddingRuntimeFacts(provider, () => runtimeFacts);
-  return provider;
+}
+
+function toLintErrorObject(value: unknown, fallbackMessage: string): Error {
+  if (value instanceof Error) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return new Error(value);
+  }
+  const error = new Error(fallbackMessage, { cause: value });
+  if ((typeof value === "object" && value !== null) || typeof value === "function") {
+    Object.assign(error, value);
+  }
+  return error;
 }

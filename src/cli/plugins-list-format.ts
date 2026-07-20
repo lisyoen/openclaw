@@ -1,5 +1,4 @@
 // Text formatter for plugin list rows and verbose plugin details.
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { theme } from "../../packages/terminal-core/src/theme.js";
 import type { PluginRecord } from "../plugins/registry.js";
@@ -17,7 +16,7 @@ export function formatPluginLine(plugin: PluginRecord, verbose = false): string 
   const desc = plugin.description
     ? theme.muted(
         plugin.description.length > 60
-          ? `${truncateUtf16Safe(plugin.description, 57)}...`
+          ? `${plugin.description.slice(0, 57)}...`
           : plugin.description,
       )
     : theme.muted("(no description)");

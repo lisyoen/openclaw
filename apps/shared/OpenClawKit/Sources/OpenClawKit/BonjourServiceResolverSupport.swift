@@ -1,6 +1,5 @@
 import Foundation
 
-#if !os(watchOS)
 public enum BonjourServiceResolverSupport {
     public static func start(_ service: NetService, timeout: TimeInterval = 2.0) {
         service.schedule(in: .main, forMode: .common)
@@ -13,4 +12,3 @@ public enum BonjourServiceResolverSupport {
         return trimmed.hasSuffix(".") ? String(trimmed.dropLast()) : trimmed
     }
 }
-#endif

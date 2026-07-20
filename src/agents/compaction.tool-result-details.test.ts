@@ -1,7 +1,7 @@
 // Covers compaction sanitization for toolResult details and runtime context.
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import type { AssistantMessage, ToolResultMessage } from "openclaw/plugin-sdk/llm";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeAgentAssistantMessage } from "./test-helpers/agent-message-fixtures.js";
 
 const agentSessionMocks = vi.hoisted(() => ({
@@ -19,7 +19,14 @@ vi.mock("./sessions/index.js", async () => {
 });
 
 let isOversizedForSummary: typeof import("./compaction.js").isOversizedForSummary;
-let summarizeWithFallback: typeof import("./compaction.test-support.js").summarizeWithFallback;
+let summarizeWithFallback: typeof import("./compaction.js").summarizeWithFallback;
+
+async function loadFreshCompactionModuleForTest() {
+  // Reset modules so each test observes the mocked token/summary helpers from a
+  // fresh compaction import.
+  vi.resetModules();
+  ({ isOversizedForSummary, summarizeWithFallback } = await import("./compaction.js"));
+}
 
 function makeAssistantToolCall(timestamp: number): AssistantMessage {
   return makeAgentAssistantMessage({
@@ -45,12 +52,8 @@ function makeToolResultWithDetails(timestamp: number): ToolResultMessage<{ raw: 
 }
 
 describe("compaction toolResult details stripping", () => {
-  beforeAll(async () => {
-    ({ isOversizedForSummary } = await import("./compaction.js"));
-    ({ summarizeWithFallback } = await import("./compaction.test-support.js"));
-  });
-
-  beforeEach(() => {
+  beforeEach(async () => {
+    await loadFreshCompactionModuleForTest();
     agentSessionMocks.generateSummary.mockReset();
     agentSessionMocks.generateSummary.mockResolvedValue("summary");
     agentSessionMocks.estimateTokens.mockReset();

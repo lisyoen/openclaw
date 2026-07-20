@@ -53,19 +53,14 @@ export async function resolveGatewayProbeSurfaceAuth(params: {
   config: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
   surface: "local" | "remote";
-}): Promise<{
-  token?: string;
-  password?: string;
-  diagnostics?: string[];
-  source?: "config" | "env";
-}> {
+}): Promise<{ token?: string; password?: string; diagnostics?: string[] }> {
   const env = params.env ?? process.env;
   const diagnostics: string[] = [];
   const authMode = params.config.gateway?.auth?.mode;
 
   if (params.surface === "remote") {
-    // Remote probes keep configured auth authoritative, then fall back to the
-    // same environment credentials supported by interactive remote clients.
+    // Remote probes prefer remote.token and only read remote.password when no
+    // token was available. This matches managed gateway auth precedence.
     const remoteToken = await resolveGatewayCredential({
       config: params.config,
       env,
@@ -82,18 +77,9 @@ export async function resolveGatewayProbeSurfaceAuth(params: {
           path: "gateway.remote.password",
           value: params.config.gateway?.remote?.password,
         });
-    const envToken = trimToUndefined(env.OPENCLAW_GATEWAY_TOKEN);
-    const envPassword = trimToUndefined(env.OPENCLAW_GATEWAY_PASSWORD);
-    const hasConfiguredAuth = Boolean(remoteToken.value || remotePassword.value);
     return withDiagnostics({
       diagnostics,
-      result: {
-        token: remoteToken.value ?? (hasConfiguredAuth ? undefined : envToken),
-        password: remotePassword.value ?? (hasConfiguredAuth ? undefined : envPassword),
-        ...(hasConfiguredAuth
-          ? { source: "config" as const }
-          : (envToken || envPassword) && { source: "env" as const }),
-      },
+      result: { token: remoteToken.value, password: remotePassword.value },
     });
   }
 
@@ -113,12 +99,9 @@ export async function resolveGatewayProbeSurfaceAuth(params: {
       value: params.config.gateway?.auth?.token,
     });
     return token.value
-      ? withDiagnostics({
-          diagnostics,
-          result: { token: token.value, source: "config" as const },
-        })
+      ? withDiagnostics({ diagnostics, result: { token: token.value } })
       : envToken
-        ? { token: envToken, source: "env" }
+        ? { token: envToken }
         : withDiagnostics({ diagnostics, result: {} });
   }
 
@@ -131,12 +114,9 @@ export async function resolveGatewayProbeSurfaceAuth(params: {
       value: params.config.gateway?.auth?.password,
     });
     return password.value
-      ? withDiagnostics({
-          diagnostics,
-          result: { password: password.value, source: "config" as const },
-        })
+      ? withDiagnostics({ diagnostics, result: { password: password.value } })
       : envPassword
-        ? { password: envPassword, source: "env" }
+        ? { password: envPassword }
         : withDiagnostics({ diagnostics, result: {} });
   }
 
@@ -148,19 +128,13 @@ export async function resolveGatewayProbeSurfaceAuth(params: {
     value: params.config.gateway?.auth?.token,
   });
   if (token.value) {
-    return withDiagnostics({
-      diagnostics,
-      result: { token: token.value, source: "config" as const },
-    });
+    return withDiagnostics({ diagnostics, result: { token: token.value } });
   }
   if (envToken) {
-    return { token: envToken, source: "env" };
+    return { token: envToken };
   }
   if (envPassword) {
-    return withDiagnostics({
-      diagnostics,
-      result: { password: envPassword, source: "env" as const },
-    });
+    return withDiagnostics({ diagnostics, result: { password: envPassword } });
   }
   // In implicit local mode, config password is the final fallback after token
   // sources and env auth have been exhausted.
@@ -173,11 +147,7 @@ export async function resolveGatewayProbeSurfaceAuth(params: {
   });
   return withDiagnostics({
     diagnostics,
-    result: {
-      token: token.value,
-      password: password.value,
-      ...(password.value && { source: "config" as const }),
-    },
+    result: { token: token.value, password: password.value },
   });
 }
 

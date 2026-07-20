@@ -1,5 +1,6 @@
 // Telegram plugin module implements telegram media behavior.
 export {
+  readRemoteMediaBuffer,
   MediaFetchError,
   saveMediaBuffer,
   saveRemoteMedia,

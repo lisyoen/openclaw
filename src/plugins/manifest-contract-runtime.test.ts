@@ -63,6 +63,7 @@ describe("resolveManifestContractRuntimePluginResolution", () => {
     expect(loadPluginMetadataSnapshot).toHaveBeenCalledWith({
       config: {},
       env: process.env,
+      preferPersisted: false,
     });
   });
 });

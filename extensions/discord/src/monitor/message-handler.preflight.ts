@@ -5,13 +5,11 @@ import {
   buildMentionRegexes,
   classifyChannelInboundEvent,
   logInboundDrop,
-  recordChannelBotPairLoopAndCheckSuppression,
   resolveInboundMentionDecision,
   resolveUnmentionedGroupInboundPolicy,
   recordDroppedChannelInboundHistory,
   toInboundMediaFacts,
 } from "openclaw/plugin-sdk/channel-inbound";
-import { isRecentOutboundMessageIdentity } from "openclaw/plugin-sdk/channel-outbound";
 import { hasControlCommand } from "openclaw/plugin-sdk/command-detection";
 import { isAbortRequestText } from "openclaw/plugin-sdk/command-primitives-runtime";
 import { shouldHandleTextCommands } from "openclaw/plugin-sdk/command-surface";
@@ -66,14 +64,9 @@ import {
   resolveDiscordChannelInfo,
   resolveDiscordMessageChannelId,
   resolveDiscordMessageText,
-  resolveForwardedMediaList,
   resolveMediaList,
 } from "./message-utils.js";
 import { resolveDiscordSenderIdentity, resolveDiscordWebhookId } from "./sender-identity.js";
-import {
-  DISCORD_ATTACHMENT_IDLE_TIMEOUT_MS,
-  DISCORD_ATTACHMENT_TOTAL_TIMEOUT_MS,
-} from "./timeouts.js";
 
 export type {
   DiscordMessagePreflightContext,
@@ -164,15 +157,7 @@ async function resolveDiscordHistoryMediaForPendingRecord(params: {
       abortSignal: params.preflight.abortSignal,
     },
   );
-  const stickerStartIndex = Math.max(0, mediaList.length - stickers.length);
-  return toInboundMediaFacts(mediaList, { messageId: params.message.id }).map((media, index) => ({
-    path: media.path,
-    url: media.url,
-    contentType: media.contentType,
-    kind: index >= stickerStartIndex ? "sticker" : (media.kind ?? "image"),
-    transcribed: media.transcribed,
-    messageId: media.messageId,
-  }));
+  return toInboundMediaFacts(mediaList, { kind: "image", messageId: params.message.id });
 }
 
 async function recordDiscordPendingHistoryEntry(params: {
@@ -260,20 +245,6 @@ export async function preflightDiscordMessage(
 
   const pluralkitConfig = params.discordConfig?.pluralkit;
   const webhookId = resolveDiscordWebhookId(message);
-  // Shared turn admission cannot undo pending history recorded by channel preflight.
-  // Consult the same generic registry before mention/history drops can admit an echo.
-  if (
-    isRecentOutboundMessageIdentity({
-      channel: "discord",
-      accountId: params.accountId,
-      conversationId: messageChannelId,
-      messageId: message.id,
-      ...(webhookId ? { sourceId: webhookId } : {}),
-    })
-  ) {
-    logVerbose(`discord: drop recent outbound echo message ${message.id}`);
-    return null;
-  }
   const isGuildMessage = Boolean(params.data.guild_id);
   const channelInfo = await resolveDiscordChannelInfo(params.client, messageChannelId);
   if (isPreflightAborted(params.abortSignal)) {
@@ -295,6 +266,7 @@ export async function preflightDiscordMessage(
       : undefined;
   if (
     shouldIgnoreBoundThreadWebhookMessage({
+      accountId: params.accountId,
       threadId: messageChannelId,
       webhookId,
       threadBinding: injectedBoundThreadBinding,
@@ -433,6 +405,7 @@ export async function preflightDiscordMessage(
   } = routeState;
   if (
     shouldIgnoreBoundThreadWebhookMessage({
+      accountId: params.accountId,
       threadId: messageChannelId,
       webhookId,
       threadBinding,
@@ -760,9 +733,7 @@ export async function preflightDiscordMessage(
     return null;
   }
 
-  const hasNativeMedia =
-    (message.attachments?.length ?? 0) > 0 || resolveDiscordMessageStickers(message).length > 0;
-  if (!messageText && !hasNativeMedia) {
+  if (!messageText) {
     logDebug(`[discord-preflight] drop: empty content`);
     logVerbose(`discord: drop message ${message.id} (empty content)`);
     return null;
@@ -797,38 +768,6 @@ export async function preflightDiscordMessage(
           nowMs: resolveTimestampMs(message.timestamp),
         }
       : undefined;
-  if (botLoopProtection) {
-    const botLoopResult = recordChannelBotPairLoopAndCheckSuppression(botLoopProtection);
-    if (botLoopResult.suppressed) {
-      logVerbose(
-        `discord: bot-to-bot loop detected before media download, suppressing for ${Math.max(0, Math.ceil((botLoopResult.cooldownUntilMs - Date.now()) / 1000))}s`,
-      );
-      return null;
-    }
-  }
-
-  // Discord CDN attachment URLs expire; download now (receipt time) instead
-  // of after the run queue, which may delay processing past the URL TTL.
-  const mediaResolveOptions = {
-    fetchImpl: params.discordRestFetch,
-    ssrfPolicy: params.cfg.browser?.ssrfPolicy,
-    readIdleTimeoutMs: DISCORD_ATTACHMENT_IDLE_TIMEOUT_MS,
-    totalTimeoutMs: DISCORD_ATTACHMENT_TOTAL_TIMEOUT_MS,
-    abortSignal: params.abortSignal,
-  };
-  const preparedMedia = await resolveMediaList(message, params.mediaMaxBytes, mediaResolveOptions);
-  if (isPreflightAborted(params.abortSignal)) {
-    return null;
-  }
-  const forwardedMedia = await resolveForwardedMediaList(
-    message,
-    params.mediaMaxBytes,
-    mediaResolveOptions,
-  );
-  if (isPreflightAborted(params.abortSignal)) {
-    return null;
-  }
-  preparedMedia.push(...forwardedMedia);
 
   logDebug(
     `[discord-preflight] success: route=${effectiveRoute.agentId} sessionKey=${effectiveRoute.sessionKey}`,
@@ -852,7 +791,6 @@ export async function preflightDiscordMessage(
     baseText,
     messageText,
     ...(preflightTranscript !== undefined ? { preflightAudioTranscript: preflightTranscript } : {}),
-    preparedMedia,
     wasMentioned,
     route: effectiveRoute,
     threadBinding,
@@ -874,7 +812,6 @@ export async function preflightDiscordMessage(
     channelAllowlistConfigured,
     channelAllowed,
     shouldRequireMention,
-    groupRequireMention: shouldRequireMentionByConfig,
     hasAnyMention,
     hasControlCommand: hasControlCommandInMessage,
     allowTextCommands,
@@ -883,6 +820,6 @@ export async function preflightDiscordMessage(
     inboundEventKind,
     canDetectMention,
     historyEntry,
+    botLoopProtection,
   });
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

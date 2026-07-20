@@ -1,29 +1,19 @@
 // Channel plugin blocker tests cover doctor diagnostics for blocked channel plugin setup.
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import * as manifestRegistry from "../../../plugins/manifest-registry.js";
 import {
-  channelPluginBlockerHitToHealthFinding,
   collectConfiguredChannelPluginBlockerWarnings,
   isWarningBlockedByChannelPlugin,
   scanConfiguredChannelPluginBlockers,
 } from "./channel-plugin-blockers.js";
-
-function createPackageChannelEnv(channelId: string, envVars: string[]) {
-  return {
-    id: channelId,
-    configuredState: { env: { anyOf: envVars } },
-  };
-}
 
 describe("channel plugin blockers", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("returns no blockers when config and package env have no channel surfaces", () => {
+  it("returns no blockers when config and manifest env have no channel surfaces", () => {
     const registrySpy = vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [],
       diagnostics: [],
@@ -72,63 +62,6 @@ describe("channel plugin blockers", () => {
     ]);
     expect(collectConfiguredChannelPluginBlockerWarnings(hits)).toEqual([
       '- channels.discord: channel is configured, but external plugin "discord" is installed without explicit trust. Add plugins.entries.discord.enabled=true. Fix plugin enablement before relying on setup guidance for this channel.',
-    ]);
-    expect(
-      channelPluginBlockerHitToHealthFinding(expectDefined(hits[0], "hits[0] test invariant")),
-    ).toEqual({
-      checkId: "core/doctor/channel-plugin-blockers",
-      severity: "warning",
-      message:
-        'channels.discord: channel is configured, but external plugin "discord" is installed without explicit trust. Add plugins.entries.discord.enabled=true. Fix plugin enablement before relying on setup guidance for this channel.',
-      path: "channels.discord",
-      target: "discord",
-      requirement: "missing explicit enablement",
-      fixHint: "Fix plugin enablement before relying on setup guidance for this channel.",
-    });
-  });
-
-  it("uses provided manifest records without loading the registry", () => {
-    const registrySpy = vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
-      plugins: [],
-      diagnostics: [],
-    });
-
-    const hits = scanConfiguredChannelPluginBlockers(
-      {
-        channels: {
-          discord: {
-            token: "configured",
-          },
-        },
-      },
-      {},
-      {},
-      {
-        manifestRecords: [
-          {
-            id: "discord",
-            origin: "global",
-            channels: ["discord"],
-            providers: [],
-            cliBackends: [],
-            skills: [],
-            hooks: [],
-            enabledByDefault: false,
-            rootDir: "/plugins/discord",
-            source: "test",
-            manifestPath: "/plugins/discord/plugin.json",
-          },
-        ],
-      },
-    );
-
-    expect(registrySpy).not.toHaveBeenCalled();
-    expect(hits).toEqual([
-      {
-        channelId: "discord",
-        pluginId: "discord",
-        reason: "missing explicit enablement",
-      },
     ]);
   });
 
@@ -366,14 +299,16 @@ describe("channel plugin blockers", () => {
     ]);
   });
 
-  it("diagnoses an external-only package env channel that lacks source trust", () => {
+  it("diagnoses an external-only manifest env channel that lacks source trust", () => {
     vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [
         {
           id: "discord",
           origin: "global",
           channels: ["discord"],
-          packageChannel: createPackageChannelEnv("discord", ["DISCORD_BOT_TOKEN"]),
+          channelEnvVars: {
+            discord: ["DISCORD_BOT_TOKEN"],
+          },
           enabledByDefault: false,
         },
       ],
@@ -403,41 +338,7 @@ describe("channel plugin blockers", () => {
     ]);
   });
 
-  it("requires every package channel allOf environment variable", () => {
-    vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
-      plugins: [
-        {
-          id: "irc",
-          origin: "global",
-          channels: ["irc"],
-          packageChannel: {
-            id: "irc",
-            configuredState: { env: { allOf: ["IRC_HOST", "IRC_NICK"] } },
-          },
-          enabledByDefault: false,
-        },
-      ],
-      diagnostics: [],
-    } as unknown as ReturnType<typeof manifestRegistry.loadPluginManifestRegistry>);
-
-    expect(
-      scanConfiguredChannelPluginBlockers({}, { IRC_HOST: "configured" } as NodeJS.ProcessEnv),
-    ).toStrictEqual([]);
-    expect(
-      scanConfiguredChannelPluginBlockers({}, {
-        IRC_HOST: "configured",
-        IRC_NICK: "configured",
-      } as NodeJS.ProcessEnv),
-    ).toEqual([
-      {
-        channelId: "irc",
-        pluginId: "irc",
-        reason: "missing explicit enablement",
-      },
-    ]);
-  });
-
-  it("keeps package env trust diagnostics scoped to the declaring owner", () => {
+  it("keeps manifest env trust diagnostics scoped to the declaring owner", () => {
     vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [
         {
@@ -450,7 +351,9 @@ describe("channel plugin blockers", () => {
           id: "external-chat",
           origin: "config",
           channels: ["shared-chat"],
-          packageChannel: createPackageChannelEnv("shared-chat", ["EXTERNAL_CHAT_TOKEN"]),
+          channelEnvVars: {
+            "shared-chat": ["EXTERNAL_CHAT_TOKEN"],
+          },
           enabledByDefault: false,
         },
       ],
@@ -503,21 +406,25 @@ describe("channel plugin blockers", () => {
     ).toBe(true);
   });
 
-  it("accepts an available co-owner for the same package env trigger", () => {
+  it("accepts an available co-owner for the same manifest env trigger", () => {
     vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [
         {
           id: "bundled-chat",
           origin: "bundled",
           channels: ["shared-chat"],
-          packageChannel: createPackageChannelEnv("shared-chat", ["SHARED_CHAT_TOKEN"]),
+          channelEnvVars: {
+            "shared-chat": ["SHARED_CHAT_TOKEN"],
+          },
           enabledByDefault: true,
         },
         {
           id: "external-chat",
           origin: "config",
           channels: ["shared-chat"],
-          packageChannel: createPackageChannelEnv("shared-chat", ["SHARED_CHAT_TOKEN"]),
+          channelEnvVars: {
+            "shared-chat": ["SHARED_CHAT_TOKEN"],
+          },
           enabledByDefault: false,
         },
       ],
@@ -531,21 +438,25 @@ describe("channel plugin blockers", () => {
     expect(hits).toStrictEqual([]);
   });
 
-  it("deduplicates global plugin disablement across package env triggers", () => {
+  it("deduplicates global plugin disablement across manifest env triggers", () => {
     vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [
         {
           id: "first-chat",
           origin: "config",
           channels: ["shared-chat"],
-          packageChannel: createPackageChannelEnv("shared-chat", ["FIRST_CHAT_TOKEN"]),
+          channelEnvVars: {
+            "shared-chat": ["FIRST_CHAT_TOKEN"],
+          },
           enabledByDefault: false,
         },
         {
           id: "second-chat",
           origin: "config",
           channels: ["shared-chat"],
-          packageChannel: createPackageChannelEnv("shared-chat", ["SECOND_CHAT_TOKEN"]),
+          channelEnvVars: {
+            "shared-chat": ["SECOND_CHAT_TOKEN"],
+          },
           enabledByDefault: false,
         },
       ],
@@ -573,14 +484,16 @@ describe("channel plugin blockers", () => {
     ]);
   });
 
-  it("does not report unrelated blocked owners for a package env trigger", () => {
+  it("does not report unrelated blocked owners for a manifest env trigger", () => {
     vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [
         {
           id: "triggered-chat",
           origin: "config",
           channels: ["shared-chat"],
-          packageChannel: createPackageChannelEnv("shared-chat", ["TRIGGERED_CHAT_TOKEN"]),
+          channelEnvVars: {
+            "shared-chat": ["TRIGGERED_CHAT_TOKEN"],
+          },
           enabledByDefault: false,
         },
         {
@@ -606,14 +519,16 @@ describe("channel plugin blockers", () => {
     ]);
   });
 
-  it("ignores package env mappings for channels the plugin does not own", () => {
+  it("ignores manifest env mappings for channels the plugin does not own", () => {
     vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [
         {
           id: "external-chat",
           origin: "config",
           channels: ["external-chat"],
-          packageChannel: createPackageChannelEnv("discord", ["EXTERNAL_CHAT_TOKEN"]),
+          channelEnvVars: {
+            discord: ["EXTERNAL_CHAT_TOKEN"],
+          },
           enabledByDefault: false,
         },
       ],
@@ -627,14 +542,16 @@ describe("channel plugin blockers", () => {
     expect(hits).toStrictEqual([]);
   });
 
-  it("diagnoses a package env channel whose bundled owner is opt-in", () => {
+  it("diagnoses a manifest env channel whose bundled owner is opt-in", () => {
     vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [
         {
           id: "twitch",
           origin: "bundled",
           channels: ["twitch"],
-          packageChannel: createPackageChannelEnv("twitch", ["OPENCLAW_TWITCH_ACCESS_TOKEN"]),
+          channelEnvVars: {
+            twitch: ["OPENCLAW_TWITCH_ACCESS_TOKEN"],
+          },
           enabledByDefault: false,
         },
       ],
@@ -664,7 +581,9 @@ describe("channel plugin blockers", () => {
           id: "twitch",
           origin: "bundled",
           channels: ["twitch"],
-          packageChannel: createPackageChannelEnv("twitch", ["OPENCLAW_TWITCH_ACCESS_TOKEN"]),
+          channelEnvVars: {
+            twitch: ["OPENCLAW_TWITCH_ACCESS_TOKEN"],
+          },
           enabledByDefault: false,
         },
       ],
@@ -694,14 +613,16 @@ describe("channel plugin blockers", () => {
     ]);
   });
 
-  it("keeps package env blockers when another channel is explicitly configured", () => {
+  it("keeps manifest env blockers when another channel is explicitly configured", () => {
     vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [
         {
           id: "discord",
           origin: "global",
           channels: ["discord"],
-          packageChannel: createPackageChannelEnv("discord", ["DISCORD_BOT_TOKEN"]),
+          channelEnvVars: {
+            discord: ["DISCORD_BOT_TOKEN"],
+          },
           enabledByDefault: false,
         },
       ],
@@ -742,14 +663,16 @@ describe("channel plugin blockers", () => {
     ]);
   });
 
-  it("honors explicit channel disablement over package env triggers", () => {
+  it("honors explicit channel disablement over manifest env triggers", () => {
     vi.spyOn(manifestRegistry, "loadPluginManifestRegistry").mockReturnValue({
       plugins: [
         {
           id: "discord",
           origin: "global",
           channels: ["discord"],
-          packageChannel: createPackageChannelEnv("discord", ["DISCORD_BOT_TOKEN"]),
+          channelEnvVars: {
+            discord: ["DISCORD_BOT_TOKEN"],
+          },
           enabledByDefault: false,
         },
       ],
@@ -1281,4 +1204,3 @@ describe("channel plugin blockers", () => {
     ]);
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

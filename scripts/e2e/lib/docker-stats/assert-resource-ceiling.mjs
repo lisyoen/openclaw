@@ -3,26 +3,14 @@ import fs from "node:fs";
 import { createInterface } from "node:readline";
 
 const [statsFile, maxMemoryRaw, maxCpuRaw, label = "docker"] = process.argv.slice(2);
-const NON_NEGATIVE_DECIMAL_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)?$/u;
+const maxMemoryMiB = Number(maxMemoryRaw);
+const maxCpuPercent = Number(maxCpuRaw);
 
-function parseFiniteLimit(raw, name) {
-  const text = String(raw ?? "").trim();
-  if (!NON_NEGATIVE_DECIMAL_PATTERN.test(text)) {
-    throw new Error(
-      `${name} must be a finite non-negative number in decimal notation. Got: ${JSON.stringify(raw)}`,
-    );
+function assertFiniteLimit(value, raw, name) {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a finite non-negative number. Got: ${JSON.stringify(raw)}`);
   }
-  const parsed = Number(text);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(
-      `${name} must be a finite non-negative number in decimal notation. Got: ${JSON.stringify(raw)}`,
-    );
-  }
-  return parsed;
 }
-
-const maxMemoryMiB = parseFiniteLimit(maxMemoryRaw, "max memory MiB");
-const maxCpuPercent = parseFiniteLimit(maxCpuRaw, "max CPU percent");
 
 function parseMemoryMiB(raw) {
   const value =
@@ -57,12 +45,7 @@ function parseMemoryMiB(raw) {
 }
 
 function parseCpuPercent(raw) {
-  const text = String(raw ?? "").trim();
-  const valueText = text.endsWith("%") ? text.slice(0, -1).trim() : text;
-  if (!NON_NEGATIVE_DECIMAL_PATTERN.test(valueText)) {
-    return undefined;
-  }
-  const parsed = Number(valueText);
+  const parsed = Number(String(raw || "").replace(/%$/u, ""));
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
@@ -103,6 +86,9 @@ async function scanStatsFileLines(file, onLine) {
 let maxObservedMemoryMiB = 0;
 let maxObservedCpuPercent = 0;
 let parsedSamples = 0;
+
+assertFiniteLimit(maxMemoryMiB, maxMemoryRaw, "max memory MiB");
+assertFiniteLimit(maxCpuPercent, maxCpuRaw, "max CPU percent");
 
 await scanStatsFileLines(statsFile, (line) => {
   let parsed;

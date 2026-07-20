@@ -1,9 +1,14 @@
 // Imessage plugin module implements approval auth behavior.
-import { createChannelApprovalAuth } from "openclaw/plugin-sdk/approval-auth-runtime";
+import {
+  createResolvedApproverActionAuthAdapter,
+  resolveApprovalApprovers,
+} from "openclaw/plugin-sdk/approval-auth-runtime";
 import { resolveIMessageAccount } from "./accounts.js";
 import { normalizeIMessageHandle } from "./targets.js";
 
-function normalizeIMessageApproverId(value: string | number): string | undefined {
+type ApprovalKind = "exec" | "plugin";
+
+export function normalizeIMessageApproverId(value: string | number): string | undefined {
   const raw = String(value).trim();
   if (!raw) {
     return undefined;
@@ -30,16 +35,45 @@ function normalizeIMessageApproverEntry(value: string | number): string | undefi
   return String(value).trim() === "*" ? "*" : normalizeIMessageApproverId(value);
 }
 
-const imessageApproval = createChannelApprovalAuth({
+export function getIMessageApprovalApprovers(params: {
+  cfg: Parameters<typeof resolveIMessageAccount>[0]["cfg"];
+  accountId?: string | null;
+}): string[] {
+  const account = resolveIMessageAccount({ cfg: params.cfg, accountId: params.accountId });
+  return resolveApprovalApprovers({
+    allowFrom: account.config.allowFrom,
+    normalizeApprover: normalizeIMessageApproverEntry,
+  });
+}
+
+const imessageResolvedApproverAuth = createResolvedApproverActionAuthAdapter({
   channelLabel: "iMessage",
-  resolveInputs: ({ cfg, accountId }) => {
-    const account = resolveIMessageAccount({ cfg, accountId });
-    return { allowFrom: account.config.allowFrom };
-  },
-  normalizeApprover: normalizeIMessageApproverEntry,
-  normalizeSenderId: normalizeIMessageApproverId,
-  isWildcardAuthorized: ({ purpose, approvers }) => purpose === "action" && approvers.includes("*"),
+  resolveApprovers: ({ cfg, accountId }) => getIMessageApprovalApprovers({ cfg, accountId }),
+  normalizeSenderId: (value) => normalizeIMessageApproverId(value),
 });
 
-export const getIMessageApprovalApprovers = imessageApproval.resolveApprovers;
-export const imessageApprovalAuth = imessageApproval.approvalAuth;
+export const imessageApprovalAuth = {
+  authorizeActorAction({
+    cfg,
+    accountId,
+    senderId,
+    approvalKind,
+  }: {
+    cfg: Parameters<typeof resolveIMessageAccount>[0]["cfg"];
+    accountId?: string | null;
+    senderId?: string | null;
+    action: "approve";
+    approvalKind: ApprovalKind;
+  }) {
+    if (getIMessageApprovalApprovers({ cfg, accountId }).includes("*")) {
+      return { authorized: true } as const;
+    }
+    return imessageResolvedApproverAuth.authorizeActorAction({
+      cfg,
+      accountId,
+      senderId,
+      action: "approve",
+      approvalKind,
+    });
+  },
+};

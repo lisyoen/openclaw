@@ -80,9 +80,6 @@ export function resolveCopilotForwardCompatModel(
       input: staticOverride.input ?? ["text", "image"],
       cost: staticOverride.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: staticOverride.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-      ...(staticOverride.contextTokens !== undefined
-        ? { contextTokens: staticOverride.contextTokens }
-        : {}),
       maxTokens: staticOverride.maxTokens ?? DEFAULT_MAX_TOKENS,
       ...(staticOverride.thinkingLevelMap
         ? { thinkingLevelMap: staticOverride.thinkingLevelMap }
@@ -144,10 +141,6 @@ type CopilotApiModelEntry = {
 
 const COPILOT_MODELS_LIST_DEFAULT_TIMEOUT_MS = 10_000;
 const COPILOT_ROUTER_ID_PREFIX = "accounts/";
-type CopilotCatalogModel = Omit<ModelDefinitionConfig, "input"> & {
-  api: NonNullable<ModelDefinitionConfig["api"]>;
-  input: ProviderRuntimeModel["input"];
-};
 
 function resolveCopilotApiForVendor(
   vendor: string | undefined,
@@ -199,7 +192,7 @@ function resolveCopilotThinkingLevelMap(
 
 function mapCopilotApiModelToDefinition(
   entry: CopilotApiModelEntry,
-): CopilotCatalogModel | undefined {
+): ModelDefinitionConfig | undefined {
   const id = entry.id?.trim();
   if (!id) {
     return undefined;
@@ -221,17 +214,16 @@ function mapCopilotApiModelToDefinition(
     ? supports.reasoning_effort.length > 0
     : false;
   const supportsVision = supports?.vision === true;
-  const input: CopilotCatalogModel["input"] = supportsVision ? ["text", "image"] : ["text"];
+  const input: ModelDefinitionConfig["input"] = supportsVision ? ["text", "image"] : ["text"];
 
   const contextWindow =
     asPositiveSafeInteger(limits?.max_context_window_tokens) ?? DEFAULT_CONTEXT_WINDOW;
-  const contextTokens = asPositiveSafeInteger(limits?.max_prompt_tokens);
   const maxTokens = asPositiveSafeInteger(limits?.max_output_tokens) ?? DEFAULT_MAX_TOKENS;
   const compat = mergeCopilotCompat(resolveCopilotModelCompat(id), supports?.reasoning_effort);
   const api = resolveCopilotApiForVendor(entry.vendor, id);
   const thinkingLevelMap = resolveCopilotThinkingLevelMap(api, id, compat);
 
-  const definition: CopilotCatalogModel = {
+  const definition: ModelDefinitionConfig = {
     id,
     name: entry.name?.trim() || id,
     api,
@@ -239,7 +231,6 @@ function mapCopilotApiModelToDefinition(
     input,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
-    ...(contextTokens !== undefined ? { contextTokens } : {}),
     maxTokens,
     ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
     ...(compat ? { compat } : {}),
@@ -254,7 +245,7 @@ function asCopilotApiModelEntry(value: unknown): CopilotApiModelEntry {
   return value as CopilotApiModelEntry;
 }
 
-type FetchCopilotModelCatalogParams = {
+export type FetchCopilotModelCatalogParams = {
   /** Short-lived Copilot API token (from `resolveCopilotApiToken`). */
   copilotApiToken: string;
   /** Resolved baseUrl from the same token-exchange response. */
@@ -277,7 +268,7 @@ type FetchCopilotModelCatalogParams = {
  */
 export async function fetchCopilotModelCatalog(
   params: FetchCopilotModelCatalogParams,
-): Promise<CopilotCatalogModel[]> {
+): Promise<ModelDefinitionConfig[]> {
   const fetchImpl = params.fetchImpl ?? fetch;
   const trimmedBase = params.baseUrl.replace(/\/+$/, "");
   if (!trimmedBase) {
@@ -303,13 +294,11 @@ export async function fetchCopilotModelCatalog(
       signal: params.signal ?? controller?.signal,
     });
     if (!res.ok) {
-      // Static catalog fallback never consumes this body, so release the transport before cleanup.
-      await res.body?.cancel().catch(() => undefined);
       throw new Error(`Copilot /models fetch failed: HTTP ${res.status}`);
     }
     const data = await readProviderJsonArrayFieldResponse(res, "Copilot /models", "data");
     const seen = new Set<string>();
-    const out: CopilotCatalogModel[] = [];
+    const out: ModelDefinitionConfig[] = [];
     for (const rawEntry of data) {
       const entry = asCopilotApiModelEntry(rawEntry);
       const def = mapCopilotApiModelToDefinition(entry);

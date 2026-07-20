@@ -4,8 +4,6 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { isSessionTranscriptSideAppendEntry } from "../../config/sessions/transcript-tree.js";
 import { CURRENT_SESSION_VERSION } from "../../config/sessions/version.js";
 import { appendRegularFile } from "../../infra/fs-safe.js";
 import { privateFileStore } from "../../infra/private-file-store.js";
@@ -31,18 +29,6 @@ type SessionInfoEntry = Extract<SessionEntry, { type: "session_info" }>;
 type SessionMessageEntry = Extract<SessionEntry, { type: "message" }>;
 type ThinkingLevelChangeEntry = Extract<SessionEntry, { type: "thinking_level_change" }>;
 
-type TranscriptLeafControlEntry = {
-  type: "leaf";
-  id: string;
-  parentId: string | null;
-  timestamp: string;
-  targetId: string | null;
-  appendParentId?: string | null;
-  appendMode?: "side";
-};
-
-export type TranscriptPersistedEntry = SessionEntry | TranscriptLeafControlEntry;
-
 const sessionEntryTypes = new Set<string>([
   "branch_summary",
   "compaction",
@@ -65,6 +51,10 @@ const repairableToolCallContentTypes = new Set([
 ]);
 
 const invalidJsonlSlotType = "__openclaw_invalid_jsonl_slot";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 function isString(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
@@ -286,73 +276,16 @@ function isSessionEntry(entry: FileEntry): entry is SessionEntry {
   return false;
 }
 
-function parseLeafControlEntry(entry: unknown):
-  | {
-      id: string;
-      parentId: string | null;
-      targetId: string | null;
-      appendParentId?: string | null;
-      appendMode?: "side";
-    }
-  | undefined {
-  if (!isRecord(entry) || entry.type !== "leaf") {
-    return undefined;
-  }
-  const candidate = entry as {
-    id?: unknown;
-    parentId?: unknown;
-    targetId?: unknown;
-    appendParentId?: unknown;
-    appendMode?: unknown;
-    timestamp?: unknown;
-  };
-  if (
-    !isString(candidate.id) ||
-    (candidate.parentId !== undefined &&
-      candidate.parentId !== null &&
-      !isString(candidate.parentId)) ||
-    (candidate.timestamp !== undefined && !isString(candidate.timestamp)) ||
-    (candidate.targetId !== null && typeof candidate.targetId !== "string") ||
-    (candidate.appendParentId !== undefined &&
-      candidate.appendParentId !== null &&
-      typeof candidate.appendParentId !== "string") ||
-    (candidate.appendMode !== undefined && candidate.appendMode !== "side")
-  ) {
-    return undefined;
-  }
-  return {
-    id: candidate.id,
-    parentId: candidate.parentId ?? null,
-    targetId: candidate.targetId,
-    ...(candidate.appendParentId !== undefined ? { appendParentId: candidate.appendParentId } : {}),
-    ...(candidate.appendMode === "side" ? { appendMode: candidate.appendMode } : {}),
-  };
-}
-
-type ReadableSessionState = {
-  entries: SessionEntry[];
-  leafId: string | null;
-  appendParentId: string | null;
-  appendMode?: "side";
-  opaqueParentsById: Map<string, string | null>;
-  logicalParentsById: Map<string, string | null>;
-};
-
 // Keep every readable entry while repairing links through rejected rows. This
 // preserves usable branches from partially written or migrated transcripts.
-function readableSessionState(fileEntries: FileEntry[]): ReadableSessionState {
+function readableSessionEntries(fileEntries: FileEntry[]): SessionEntry[] {
   const entries: SessionEntry[] = [];
   const acceptedIds = new Set<string>();
   const acceptedEntryById = new Map<string, SessionEntry>();
   const rejectedIds = new Set<string>();
   const rejectedParentById = new Map<string, string | null>();
-  const logicalParentsById = new Map<string, string | null>();
-  const invalidLeafIds = new Set<string>();
   const firstReadableDescendantByRejectedId = new Map<string, string>();
   const rejectedAncestorsByAcceptedId = new Map<string, string[]>();
-  let effectiveLeafId: string | null = null;
-  let effectiveAppendParentId: string | null = null;
-  let effectiveAppendMode: "side" | undefined;
   const acceptedPath = (leafId: string | null | undefined): SessionEntry[] => {
     const pathLocal: SessionEntry[] = [];
     let id = leafId ?? null;
@@ -366,10 +299,9 @@ function readableSessionState(fileEntries: FileEntry[]): ReadableSessionState {
       if (!entry) {
         break;
       }
-      pathLocal.push(entry);
+      pathLocal.unshift(entry);
       id = entry.parentId;
     }
-    pathLocal.reverse();
     return pathLocal;
   };
   const firstReadableDescendantOnBranch = (
@@ -452,62 +384,13 @@ function readableSessionState(fileEntries: FileEntry[]): ReadableSessionState {
     if (!isRecord(rawEntry)) {
       continue;
     }
-    const rawRecord = rawEntry as unknown as Record<string, unknown>;
     const entry = rawEntry as FileEntry;
-    const id = rawRecord.id;
-    const rawType = rawRecord.type;
-    const rawParentId = rawRecord.parentId;
-    const leafEntry = parseLeafControlEntry(rawRecord);
-    if (leafEntry) {
-      rejectedIds.add(leafEntry.id);
-      const targetIsKnown =
-        leafEntry.targetId === null ||
-        acceptedIds.has(leafEntry.targetId) ||
-        (rejectedParentById.has(leafEntry.targetId) && !invalidLeafIds.has(leafEntry.targetId));
-      const appendParentIsKnown =
-        leafEntry.appendParentId === undefined ||
-        leafEntry.appendParentId === null ||
-        acceptedIds.has(leafEntry.appendParentId) ||
-        (rejectedParentById.has(leafEntry.appendParentId) &&
-          !invalidLeafIds.has(leafEntry.appendParentId));
-      if (!targetIsKnown || !appendParentIsKnown) {
-        // Ignore corrupt navigation state, but keep the marker transparent so
-        // descendants can still repair through the serialized raw branch.
-        invalidLeafIds.add(leafEntry.id);
-        rejectedParentById.set(leafEntry.id, leafEntry.parentId);
-        continue;
-      }
-      rejectedParentById.set(leafEntry.id, leafEntry.targetId);
-      const resolvedTargetId = resolveRejectedParent(leafEntry.targetId);
-      effectiveLeafId =
-        resolvedTargetId !== null && acceptedIds.has(resolvedTargetId) ? resolvedTargetId : null;
-      effectiveAppendParentId =
-        leafEntry.appendParentId === undefined ? effectiveLeafId : leafEntry.appendParentId;
-      effectiveAppendMode = leafEntry.appendMode;
-      continue;
-    }
-    if (rawType === "leaf") {
-      if (isString(id)) {
-        rejectedIds.add(id);
-        invalidLeafIds.add(id);
-        rejectedParentById.set(id, isString(rawParentId) ? rawParentId : null);
-      }
-      continue;
-    }
+    const id = rawEntry.id;
     if (!isSessionEntry(entry)) {
       if (isString(id)) {
         rejectedIds.add(id);
-        rejectedParentById.set(id, isString(rawParentId) ? rawParentId : null);
-        const isParentLinkedOpaque =
-          typeof rawType === "string" &&
-          rawType !== "session" &&
-          !id.startsWith("__openclaw_invalid_jsonl_slot_") &&
-          !sessionEntryTypes.has(rawType) &&
-          Object.hasOwn(rawRecord, "parentId") &&
-          (rawParentId === null || isString(rawParentId));
-        if (isParentLinkedOpaque) {
-          effectiveAppendParentId = id;
-        }
+        const parentId = rawEntry.parentId;
+        rejectedParentById.set(id, isString(parentId) ? parentId : null);
       }
       continue;
     }
@@ -519,35 +402,12 @@ function readableSessionState(fileEntries: FileEntry[]): ReadableSessionState {
     if (acceptedIds.has(entry.id)) {
       continue;
     }
-    const hasSerializedParent = Object.hasOwn(rawRecord, "parentId");
-    if (
-      !hasSerializedParent ||
-      (!isSessionTranscriptSideAppendEntry(rawRecord) &&
-        entry.parentId === effectiveAppendParentId &&
-        effectiveLeafId !== effectiveAppendParentId)
-    ) {
-      logicalParentsById.set(entry.id, effectiveLeafId);
-    }
     const repaired = repairEntryLinks(entry);
     entries.push(repaired);
     acceptedIds.add(repaired.id);
     acceptedEntryById.set(repaired.id, repaired);
-    effectiveAppendParentId = repaired.id;
-    if (isSessionTranscriptSideAppendEntry(rawRecord)) {
-      effectiveAppendMode = "side";
-    } else {
-      effectiveLeafId = repaired.id;
-      effectiveAppendMode = undefined;
-    }
   }
-  return {
-    entries,
-    leafId: effectiveLeafId,
-    appendParentId: effectiveAppendParentId,
-    ...(effectiveAppendMode ? { appendMode: effectiveAppendMode } : {}),
-    opaqueParentsById: rejectedParentById,
-    logicalParentsById,
-  };
+  return entries;
 }
 
 function sessionHeaderVersion(header: SessionHeader | null): number {
@@ -564,7 +424,7 @@ function generateEntryId(byId: { has(id: string): boolean }): string {
   return randomUUID();
 }
 
-function serializeTranscriptFileEntries(entries: readonly unknown[]): string {
+function serializeTranscriptFileEntries(entries: FileEntry[]): string {
   return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 }
 
@@ -580,34 +440,6 @@ function fileEntryOrMigrationSlot(value: unknown, index: number): FileEntry {
   } as unknown as FileEntry;
 }
 
-function createReadableTranscriptFileState(params: {
-  fileEntries: FileEntry[];
-  header: SessionHeader | null;
-  migrated?: boolean;
-}): TranscriptFileState {
-  const readable = readableSessionState(params.fileEntries);
-  return new TranscriptFileState({
-    header: params.header,
-    entries: readable.entries,
-    leafId: readable.leafId,
-    appendParentId: params.migrated ? readable.leafId : readable.appendParentId,
-    ...(!params.migrated && readable.appendMode ? { appendMode: readable.appendMode } : {}),
-    opaqueParentsById: readable.opaqueParentsById,
-    logicalParentsById: readable.logicalParentsById,
-    migrated: params.migrated,
-  });
-}
-
-/** Builds readable branch state from persisted transcript records. */
-export function createTranscriptFileStateFromPersistedEntries(
-  entries: readonly unknown[],
-): TranscriptFileState {
-  const fileEntries = entries.map(fileEntryOrMigrationSlot);
-  const header =
-    fileEntries.find((entry): entry is SessionHeader => entry.type === "session") ?? null;
-  return createReadableTranscriptFileState({ fileEntries, header });
-}
-
 /** In-memory transcript state with branch, label, and append helpers. */
 export class TranscriptFileState {
   readonly header: SessionHeader | null;
@@ -616,58 +448,27 @@ export class TranscriptFileState {
   private readonly byId = new Map<string, SessionEntry>();
   private readonly labelsById = new Map<string, string>();
   private readonly labelTimestampsById = new Map<string, string>();
-  private readonly opaqueParentsById = new Map<string, string | null>();
-  private readonly logicalParentsById = new Map<string, string | null>();
   private leafId: string | null = null;
-  private appendParentId: string | null = null;
-  private appendMode: "side" | undefined;
 
   constructor(params: {
     header: SessionHeader | null;
     entries: SessionEntry[];
-    leafId?: string | null;
-    appendParentId?: string | null;
-    appendMode?: "side";
-    opaqueParentsById?: ReadonlyMap<string, string | null>;
-    logicalParentsById?: ReadonlyMap<string, string | null>;
     migrated?: boolean;
   }) {
     this.header = params.header;
     this.entries = [...params.entries];
     this.migrated = params.migrated === true;
-    for (const [id, parentId] of params.opaqueParentsById ?? []) {
-      this.opaqueParentsById.set(id, parentId);
-    }
-    for (const [id, parentId] of params.logicalParentsById ?? []) {
-      this.logicalParentsById.set(id, parentId);
-    }
-    this.rebuildIndex(params.leafId, params.appendParentId);
-    this.appendMode = params.appendMode;
+    this.rebuildIndex();
   }
 
-  private resolveCanonicalParentId(parentId: string | null): string | null {
-    const seen = new Set<string>();
-    let currentId = parentId;
-    while (currentId !== null && this.opaqueParentsById.has(currentId)) {
-      if (seen.has(currentId)) {
-        return null;
-      }
-      seen.add(currentId);
-      currentId = this.opaqueParentsById.get(currentId) ?? null;
-    }
-    return currentId;
-  }
-
-  private rebuildIndex(leafId?: string | null, appendParentId?: string | null): void {
+  private rebuildIndex(): void {
     this.byId.clear();
     this.labelsById.clear();
     this.labelTimestampsById.clear();
     this.leafId = null;
-    this.appendParentId = null;
     for (const entry of this.entries) {
       this.byId.set(entry.id, entry);
       this.leafId = entry.id;
-      this.appendParentId = entry.id;
       if (entry.type === "label") {
         if (entry.label) {
           this.labelsById.set(entry.targetId, entry.label);
@@ -677,14 +478,6 @@ export class TranscriptFileState {
           this.labelTimestampsById.delete(entry.targetId);
         }
       }
-    }
-    if (leafId !== undefined) {
-      this.leafId = leafId;
-    }
-    if (appendParentId !== undefined) {
-      this.appendParentId = appendParentId;
-    } else if (leafId !== undefined) {
-      this.appendParentId = leafId;
     }
   }
 
@@ -704,14 +497,6 @@ export class TranscriptFileState {
     return this.leafId;
   }
 
-  getAppendParentId(): string | null {
-    return this.appendParentId;
-  }
-
-  getAppendMode(): "side" | undefined {
-    return this.appendMode;
-  }
-
   getLeafEntry(): SessionEntry | undefined {
     return this.leafId ? this.byId.get(this.leafId) : undefined;
   }
@@ -722,34 +507,17 @@ export class TranscriptFileState {
 
   getBranch(fromId?: string): SessionEntry[] {
     const branch: SessionEntry[] = [];
-    const seen = new Set<string>();
-    let currentId = fromId ?? this.leafId;
-    while (currentId && !seen.has(currentId)) {
-      const current = this.byId.get(currentId);
-      if (!current) {
-        break;
-      }
-      seen.add(current.id);
-      const resolvedParentId = this.logicalParentsById.has(current.id)
-        ? (this.logicalParentsById.get(current.id) ?? null)
-        : this.resolveCanonicalParentId(current.parentId);
-      const parentId =
-        resolvedParentId === current.id || (resolvedParentId && seen.has(resolvedParentId))
-          ? null
-          : resolvedParentId;
-      branch.push(
-        parentId === current.parentId ? current : ({ ...current, parentId } as SessionEntry),
-      );
-      currentId = parentId;
+    let current = (fromId ?? this.leafId) ? this.byId.get((fromId ?? this.leafId)!) : undefined;
+    while (current) {
+      branch.push(current);
+      current = current.parentId ? this.byId.get(current.parentId) : undefined;
     }
     branch.reverse();
     return branch;
   }
 
   buildSessionContext(): SessionContext {
-    const entries = this.getBranch();
-    const leafId = entries.at(-1)?.id ?? null;
-    return buildSessionContext(entries, leafId, new Map(entries.map((entry) => [entry.id, entry])));
+    return buildSessionContext(this.entries, this.leafId, this.byId);
   }
 
   /** Move the active leaf to an existing entry without appending a row. */
@@ -758,22 +526,18 @@ export class TranscriptFileState {
       throw new Error(`Entry ${branchFromId} not found`);
     }
     this.leafId = branchFromId;
-    this.appendParentId = branchFromId;
-    this.appendMode = undefined;
   }
 
   /** Clear the active leaf so the next append starts a root branch. */
   resetLeaf(): void {
     this.leafId = null;
-    this.appendParentId = null;
-    this.appendMode = undefined;
   }
 
   appendMessage(message: SessionMessageEntry["message"]): SessionMessageEntry {
     return this.appendEntry({
       type: "message",
       id: generateEntryId(this.byId),
-      parentId: this.appendParentId,
+      parentId: this.leafId,
       timestamp: new Date().toISOString(),
       message,
     });
@@ -783,7 +547,7 @@ export class TranscriptFileState {
     return this.appendEntry({
       type: "thinking_level_change",
       id: generateEntryId(this.byId),
-      parentId: this.appendParentId,
+      parentId: this.leafId,
       timestamp: new Date().toISOString(),
       thinkingLevel,
     });
@@ -793,7 +557,7 @@ export class TranscriptFileState {
     return this.appendEntry({
       type: "model_change",
       id: generateEntryId(this.byId),
-      parentId: this.appendParentId,
+      parentId: this.leafId,
       timestamp: new Date().toISOString(),
       provider,
       modelId,
@@ -810,7 +574,7 @@ export class TranscriptFileState {
     return this.appendEntry({
       type: "compaction",
       id: generateEntryId(this.byId),
-      parentId: this.appendParentId,
+      parentId: this.leafId,
       timestamp: new Date().toISOString(),
       summary,
       firstKeptEntryId,
@@ -826,7 +590,7 @@ export class TranscriptFileState {
       customType,
       data,
       id: generateEntryId(this.byId),
-      parentId: this.appendParentId,
+      parentId: this.leafId,
       timestamp: new Date().toISOString(),
     });
   }
@@ -835,9 +599,9 @@ export class TranscriptFileState {
     return this.appendEntry({
       type: "session_info",
       id: generateEntryId(this.byId),
-      parentId: this.appendParentId,
+      parentId: this.leafId,
       timestamp: new Date().toISOString(),
-      name: name.replace(/[\r\n]+/g, " ").trim(),
+      name: name.trim(),
     });
   }
 
@@ -854,7 +618,7 @@ export class TranscriptFileState {
       display,
       details,
       id: generateEntryId(this.byId),
-      parentId: this.appendParentId,
+      parentId: this.leafId,
       timestamp: new Date().toISOString(),
     });
   }
@@ -866,7 +630,7 @@ export class TranscriptFileState {
     return this.appendEntry({
       type: "label",
       id: generateEntryId(this.byId),
-      parentId: this.appendParentId,
+      parentId: this.leafId,
       timestamp: new Date().toISOString(),
       targetId,
       label,
@@ -883,7 +647,6 @@ export class TranscriptFileState {
       throw new Error(`Entry ${branchFromId} not found`);
     }
     this.leafId = branchFromId;
-    this.appendParentId = branchFromId;
     return this.appendEntry({
       type: "branch_summary",
       id: generateEntryId(this.byId),
@@ -896,58 +659,10 @@ export class TranscriptFileState {
     });
   }
 
-  appendLeafControl(params: {
-    targetId: string | null;
-    appendParentId: string | null;
-    appendMode?: "side";
-  }): TranscriptLeafControlEntry {
-    if (params.targetId !== null && !this.byId.has(params.targetId)) {
-      throw new Error(`Entry ${params.targetId} not found`);
-    }
-    if (
-      params.appendParentId !== null &&
-      !this.byId.has(params.appendParentId) &&
-      !this.opaqueParentsById.has(params.appendParentId)
-    ) {
-      throw new Error(`Entry ${params.appendParentId} not found`);
-    }
-    const entry: TranscriptLeafControlEntry = {
-      type: "leaf",
-      id: generateEntryId({
-        has: (id) => this.byId.has(id) || this.opaqueParentsById.has(id),
-      }),
-      parentId: this.appendParentId,
-      timestamp: new Date().toISOString(),
-      targetId: params.targetId,
-      ...(params.appendParentId !== params.targetId
-        ? { appendParentId: params.appendParentId }
-        : {}),
-      ...(params.appendMode ? { appendMode: params.appendMode } : {}),
-    };
-    this.opaqueParentsById.set(entry.id, params.targetId);
-    this.leafId = params.targetId;
-    this.appendParentId = params.appendParentId;
-    this.appendMode = params.appendMode;
-    return entry;
-  }
-
   private appendEntry<T extends SessionEntry>(entry: T): T {
-    if (
-      !isSessionTranscriptSideAppendEntry(entry) &&
-      entry.parentId === this.appendParentId &&
-      this.leafId !== this.appendParentId
-    ) {
-      this.logicalParentsById.set(entry.id, this.leafId);
-    }
     this.entries.push(entry);
     this.byId.set(entry.id, entry);
-    this.appendParentId = entry.id;
-    if (isSessionTranscriptSideAppendEntry(entry)) {
-      this.appendMode = "side";
-    } else {
-      this.leafId = entry.id;
-      this.appendMode = undefined;
-    }
+    this.leafId = entry.id;
     if (entry.type === "label") {
       if (entry.label) {
         this.labelsById.set(entry.targetId, entry.label);
@@ -972,13 +687,14 @@ export async function readTranscriptFileState(sessionFile: string): Promise<Tran
   migrateSessionEntries(fileEntries);
   const header =
     fileEntries.find((entry): entry is SessionHeader => entry.type === "session") ?? null;
-  return createReadableTranscriptFileState({ fileEntries, header, migrated });
+  const entries = readableSessionEntries(fileEntries);
+  return new TranscriptFileState({ header, entries, migrated });
 }
 
 /** Rewrite the full transcript through the private-file store. */
 export async function writeTranscriptFileAtomic(
   filePath: string,
-  entries: Array<SessionHeader | TranscriptPersistedEntry>,
+  entries: Array<SessionHeader | SessionEntry>,
 ): Promise<void> {
   await privateFileStore(path.dirname(filePath)).writeText(
     path.basename(filePath),
@@ -990,19 +706,15 @@ export async function writeTranscriptFileAtomic(
 export async function persistTranscriptStateMutation(params: {
   sessionFile: string;
   state: TranscriptFileState;
-  appendedEntries: TranscriptPersistedEntry[];
+  appendedEntries: SessionEntry[];
 }): Promise<void> {
   if (params.appendedEntries.length === 0 && !params.state.migrated) {
     return;
   }
   if (params.state.migrated) {
-    const appendedLeafControls = params.appendedEntries.filter(
-      (entry): entry is TranscriptLeafControlEntry => entry.type === "leaf",
-    );
     await writeTranscriptFileAtomic(params.sessionFile, [
       ...(params.state.header ? [params.state.header] : []),
       ...params.state.entries,
-      ...appendedLeafControls,
     ]);
     return;
   }
@@ -1012,4 +724,3 @@ export async function persistTranscriptStateMutation(params: {
     rejectSymlinkParents: true,
   });
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

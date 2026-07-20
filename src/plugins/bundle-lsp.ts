@@ -15,19 +15,18 @@ import {
   mergeBundlePathLists,
   normalizeBundlePathList,
 } from "./bundle-manifest.js";
-import type { PluginManifestRegistry } from "./manifest-registry.js";
 import type { PluginBundleFormat } from "./manifest-types.js";
 
 /** LSP server config block loaded from plugin bundle metadata. */
 export type BundleLspServerConfig = Record<string, unknown>;
 
 /** Merged LSP config contributed by enabled plugin bundles. */
-type BundleLspConfig = {
+export type BundleLspConfig = {
   lspServers: Record<string, BundleLspServerConfig>;
 };
 
 /** Runtime support summary for bundle-declared LSP servers. */
-type BundleLspRuntimeSupport = {
+export type BundleLspRuntimeSupport = {
   hasStdioServer: boolean;
   supportedServerNames: string[];
   unsupportedServerNames: string[];
@@ -151,12 +150,10 @@ export function inspectBundleLspRuntimeSupport(params: {
 export function loadEnabledBundleLspConfig(params: {
   workspaceDir: string;
   cfg?: OpenClawConfig;
-  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
 }): { config: BundleLspConfig; diagnostics: Array<{ pluginId: string; message: string }> } {
   return loadEnabledBundleConfig({
     workspaceDir: params.workspaceDir,
     cfg: params.cfg,
-    manifestRegistry: params.manifestRegistry,
     createEmptyConfig: () => ({ lspServers: {} }),
     loadBundleConfig: loadBundleLspConfig,
     createDiagnostic: (pluginId, message) => ({ pluginId, message }),

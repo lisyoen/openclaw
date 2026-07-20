@@ -235,7 +235,7 @@ function appendNormalizedPluginMetadataOwners(
 }
 
 /** Resolve the plugin discovery filter used by implicit provider discovery tests. */
-function resolveProviderDiscoveryFilterForTest(params: {
+export function resolveProviderDiscoveryFilterForTest(params: {
   config?: OpenClawConfig;
   workspaceDir?: string;
   env: NodeJS.ProcessEnv;
@@ -246,20 +246,11 @@ function resolveProviderDiscoveryFilterForTest(params: {
 }
 
 /** Resolve provider owner plugin IDs from a preloaded metadata snapshot for tests. */
-function resolvePluginMetadataProviderOwnersForTest(
+export function resolvePluginMetadataProviderOwnersForTest(
   pluginMetadataSnapshot: Pick<PluginMetadataSnapshot, "owners"> | undefined,
   provider: string,
 ): readonly string[] | undefined {
   return resolvePluginMetadataProviderOwners(pluginMetadataSnapshot, provider);
-}
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[
-    Symbol.for("openclaw.modelsConfigImplicitProvidersTestApi")
-  ] = {
-    resolvePluginMetadataProviderOwnersForTest,
-    resolveProviderDiscoveryFilterForTest,
-  };
 }
 
 function mergeImplicitProviderSet(
@@ -360,13 +351,15 @@ function hasProviderWildcardVisibility(params: {
 function hasRuntimeProviderCatalog(
   provider: import("../plugins/types.js").ProviderPlugin,
 ): boolean {
-  return typeof provider.catalog?.run === "function";
+  return (
+    typeof provider.catalog?.run === "function" || typeof provider.discovery?.run === "function"
+  );
 }
 
 async function resolvePluginImplicitProviders(
   ctx: ImplicitProviderContext,
   providers: import("../plugins/types.js").ProviderPlugin[],
-  order: import("../plugins/types.js").ProviderCatalogOrder,
+  order: import("../plugins/types.js").ProviderDiscoveryOrder,
 ): Promise<Record<string, ProviderConfig> | undefined> {
   const byOrder = groupPluginDiscoveryProvidersByOrder(providers);
   const discovered: Record<string, ProviderConfig> = {};

@@ -7,17 +7,11 @@ const SECRET_TARGET_CALLSITES = [
   bundledPluginFile("memory-core", "src/cli.runtime.ts"),
   "src/cli/qr-cli.ts",
   "src/agents/agent-runtime-config.ts",
-  "src/agents/command/prepare.ts",
+  "src/commands/agent.ts",
   "src/commands/channels/resolve.ts",
   "src/commands/channels/shared.ts",
   "src/commands/message.ts",
-  "src/cli/capability-cli/audio.ts",
-  "src/cli/capability-cli/embedding.ts",
-  "src/cli/capability-cli/image.ts",
-  "src/cli/capability-cli/model.ts",
-  "src/cli/capability-cli/tts-runtime.ts",
-  "src/cli/capability-cli/video.ts",
-  "src/cli/capability-cli/web.ts",
+  "src/cli/capability-cli.ts",
   "src/commands/models/load-config.ts",
   "src/commands/status-all.ts",
   "src/commands/status.scan.ts",
@@ -37,7 +31,6 @@ function hasSupportedTargetIdsWiring(source: string): boolean {
 function hasSupportedSecretResolutionWiring(source: string): boolean {
   return (
     source.includes("resolveAgentRuntimeConfig(") ||
-    source.includes("resolveLocalCapabilityRuntimeConfig(") ||
     source.includes("resolveCommandConfigWithSecrets(") ||
     source.includes("resolveCommandSecretRefsViaGateway(") ||
     source.includes("collectStatusScanOverview(")
@@ -49,12 +42,6 @@ function usesDelegatedStatusOverviewFlow(source: string): boolean {
 }
 
 describe("command secret resolution coverage", () => {
-  it("routes capability command config through shared secret resolution", async () => {
-    const source = await readCommandSource("src/cli/capability-cli/shared.ts");
-    expect(source).toContain("resolveCommandConfigWithSecrets({");
-    expect(source).toMatch(/targetIds:\s*params\.targetIds/m);
-  });
-
   it.each(SECRET_TARGET_CALLSITES)(
     "routes target-id command path through shared secret resolution flow: %s",
     async (relativePath) => {

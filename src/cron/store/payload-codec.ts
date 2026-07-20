@@ -10,35 +10,6 @@ import {
 } from "./scalar-codec.js";
 import type { CronJobInsert, CronJobRow } from "./schema.js";
 
-type CronPayloadToolAllow = Pick<CronPayload, "toolsAllow" | "toolsAllowIsDefault">;
-type CronPayloadToolAllowColumns = Pick<
-  CronJobInsert,
-  "payload_tools_allow_json" | "payload_tools_allow_is_default"
->;
-
-function bindPayloadToolAllowColumns(payload: CronPayloadToolAllow): CronPayloadToolAllowColumns {
-  return {
-    payload_tools_allow_json: serializeJson(payload.toolsAllow),
-    payload_tools_allow_is_default: payload.toolsAllow
-      ? booleanToInteger(payload.toolsAllowIsDefault)
-      : null,
-  };
-}
-
-function payloadToolAllowFromRow(
-  row: Pick<CronJobRow, "payload_tools_allow_json" | "payload_tools_allow_is_default">,
-): CronPayloadToolAllow {
-  const toolsAllow = parseJsonArray(row.payload_tools_allow_json);
-  if (!toolsAllow) {
-    return {};
-  }
-  const toolsAllowIsDefault = integerToBoolean(row.payload_tools_allow_is_default);
-  return {
-    toolsAllow,
-    ...(toolsAllowIsDefault ? { toolsAllowIsDefault: true } : {}),
-  };
-}
-
 function parseExternalContentSource(raw: string | null): "gmail" | "webhook" | undefined {
   const parsed = raw ? parseJsonValue<unknown>(raw, undefined) : undefined;
   return parsed === "gmail" || parsed === "webhook" ? parsed : undefined;
@@ -89,28 +60,6 @@ function parseCommandPayloadMessage(
   };
 }
 
-function parseScriptPayloadMessage(
-  raw: string | null,
-): Omit<Extract<CronPayload, { kind: "script" }>, "kind" | "timeoutSeconds"> | null {
-  const parsed = raw ? parseJsonValue<unknown>(raw, undefined) : undefined;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-  const record = parsed as Record<string, unknown>;
-  if (typeof record.script !== "string" || !record.script.trim()) {
-    return null;
-  }
-  const toolBudget = normalizeNumber(
-    typeof record.toolBudget === "number" || typeof record.toolBudget === "bigint"
-      ? record.toolBudget
-      : null,
-  );
-  return {
-    script: record.script,
-    ...(toolBudget != null ? { toolBudget } : {}),
-  };
-}
-
 /** Maps cron payload variants into normalized SQLite columns. */
 export function bindPayloadColumns(
   payload: CronPayload,
@@ -126,7 +75,6 @@ export function bindPayloadColumns(
   | "payload_thinking"
   | "payload_timeout_seconds"
   | "payload_tools_allow_json"
-  | "payload_tools_allow_is_default"
 > {
   if (payload.kind === "systemEvent") {
     return {
@@ -139,16 +87,11 @@ export function bindPayloadColumns(
       payload_allow_unsafe_external_content: null,
       payload_external_content_source_json: null,
       payload_light_context: null,
-      ...bindPayloadToolAllowColumns(payload),
+      payload_tools_allow_json: null,
     };
   }
   if (payload.kind === "command") {
-    const {
-      timeoutSeconds: _timeoutSeconds,
-      toolsAllow: _toolsAllow,
-      toolsAllowIsDefault: _toolsAllowIsDefault,
-      ...payloadMessage
-    } = payload;
+    const { timeoutSeconds: _timeoutSeconds, ...payloadMessage } = payload;
     return {
       payload_kind: "command",
       payload_message: serializeJson(payloadMessage),
@@ -159,27 +102,7 @@ export function bindPayloadColumns(
       payload_allow_unsafe_external_content: null,
       payload_external_content_source_json: null,
       payload_light_context: null,
-      ...bindPayloadToolAllowColumns(payload),
-    };
-  }
-  if (payload.kind === "script") {
-    const {
-      timeoutSeconds: _timeoutSeconds,
-      toolsAllow: _toolsAllow,
-      toolsAllowIsDefault: _toolsAllowIsDefault,
-      ...payloadMessage
-    } = payload;
-    return {
-      payload_kind: "script",
-      payload_message: serializeJson(payloadMessage),
-      payload_model: null,
-      payload_fallbacks_json: null,
-      payload_thinking: null,
-      payload_timeout_seconds: payload.timeoutSeconds ?? null,
-      payload_allow_unsafe_external_content: null,
-      payload_external_content_source_json: null,
-      payload_light_context: null,
-      ...bindPayloadToolAllowColumns(payload),
+      payload_tools_allow_json: null,
     };
   }
   return {
@@ -192,21 +115,14 @@ export function bindPayloadColumns(
     payload_allow_unsafe_external_content: booleanToInteger(payload.allowUnsafeExternalContent),
     payload_external_content_source_json: serializeJson(payload.externalContentSource),
     payload_light_context: booleanToInteger(payload.lightContext),
-    ...bindPayloadToolAllowColumns(payload),
+    payload_tools_allow_json: serializeJson(payload.toolsAllow),
   };
 }
 
 /** Reconstructs cron payload variants from SQLite columns, returning null for invalid rows. */
 export function payloadFromRow(row: CronJobRow): CronPayload | null {
   if (row.payload_kind === "systemEvent") {
-    if (row.payload_message == null) {
-      return null;
-    }
-    return {
-      kind: "systemEvent",
-      text: row.payload_message,
-      ...payloadToolAllowFromRow(row),
-    };
+    return row.payload_message == null ? null : { kind: "systemEvent", text: row.payload_message };
   }
   if (row.payload_kind === "agentTurn") {
     if (row.payload_message == null) {
@@ -225,6 +141,9 @@ export function payloadFromRow(row: CronJobRow): CronPayload | null {
     );
     const lightContext =
       row.payload_light_context != null ? integerToBoolean(row.payload_light_context) : undefined;
+    const toolsAllow = row.payload_tools_allow_json
+      ? parseJsonArray(row.payload_tools_allow_json)
+      : undefined;
     return {
       kind: "agentTurn",
       message: row.payload_message,
@@ -235,7 +154,7 @@ export function payloadFromRow(row: CronJobRow): CronPayload | null {
       ...(allowUnsafeExternalContent != null ? { allowUnsafeExternalContent } : {}),
       ...(externalContentSource ? { externalContentSource } : {}),
       ...(lightContext != null ? { lightContext } : {}),
-      ...payloadToolAllowFromRow(row),
+      ...(toolsAllow ? { toolsAllow } : {}),
     };
   }
   if (row.payload_kind === "command") {
@@ -248,20 +167,6 @@ export function payloadFromRow(row: CronJobRow): CronPayload | null {
       kind: "command",
       ...command,
       ...(timeoutSeconds != null ? { timeoutSeconds } : {}),
-      ...payloadToolAllowFromRow(row),
-    };
-  }
-  if (row.payload_kind === "script") {
-    const script = parseScriptPayloadMessage(row.payload_message);
-    if (!script) {
-      return null;
-    }
-    const timeoutSeconds = normalizeNumber(row.payload_timeout_seconds);
-    return {
-      kind: "script",
-      ...script,
-      ...(timeoutSeconds != null ? { timeoutSeconds } : {}),
-      ...payloadToolAllowFromRow(row),
     };
   }
   return null;

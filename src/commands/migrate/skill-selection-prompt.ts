@@ -10,8 +10,6 @@ import {
   S_CHECKBOX_SELECTED,
   symbol,
   symbolBar,
-  type MultiSelectOptions,
-  type Option,
 } from "@clack/prompts";
 import {
   MIGRATION_SELECTION_ACCEPT,
@@ -20,13 +18,30 @@ import {
   reconcileInteractiveMigrationSkillToggleValues,
 } from "./selection.js";
 
+type MigrationSkillSelectionOption = {
+  value: string;
+  label?: string;
+  hint?: string;
+  disabled?: boolean;
+};
+
 /** Options for the migration selection prompt, including testable IO streams. */
-type MigrationSkillSelectionPromptOptions = Omit<MultiSelectOptions<string>, "required"> & {
+export type MigrationSkillSelectionPromptOptions = {
+  message: string;
+  options: MigrationSkillSelectionOption[];
+  initialValues?: string[];
+  maxItems?: number;
+  required?: boolean;
+  cursorAt?: string;
+  input?: NodeJS.ReadStream;
+  output?: NodeJS.WriteStream;
+  signal?: AbortSignal;
+  withGuide?: boolean;
   selectableValues: readonly string[];
 };
 
 function formatOption(
-  option: Option<string>,
+  option: MigrationSkillSelectionOption,
   state:
     | "active"
     | "active-selected"
@@ -63,13 +78,21 @@ function formatOption(
 export function promptMigrationSkillSelectionValues(
   opts: MigrationSkillSelectionPromptOptions,
 ): Promise<string[] | symbol | undefined> {
-  const prompt = new MultiSelectPrompt<Option<string>>({
+  const required = opts.required ?? true;
+  const prompt = new MultiSelectPrompt<MigrationSkillSelectionOption>({
     options: opts.options,
     signal: opts.signal,
     input: opts.input,
     output: opts.output,
     initialValues: opts.initialValues,
+    required,
     cursorAt: opts.cursorAt,
+    validate(value) {
+      if (required && (value === undefined || value.length === 0)) {
+        return "Please select at least one option.";
+      }
+      return undefined;
+    },
     render() {
       const withGuide = opts.withGuide ?? settings.withGuide;
       const message = wrapTextWithPrefix(
@@ -80,7 +103,7 @@ export function promptMigrationSkillSelectionValues(
       );
       const header = `${withGuide ? `${styleText("gray", S_BAR)}\n` : ""}${message}\n`;
       const value = this.value ?? [];
-      const optionState = (option: Option<string>, active: boolean) => {
+      const optionState = (option: MigrationSkillSelectionOption, active: boolean) => {
         if (option.disabled) {
           return formatOption(option, "disabled");
         }
@@ -232,3 +255,10 @@ export function promptMigrationSkillSelectionValues(
 
   return prompt.prompt();
 }
+
+/**
+ * Compatibility alias for plugin selection prompts that share the same picker.
+ *
+ * @deprecated Use promptMigrationSkillSelectionValues.
+ */
+export const promptMigrationSelectionValues = promptMigrationSkillSelectionValues;

@@ -56,6 +56,12 @@ import Testing
             appModel: appModel,
             defaults: defaults,
             hasSavedGatewayConnection: false))
+
+        OnboardingStateStore.markIncomplete(defaults: defaults)
+        #expect(OnboardingStateStore.shouldPresentOnLaunch(
+            appModel: appModel,
+            defaults: defaults,
+            hasSavedGatewayConnection: false))
     }
 
     @Test func firstRunIntroDefaultsToVisibleThenPersists() {

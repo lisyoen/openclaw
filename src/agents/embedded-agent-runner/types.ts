@@ -13,26 +13,8 @@ import type {
   MessagingToolSend,
   MessagingToolSourceReplyPayload,
 } from "../embedded-agent-messaging.types.js";
-import type { McpAppChannelView } from "../mcp-ui-resource.js";
 import type { FallbackAttempt } from "../model-fallback.types.js";
 import type { AgentRunTimeoutPhase } from "../run-timeout-attribution.js";
-import type { ContextUsage } from "../usage.js";
-
-export type BlockReplyFlushContext =
-  | {
-      /** Boundary that requested the flush. */
-      reason: "message_end" | "terminal";
-    }
-  | {
-      /** Tool boundary separating pre-tool narration from the eventual answer. */
-      reason: "tool_start";
-      assistantMessageIndex: number;
-    }
-  | {
-      /** Pre-compaction delivery is safe only for a completed assistant attempt. */
-      reason: "pre_compaction";
-      attemptAccepted: boolean;
-    };
 
 export type EmbeddedAgentMeta = {
   sessionId: string;
@@ -77,7 +59,6 @@ export type EmbeddedAgentMeta = {
     output?: number;
     cacheRead?: number;
     cacheWrite?: number;
-    contextUsage?: ContextUsage;
     reasoningTokens?: number;
     total?: number;
   };
@@ -103,7 +84,7 @@ export type TraceAttempt = {
   status?: number;
 };
 
-type ExecutionTrace = {
+export type ExecutionTrace = {
   winnerProvider?: string;
   winnerModel?: string;
   attempts?: TraceAttempt[];
@@ -111,7 +92,7 @@ type ExecutionTrace = {
   runner?: "embedded" | "cli";
 };
 
-type RequestShapingTrace = {
+export type RequestShapingTrace = {
   authMode?: string;
   thinking?: string;
   reasoning?: string;
@@ -121,7 +102,7 @@ type RequestShapingTrace = {
   blockStreaming?: string;
 };
 
-type PromptSegmentTrace = {
+export type PromptSegmentTrace = {
   key: string;
   chars: number;
 };
@@ -133,13 +114,13 @@ export type ToolSummaryTrace = {
   totalToolTimeMs?: number;
 };
 
-type CompletionTrace = {
+export type CompletionTrace = {
   finishReason?: string;
   stopReason?: string;
   refusal?: boolean;
 };
 
-type ContextManagementTrace = {
+export type ContextManagementTrace = {
   sessionCompactions?: number;
   lastTurnCompactions?: number;
   preflightCompactionApplied?: boolean;
@@ -179,17 +160,19 @@ export type EmbeddedAgentRunMeta = {
       | "role_ordering"
       | "image_size"
       | "retry_limit"
-      | "incomplete_turn"
       | "hook_block";
     message: string;
-    /** True only when model fallback can retry this terminal error without repeating side effects. */
-    fallbackSafe?: boolean;
-    /** True when the payload includes a trusted structured terminal tool summary. */
-    terminalPresentation?: boolean;
   };
   failureSignal?: EmbeddedRunFailureSignal;
   /** Stop reason for the agent run (e.g., "completed", "tool_calls"). */
   stopReason?: string;
+  /**
+   * Raw error message from the final assistant turn when it ended with
+   * stopReason === "error". Exposed so callers (e.g. the agent runner safety
+   * net) can run context-overflow detection even when `meta.error` is not
+   * populated for this run path.
+   */
+  lastAssistantErrorMessage?: string;
   /** Pending tool calls when stopReason is "tool_calls". */
   pendingToolCalls?: Array<{
     id: string;
@@ -205,7 +188,6 @@ export type EmbeddedAgentRunMeta = {
 };
 
 export type EmbeddedAgentRunResult = {
-  latestMcpAppChannelView?: McpAppChannelView;
   payloads?: Array<{
     text?: string;
     mediaUrl?: string;
@@ -213,8 +195,6 @@ export type EmbeddedAgentRunResult = {
     replyToId?: string;
     isError?: boolean;
     isReasoning?: boolean;
-    /** Marks pre-tool commentary (💬) — a display lane, suppressed unless the channel opts in. */
-    isCommentary?: boolean;
     audioAsVoice?: boolean;
     trustedLocalMedia?: boolean;
     channelData?: Record<string, unknown>;

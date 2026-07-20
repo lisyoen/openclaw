@@ -12,7 +12,7 @@ import { resolveProviderReasoningOutputModeWithPlugin } from "../plugins/provide
  * Resolves whether a provider should emit reasoning via native fields or tagged text,
  * using provider runtime hooks when available and defaulting to native output.
  */
-function resolveReasoningOutputMode(params: {
+export function resolveReasoningOutputMode(params: {
   provider: string | undefined | null;
   config?: OpenClawConfig;
   workspaceDir?: string;

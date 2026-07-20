@@ -8,9 +8,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadExecApprovals } from "../infra/exec-approvals.js";
 import { sendMessage } from "../infra/outbound/message.js";
-import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import { buildSystemRunPreparePayload } from "../test-utils/system-run-prepare-payload.js";
 import { createExecTool } from "./bash-tools.exec.js";
 import { callGatewayTool } from "./tools/gateway.js";
@@ -36,25 +34,22 @@ vi.mock("../infra/outbound/message.js", () => ({
 }));
 
 vi.mock("../utils/message-channel.js", () => {
-  const INTERNAL_MESSAGE_CHANNEL = "webchat";
   const normalizeMessageChannel = (raw?: string | null) => {
     const normalized = raw?.trim().toLowerCase();
     if (!normalized) {
       return undefined;
     }
-    if (normalized === "web") {
-      return INTERNAL_MESSAGE_CHANNEL;
+    if (normalized === "web" || normalized === "webchat") {
+      return "internal";
     }
     return normalized;
   };
   const isGatewayMessageChannel = (value: string) => Boolean(normalizeMessageChannel(value));
   return {
-    INTERNAL_MESSAGE_CHANNEL,
-    isNativeApprovalChannel: (value?: string | null) =>
-      value === INTERNAL_MESSAGE_CHANNEL || value === "discord",
+    INTERNAL_MESSAGE_CHANNEL: "internal",
     isDeliverableMessageChannel: (value: string) => {
       const channel = normalizeMessageChannel(value);
-      return Boolean(channel && channel !== INTERNAL_MESSAGE_CHANNEL && channel !== "tui");
+      return Boolean(channel && channel !== "internal" && channel !== "tui");
     },
     isGatewayMessageChannel,
     normalizeMessageChannel,
@@ -102,12 +97,12 @@ vi.mock("../infra/exec-approval-surface.js", () => ({
       kind: "enabled",
       channel,
       channelLabel:
-        channel === "tui" ? "terminal UI" : channel === "webchat" ? "Web UI" : "this platform",
+        channel === "tui" ? "terminal UI" : channel === "internal" ? "Web UI" : "this platform",
       accountId: params.accountId ?? undefined,
     };
   },
   supportsNativeExecApprovalClient: (channel?: string | null) =>
-    !channel || channel === "webchat" || channel === "tui",
+    !channel || channel === "internal" || channel === "tui",
 }));
 
 vi.mock("../infra/shell-env.js", () => ({
@@ -173,6 +168,7 @@ vi.mock("../process/supervisor/index.js", () => {
       },
       cancel: vi.fn(),
       cancelScope: vi.fn(),
+      reconcileOrphans: vi.fn(),
       getRecord: vi.fn(),
     }),
   };
@@ -351,9 +347,7 @@ function mockPendingApprovalRegistration() {
       return { status: "accepted", id: "approval-id" };
     }
     if (method === "exec.approval.waitDecision") {
-      // Keep the detached follow-up pending. Resolving with no decision applies
-      // askFallback and can race the next fixture's policy-file rewrite.
-      return await new Promise<never>(() => {});
+      return { decision: null };
     }
     return { ok: true };
   });
@@ -395,7 +389,10 @@ function expectRecordFields(
 }
 
 describe("exec approvals", () => {
-  let envSnapshot: ReturnType<typeof captureEnv> | undefined;
+  let previousHome: string | undefined;
+  let previousUserProfile: string | undefined;
+  let previousBundledPluginsDir: string | undefined;
+  let previousDisableBundledPlugins: string | undefined;
   let tempRoot = "";
   let tempCaseIndex = 0;
 
@@ -404,27 +401,43 @@ describe("exec approvals", () => {
   });
 
   beforeEach(async () => {
-    envSnapshot = captureEnv([
-      "HOME",
-      "USERPROFILE",
-      "OPENCLAW_BUNDLED_PLUGINS_DIR",
-      "OPENCLAW_DISABLE_BUNDLED_PLUGINS",
-    ]);
+    previousHome = process.env.HOME;
+    previousUserProfile = process.env.USERPROFILE;
+    previousBundledPluginsDir = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+    previousDisableBundledPlugins = process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS;
     const tempDir = path.join(tempRoot, `case-${++tempCaseIndex}`);
     await fs.mkdir(tempDir, { recursive: true });
-    setTestEnvValue("HOME", tempDir);
+    process.env.HOME = tempDir;
     // Windows uses USERPROFILE for os.homedir()
-    setTestEnvValue("USERPROFILE", tempDir);
-    deleteTestEnvValue("OPENCLAW_BUNDLED_PLUGINS_DIR");
-    setTestEnvValue("OPENCLAW_DISABLE_BUNDLED_PLUGINS", "1");
+    process.env.USERPROFILE = tempDir;
+    delete process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+    process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS = "1";
     vi.mocked(callGatewayTool).mockReset();
     vi.mocked(sendMessage).mockClear();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
-    envSnapshot?.restore();
-    envSnapshot = undefined;
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = previousUserProfile;
+    }
+    if (previousBundledPluginsDir === undefined) {
+      delete process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
+    } else {
+      process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = previousBundledPluginsDir;
+    }
+    if (previousDisableBundledPlugins === undefined) {
+      delete process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS;
+    } else {
+      process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS = previousDisableBundledPlugins;
+    }
   });
 
   afterAll(async () => {
@@ -613,40 +626,6 @@ describe("exec approvals", () => {
     expect(runCwd).toBeUndefined();
   });
 
-  it("forwards the node-only default cwd when node workdir is omitted", async () => {
-    let runCwd: string | undefined;
-
-    vi.mocked(callGatewayTool).mockImplementation(async (method, _opts, params) => {
-      if (method === "node.invoke") {
-        const invoke = params as { command?: string; params?: { cwd?: string } };
-        if (invoke.command === "system.run.prepare") {
-          return buildPreparedSystemRunPayload(params);
-        }
-        if (invoke.command === "system.run") {
-          runCwd = invoke.params?.cwd;
-          return { payload: { success: true, stdout: "ok" } };
-        }
-      }
-      return { ok: true };
-    });
-
-    const tool = createExecTool({
-      host: "node",
-      ask: "off",
-      security: "full",
-      approvalRunningNoticeMs: 0,
-      cwd: "/gateway/workspace",
-      nodeCwd: "/remote/node/workspace",
-    });
-
-    const result = await tool.execute("call-node-session-cwd", {
-      command: "/bin/pwd",
-    });
-
-    expect(result.details.status).toBe("completed");
-    expect(runCwd).toBe("/remote/node/workspace");
-  });
-
   it("routes explicit host=node to node invoke when elevated default is on under auto host", async () => {
     const calls: string[] = [];
 
@@ -680,37 +659,6 @@ describe("exec approvals", () => {
     expect(result.details.status).toBe("completed");
     expect(getResultText(result)).toContain("node-ok");
     expect(calls).toContain("node.invoke");
-  });
-
-  it("keeps the background fallback warning when node exec actually runs inline", async () => {
-    vi.mocked(callGatewayTool).mockImplementation(async (method, _opts, params) => {
-      if (method === "node.invoke") {
-        const invoke = params as { command?: string };
-        if (invoke.command === "system.run") {
-          return { payload: { success: true, stdout: "node-ok" } };
-        }
-      }
-      return { ok: true };
-    });
-
-    const tool = createExecTool({
-      host: "node",
-      ask: "off",
-      security: "full",
-      allowBackground: false,
-      approvalRunningNoticeMs: 0,
-    });
-
-    const result = await tool.execute("call-node-background-disabled", {
-      command: "echo ok",
-      background: true,
-    });
-
-    expect(result.details.status).toBe("completed");
-    expect(getResultText(result)).toContain(
-      "Warning: background execution is disabled; running synchronously.",
-    );
-    expect(getResultText(result)).toContain("node-ok");
   });
 
   it("honors ask=off for elevated gateway exec without prompting", async () => {
@@ -831,12 +779,23 @@ describe("exec approvals", () => {
     expect(calls).toContain("exec.approval.request");
     expect(calls).toContain("exec.approval.waitDecision");
 
+    const approvalsPath = path.join(process.env.HOME ?? "", ".openclaw", "exec-approvals.json");
     await expect
       .poll(
-        () =>
-          loadExecApprovals().agents?.main?.allowlist?.some(
-            (entry) => entry.source === "allow-always",
-          ) === true,
+        async () => {
+          try {
+            const raw = await fs.readFile(approvalsPath, "utf8");
+            const parsed = JSON.parse(raw) as {
+              agents?: { main?: { allowlist?: Array<{ source?: string }> } };
+            };
+            return (
+              parsed.agents?.main?.allowlist?.some((entry) => entry.source === "allow-always") ===
+              true
+            );
+          } catch {
+            return false;
+          }
+        },
         { timeout: 2000, interval: 1 },
       )
       .toBe(true);
@@ -986,49 +945,6 @@ describe("exec approvals", () => {
     expect(calls).toContain("exec.approval.waitDecision");
   });
 
-  it.each(["gateway", "node"] as const)(
-    "keeps background fallback warnings out of pending %s approvals",
-    async (host) => {
-      let approvalRequest: Record<string, unknown> | undefined;
-      vi.mocked(callGatewayTool).mockImplementation(async (method, _opts, params) => {
-        if (method === "node.invoke") {
-          const invoke = params as { command?: string };
-          if (invoke.command === "system.run.prepare") {
-            return buildPreparedSystemRunPayload(params);
-          }
-        }
-        if (method === "exec.approvals.node.get") {
-          return { file: { version: 1, agents: {} } };
-        }
-        if (method === "exec.approval.request") {
-          approvalRequest = params as Record<string, unknown>;
-          return acceptedApprovalResponse(params);
-        }
-        if (method === "exec.approval.waitDecision") {
-          return { decision: "deny" };
-        }
-        return { ok: true };
-      });
-
-      const tool = createExecTool({
-        host,
-        ask: "always",
-        security: "full",
-        allowBackground: false,
-        approvalRunningNoticeMs: 0,
-      });
-
-      const result = await tool.execute(`call-${host}-background-approval`, {
-        command: "echo ok",
-        background: true,
-      });
-
-      expect(result.details.status).toBe("approval-pending");
-      expect(getResultText(result)).not.toContain("background execution is disabled");
-      expect(approvalRequest?.warningText).toBeUndefined();
-    },
-  );
-
   it("starts an internal agent follow-up after approved gateway exec completes without an external route", async () => {
     const agentCalls: Array<Record<string, unknown>> = [];
 
@@ -1064,7 +980,7 @@ describe("exec approvals", () => {
     );
   });
 
-  it("continues the original agent session after approved gateway exec completes with a non-native external route", async () => {
+  it("continues the original agent session after approved gateway exec completes with an external route", async () => {
     const agentCalls: Array<Record<string, unknown>> = [];
 
     mockAcceptedApprovalFlow({
@@ -1077,15 +993,15 @@ describe("exec approvals", () => {
       host: "gateway",
       ask: "always",
       approvalRunningNoticeMs: 0,
-      sessionKey: "agent:main:feishu:channel:123",
+      sessionKey: "agent:main:discord:channel:123",
       elevated: { enabled: true, allowed: true, defaultLevel: "ask" },
-      messageProvider: "feishu",
+      messageProvider: "discord",
       currentChannelId: "123",
       accountId: "default",
       currentThreadTs: "456",
     });
 
-    const result = await tool.execute("call-gw-followup-feishu", {
+    const result = await tool.execute("call-gw-followup-discord", {
       command: "echo ok",
       workdir: process.cwd(),
     });
@@ -1093,10 +1009,10 @@ describe("exec approvals", () => {
     expect(result.details.status).toBe("approval-pending");
     await expect.poll(() => agentCalls.length, { timeout: 3000, interval: 1 }).toBe(1);
     expectRecordFields(agentCalls[0], {
-      sessionKey: "agent:main:feishu:channel:123",
+      sessionKey: "agent:main:discord:channel:123",
       deliver: true,
       bestEffortDeliver: true,
-      channel: "feishu",
+      channel: "discord",
       to: "123",
       accountId: "default",
       threadId: "456",
@@ -1109,7 +1025,7 @@ describe("exec approvals", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it("waits inline for native Discord approval and resumes the same session without a second user turn", async () => {
+  it("auto-continues the same Discord session after approval resolves without a second user turn", async () => {
     const agentCalls: Array<Record<string, unknown>> = [];
     let resolveDecision: ((value: { decision: string }) => void) | undefined;
     const decisionPromise = new Promise<{ decision: string }>((resolve) => {
@@ -1142,26 +1058,31 @@ describe("exec approvals", () => {
       currentThreadTs: "456",
     });
 
-    let settled = false;
-    const resultPromise = tool.execute("call-gw-followup-discord-delayed", {
+    const result = await tool.execute("call-gw-followup-discord-delayed", {
       command: "printf delayed-ok",
       workdir: process.cwd(),
     });
-    void resultPromise.then(() => {
-      settled = true;
-    });
 
-    await Promise.resolve();
-    expect(settled).toBe(false);
+    expect(result.details.status).toBe("approval-pending");
     expect(agentCalls).toHaveLength(0);
 
     resolveDecision?.({ decision: "allow-once" });
 
-    const result = await resultPromise;
-
-    expect(result.details.status).toBe("completed");
-    expect(getResultText(result)).toContain("delayed-ok");
-    expect(agentCalls).toHaveLength(0);
+    await expect.poll(() => agentCalls.length, { timeout: 3000, interval: 1 }).toBe(1);
+    expectRecordFields(agentCalls[0], {
+      sessionKey: "agent:main:discord:channel:123",
+      deliver: true,
+      bestEffortDeliver: true,
+      channel: "discord",
+      to: "123",
+      accountId: "default",
+      threadId: "456",
+    });
+    expect(typeof agentCalls[0]?.message).toBe("string");
+    expect(agentCalls[0]?.message).toContain(
+      "If the task requires more steps, continue from this result before replying to the user.",
+    );
+    expect(agentCalls[0]?.message).toContain("delayed-ok");
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -1638,9 +1559,8 @@ describe("exec approvals", () => {
     const systemRun = requireRecord(systemRunInvoke, "system.run invoke");
     expect(systemRun.command).toBe("system.run");
     const params = requireRecord(systemRun.params, "system.run params");
-    expect(params.approved).toBeUndefined();
-    expect(params.approvalDecision).toBeUndefined();
-    expect(params.approvalSource).toBe("ask-fallback");
+    expect(params.approved).toBe(true);
+    expect(params.approvalDecision).toBe("allow-once");
     expect(params.systemRunPlan).toStrictEqual(preparedPlan);
     expect(params.runId).toBeTypeOf("string");
   });
@@ -1668,4 +1588,3 @@ describe("exec approvals", () => {
     ).rejects.toThrow("Cron runs cannot wait for interactive exec approval");
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

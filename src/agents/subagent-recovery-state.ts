@@ -8,10 +8,7 @@ import type { SessionEntry } from "../config/sessions.js";
 const SUBAGENT_RECOVERY_MAX_AUTOMATIC_ATTEMPTS = 2;
 const SUBAGENT_RECOVERY_REWEDGE_WINDOW_MS = 2 * 60_000;
 
-function normalizeRecoveryAttempts(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
-}
-
+/** Decision returned before attempting automatic subagent orphan recovery. */
 type SubagentRecoveryGate =
   | {
       allowed: true;
@@ -34,6 +31,7 @@ function isRecentRecoveryAttempt(entry: SessionEntry, now: number): boolean {
   );
 }
 
+/** Returns true when recovery has been tombstoned for a session entry. */
 export function isSubagentRecoveryWedgedEntry(entry: unknown): boolean {
   if (!entry || typeof entry !== "object") {
     return false;
@@ -46,6 +44,7 @@ export function isSubagentRecoveryWedgedEntry(entry: unknown): boolean {
   );
 }
 
+/** Formats the operator-facing reason for a wedged recovery entry. */
 export function formatSubagentRecoveryWedgedReason(entry: SessionEntry): string {
   return (
     entry.subagentRecovery?.wedgedReason?.trim() ||
@@ -53,6 +52,7 @@ export function formatSubagentRecoveryWedgedReason(entry: SessionEntry): string 
   );
 }
 
+/** Checks whether automatic orphan recovery may run for this session entry. */
 export function evaluateSubagentRecoveryGate(
   entry: SessionEntry,
   now: number,
@@ -66,7 +66,7 @@ export function evaluateSubagentRecoveryGate(
   }
 
   const previousAttempts = isRecentRecoveryAttempt(entry, now)
-    ? normalizeRecoveryAttempts(entry.subagentRecovery?.automaticAttempts)
+    ? Math.max(0, entry.subagentRecovery?.automaticAttempts ?? 0)
     : 0;
   if (previousAttempts >= SUBAGENT_RECOVERY_MAX_AUTOMATIC_ATTEMPTS) {
     return {
@@ -84,6 +84,7 @@ export function evaluateSubagentRecoveryGate(
   };
 }
 
+/** Records one accepted automatic orphan-recovery attempt. */
 export function markSubagentRecoveryAttempt(params: {
   entry: SessionEntry;
   now: number;
@@ -97,10 +98,11 @@ export function markSubagentRecoveryAttempt(params: {
   };
 }
 
+/** Tombstones automatic recovery until maintenance or doctor clears the state. */
 export function markSubagentRecoveryWedged(params: {
   entry: SessionEntry;
   now: number;
-  runId: string;
+  runId?: string;
   reason: string;
 }): void {
   params.entry.abortedLastRun = false;
@@ -111,13 +113,14 @@ export function markSubagentRecoveryWedged(params: {
       SUBAGENT_RECOVERY_MAX_AUTOMATIC_ATTEMPTS,
     ),
     lastAttemptAt: params.entry.subagentRecovery?.lastAttemptAt ?? params.now,
-    lastRunId: params.runId,
+    ...(params.runId ? { lastRunId: params.runId } : {}),
     wedgedAt: params.now,
     wedgedReason: params.reason,
   };
   params.entry.updatedAt = params.now;
 }
 
+/** Clears stale abort state when a wedged entry should no longer look runnable. */
 export function clearWedgedSubagentRecoveryAbort(entry: SessionEntry, now: number): boolean {
   if (!isSubagentRecoveryWedgedEntry(entry) || entry.abortedLastRun !== true) {
     return false;

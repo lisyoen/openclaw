@@ -2,84 +2,32 @@ import Foundation
 import OpenClawProtocol
 
 public enum GatewayDeviceAuthPayload {
-    public struct Client: Sendable {
-        public let id: String
-        public let mode: String
-
-        public init(id: String, mode: String) {
-            self.id = id
-            self.mode = mode
-        }
-    }
-
-    public struct Fields: Sendable {
-        public let deviceId: String
-        public let client: Client
-        public let role: String
-        public let scopes: [String]
-        public let signedAtMs: Int64
-        public let token: String?
-        public let nonce: String
-
-        public init(
-            deviceId: String,
-            client: Client,
-            role: String,
-            scopes: [String],
-            signedAtMs: Int64,
-            token: String?,
-            nonce: String)
-        {
-            self.deviceId = deviceId
-            self.client = client
-            self.role = role
-            self.scopes = scopes
-            self.signedAtMs = signedAtMs
-            self.token = token
-            self.nonce = nonce
-        }
-    }
-
-    public static func buildConnectCompatibilityPayload(
-        fields: Fields) -> String
-    {
-        // Managed gateways deployed before v3 metadata payload support still
-        // verify v2 signatures. Swift connect signers temporarily omit signed
-        // metadata until managed and supported self-managed gateways verify v3.
-        let scopeString = fields.scopes.joined(separator: ",")
-        let authToken = fields.token ?? ""
-        return [
-            "v2",
-            fields.deviceId,
-            fields.client.id,
-            fields.client.mode,
-            fields.role,
-            scopeString,
-            String(fields.signedAtMs),
-            authToken,
-            fields.nonce,
-        ].joined(separator: "|")
-    }
-
     public static func buildV3(
-        fields: Fields,
+        deviceId: String,
+        clientId: String,
+        clientMode: String,
+        role: String,
+        scopes: [String],
+        signedAtMs: Int,
+        token: String?,
+        nonce: String,
         platform: String?,
         deviceFamily: String?) -> String
     {
-        let scopeString = fields.scopes.joined(separator: ",")
-        let authToken = fields.token ?? ""
+        let scopeString = scopes.joined(separator: ",")
+        let authToken = token ?? ""
         let normalizedPlatform = self.normalizeMetadataField(platform)
         let normalizedDeviceFamily = self.normalizeMetadataField(deviceFamily)
         return [
             "v3",
-            fields.deviceId,
-            fields.client.id,
-            fields.client.mode,
-            fields.role,
+            deviceId,
+            clientId,
+            clientMode,
+            role,
             scopeString,
-            String(fields.signedAtMs),
+            String(signedAtMs),
             authToken,
-            fields.nonce,
+            nonce,
             normalizedPlatform,
             normalizedDeviceFamily,
         ].joined(separator: "|")
@@ -109,7 +57,7 @@ public enum GatewayDeviceAuthPayload {
     public static func signedDeviceDictionary(
         payload: String,
         identity: DeviceIdentity,
-        signedAtMs: Int64,
+        signedAtMs: Int,
         nonce: String) -> [String: OpenClawProtocol.AnyCodable]?
     {
         guard let signature = DeviceIdentityStore.signPayload(payload, identity: identity),

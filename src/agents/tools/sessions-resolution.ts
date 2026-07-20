@@ -10,10 +10,8 @@ import {
 } from "../../../packages/gateway-protocol/src/client-info.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { callGateway } from "../../gateway/call.js";
-import { GatewayClientRequestError } from "../../gateway/client.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
-  createSessionVisibilityChecker,
   listSpawnedSessionKeys,
   sessionVisibilityGatewayTesting,
 } from "../../plugin-sdk/session-visibility.js";
@@ -89,7 +87,9 @@ export function resolveCurrentSessionClientAlias(params: {
   return requesterKey;
 }
 
-async function isRequesterSpawnedSessionVisible(params: {
+export { listSpawnedSessionKeys };
+
+export async function isRequesterSpawnedSessionVisible(params: {
   requesterSessionKey: string;
   targetSessionKey: string;
   limit?: number;
@@ -118,7 +118,46 @@ async function isRequesterSpawnedSessionVisible(params: {
   return keys.has(params.targetSessionKey);
 }
 
-function looksLikeSessionKey(value: string): boolean {
+export function shouldVerifyRequesterSpawnedSessionVisibility(params: {
+  requesterSessionKey: string;
+  targetSessionKey: string;
+  restrictToSpawned: boolean;
+  resolvedViaSessionId: boolean;
+}): boolean {
+  return (
+    params.restrictToSpawned &&
+    !params.resolvedViaSessionId &&
+    params.requesterSessionKey !== params.targetSessionKey
+  );
+}
+
+export async function isResolvedSessionVisibleToRequester(params: {
+  requesterSessionKey: string;
+  targetSessionKey: string;
+  restrictToSpawned: boolean;
+  resolvedViaSessionId: boolean;
+  limit?: number;
+}): Promise<boolean> {
+  if (
+    !shouldVerifyRequesterSpawnedSessionVisibility({
+      requesterSessionKey: params.requesterSessionKey,
+      targetSessionKey: params.targetSessionKey,
+      restrictToSpawned: params.restrictToSpawned,
+      resolvedViaSessionId: params.resolvedViaSessionId,
+    })
+  ) {
+    return true;
+  }
+  return await isRequesterSpawnedSessionVisible({
+    requesterSessionKey: params.requesterSessionKey,
+    targetSessionKey: params.targetSessionKey,
+    limit: params.limit,
+  });
+}
+
+export { looksLikeSessionId };
+
+export function looksLikeSessionKey(value: string): boolean {
   const raw = normalizeOptionalString(value) ?? "";
   if (!raw) {
     return false;
@@ -150,7 +189,7 @@ export function shouldResolveSessionIdInput(value: string): boolean {
   return looksLikeSessionId(value) || !looksLikeSessionKey(value);
 }
 
-type SessionReferenceResolution =
+export type SessionReferenceResolution =
   | {
       ok: true;
       key: string;
@@ -159,7 +198,7 @@ type SessionReferenceResolution =
     }
   | { ok: false; status: "error" | "forbidden"; error: string };
 
-type VisibleSessionReferenceResolution =
+export type VisibleSessionReferenceResolution =
   | {
       ok: true;
       key: string;
@@ -194,53 +233,24 @@ function buildSessionIdResolveParams(params: {
   sessionId: string;
   requesterInternalKey?: string;
   restrictToSpawned: boolean;
-  allowMissing?: boolean;
 }) {
   return {
     sessionId: params.sessionId,
     spawnedBy: params.restrictToSpawned ? params.requesterInternalKey : undefined,
     includeGlobal: !params.restrictToSpawned,
     includeUnknown: !params.restrictToSpawned,
-    ...(params.allowMissing ? { allowMissing: true } : {}),
   };
-}
-
-async function callGatewayResolveSession(
-  params: Record<string, unknown> & { allowMissing?: boolean },
-) {
-  try {
-    return await sessionsResolutionDeps.callGateway({
-      method: "sessions.resolve",
-      params,
-    });
-  } catch (error) {
-    const olderGatewayRejectedProbe =
-      params.allowMissing === true &&
-      error instanceof GatewayClientRequestError &&
-      error.gatewayCode === "INVALID_REQUEST" &&
-      error.message.includes("invalid sessions.resolve params") &&
-      error.message.includes("unexpected property 'allowMissing'");
-    if (!olderGatewayRejectedProbe) {
-      throw error;
-    }
-    // Protocol v4 gateways predating allowMissing reject the additive field.
-    // Retry without it for mixed-version correctness; remove at the next protocol break.
-    const legacyParams: Record<string, unknown> = { ...params };
-    delete legacyParams.allowMissing;
-    return await sessionsResolutionDeps.callGateway({
-      method: "sessions.resolve",
-      params: legacyParams,
-    });
-  }
 }
 
 async function callGatewayResolveSessionId(params: {
   sessionId: string;
   requesterInternalKey?: string;
   restrictToSpawned: boolean;
-  allowMissing?: boolean;
 }): Promise<string> {
-  const result = await callGatewayResolveSession(buildSessionIdResolveParams(params));
+  const result = await sessionsResolutionDeps.callGateway({
+    method: "sessions.resolve",
+    params: buildSessionIdResolveParams(params),
+  });
   const key = normalizeOptionalString(result?.key) ?? "";
   if (!key) {
     throw new Error(
@@ -256,7 +266,6 @@ async function resolveSessionKeyFromSessionId(params: {
   mainKey: string;
   requesterInternalKey?: string;
   restrictToSpawned: boolean;
-  allowMissing?: boolean;
 }): Promise<SessionReferenceResolution> {
   try {
     // Resolve via gateway so we respect store routing and visibility rules.
@@ -292,14 +301,15 @@ async function resolveSessionKeyFromKey(params: {
   mainKey: string;
   requesterInternalKey?: string;
   restrictToSpawned: boolean;
-  allowMissing?: boolean;
 }): Promise<SessionReferenceResolution | null> {
   try {
     // Try key-based resolution first so non-standard keys keep working.
-    const result = await callGatewayResolveSession({
-      key: params.key,
-      spawnedBy: params.restrictToSpawned ? params.requesterInternalKey : undefined,
-      ...(params.allowMissing ? { allowMissing: true } : {}),
+    const result = await sessionsResolutionDeps.callGateway({
+      method: "sessions.resolve",
+      params: {
+        key: params.key,
+        spawnedBy: params.restrictToSpawned ? params.requesterInternalKey : undefined,
+      },
     });
     const key = normalizeOptionalString(result?.key) ?? "";
     if (!key) {
@@ -322,7 +332,6 @@ async function tryResolveSessionKeyFromSessionId(params: {
   mainKey: string;
   requesterInternalKey?: string;
   restrictToSpawned: boolean;
-  allowMissing?: boolean;
 }): Promise<Extract<SessionReferenceResolution, { ok: true }> | null> {
   try {
     const key = await callGatewayResolveSessionId(params);
@@ -344,7 +353,6 @@ async function resolveSessionReferenceByKeyOrSessionId(params: {
   requesterInternalKey?: string;
   restrictToSpawned: boolean;
   allowUnresolvedSessionId: boolean;
-  allowMissing?: boolean;
   skipKeyLookup?: boolean;
   forceSessionIdLookup?: boolean;
 }): Promise<SessionReferenceResolution | null> {
@@ -356,7 +364,6 @@ async function resolveSessionReferenceByKeyOrSessionId(params: {
       mainKey: params.mainKey,
       requesterInternalKey: params.requesterInternalKey,
       restrictToSpawned: params.restrictToSpawned,
-      allowMissing: params.allowMissing,
     });
     if (resolvedByKey) {
       return resolvedByKey;
@@ -372,7 +379,6 @@ async function resolveSessionReferenceByKeyOrSessionId(params: {
       mainKey: params.mainKey,
       requesterInternalKey: params.requesterInternalKey,
       restrictToSpawned: params.restrictToSpawned,
-      allowMissing: params.allowMissing,
     });
   }
   return await resolveSessionKeyFromSessionId({
@@ -381,7 +387,6 @@ async function resolveSessionReferenceByKeyOrSessionId(params: {
     mainKey: params.mainKey,
     requesterInternalKey: params.requesterInternalKey,
     restrictToSpawned: params.restrictToSpawned,
-    allowMissing: params.allowMissing,
   });
 }
 
@@ -405,7 +410,6 @@ export async function resolveSessionReference(params: {
       requesterInternalKey: params.requesterInternalKey,
       restrictToSpawned: params.restrictToSpawned,
       allowUnresolvedSessionId: true,
-      allowMissing: true,
       skipKeyLookup: params.restrictToSpawned,
       forceSessionIdLookup: true,
     });
@@ -444,7 +448,6 @@ export async function resolveSessionReference(params: {
 }
 
 export async function resolveVisibleSessionReference(params: {
-  action: "history" | "send" | "status" | "list";
   resolvedSession: Extract<SessionReferenceResolution, { ok: true }>;
   requesterSessionKey: string;
   restrictToSpawned: boolean;
@@ -452,25 +455,12 @@ export async function resolveVisibleSessionReference(params: {
 }): Promise<VisibleSessionReferenceResolution> {
   const resolvedKey = params.resolvedSession.key;
   const displayKey = params.resolvedSession.displayKey;
-  const shouldVerifySpawnedVisibility =
-    params.restrictToSpawned &&
-    !params.resolvedSession.resolvedViaSessionId &&
-    params.requesterSessionKey !== resolvedKey;
-  const scopedAccess =
-    params.action === "list"
-      ? undefined
-      : createSessionVisibilityChecker.resolveScopedAccess({
-          action: params.action,
-          requesterSessionKey: params.requesterSessionKey,
-          targetSessionKey: resolvedKey,
-        });
-  const visible =
-    Boolean(scopedAccess) ||
-    !shouldVerifySpawnedVisibility ||
-    (await isRequesterSpawnedSessionVisible({
-      requesterSessionKey: params.requesterSessionKey,
-      targetSessionKey: resolvedKey,
-    }));
+  const visible = await isResolvedSessionVisibleToRequester({
+    requesterSessionKey: params.requesterSessionKey,
+    targetSessionKey: resolvedKey,
+    restrictToSpawned: params.restrictToSpawned,
+    resolvedViaSessionId: params.resolvedSession.resolvedViaSessionId,
+  });
   if (!visible) {
     return {
       ok: false,
@@ -482,7 +472,9 @@ export async function resolveVisibleSessionReference(params: {
   return { ok: true, key: resolvedKey, displayKey };
 }
 
-const testing = {
+export const normalizeOptionalKey: (value?: string) => string | undefined = normalizeOptionalString;
+
+export const testing = {
   setDepsForTest(overrides?: Partial<{ callGateway: GatewayCaller }>) {
     sessionsResolutionDeps = overrides
       ? {
@@ -495,9 +487,4 @@ const testing = {
     );
   },
 };
-
-if (process.env.VITEST || process.env.NODE_ENV === "test") {
-  (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.sessionsResolutionTestApi")] = {
-    testing,
-  };
-}
+export { testing as __testing };

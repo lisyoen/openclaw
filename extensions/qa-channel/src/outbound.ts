@@ -1,6 +1,6 @@
 // Qa Channel plugin module implements outbound behavior.
 import { resolveQaChannelAccount } from "./accounts.js";
-import { buildQaTarget, resolveQaTargetThread, sendQaBusMessage } from "./bus-client.js";
+import { buildQaTarget, parseQaTarget, sendQaBusMessage } from "./bus-client.js";
 import type { CoreConfig } from "./types.js";
 
 export async function sendQaChannelText(params: {
@@ -12,20 +12,20 @@ export async function sendQaChannelText(params: {
   replyToId?: string | number | null;
 }) {
   const account = resolveQaChannelAccount({ cfg: params.cfg, accountId: params.accountId });
-  const resolved = resolveQaTargetThread({ target: params.to, threadId: params.threadId });
-  const parsed = resolved.target;
+  const parsed = parseQaTarget(params.to);
+  const resolvedThreadId = params.threadId == null ? parsed.threadId : String(params.threadId);
   const { message } = await sendQaBusMessage({
     baseUrl: account.baseUrl,
     accountId: account.accountId,
     to: buildQaTarget({
       chatType: parsed.chatType,
       conversationId: parsed.conversationId,
-      threadId: resolved.threadId,
+      threadId: resolvedThreadId,
     }),
     text: params.text,
     senderId: account.botUserId,
     senderName: account.botDisplayName,
-    threadId: resolved.threadId,
+    threadId: resolvedThreadId,
     replyToId: params.replyToId == null ? undefined : String(params.replyToId),
   });
   return {

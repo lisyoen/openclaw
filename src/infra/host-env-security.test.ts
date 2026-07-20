@@ -13,8 +13,7 @@ import {
   sanitizeHostExecEnvWithDiagnostics,
   sanitizeSystemRunEnvOverrides,
 } from "./host-env-security.js";
-
-const OPENCLAW_CLI_ENV_VALUE = "1";
+import { OPENCLAW_CLI_ENV_VALUE } from "./openclaw-exec-env.js";
 
 function findSystemCommandPath(command: string) {
   if (process.platform === "win32") {
@@ -596,8 +595,6 @@ describe("sanitizeHostExecEnv", () => {
       ["GOPATH", "/tmp/evil-go"],
       ["PYTHONUSERBASE", "/tmp/evil-python-userbase"],
       ["VIRTUAL_ENV", "/tmp/evil-venv"],
-      ["CONDA_DEFAULT_ENV", "evil-conda"],
-      ["CONDA_PREFIX", "/tmp/evil-conda"],
       ["SHELLOPTS", "xtrace"],
       ["PS4", "$(touch /tmp/pwned)"],
       ["CLASSPATH", "/tmp/evil-classpath"],
@@ -706,8 +703,6 @@ describe("sanitizeHostExecEnv", () => {
     expect(env.NODE_V8_COVERAGE).toBeUndefined();
     expect(env.PYTHONUSERBASE).toBeUndefined();
     expect(env.VIRTUAL_ENV).toBeUndefined();
-    expect(env.CONDA_DEFAULT_ENV).toBeUndefined();
-    expect(env.CONDA_PREFIX).toBeUndefined();
     expect(env.SAFE).toBe("ok");
     expect(env.HOME).toBe("/tmp/trusted-home");
     expect(env.ZDOTDIR).toBe("/tmp/trusted-zdotdir");
@@ -1008,7 +1003,7 @@ describe("sanitizeHostExecEnv", () => {
       baseEnv: {
         PATH: "/usr/bin:/bin",
         GOOD: "1",
-        BAD_NUMBER: 1 as unknown as string,
+        BAD_NUMBER: 1 as any,
         "NOT-PORTABLE": "x",
         "ProgramFiles(x86)": "C:\\Program Files (x86)",
       },
@@ -1068,8 +1063,6 @@ describe("isDangerousHostEnvOverrideVarName", () => {
     expect(isDangerousHostEnvOverrideVarName("goenv")).toBe(true);
     expect(isDangerousHostEnvOverrideVarName("PYTHONUSERBASE")).toBe(true);
     expect(isDangerousHostEnvOverrideVarName("virtual_env")).toBe(true);
-    expect(isDangerousHostEnvOverrideVarName("conda_default_env")).toBe(true);
-    expect(isDangerousHostEnvOverrideVarName("conda_prefix")).toBe(true);
     expect(isDangerousHostEnvOverrideVarName("KUBECONFIG")).toBe(true);
     expect(isDangerousHostEnvOverrideVarName("google_application_credentials")).toBe(true);
     expect(isDangerousHostEnvOverrideVarName("AWS_SHARED_CREDENTIALS_FILE")).toBe(true);
@@ -1248,8 +1241,6 @@ describe("sanitizeHostExecEnvWithDiagnostics", () => {
       ["RUSTUP_TOOLCHAIN", "/tmp/evil-toolchain"],
       ["RUSTUP_UPDATE_ROOT", "https://evil.example.test/rustup"],
       ["VIRTUAL_ENV", "/tmp/evil-venv"],
-      ["CONDA_DEFAULT_ENV", "evil-conda"],
-      ["CONDA_PREFIX", "/tmp/evil-conda"],
       ["JAVA_OPTS", "-javaagent:/tmp/evil.jar"],
       ["YARN_RC_FILENAME", ".evil-yarnrc.yml"],
       ["HTTPS_PROXY", "http://proxy.example.test:8080"],
@@ -1276,8 +1267,6 @@ describe("sanitizeHostExecEnvWithDiagnostics", () => {
       "CARGO_REGISTRIES_CRATES_IO_INDEX",
       "CLASSPATH",
       "CMAKE_C_COMPILER",
-      "CONDA_DEFAULT_ENV",
-      "CONDA_PREFIX",
       "CPATH",
       "CPLUS_INCLUDE_PATH",
       "CURL_CA_BUNDLE",
@@ -1426,8 +1415,6 @@ describe("sanitizeHostExecEnvWithDiagnostics", () => {
     expect(result.env.RUSTUP_TOOLCHAIN).toBeUndefined();
     expect(result.env.RUSTUP_UPDATE_ROOT).toBeUndefined();
     expect(result.env.VIRTUAL_ENV).toBeUndefined();
-    expect(result.env.CONDA_DEFAULT_ENV).toBeUndefined();
-    expect(result.env.CONDA_PREFIX).toBeUndefined();
     expect(result.env.YARN_RC_FILENAME).toBeUndefined();
   });
 
@@ -2165,4 +2152,3 @@ describe("make env exploit regression", () => {
     }
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

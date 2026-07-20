@@ -15,7 +15,6 @@ import {
   createChannelDirectoryAdapter,
   createResolvedDirectoryEntriesLister,
 } from "openclaw/plugin-sdk/directory-runtime";
-import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import {
   createComputedAccountStatusAdapter,
   createDefaultChannelRuntimeState,
@@ -41,10 +40,9 @@ import {
   looksLikeIrcTargetId,
   normalizeIrcAllowEntry,
   normalizeIrcMessagingTarget,
-  resolveIrcOutboundSessionRoute,
 } from "./normalize.js";
 import { ircOutboundBaseAdapter } from "./outbound-base.js";
-import { resolveIrcGroupRequireMention, resolveIrcGroupToolPolicy } from "./policy.js";
+import { resolveIrcGroupMatch, resolveIrcRequireMention } from "./policy.js";
 import { probeIrc } from "./probe.js";
 import { collectRuntimeConfigAssignments, secretTargetRegistryEntries } from "./secret-contract.js";
 import { ircSetupAdapter } from "./setup-core.js";
@@ -64,7 +62,14 @@ const meta = {
   markdownCapable: true,
 };
 
-const loadIrcChannelRuntime = createLazyRuntimeModule(() => import("./channel-runtime.js"));
+type IrcChannelRuntimeModule = typeof import("./channel-runtime.js");
+
+let ircChannelRuntimePromise: Promise<IrcChannelRuntimeModule> | undefined;
+
+async function loadIrcChannelRuntime(): Promise<IrcChannelRuntimeModule> {
+  ircChannelRuntimePromise ??= import("./channel-runtime.js");
+  return await ircChannelRuntimePromise;
+}
 
 function normalizePairingTarget(raw: string): string {
   const normalized = normalizeIrcAllowEntry(raw);
@@ -197,7 +202,6 @@ export const ircPlugin: ChannelPlugin<ResolvedIrcAccount, IrcProbe> = createChat
             tls: account.tls,
             nick: account.nick,
             passwordSource: account.passwordSource,
-            tokenStatus: account.tokenStatus,
           },
         }),
     },
@@ -215,20 +219,24 @@ export const ircPlugin: ChannelPlugin<ResolvedIrcAccount, IrcProbe> = createChat
         if (!groupId) {
           return true;
         }
-        return resolveIrcGroupRequireMention({ groups: account.config.groups, target: groupId });
+        const match = resolveIrcGroupMatch({ groups: account.config.groups, target: groupId });
+        return resolveIrcRequireMention({
+          groupConfig: match.groupConfig,
+          wildcardConfig: match.wildcardConfig,
+        });
       },
       resolveToolPolicy: ({ cfg, accountId, groupId }) => {
         const account = resolveIrcAccount({ cfg: cfg as CoreConfig, accountId });
         if (!groupId) {
           return undefined;
         }
-        return resolveIrcGroupToolPolicy({ groups: account.config.groups, target: groupId });
+        const match = resolveIrcGroupMatch({ groups: account.config.groups, target: groupId });
+        return match.groupConfig?.tools ?? match.wildcardConfig?.tools;
       },
     },
     messaging: {
       targetPrefixes: ["irc"],
       normalizeTarget: normalizeIrcMessagingTarget,
-      resolveOutboundSessionRoute: (params) => resolveIrcOutboundSessionRoute(params),
       targetResolver: {
         looksLikeId: looksLikeIrcTargetId,
         hint: "<#channel|nick>",
@@ -302,7 +310,6 @@ export const ircPlugin: ChannelPlugin<ResolvedIrcAccount, IrcProbe> = createChat
           tls: account.tls,
           nick: account.nick,
           passwordSource: account.passwordSource,
-          tokenStatus: account.tokenStatus,
         },
       }),
     }),

@@ -4,14 +4,11 @@
 import type { ThinkLevel } from "../../../auto-reply/thinking.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import type { Model } from "../../../llm/types.js";
-import type { ProviderModelRouteAuthRequirement } from "../../../plugin-sdk/provider-model-types.js";
 import { prepareProviderRuntimeAuth } from "../../../plugins/provider-runtime.js";
-import { SecretSurfaceUnavailableError } from "../../../secrets/runtime-degraded-state.js";
 import {
   type AuthProfileStore,
   isProfileInCooldown,
   resolveProfilesUnavailableReason,
-  resolveSubscriptionAuthModeForProfiles,
 } from "../../auth-profiles.js";
 import { formatAuthProfileFailureMessage } from "../../auth-profiles/failure-copy.js";
 import {
@@ -20,21 +17,16 @@ import {
   type FailoverReason,
 } from "../../embedded-agent-helpers.js";
 import { FailoverError, resolveFailoverStatus } from "../../failover-error.js";
-import { shouldUseTransientCooldownProbeSlot } from "../../failover-policy.js";
+import { shouldAllowCooldownProbeForReason } from "../../failover-policy.js";
 import {
   getApiKeyForModel,
   MissingProviderAuthError,
   type ResolvedProviderAuth,
 } from "../../model-auth.js";
-import { providerModelRouteAcceptsAuthMode } from "../../provider-model-route-auth.js";
 import {
   applyPreparedRuntimeAuthToModel,
   type ModelProviderRequestTransportOverrides,
 } from "../../provider-request-config.js";
-import {
-  protectPreparedProviderRuntimeAuth,
-  unwrapSecretSentinelsForProviderEgress,
-} from "../../provider-secret-egress.js";
 import { clampRuntimeAuthRefreshDelayMs } from "../../runtime-auth-refresh.js";
 import {
   RUNTIME_AUTH_REFRESH_MARGIN_MS,
@@ -55,38 +47,6 @@ type LogLike = {
   info(message: string): void;
   warn(message: string): void;
 };
-
-/** Decides whether one automatic profile may bypass its current cooldown. */
-export function resolveEmbeddedAuthCooldownProbePolicy(params: {
-  authStore: AuthProfileStore;
-  profileCandidates: Array<string | undefined>;
-  lockedProfileId?: string;
-  modelId: string;
-  allowTransientCooldownProbe: boolean;
-}): { allowProbe: boolean; unavailableReason: FailoverReason | null } {
-  const autoProfileCandidates = params.profileCandidates.filter(
-    (candidate): candidate is string =>
-      typeof candidate === "string" && candidate.length > 0 && candidate !== params.lockedProfileId,
-  );
-  const allAutoProfilesInCooldown =
-    autoProfileCandidates.length > 0 &&
-    autoProfileCandidates.every((candidate) =>
-      isProfileInCooldown(params.authStore, candidate, undefined, params.modelId),
-    );
-  const unavailableReason = allAutoProfilesInCooldown
-    ? (resolveProfilesUnavailableReason({
-        store: params.authStore,
-        profileIds: autoProfileCandidates,
-      }) ?? "unknown")
-    : null;
-  return {
-    allowProbe:
-      params.allowTransientCooldownProbe &&
-      allAutoProfilesInCooldown &&
-      shouldUseTransientCooldownProbeSlot(unavailableReason),
-    unavailableReason,
-  };
-}
 
 /**
  * Coordinates auth profile selection, runtime auth preparation/refresh, and
@@ -121,36 +81,9 @@ export function createEmbeddedRunAuthController(params: {
   setRuntimeAuthRefreshCancelled(next: boolean): void;
   getProfileIndex(): number;
   setProfileIndex(next: number): void;
-  prepareModelForAuthProfile?(
-    profileId: string | undefined,
-    attemptIndex?: number,
-  ): Promise<{
-    runtimeModel: Model;
-    authRequirement?: ProviderModelRouteAuthRequirement;
-    allowAuthProfileFallback?: boolean;
-    commit(): void;
-  }>;
   setThinkLevel(next: ThinkLevel): void;
   log: LogLike;
 }) {
-  // Runtime auth overlays are profile-scoped. Keep the pre-auth model so a
-  // later profile cannot inherit an earlier profile's endpoint or headers.
-  const baseRuntimeModel = params.getRuntimeModel();
-  const baseEffectiveModel = params.getEffectiveModel();
-
-  const commitPreparedModel = (
-    preparedModel:
-      | Awaited<ReturnType<NonNullable<typeof params.prepareModelForAuthProfile>>>
-      | undefined,
-  ) => {
-    preparedModel?.commit();
-    if (preparedModel?.authRequirement) {
-      return;
-    }
-    params.setRuntimeModel(baseRuntimeModel);
-    params.setEffectiveModel(baseEffectiveModel);
-  };
-
   const applyPreparedRuntimeRequestOverrides = (paramsForApply: {
     runtimeModel: Model;
     preparedAuth: {
@@ -183,8 +116,8 @@ export function createEmbeddedRunAuthController(params: {
     apiKey: string;
     authMode: string;
     profileId?: string;
-  }) => {
-    const preparedAuth = await prepareProviderRuntimeAuth({
+  }) =>
+    prepareProviderRuntimeAuth({
       provider: prepareParams.runtimeModel.provider,
       config: params.config,
       workspaceDir: params.workspaceDir,
@@ -197,19 +130,11 @@ export function createEmbeddedRunAuthController(params: {
         provider: prepareParams.runtimeModel.provider,
         modelId: params.getModelId(),
         model: prepareParams.runtimeModel,
-        apiKey: unwrapSecretSentinelsForProviderEgress(
-          prepareParams.apiKey,
-          "provider runtime auth exchange",
-        ),
+        apiKey: prepareParams.apiKey,
         authMode: prepareParams.authMode,
         profileId: prepareParams.profileId,
       },
     });
-    return protectPreparedProviderRuntimeAuth({
-      provider: prepareParams.runtimeModel.provider,
-      preparedAuth,
-    });
-  };
 
   const clearRuntimeAuthRefreshTimer = () => {
     const runtimeAuthState = params.getRuntimeAuthState();
@@ -413,20 +338,10 @@ export function createEmbeddedRunAuthController(params: {
         env: process.env,
       });
     if (params.fallbackConfigured) {
-      const authMode =
-        reason === "billing"
-          ? resolveSubscriptionAuthModeForProfiles({
-              store: params.authStore,
-              profileIds: failoverParams.allInCooldown
-                ? params.profileCandidates
-                : [params.profileCandidates[params.getProfileIndex()]],
-            })
-          : undefined;
       throw new FailoverError(message, {
         reason,
         provider,
         model: modelId,
-        authMode,
         status: resolveFailoverStatus(reason),
         authProfileFailure: { allInCooldown: failoverParams.allInCooldown },
         cause: failoverParams.error,
@@ -438,51 +353,27 @@ export function createEmbeddedRunAuthController(params: {
     throw new Error(message);
   };
 
-  const resolveApiKeyForCandidate = async (
-    candidate?: string,
-    model = params.getRuntimeModel(),
-    allowAuthProfileFallback?: boolean,
-  ) => {
+  const resolveApiKeyForCandidate = async (candidate?: string) => {
     return getApiKeyForModel({
-      model,
+      model: params.getRuntimeModel(),
       cfg: params.config,
       profileId: candidate,
       store: params.authStore,
       agentDir: params.agentDir,
       workspaceDir: params.workspaceDir,
       lockedProfile: candidate != null && candidate === params.lockedProfileId,
-      allowAuthProfileFallback,
-      secretSentinels: true,
     });
   };
 
-  const applyApiKeyInfo = async (candidate?: string, attemptIndex?: number): Promise<void> => {
-    const preparedModel = await params.prepareModelForAuthProfile?.(candidate, attemptIndex);
-    const apiKeyInfo = await resolveApiKeyForCandidate(
-      candidate,
-      preparedModel?.runtimeModel,
-      preparedModel?.allowAuthProfileFallback,
-    );
-    if (
-      preparedModel?.authRequirement &&
-      !providerModelRouteAcceptsAuthMode({
-        requirement: preparedModel.authRequirement,
-        mode: apiKeyInfo.mode ?? (apiKeyInfo.apiKey ? "api-key" : undefined),
-      })
-    ) {
-      throw new Error(
-        `Resolved ${apiKeyInfo.mode ?? "unknown"} credentials are incompatible with the selected ${preparedModel.authRequirement} route for ${preparedModel.runtimeModel.provider}.`,
-      );
-    }
-    // Preserve the checked source even when resolution fails before route commit.
+  const applyApiKeyInfo = async (candidate?: string): Promise<void> => {
+    const apiKeyInfo = await resolveApiKeyForCandidate(candidate);
     params.setApiKeyInfo(apiKeyInfo);
     const resolvedProfileId = apiKeyInfo.profileId ?? candidate;
     if (!apiKeyInfo.apiKey) {
       if (apiKeyInfo.mode !== "aws-sdk") {
-        const runtimeModel = preparedModel?.runtimeModel ?? params.getRuntimeModel();
+        const runtimeModel = params.getRuntimeModel();
         throw new MissingProviderAuthError(runtimeModel.provider, apiKeyInfo);
       }
-      commitPreparedModel(preparedModel);
       // AWS SDK auth via IMDS / instance role / ECS task role: no explicit API
       // key is available but the SDK default credential chain can resolve
       // credentials at runtime.  We must still call setRuntimeApiKey so that
@@ -530,7 +421,6 @@ export function createEmbeddedRunAuthController(params: {
       params.setLastProfileId(resolvedProfileId);
       return;
     }
-    commitPreparedModel(preparedModel);
     let runtimeAuthHandled = false;
     const runtimeModel = params.getRuntimeModel();
     const preparedAuth = await prepareRuntimeAuthForModel({
@@ -578,15 +468,12 @@ export function createEmbeddedRunAuthController(params: {
         continue;
       }
       try {
-        await applyApiKeyInfo(candidate, nextIndex);
+        await applyApiKeyInfo(candidate);
         params.setProfileIndex(nextIndex);
         params.setThinkLevel(params.initialThinkLevel);
         params.attemptedThinking.clear();
         return true;
       } catch (err) {
-        if (err instanceof SecretSurfaceUnavailableError) {
-          throw err;
-        }
         if (candidate && candidate === params.lockedProfileId) {
           throw err;
         }
@@ -598,14 +485,28 @@ export function createEmbeddedRunAuthController(params: {
 
   const initializeAuthProfile = async () => {
     try {
+      const autoProfileCandidates = params.profileCandidates.filter(
+        (candidate): candidate is string =>
+          typeof candidate === "string" &&
+          candidate.length > 0 &&
+          candidate !== params.lockedProfileId,
+      );
       const modelId = params.getModelId();
-      const cooldownProbePolicy = resolveEmbeddedAuthCooldownProbePolicy({
-        authStore: params.authStore,
-        profileCandidates: params.profileCandidates,
-        lockedProfileId: params.lockedProfileId,
-        modelId,
-        allowTransientCooldownProbe: params.allowTransientCooldownProbe,
-      });
+      const allAutoProfilesInCooldown =
+        autoProfileCandidates.length > 0 &&
+        autoProfileCandidates.every((candidate) =>
+          isProfileInCooldown(params.authStore, candidate, undefined, modelId),
+        );
+      const unavailableReason = allAutoProfilesInCooldown
+        ? (resolveProfilesUnavailableReason({
+            store: params.authStore,
+            profileIds: autoProfileCandidates,
+          }) ?? "unknown")
+        : null;
+      const allowTransientCooldownProbe =
+        params.allowTransientCooldownProbe &&
+        allAutoProfilesInCooldown &&
+        shouldAllowCooldownProbeForReason(unavailableReason);
       let didTransientCooldownProbe = false;
 
       while (params.getProfileIndex() < params.profileCandidates.length) {
@@ -615,27 +516,24 @@ export function createEmbeddedRunAuthController(params: {
           candidate !== params.lockedProfileId &&
           isProfileInCooldown(params.authStore, candidate, undefined, modelId);
         if (inCooldown) {
-          if (cooldownProbePolicy.allowProbe && !didTransientCooldownProbe) {
+          if (allowTransientCooldownProbe && !didTransientCooldownProbe) {
             didTransientCooldownProbe = true;
             params.log.warn(
-              `probing cooldowned auth profile for ${params.getProvider()}/${modelId} due to ${cooldownProbePolicy.unavailableReason ?? "transient"} unavailability`,
+              `probing cooldowned auth profile for ${params.getProvider()}/${modelId} due to ${unavailableReason ?? "transient"} unavailability`,
             );
           } else {
             params.setProfileIndex(params.getProfileIndex() + 1);
             continue;
           }
         }
-        await applyApiKeyInfo(
-          params.profileCandidates[params.getProfileIndex()],
-          params.getProfileIndex(),
-        );
+        await applyApiKeyInfo(params.profileCandidates[params.getProfileIndex()]);
         break;
       }
       if (params.getProfileIndex() >= params.profileCandidates.length) {
         throwAuthProfileFailover({ allInCooldown: true });
       }
     } catch (err) {
-      if (err instanceof FailoverError || err instanceof SecretSurfaceUnavailableError) {
+      if (err instanceof FailoverError) {
         throw err;
       }
       if (params.profileCandidates[params.getProfileIndex()] === params.lockedProfileId) {
@@ -671,7 +569,6 @@ export function createEmbeddedRunAuthController(params: {
   };
 
   return {
-    applyAuthProfileCandidate: applyApiKeyInfo,
     advanceAuthProfile,
     initializeAuthProfile,
     maybeRefreshRuntimeAuthForAuthError,

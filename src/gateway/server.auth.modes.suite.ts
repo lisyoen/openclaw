@@ -14,7 +14,7 @@ import {
   startGatewayServer,
   testState,
   testTailscaleWhois,
-} from "./server.auth.test-helpers.js";
+} from "./server.auth.shared.js";
 
 export function registerAuthModesSuite(): void {
   describe("password auth", () => {

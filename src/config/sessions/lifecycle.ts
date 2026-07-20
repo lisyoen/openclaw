@@ -1,6 +1,6 @@
 // Session lifecycle timestamps prefer store metadata and fall back to transcript headers.
 import fs from "node:fs";
-import { readFileWindowFullySync } from "../../infra/file-read.js";
+import fsp from "node:fs/promises";
 import { asDateTimestampMs } from "../../shared/number-coercion.js";
 import { canonicalizeMainSessionAlias } from "./main-session.js";
 import {
@@ -8,67 +8,12 @@ import {
   resolveSessionFilePathOptions,
   type SessionFilePathOptions,
 } from "./paths.js";
-import { readTranscriptStatsSync } from "./session-accessor.js";
 import { isTerminalSessionStatus, type SessionEntry, type SessionScope } from "./types.js";
 
 type SessionLifecycleEntry = Pick<
   SessionEntry,
   "sessionId" | "sessionFile" | "sessionStartedAt" | "lastInteractionAt" | "updatedAt"
 >;
-
-type SessionWorkStartEntry = Pick<
-  SessionEntry,
-  "archivedAt" | "initializationPending" | "sessionId"
->;
-
-type SessionWorkStartOptions = {
-  expectedSessionId?: string;
-};
-
-/** Stable Gateway error detail for stale session lifecycle requests. */
-export const SESSION_LIFECYCLE_CHANGED_ERROR_REASON = "session-changed";
-const SESSION_WORK_START_INVALIDATED_ERROR_CODE = "SESSION_WORK_START_INVALIDATED";
-
-export class SessionWorkStartInvalidatedError extends Error {
-  readonly code = SESSION_WORK_START_INVALIDATED_ERROR_CODE;
-
-  constructor(message: string) {
-    super(message);
-    this.name = "SessionWorkStartInvalidatedError";
-  }
-}
-
-export function isSessionWorkStartInvalidatedError(
-  error: unknown,
-): error is SessionWorkStartInvalidatedError {
-  return (
-    error instanceof SessionWorkStartInvalidatedError ||
-    (typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === SESSION_WORK_START_INVALIDATED_ERROR_CODE)
-  );
-}
-
-/** Lifecycle-owned initializing and archived sessions reject new work. */
-export function resolveSessionWorkStartError(
-  sessionKey: string,
-  entry: SessionWorkStartEntry | null | undefined,
-  options?: SessionWorkStartOptions,
-): string | undefined {
-  if (options?.expectedSessionId && !entry) {
-    return `Session "${sessionKey}" was deleted while starting work. Retry.`;
-  }
-  if (options?.expectedSessionId && entry?.sessionId !== options.expectedSessionId) {
-    return `Session "${sessionKey}" changed while starting work. Retry.`;
-  }
-  if (entry?.initializationPending === true) {
-    return `Session "${sessionKey}" is still initializing. Retry after initialization completes.`;
-  }
-  return entry?.archivedAt === undefined
-    ? undefined
-    : `Session "${sessionKey}" is archived. Restore it before starting new work.`;
-}
 
 // Transcript headers are read lazily to recover startedAt without parsing full files.
 
@@ -112,7 +57,7 @@ function readFirstLine(filePath: string): string | undefined {
     const fd = fs.openSync(filePath, "r");
     try {
       const buffer = Buffer.alloc(8192);
-      const bytesRead = readFileWindowFullySync(fd, buffer, 0);
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
       if (bytesRead <= 0) {
         return undefined;
       }
@@ -128,7 +73,7 @@ function readFirstLine(filePath: string): string | undefined {
 }
 
 /** Reads session start time from a transcript header when store metadata is missing. */
-function readSessionHeaderStartedAtMs(params: {
+export function readSessionHeaderStartedAtMs(params: {
   entry: SessionLifecycleEntry | undefined;
   agentId?: string;
   storePath?: string;
@@ -220,11 +165,6 @@ export function resolveTerminalMainSessionTranscriptRegistryCheck(
   if (!hasTerminalLifecycle) {
     return undefined;
   }
-  if (params.entry.status === "done") {
-    // Successful rows stay reusable: transcript writes can land after registry
-    // updates without making the session stale.
-    return undefined;
-  }
   if (params.entry.status === "failed") {
     // Failed rows with a present transcript stay reusable for retry/recovery.
     // Callers already rotate failed rows when the transcript is missing.
@@ -243,13 +183,13 @@ export function resolveTerminalMainSessionTranscriptRegistryCheck(
   return { sessionId, registryTimestampMs };
 }
 
-function isTranscriptMutationNewerThanRegistry(params: {
-  transcriptMutationAtMs: number;
+function isTranscriptMtimeNewerThanRegistry(params: {
+  transcriptMtimeMs: number;
   registryTimestampMs: number;
 }): boolean {
-  const transcriptMutationAtMs = Math.floor(params.transcriptMutationAtMs);
+  const transcriptMtimeMs = Math.floor(params.transcriptMtimeMs);
   const registryTimestampMs = Math.floor(params.registryTimestampMs);
-  return Number.isFinite(transcriptMutationAtMs) && transcriptMutationAtMs > registryTimestampMs;
+  return Number.isFinite(transcriptMtimeMs) && transcriptMtimeMs > registryTimestampMs;
 }
 
 export function hasTerminalMainSessionTranscriptNewerThanRegistrySync(
@@ -259,20 +199,16 @@ export function hasTerminalMainSessionTranscriptNewerThanRegistrySync(
   if (!check) {
     return false;
   }
+  const pathOptions = resolveSessionFilePathOptions({
+    agentId: params.agentId,
+    storePath: params.storePath,
+  });
   try {
-    // Runtime transcripts are SQLite-only. Legacy-looking sessionFile values still
-    // resolve through agent/session/store scope, so a file stat would read stale state.
-    const stats = readTranscriptStatsSync({
-      agentId: params.agentId,
-      sessionId: check.sessionId,
-      storePath: params.storePath,
-    });
-    if (stats.lastMutationAtMs === undefined) {
-      return false;
-    }
-    return isTranscriptMutationNewerThanRegistry({
-      transcriptMutationAtMs: stats.lastMutationAtMs,
-      registryTimestampMs: stats.lastObservedMutationAtMs ?? check.registryTimestampMs,
+    const sessionFile = resolveSessionFilePath(check.sessionId, params.entry, pathOptions);
+    const stats = fs.statSync(sessionFile);
+    return isTranscriptMtimeNewerThanRegistry({
+      transcriptMtimeMs: stats.mtimeMs,
+      registryTimestampMs: check.registryTimestampMs,
     });
   } catch {
     return false;
@@ -282,5 +218,23 @@ export function hasTerminalMainSessionTranscriptNewerThanRegistrySync(
 export async function hasTerminalMainSessionTranscriptNewerThanRegistry(
   params: TerminalMainSessionTranscriptRegistryParams,
 ): Promise<boolean> {
-  return hasTerminalMainSessionTranscriptNewerThanRegistrySync(params);
+  const check = resolveTerminalMainSessionTranscriptRegistryCheck(params);
+  if (!check) {
+    return false;
+  }
+  const pathOptions = resolveSessionFilePathOptions({
+    agentId: params.agentId,
+    storePath: params.storePath,
+  });
+  try {
+    // Session admission owns this bounded stat as the terminal-main reconciliation gate.
+    const sessionFile = resolveSessionFilePath(check.sessionId, params.entry, pathOptions);
+    const stats = await fsp.stat(sessionFile);
+    return isTranscriptMtimeNewerThanRegistry({
+      transcriptMtimeMs: stats.mtimeMs,
+      registryTimestampMs: check.registryTimestampMs,
+    });
+  } catch {
+    return false;
+  }
 }

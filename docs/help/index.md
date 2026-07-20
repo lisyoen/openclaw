@@ -6,13 +6,13 @@ read_when:
 title: "Help"
 ---
 
-Fastest path to unstuck, by symptom:
+Quick "get unstuck" path for the most common problems:
 
 - [Troubleshooting](/help/troubleshooting) - symptom-first decision tree
 - [Debugging](/help/debugging) - watch mode, raw streams, dev profile
 - [Install sanity](/install/node#troubleshooting) - Node / npm / PATH checks
 - [Gateway troubleshooting](/gateway/troubleshooting) - gateway-specific issues
-- [Doctor](/gateway/doctor) - `openclaw doctor`: health checks, config migrations, repair steps
+- [Doctor](/gateway/doctor) - automated repair + diagnostic bundle
 
 ## FAQ
 

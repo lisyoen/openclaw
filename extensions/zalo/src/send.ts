@@ -6,7 +6,6 @@ import {
 } from "openclaw/plugin-sdk/channel-outbound";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { resolveZaloAccount } from "./accounts.js";
 import type { ZaloFetch } from "./api.js";
 import { sendMessage, sendPhoto } from "./api.js";
@@ -168,14 +167,14 @@ export async function sendMessageZalo(
       context.token,
       {
         chat_id: context.chatId,
-        text: truncateUtf16Safe(text, 2000),
+        text: text.slice(0, 2000),
       },
       context.fetcher,
     ),
   );
 }
 
-async function sendPhotoZalo(
+export async function sendPhotoZalo(
   chatId: string,
   photoUrl: string,
   options: ZaloSendOptions = {},
@@ -201,8 +200,7 @@ async function sendPhotoZalo(
         {
           chat_id: context.chatId,
           photo: photoUrl.trim(),
-          caption:
-            options.caption !== undefined ? truncateUtf16Safe(options.caption, 2000) : undefined,
+          caption: options.caption?.slice(0, 2000),
         },
         context.fetcher,
       ))(),

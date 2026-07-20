@@ -49,9 +49,7 @@ describe("setupWizardShellCompletion", () => {
     await setupWizardShellCompletion({ flow: "quickstart", prompter, deps });
 
     expect(prompter.confirm).not.toHaveBeenCalled();
-    expect(deps.ensureCompletionCacheExists).toHaveBeenCalledWith("openclaw", {
-      generationMode: "full",
-    });
+    expect(deps.ensureCompletionCacheExists).toHaveBeenCalledWith("openclaw");
     expect(deps.installCompletion).toHaveBeenCalledWith("zsh", true, "openclaw");
     expect(prompter.note).toHaveBeenCalled();
   });

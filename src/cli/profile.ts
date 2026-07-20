@@ -5,6 +5,7 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
+import { isValueToken } from "../infra/cli-root-options.js";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { resolveCliArgvInvocation } from "./argv-invocation.js";
 import { isValidProfileName } from "./profile-utils.js";
@@ -14,6 +15,11 @@ import { takeCliRootOptionValue } from "./root-option-value.js";
 type CliProfileParseResult =
   | { ok: true; profile: string | null; argv: string[] }
   | { ok: false; error: string };
+
+function isCommandLocalProfileOption(out: string[]): boolean {
+  const [primary, secondary] = resolveCliArgvInvocation(out).commandPath;
+  return primary === "qa" && secondary === "matrix";
+}
 
 export function parseCliProfileArgs(argv: string[]): CliProfileParseResult {
   // Root profile flags are stripped before Commander sees argv, except command-local cases.
@@ -35,19 +41,19 @@ export function parseCliProfileArgs(argv: string[]): CliProfileParseResult {
     }
 
     if (arg === "--profile" || arg.startsWith("--profile=")) {
-      const next = args[index + 1];
-      const { value, consumedNext } = takeCliRootOptionValue(arg, next);
-      const [primary, secondary] = resolveCliArgvInvocation(out).commandPath;
-      if (primary === "qa" && secondary === "matrix") {
+      if (isCommandLocalProfileOption(out)) {
         out.push(arg);
-        if (consumedNext && next !== undefined) {
-          out.push(next);
+        if (arg === "--profile" && isValueToken(args[index + 1])) {
+          out.push(args[index + 1]);
+          return { kind: "handled", consumedNext: true };
         }
-        return { kind: "handled", consumedNext };
+        return { kind: "handled" };
       }
       if (sawDev) {
         return { kind: "error", error: "Cannot combine --dev with --profile" };
       }
+      const next = args[index + 1];
+      const { value, consumedNext } = takeCliRootOptionValue(arg, next);
       if (!value) {
         return { kind: "error", error: "--profile requires a value" };
       }

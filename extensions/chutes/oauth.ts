@@ -8,17 +8,11 @@ import {
   parseOAuthCallbackInput,
   waitForLocalOAuthCallback,
 } from "openclaw/plugin-sdk/provider-auth-runtime";
-import {
-  assertOkOrThrowProviderError,
-  readProviderJsonResponse,
-} from "openclaw/plugin-sdk/provider-http";
-import { buildOAuthRequestSignal } from "openclaw/plugin-sdk/provider-oauth-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 const CHUTES_AUTHORIZE_ENDPOINT = "https://api.chutes.ai/idp/authorize";
 const CHUTES_TOKEN_ENDPOINT = "https://api.chutes.ai/idp/token";
 const CHUTES_USERINFO_ENDPOINT = "https://api.chutes.ai/idp/userinfo";
-const CHUTES_OAUTH_REQUEST_TIMEOUT_MS = 30_000;
 
 type OAuthPrompt = {
   message: string;
@@ -118,22 +112,15 @@ function resolveChutesExpiresAt(value: unknown, now: number): number | undefined
 async function fetchChutesUserInfo(params: {
   accessToken: string;
   fetchFn?: typeof fetch;
-  signal?: AbortSignal;
 }): Promise<ChutesUserInfo | null> {
   const fetchFn = params.fetchFn ?? fetch;
   const response = await fetchFn(CHUTES_USERINFO_ENDPOINT, {
     headers: { Authorization: `Bearer ${params.accessToken}` },
-    signal: buildOAuthRequestSignal({
-      timeoutMs: CHUTES_OAUTH_REQUEST_TIMEOUT_MS,
-      ...(params.signal ? { signal: params.signal } : {}),
-    }),
   });
   if (!response.ok) {
-    // Release the connection instead of leaving the error body to idle timeout.
-    await response.body?.cancel().catch(() => undefined);
     return null;
   }
-  const data = await readProviderJsonResponse<unknown>(response, "Chutes userinfo");
+  const data = (await response.json()) as unknown;
   return data && typeof data === "object" ? (data as ChutesUserInfo) : null;
 }
 
@@ -143,7 +130,6 @@ async function exchangeChutesCodeForTokens(params: {
   codeVerifier: string;
   fetchFn?: typeof fetch;
   now?: number;
-  signal?: AbortSignal;
 }): Promise<ChutesStoredOAuth> {
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? Date.now();
@@ -164,18 +150,16 @@ async function exchangeChutesCodeForTokens(params: {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
-    signal: buildOAuthRequestSignal({
-      timeoutMs: CHUTES_OAUTH_REQUEST_TIMEOUT_MS,
-      ...(params.signal ? { signal: params.signal } : {}),
-    }),
   });
-  await assertOkOrThrowProviderError(response, "Chutes token exchange failed");
+  if (!response.ok) {
+    throw new Error(`Chutes token exchange failed: ${await response.text()}`);
+  }
 
-  const data = await readProviderJsonResponse<{
+  const data = (await response.json()) as {
     access_token?: string;
     refresh_token?: string;
     expires_in?: number;
-  }>(response, "Chutes token exchange");
+  };
   const access = normalizeOptionalString(data.access_token);
   const refresh = normalizeOptionalString(data.refresh_token);
   const expires = resolveChutesExpiresAt(data.expires_in, now);
@@ -189,20 +173,7 @@ async function exchangeChutesCodeForTokens(params: {
     throw new Error("Chutes token exchange returned invalid expires_in");
   }
 
-  let info: ChutesUserInfo | null = null;
-  try {
-    info = await fetchChutesUserInfo({
-      accessToken: access,
-      fetchFn,
-      ...(params.signal ? { signal: params.signal } : {}),
-    });
-  } catch (error) {
-    if (params.signal?.aborted) {
-      throw error;
-    }
-    // Token exchange completes authentication; optional profile enrichment must
-    // not discard issued credentials when userinfo is unavailable or times out.
-  }
+  const info = await fetchChutesUserInfo({ accessToken: access, fetchFn });
   return {
     access,
     refresh,
@@ -223,7 +194,6 @@ export async function loginChutes(params: {
   onPrompt: (prompt: OAuthPrompt) => Promise<string>;
   onProgress?: (message: string) => void;
   fetchFn?: typeof fetch;
-  signal?: AbortSignal;
 }): Promise<ChutesStoredOAuth> {
   const { verifier, challenge } = generatePkceVerifierChallenge();
   const state = params.createState?.() ?? randomBytes(16).toString("hex");
@@ -258,11 +228,7 @@ export async function loginChutes(params: {
       successTitle: "Chutes OAuth complete",
       hostname: redirect.hostname,
       onProgress: params.onProgress,
-      ...(params.signal ? { signal: params.signal } : {}),
-    }).catch(async (error: unknown) => {
-      if (params.signal?.aborted) {
-        throw error;
-      }
+    }).catch(async () => {
       params.onProgress?.("OAuth callback not detected; paste redirect URL...");
       return parseManualOAuthInput(
         await params.onPrompt({
@@ -283,6 +249,5 @@ export async function loginChutes(params: {
     code: codeAndState.code,
     codeVerifier: verifier,
     fetchFn: params.fetchFn,
-    ...(params.signal ? { signal: params.signal } : {}),
   });
 }

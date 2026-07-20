@@ -1,8 +1,9 @@
 // Covers package manager resolution for update build flows.
 import { describe, expect, it } from "vitest";
-import { resolveUpdateBuildManager } from "./update-package-manager.js";
-
-type PackageManagerCommandRunner = Parameters<typeof resolveUpdateBuildManager>[0];
+import {
+  resolveUpdateBuildManager,
+  type PackageManagerCommandRunner,
+} from "./update-package-manager.js";
 
 describe("resolveUpdateBuildManager", () => {
   it("bootstraps pnpm via npm when pnpm and corepack are unavailable", async () => {

@@ -25,7 +25,6 @@ import {
 import { resolveSlackChannelConfig } from "./channel-config.js";
 import { inferSlackChannelType } from "./channel-type.js";
 import { normalizeSlackChannelType, type SlackMonitorContext } from "./context.js";
-import type { SlackEventScope } from "./event-scope.js";
 
 type SlackChannelMembersCacheEntry = {
   expiresAtMs: number;
@@ -47,7 +46,7 @@ type SlackSystemEventAuthorization =
       channelName?: string;
     };
 
-const slackChannelMembersCache = new WeakMap<
+let slackChannelMembersCache = new WeakMap<
   SlackMonitorContext,
   Map<string, SlackChannelMembersCacheEntry>
 >();
@@ -203,15 +202,21 @@ export async function resolveSlackEffectiveAllowFrom(
   return normalizeAllowListLower([...base, ...storeAllowFrom]);
 }
 
+export function clearSlackAllowFromCacheForTest(): void {
+  slackChannelMembersCache = new WeakMap<
+    SlackMonitorContext,
+    Map<string, SlackChannelMembersCacheEntry>
+  >();
+}
+
 async function fetchSlackChannelMemberIds(
   ctx: SlackMonitorContext,
   channelId: string,
-  eventScope?: SlackEventScope,
 ): Promise<Set<string>> {
   const members = new Set<string>();
   let cursor: string | undefined;
   do {
-    const response = await (eventScope?.client ?? ctx.app.client).conversations.members({
+    const response = await ctx.app.client.conversations.members({
       token: ctx.botToken,
       channel: channelId,
       limit: 999,
@@ -229,10 +234,9 @@ async function fetchSlackChannelMemberIds(
 async function resolveSlackChannelMemberIds(
   ctx: SlackMonitorContext,
   channelId: string,
-  eventScope?: SlackEventScope,
 ): Promise<Set<string>> {
   const cache = getChannelMembersCache(ctx);
-  const key = `${ctx.accountId}:${eventScope ? `${eventScope.teamId}:` : ""}${channelId}`;
+  const key = `${ctx.accountId}:${channelId}`;
   const ttlMs = readSlackCacheTtlMs(
     "OPENCLAW_SLACK_CHANNEL_MEMBERS_CACHE_TTL_MS",
     DEFAULT_CHANNEL_MEMBERS_CACHE_TTL_MS,
@@ -250,7 +254,7 @@ async function resolveSlackChannelMemberIds(
     return await cached.pending;
   }
 
-  const pending = fetchSlackChannelMemberIds(ctx, channelId, eventScope);
+  const pending = fetchSlackChannelMemberIds(ctx, channelId);
   const pendingExpiresAtMs =
     ttlMs > 0 ? resolveExpiresAtMsFromDurationMs(ttlMs, { nowMs: rawNowMs }) : undefined;
   cache.set(key, {
@@ -297,7 +301,6 @@ export async function authorizeSlackBotRoomMessage(params: {
   senderName?: string;
   channelUsers?: Array<string | number>;
   allowFromLower: string[];
-  eventScope?: SlackEventScope;
 }): Promise<boolean> {
   const channelUserAllowList = normalizeAllowListLower(params.channelUsers).filter(
     (entry) => entry !== "*",
@@ -323,11 +326,7 @@ export async function authorizeSlackBotRoomMessage(params: {
   }
 
   try {
-    const channelMemberIds = await resolveSlackChannelMemberIds(
-      params.ctx,
-      params.channelId,
-      params.eventScope,
-    );
+    const channelMemberIds = await resolveSlackChannelMemberIds(params.ctx, params.channelId);
     if (explicitOwnerIds.some((ownerId) => channelMemberIds.has(ownerId))) {
       return true;
     }
@@ -370,16 +369,8 @@ export async function resolveSlackCommandIngress(params: {
   >["modeWhenAccessGroupsOff"];
 }) {
   const isDirectMessage = params.channelType === "im";
-  const isGroupDm = params.channelType === "mpim";
   const channelUsers = normalizeAllowListLower(params.channelUsers);
-  const channelUsersConfigured = !isDirectMessage && !isGroupDm && channelUsers.length > 0;
-  // MPIM ingress is group-shaped, but its sender policy is DM-owned. Callers
-  // pass configured allowFrom without pairing-store approvals for this path.
-  const groupAllowFrom = isGroupDm
-    ? params.ownerAllowFromLower
-    : channelUsersConfigured
-      ? channelUsers
-      : [];
+  const channelUsersConfigured = !isDirectMessage && channelUsers.length > 0;
   const result = await createSlackIngressResolver(params.ctx).message({
     subject: createSlackIngressSubject({
       senderId: params.senderId,
@@ -395,7 +386,7 @@ export async function resolveSlackCommandIngress(params: {
       mayPair: false,
     },
     dmPolicy: isDirectMessage ? "open" : "disabled",
-    groupPolicy: isGroupDm || channelUsersConfigured ? "allowlist" : "open",
+    groupPolicy: channelUsersConfigured ? "allowlist" : "open",
     policy: {
       groupAllowFromFallbackToAllowFrom: false,
       mutableIdentifierMatching: params.ctx.allowNameMatching ? "enabled" : "disabled",
@@ -403,7 +394,7 @@ export async function resolveSlackCommandIngress(params: {
     },
     mentionFacts: params.mentionFacts,
     allowFrom: isDirectMessage ? ["*"] : params.ownerAllowFromLower,
-    groupAllowFrom,
+    groupAllowFrom: channelUsersConfigured ? channelUsers : [],
     command: {
       allowTextCommands: params.allowTextCommands,
       hasControlCommand: params.hasControlCommand,
@@ -425,9 +416,8 @@ async function decideSlackSystemIngress(params: {
   interactiveEvent: boolean;
 }): Promise<ChannelIngressDecision> {
   const isDirectMessage = params.channelType === "im";
-  const isGroupDm = params.channelType === "mpim";
   const channelUsers = normalizeAllowListLower(params.channelUsers);
-  const channelUsersConfigured = !isDirectMessage && !isGroupDm && channelUsers.length > 0;
+  const channelUsersConfigured = !isDirectMessage && channelUsers.length > 0;
   const ownerAllowFrom =
     params.interactiveEvent && channelUsersConfigured
       ? params.ownerAllowFromLower.filter((entry) => entry !== "*")
@@ -436,9 +426,6 @@ async function decideSlackSystemIngress(params: {
   const groupAllowFrom = (() => {
     if (isDirectMessage) {
       return [];
-    }
-    if (isGroupDm) {
-      return ownerAllowFrom;
     }
     if (params.interactiveEvent && hasAnyCommandAllowlist) {
       return channelUsersConfigured ? channelUsers : [];
@@ -463,9 +450,8 @@ async function decideSlackSystemIngress(params: {
       mayPair: false,
     },
     dmPolicy: isDirectMessage ? "open" : "disabled",
-    groupPolicy: isGroupDm
-      ? "allowlist"
-      : params.interactiveEvent && hasAnyCommandAllowlist
+    groupPolicy:
+      params.interactiveEvent && hasAnyCommandAllowlist
         ? "open"
         : channelUsersConfigured || (!params.channelId && params.ownerAllowFromLower.length > 0)
           ? "allowlist"

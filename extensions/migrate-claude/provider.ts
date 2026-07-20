@@ -16,12 +16,10 @@ export function buildClaudeMigrationProvider(
   return {
     id: "claude",
     label: "Claude",
-    description: "Import Claude Code auto-memory, instructions, MCP servers, and skills.",
-    supportedItemKinds: ["memory"],
+    description: "Import Claude Code and Claude Desktop instructions, MCP servers, and skills.",
     async detect(ctx) {
       const source = await discoverClaudeSource(ctx.source);
-      const memoryOnly = ctx.itemKinds?.length === 1 && ctx.itemKinds[0] === "memory";
-      const found = memoryOnly ? source.autoMemorySources.length > 0 : hasClaudeSource(source);
+      const found = hasClaudeSource(source);
       return {
         found,
         source: source.root,

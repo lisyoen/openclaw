@@ -1,5 +1,4 @@
-// Defines node-host-local capability configuration types.
-import type { McpServerConfig } from "./types.mcp.js";
+// Defines node-host browser proxy configuration types.
 export type NodeHostBrowserProxyConfig = {
   /** Enable the browser proxy on the node host (default: true). */
   enabled?: boolean;
@@ -8,22 +7,6 @@ export type NodeHostBrowserProxyConfig = {
 };
 
 export type NodeHostConfig = {
-  /** Sensitive native agent execution exposed by the headless node host. */
-  agentRuns?: {
-    claude?: {
-      /** Advertise approval-gated Claude CLI turns when the binary is installed. */
-      enabled?: boolean;
-    };
-  };
   /** Browser proxy settings for node hosts. */
   browserProxy?: NodeHostBrowserProxyConfig;
-  /** MCP servers started and exposed by the headless node host. */
-  mcp?: {
-    servers?: Record<string, McpServerConfig>;
-  };
-  /** Skills published by the headless node host. */
-  skills?: {
-    /** Scan and publish ~/.openclaw/skills (default: true). */
-    enabled?: boolean;
-  };
 };

@@ -1,6 +1,5 @@
 import AVFoundation
 import Foundation
-import OpenClawKit
 import OSLog
 import Speech
 import SwabbleKit
@@ -11,6 +10,8 @@ import AppKit
 /// Background listener that keeps the voice-wake pipeline alive outside the settings test view.
 actor VoiceWakeRuntime {
     static let shared = VoiceWakeRuntime()
+
+    enum ListeningState { case idle, voiceWake, pushToTalk }
 
     private let logger = Logger(subsystem: "ai.openclaw", category: "voicewake.runtime")
 
@@ -33,6 +34,7 @@ actor VoiceWakeRuntime {
     private var volatileTranscript: String = ""
     private var cooldownUntil: Date?
     private var currentConfig: RuntimeConfig?
+    private var listeningState: ListeningState = .idle
     private var overlayToken: UUID?
     private var activeTriggerEndTime: TimeInterval?
     private var activeTriggerWord: String?
@@ -118,7 +120,9 @@ actor VoiceWakeRuntime {
 
         let config = snapshot.1
 
-        if self.isStarting { return }
+        if self.isStarting {
+            return
+        }
 
         if self.scheduledRestartTask != nil, config == self.currentConfig, self.recognitionTask == nil {
             return
@@ -138,7 +142,9 @@ actor VoiceWakeRuntime {
     }
 
     private func start(with config: RuntimeConfig) async {
-        if self.isStarting { return }
+        if self.isStarting {
+            return
+        }
         self.isStarting = true
         defer { self.isStarting = false }
         do {
@@ -182,7 +188,7 @@ actor VoiceWakeRuntime {
             input.removeTap(onBus: 0)
             input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self, weak request] buffer, _ in
                 request?.append(SpeechAudioBufferNormalizer.speechCompatibleBuffer(from: buffer))
-                let rms = TalkAudioLevel.rms(buffer: buffer)
+                guard let rms = Self.rmsLevel(buffer: buffer) else { return }
                 Task.detached { [weak self] in
                     await self?.noteAudioLevel(rms: rms)
                     await self?.noteAudioTap(rms: rms)
@@ -249,6 +255,7 @@ actor VoiceWakeRuntime {
         self.haltRecognitionPipeline()
         self.recognizer = nil
         self.currentConfig = nil
+        self.listeningState = .idle
         self.activeTriggerEndTime = nil
         self.activeTriggerWord = nil
         self.logger.debug("voicewake runtime stopped")
@@ -568,6 +575,7 @@ actor VoiceWakeRuntime {
             await AppStateStore.shared.setTalkEnabled(true)
             return
         }
+        self.listeningState = .voiceWake
         self.isCapturing = true
         DiagnosticsFileLog.shared.log(category: "voicewake.runtime", event: "beginCapture")
         self.capturedTranscript = command
@@ -718,6 +726,18 @@ actor VoiceWakeRuntime {
         }
     }
 
+    private static func rmsLevel(buffer: AVAudioPCMBuffer) -> Double? {
+        guard let channelData = buffer.floatChannelData?.pointee else { return nil }
+        let frameCount = Int(buffer.frameLength)
+        guard frameCount > 0 else { return nil }
+        var sum: Double = 0
+        for i in 0..<frameCount {
+            let sample = Double(channelData[i])
+            sum += sample * sample
+        }
+        return sqrt(sum / Double(frameCount))
+    }
+
     private func restartRecognizer() {
         // Restart the recognizer so we listen for the next trigger with a clean buffer.
         let current = self.currentConfig
@@ -752,6 +772,7 @@ actor VoiceWakeRuntime {
     }
 
     func pauseForPushToTalk() {
+        self.listeningState = .pushToTalk
         self.stop(dismissOverlay: false)
     }
 
@@ -805,6 +826,11 @@ actor VoiceWakeRuntime {
 
     static func _testMatchedTriggerWord(_ text: String, triggers: [String]) -> String? {
         self.matchedTriggerWordText(transcript: text, triggers: triggers)
+    }
+
+    static func _testAttributedColor(isFinal: Bool) -> NSColor {
+        VoiceOverlayTextFormatting.makeAttributed(committed: "sample", volatile: "", isFinal: isFinal)
+            .attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor ?? .clear
     }
 
     #endif

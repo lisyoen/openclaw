@@ -8,13 +8,10 @@ import { getTerminalTableWidth, renderTable } from "../../../packages/terminal-c
 import { defaultRuntime } from "../../runtime.js";
 import { shortenHomePath } from "../../utils.js";
 import {
-  type CameraArtifactFacing,
   type CameraFacing,
   cameraTempPath,
   parseCameraClipPayload,
   parseCameraSnapPayload,
-  resolveCameraClipTarget,
-  resolveCameraSnapTargets,
   writeCameraPayloadToFile,
   writeCameraClipPayloadToFile,
 } from "../nodes-camera.js";
@@ -118,8 +115,8 @@ export function registerNodesCameraCommands(nodes: Command) {
       .option("--facing <front|back|both>", "Camera facing", "both")
       .option("--device-id <id>", "Camera device id (from nodes camera list)")
       .option("--max-width <px>", "Max width in px (optional)")
-      .option("--quality <0-1>", "JPEG quality (optional; platform-specific default)")
-      .option("--delay-ms <ms>", "Delay before capture in ms (optional; platform-specific default)")
+      .option("--quality <0-1>", "JPEG quality (default 0.9)")
+      .option("--delay-ms <ms>", "Delay before capture in ms (macOS default 2000)")
       .option("--invoke-timeout <ms>", "Node invoke timeout in ms (default 20000)", "20000")
       .action(async (opts: NodesRpcOpts) => {
         await runNodesCommand("camera snap", async () => {
@@ -128,14 +125,16 @@ export function registerNodesCameraCommands(nodes: Command) {
           const facingOpt = normalizeLowercaseStringOrEmpty(
             normalizeOptionalString(opts.facing) ?? "both",
           );
-          const facing =
-            facingOpt === "both" || facingOpt === "front" || facingOpt === "back"
-              ? facingOpt
-              : (() => {
-                  throw new Error(
-                    `invalid facing: ${String(opts.facing)} (expected front|back|both)`,
-                  );
-                })();
+          const facings: CameraFacing[] =
+            facingOpt === "both"
+              ? ["front", "back"]
+              : facingOpt === "front" || facingOpt === "back"
+                ? [facingOpt]
+                : (() => {
+                    throw new Error(
+                      `invalid facing: ${String(opts.facing)} (expected front|back|both)`,
+                    );
+                  })();
 
           const maxWidth = parseOptionalNodePositiveInteger(opts.maxWidth, "--max-width");
           const quality = parseOptionalNodeFiniteNumber(opts.quality, "--quality", {
@@ -144,32 +143,27 @@ export function registerNodesCameraCommands(nodes: Command) {
           });
           const delayMs = parseOptionalNodeNonNegativeInteger(opts.delayMs, "--delay-ms");
           const deviceId = normalizeOptionalString(opts.deviceId);
-          if (deviceId && facing === "both" && node.platform?.toLowerCase() !== "linux") {
+          if (deviceId && facings.length > 1) {
             throw new Error("facing=both is not allowed when --device-id is set");
           }
-          const targets = resolveCameraSnapTargets({
-            facing,
-            platform: node.platform,
-            deviceId,
-          });
           const timeoutMs = parseOptionalNodePositiveInteger(
             opts.invokeTimeout,
             "--invoke-timeout",
           );
 
           const results: Array<{
-            facing: CameraArtifactFacing;
+            facing: CameraFacing;
             path: string;
             width: number;
             height: number;
           }> = [];
 
-          for (const target of targets) {
+          for (const facing of facings) {
             const invokeParams = buildNodeInvokeParams({
               nodeId,
               command: "camera.snap",
               params: {
-                facing: target.requestFacing,
+                facing,
                 maxWidth: Number.isFinite(maxWidth) ? maxWidth : undefined,
                 quality: Number.isFinite(quality) ? quality : undefined,
                 format: "jpg",
@@ -183,7 +177,7 @@ export function registerNodesCameraCommands(nodes: Command) {
             const payload = parseCameraSnapPayload(getGatewayInvokePayload(raw));
             const filePath = cameraTempPath({
               kind: "snap",
-              facing: target.artifactFacing,
+              facing,
               ext: payload.format === "jpeg" ? "jpg" : payload.format,
             });
             await writeCameraPayloadToFile({
@@ -193,7 +187,7 @@ export function registerNodesCameraCommands(nodes: Command) {
               invalidPayloadMessage: "invalid camera.snap payload",
             });
             results.push({
-              facing: target.artifactFacing,
+              facing,
               path: filePath,
               width: payload.width,
               height: payload.height,
@@ -229,7 +223,6 @@ export function registerNodesCameraCommands(nodes: Command) {
           const node = await resolveNode(opts, normalizeOptionalString(opts.node) ?? "");
           const nodeId = node.nodeId;
           const facing = parseFacing(opts.facing ?? "front");
-          const target = resolveCameraClipTarget({ facing, platform: node.platform });
           const durationMs = parseDurationMs(opts.duration ?? "3000");
           const includeAudio = opts.audio !== false;
           const timeoutMs = parseOptionalNodePositiveInteger(
@@ -242,7 +235,7 @@ export function registerNodesCameraCommands(nodes: Command) {
             nodeId,
             command: "camera.clip",
             params: {
-              facing: target.requestFacing,
+              facing,
               durationMs: Number.isFinite(durationMs) ? durationMs : undefined,
               includeAudio,
               format: "mp4",
@@ -255,14 +248,14 @@ export function registerNodesCameraCommands(nodes: Command) {
           const payload = parseCameraClipPayload(getGatewayInvokePayload(raw));
           const filePath = await writeCameraClipPayloadToFile({
             payload,
-            facing: target.artifactFacing,
+            facing,
             expectedHost: node.remoteIp,
           });
 
           if (opts.json) {
             defaultRuntime.writeJson({
               file: {
-                facing: target.artifactFacing,
+                facing,
                 path: filePath,
                 durationMs: payload.durationMs,
                 hasAudio: payload.hasAudio,

@@ -1,6 +1,9 @@
 // Live-test helpers for music generation provider configuration.
 import type { OpenClawConfig } from "../config/types.js";
 import {
+  parseLiveCsvFilter,
+  parseProviderModelMap,
+  redactLiveApiKey,
   resolveConfiguredLiveProviderModels,
   resolveLiveAuthStore,
 } from "../media-generation/live-test-helpers.js";
@@ -11,6 +14,7 @@ import {
  * This module adapts the shared media live-test parsing/auth helpers to the
  * music-generation config key and default provider model list.
  */
+export { parseProviderModelMap, redactLiveApiKey };
 
 /** Default live model refs used when a provider is enabled but not explicitly mapped. */
 export const DEFAULT_LIVE_MUSIC_MODELS: Record<string, string> = {
@@ -19,6 +23,11 @@ export const DEFAULT_LIVE_MUSIC_MODELS: Record<string, string> = {
   minimax: "minimax/music-2.6",
   openrouter: "openrouter/google/lyria-3-pro-preview",
 };
+
+/** Parse a comma-separated provider/model filter for live music tests. */
+export function parseCsvFilter(raw?: string): Set<string> | null {
+  return parseLiveCsvFilter(raw);
+}
 
 /** Resolve configured provider/model refs from the musicGenerationModel defaults. */
 export function resolveConfiguredLiveMusicModels(cfg: OpenClawConfig): Map<string, string> {

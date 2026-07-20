@@ -7,15 +7,15 @@ export function stripNextcloudTalkTargetPrefix(raw: string): string | undefined 
 
   let normalized = trimmed;
 
-  if (/^nextcloud-talk:/i.test(normalized)) {
+  if (normalized.startsWith("nextcloud-talk:")) {
     normalized = normalized.slice("nextcloud-talk:".length).trim();
-  } else if (/^nc-talk:/i.test(normalized)) {
+  } else if (normalized.startsWith("nc-talk:")) {
     normalized = normalized.slice("nc-talk:".length).trim();
-  } else if (/^nc:/i.test(normalized)) {
+  } else if (normalized.startsWith("nc:")) {
     normalized = normalized.slice("nc:".length).trim();
   }
 
-  if (/^room:/i.test(normalized)) {
+  if (normalized.startsWith("room:")) {
     normalized = normalized.slice("room:".length).trim();
   }
 
@@ -37,7 +37,7 @@ export function looksLikeNextcloudTalkTargetId(raw: string): boolean {
     return false;
   }
 
-  if (/^(nextcloud-talk|nc-talk|nc|room):/i.test(trimmed)) {
+  if (/^(nextcloud-talk|nc-talk|nc):/i.test(trimmed)) {
     return true;
   }
 

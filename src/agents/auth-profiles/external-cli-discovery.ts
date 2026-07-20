@@ -54,10 +54,26 @@ function normalizeStringList(values: Iterable<string | undefined>): string[] {
 }
 
 /** Disables external CLI auth discovery. */
-function externalCliDiscoveryNone(params?: { config?: OpenClawConfig }): ExternalCliAuthDiscovery {
+export function externalCliDiscoveryNone(params?: {
+  config?: OpenClawConfig;
+}): ExternalCliAuthDiscovery {
   return {
     mode: "none",
     allowKeychainPrompt: false,
+    ...(params?.config ? { config: params.config } : {}),
+  };
+}
+
+/** Allows discovery of already-existing external CLI auth profiles. */
+export function externalCliDiscoveryExisting(params?: {
+  config?: OpenClawConfig;
+  allowKeychainPrompt?: boolean;
+}): ExternalCliAuthDiscovery {
+  return {
+    mode: "existing",
+    ...(params?.allowKeychainPrompt !== undefined
+      ? { allowKeychainPrompt: params.allowKeychainPrompt }
+      : {}),
     ...(params?.config ? { config: params.config } : {}),
   };
 }

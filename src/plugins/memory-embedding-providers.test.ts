@@ -8,6 +8,7 @@ import {
   listRegisteredMemoryEmbeddingProviders,
   registerMemoryEmbeddingProvider,
   restoreRegisteredMemoryEmbeddingProviders,
+  restoreMemoryEmbeddingProviders,
   type MemoryEmbeddingProviderAdapter,
 } from "./memory-embedding-providers.js";
 
@@ -112,6 +113,17 @@ describe("memory embedding provider registry", () => {
       expectedIds: ["alpha", "beta"],
       expectedCurrent: { id: "alpha", adapter: alpha },
     });
+  });
+
+  it("restores a previous snapshot", () => {
+    const alpha = createAdapter("alpha");
+    const beta = createAdapter("beta");
+    registerMemoryEmbeddingProvider(alpha);
+
+    restoreMemoryEmbeddingProviders([beta]);
+
+    expectCurrentMemoryEmbeddingProvider("alpha", undefined);
+    expectCurrentMemoryEmbeddingProvider("beta", beta);
   });
 
   it.each([

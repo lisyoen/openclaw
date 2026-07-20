@@ -2,6 +2,7 @@
 export {
   buildPluginBindingResolvedText,
   parsePluginBindingApprovalCustomId,
+  recordInboundSession,
   resolveConversationLabel,
   resolvePluginConversationBindingApproval,
   upsertChannelPairingRequest,

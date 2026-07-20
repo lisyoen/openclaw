@@ -5,7 +5,6 @@
   },
   "name": "Diffs",
   "description": "OpenClaw read-only diff viewer plugin and file renderer for agents.",
-  "catalog": { "featured": true, "order": 40 },
   "contracts": {
     "tools": ["diffs"]
   },
@@ -146,7 +145,8 @@
           },
           "fileFormat": {
             "type": "string",
-            "enum": ["png", "pdf"]
+            "enum": ["png", "pdf"],
+            "default": "png"
           },
           "format": {
             "type": "string",
@@ -155,7 +155,8 @@
           },
           "fileQuality": {
             "type": "string",
-            "enum": ["standard", "hq", "print"]
+            "enum": ["standard", "hq", "print"],
+            "default": "standard"
           },
           "fileScale": {
             "type": "number",

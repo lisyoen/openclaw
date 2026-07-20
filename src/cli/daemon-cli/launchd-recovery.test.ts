@@ -20,10 +20,12 @@ vi.mock("../../daemon/launchd.js", () => ({
 }));
 
 let recoverInstalledLaunchAgent: typeof import("./launchd-recovery.js").recoverInstalledLaunchAgent;
+let LAUNCH_AGENT_RECOVERY_MESSAGE: typeof import("./launchd-recovery.js").LAUNCH_AGENT_RECOVERY_MESSAGE;
 
 describe("recoverInstalledLaunchAgent", () => {
   beforeAll(async () => {
-    ({ recoverInstalledLaunchAgent } = await import("./launchd-recovery.js"));
+    ({ recoverInstalledLaunchAgent, LAUNCH_AGENT_RECOVERY_MESSAGE } =
+      await import("./launchd-recovery.js"));
   });
 
   beforeEach(() => {
@@ -55,7 +57,7 @@ describe("recoverInstalledLaunchAgent", () => {
     await expect(recoverInstalledLaunchAgent({ result: "restarted" })).resolves.toEqual({
       result: "restarted",
       loaded: true,
-      message: "Gateway LaunchAgent was installed but not loaded; re-bootstrapped launchd service.",
+      message: LAUNCH_AGENT_RECOVERY_MESSAGE,
     });
     expect(launchAgentPlistExists).toHaveBeenCalledWith(process.env);
     expect(repairLaunchAgentBootstrap).toHaveBeenCalledWith({ env: process.env });

@@ -7,16 +7,14 @@ export {
 } from "./payload.js";
 export {
   normalizePlainTextToolCallStreamEvents,
-  projectScrubbedPlainTextToolCallMessage,
+  scrubOverCapPlainTextToolCallMessage,
   type PlainTextToolCallMessageNormalization,
   type PlainTextToolCallNameMatcher,
   type PlainTextToolCallStreamNormalizerOptions,
 } from "./stream-normalizer.js";
 export {
-  createPromotedPlainTextToolCallBlock,
-  createPromotedPlainTextToolCallEvents,
-  projectStandalonePlainTextToolCallMessage,
-  type PlainTextToolCallMessageProjection,
+  extractStandalonePlainTextToolCallText,
+  promoteStandalonePlainTextToolCallMessage,
   type PlainTextToolCallPromotionOptions,
   type PromotedPlainTextToolCallBlockFactory,
   type ToolCallRepairNameResolver,

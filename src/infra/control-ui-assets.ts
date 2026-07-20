@@ -2,7 +2,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
-import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import * as controlUiFsRuntime from "./control-ui-assets.fs.runtime.js";
@@ -14,7 +13,7 @@ export function resolveControlUiDistIndexPathForRoot(root: string): string {
   return path.join(root, ...CONTROL_UI_DIST_PATH_SEGMENTS);
 }
 
-type ControlUiDistIndexHealth = {
+export type ControlUiDistIndexHealth = {
   indexPath: string | null;
   exists: boolean;
 };
@@ -38,7 +37,9 @@ export async function resolveControlUiDistIndexHealth(
   };
 }
 
-function resolveControlUiRepoRoot(argv1: string | undefined = process.argv[1]): string | null {
+export function resolveControlUiRepoRoot(
+  argv1: string | undefined = process.argv[1],
+): string | null {
   if (!argv1) {
     return null;
   }
@@ -70,7 +71,7 @@ function resolveControlUiRepoRoot(argv1: string | undefined = process.argv[1]): 
   return null;
 }
 
-async function resolveControlUiDistIndexPath(
+export async function resolveControlUiDistIndexPath(
   argv1OrOpts?: string | { argv1?: string; moduleUrl?: string },
 ): Promise<string | null> {
   const argv1 =
@@ -139,7 +140,7 @@ async function resolveControlUiDistIndexPath(
   return null;
 }
 
-type ControlUiRootResolveOptions = {
+export type ControlUiRootResolveOptions = {
   argv1?: string;
   moduleUrl?: string;
   cwd?: string;
@@ -269,7 +270,7 @@ export function isPackageProvenControlUiRootSync(
   return pathsMatchByRealpathOrResolve(root, packageDistRoot);
 }
 
-type EnsureControlUiAssetsResult = {
+export type EnsureControlUiAssetsResult = {
   ok: boolean;
   built: boolean;
   message?: string;
@@ -284,7 +285,7 @@ function summarizeCommandOutput(text: string): string | undefined {
   if (!last) {
     return undefined;
   }
-  return last.length > 240 ? `${truncateUtf16Safe(last, 239)}…` : last;
+  return last.length > 240 ? `${last.slice(0, 239)}…` : last;
 }
 
 export async function ensureControlUiAssetsBuilt(
@@ -323,9 +324,7 @@ export async function ensureControlUiAssetsBuilt(
     };
   }
 
-  runtime.log(
-    "Control UI assets missing; building them now (rerun `pnpm ui:build` after UI changes, or use `pnpm ui:dev` while developing the Control UI)…",
-  );
+  runtime.log("Control UI assets missing; building (ui:build, auto-installs UI deps)…");
 
   const build = await runCommandWithTimeout([process.execPath, uiScript, "build"], {
     cwd: repoRoot,

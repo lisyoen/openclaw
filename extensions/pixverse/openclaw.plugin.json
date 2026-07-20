@@ -6,14 +6,8 @@
     "onStartup": false
   },
   "enabledByDefault": true,
-  "setup": {
-    "providers": [
-      {
-        "id": "pixverse",
-        "authMethods": ["api-key"],
-        "envVars": ["PIXVERSE_API_KEY"]
-      }
-    ]
+  "providerAuthEnvVars": {
+    "pixverse": ["PIXVERSE_API_KEY"]
   },
   "providerAuthChoices": [
     {

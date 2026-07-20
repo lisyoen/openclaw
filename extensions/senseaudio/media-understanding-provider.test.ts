@@ -8,16 +8,11 @@ import {
   createAuthCaptureJsonFetch,
   createRequestCaptureJsonFetch,
   installPinnedHostnameTestHooks,
-} from "openclaw/plugin-sdk/test-media-understanding";
+} from "openclaw/plugin-sdk/test-env";
 import { describe, expect, it } from "vitest";
-import { senseaudioMediaUnderstandingProvider } from "./media-understanding-provider.js";
+import { transcribeSenseAudioAudio } from "./media-understanding-provider.js";
 
 installPinnedHostnameTestHooks();
-
-const transcribeSenseAudioAudio = senseaudioMediaUnderstandingProvider.transcribeAudio;
-if (!transcribeSenseAudioAudio) {
-  throw new Error("expected SenseAudio transcription capability");
-}
 
 describe("transcribeSenseAudioAudio", () => {
   it("uses SenseAudio base URL by default", async () => {

@@ -36,7 +36,7 @@ function resolveAccountChannels(
   return { channels: matchKey ? accounts[matchKey]?.channels : undefined };
 }
 
-function migrateSlackChannelsInPlace(
+export function migrateSlackChannelsInPlace(
   channels: SlackChannels | undefined,
   oldChannelId: string,
   newChannelId: string,
@@ -53,11 +53,7 @@ function migrateSlackChannelsInPlace(
   if (Object.hasOwn(channels, newChannelId)) {
     return { migrated: false, skippedExisting: true };
   }
-  const channelConfig = channels[oldChannelId];
-  if (!channelConfig) {
-    return { migrated: false, skippedExisting: false };
-  }
-  channels[newChannelId] = channelConfig;
+  channels[newChannelId] = channels[oldChannelId];
   delete channels[oldChannelId];
   return { migrated: true, skippedExisting: false };
 }

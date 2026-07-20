@@ -1,7 +1,6 @@
 // Tests queue cleanup behavior for expired state and dedupe records.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearSessionQueues } from "./cleanup.js";
-import { testing } from "./cleanup.test-support.js";
+import { testing, clearSessionQueues } from "./cleanup.js";
 
 const followupQueueMocks = vi.hoisted(() => ({
   clearFollowupDrainCallback: vi.fn(),

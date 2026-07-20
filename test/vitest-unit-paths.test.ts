@@ -9,8 +9,6 @@ describe("isUnitConfigTestFile", () => {
   });
 
   it("rejects files excluded from the unit config", () => {
-    expect(isUnitConfigTestFile("packages/gateway-client/src/index.test.ts")).toBe(false);
-    expect(isUnitConfigTestFile("packages/gateway-protocol/src/index.test.ts")).toBe(false);
     expect(
       isUnitConfigTestFile(
         bundledPluginFile("imessage", "src/monitor.shutdown.unhandled-rejection.test.ts"),

@@ -1,4 +1,3 @@
-import type { FastMode } from "@openclaw/normalization-core/string-coerce";
 // Defines the TUI backend contract and backend event shapes.
 import type {
   CommandEntry,
@@ -6,8 +5,6 @@ import type {
   SessionsListParams,
   SessionsPatchParams,
   SessionsPatchResult,
-  TaskSuggestion,
-  TaskSuggestionsAcceptResult,
 } from "../../packages/gateway-protocol/src/index.js";
 import type { ResponseUsageMode, SessionInfo, SessionScope } from "./tui-types.js";
 
@@ -24,36 +21,8 @@ export type ChatSendOptions = {
   runId?: string;
 };
 
-export type TuiChatSendResult = {
-  runId: string;
-  status?: string;
-};
-
-export type TuiApprovalDecision = "allow-once" | "allow-always" | "deny";
-
-type TuiTaskSuggestionActionCapabilities = {
-  canAccept: boolean;
-  canDismiss: boolean;
-};
-
-export type TuiPluginApproval = {
-  id: string;
-  request: {
-    title: string;
-    description?: string | null;
-    pluginId?: string | null;
-    severity?: "info" | "warning" | "critical" | null;
-    toolName?: string | null;
-    allowedDecisions?: readonly TuiApprovalDecision[] | null;
-    agentId?: string | null;
-    sessionKey?: string | null;
-  };
-  createdAtMs: number;
-  expiresAtMs: number;
-};
-
 /** Options for forwarding a goal command to a backend session. */
-type TuiGoalCommandOptions = {
+export type TuiGoalCommandOptions = {
   sessionKey: string;
   agentId?: string;
   command: string;
@@ -93,16 +62,14 @@ export type TuiSessionList = {
       | "inputTokens"
       | "outputTokens"
       | "totalTokens"
-      | "totalTokensFresh"
       | "goal"
       | "modelProvider"
-      | "agentRuntime"
       | "displayName"
     > & {
       key: string;
       sessionId?: string;
       updatedAt?: number | null;
-      fastMode?: FastMode;
+      fastMode?: boolean;
       sendPolicy?: string;
       responseUsage?: ResponseUsageMode;
       label?: string;
@@ -157,18 +124,7 @@ export type TuiSessionMutationResult = {
   resolved?: {
     modelProvider?: string;
     model?: string;
-    agentRuntime?: SessionInfo["agentRuntime"];
-    thinkingLevel?: string;
-    thinkingLevels?: SessionInfo["thinkingLevels"];
   };
-};
-
-/** Options for creating a fresh TUI session through the backend lifecycle. */
-export type TuiSessionCreateOptions = {
-  key: string;
-  agentId?: string;
-  parentSessionKey?: string;
-  succeedsParent?: boolean;
 };
 
 /** Minimal backend interface shared by Gateway and embedded local TUI modes. */
@@ -184,19 +140,16 @@ export type TuiBackend = {
   onGap?: (info: { expected: number; received: number }) => void;
   start: () => void;
   stop: () => void | Promise<void>;
-  subscribeSessionEvents?: () => Promise<unknown>;
-  sendChat: (opts: ChatSendOptions) => Promise<TuiChatSendResult>;
-  /** runId optional: omit for session-scoped abort (queued turns then active). */
+  sendChat: (opts: ChatSendOptions) => Promise<{ runId: string }>;
   abortChat: (opts: {
     sessionKey: string;
     agentId?: string;
-    runId?: string;
-  }) => Promise<{ ok: boolean; aborted: boolean; runIds?: string[] }>;
+    runId: string;
+  }) => Promise<{ ok: boolean; aborted: boolean }>;
   loadHistory: (opts: { sessionKey: string; agentId?: string; limit?: number }) => Promise<unknown>;
   listSessions: (opts?: SessionsListParams) => Promise<TuiSessionList>;
   listAgents: () => Promise<TuiAgentsList>;
   patchSession: (opts: SessionsPatchParams) => Promise<SessionsPatchResult>;
-  createSession: (opts: TuiSessionCreateOptions) => Promise<TuiSessionMutationResult>;
   resetSession: (
     key: string,
     reason?: "new" | "reset",
@@ -205,11 +158,5 @@ export type TuiBackend = {
   getGatewayStatus: () => Promise<unknown>;
   listModels: () => Promise<TuiModelChoice[]>;
   listCommands?: (opts?: CommandsListParams) => Promise<CommandEntry[]>;
-  listPluginApprovals?: () => Promise<unknown>;
-  resolvePluginApproval?: (id: string, decision: TuiApprovalDecision) => Promise<{ ok?: boolean }>;
-  getTaskSuggestionActionCapabilities?: () => TuiTaskSuggestionActionCapabilities;
-  listTaskSuggestions?: () => Promise<TaskSuggestion[]>;
-  acceptTaskSuggestion?: (taskId: string) => Promise<TaskSuggestionsAcceptResult>;
-  dismissTaskSuggestion?: (taskId: string) => Promise<{ taskId: string; dismissed: boolean }>;
   runGoalCommand?: (opts: TuiGoalCommandOptions) => Promise<{ text: string }>;
 };

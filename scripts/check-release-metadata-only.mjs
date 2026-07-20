@@ -6,8 +6,9 @@ import path from "node:path";
 import { RELEASE_METADATA_PATHS } from "./changed-lanes.mjs";
 
 const VERSION_ONLY_TEXT_PATHS = new Set([
-  "apps/android/Config/Version.properties",
-  "apps/android/version.json",
+  "apps/android/app/build.gradle.kts",
+  "apps/ios/Config/Version.xcconfig",
+  "apps/ios/version.json",
   "apps/macos/Sources/OpenClaw/Resources/Info.plist",
 ]);
 
@@ -20,35 +21,30 @@ function normalizePath(input) {
 
 function readRefOptionValue(argv, index, optionName) {
   const value = argv[index + 1];
-  if (value === undefined || value === "" || value.startsWith("-")) {
+  if (value === undefined || value === "" || value.startsWith("--")) {
     throw new Error(`Expected ${optionName} <ref>.`);
   }
   return value;
 }
 
 export function parseArgs(argv) {
-  const separatorIndex = argv.indexOf("--");
-  const flagArgv = separatorIndex === -1 ? argv : argv.slice(0, separatorIndex);
-  const explicitPaths =
-    separatorIndex === -1 ? [] : argv.slice(separatorIndex + 1).map(normalizePath);
   const args = { staged: false, base: "origin/main", head: "HEAD", paths: [] };
-  for (let index = 0; index < flagArgv.length; index += 1) {
-    const arg = flagArgv[index];
-    if (arg === "--staged") {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--") {
+      continue;
+    } else if (arg === "--staged") {
       args.staged = true;
     } else if (arg === "--base") {
-      args.base = readRefOptionValue(flagArgv, index, arg);
+      args.base = readRefOptionValue(argv, index, arg);
       index += 1;
     } else if (arg === "--head") {
-      args.head = readRefOptionValue(flagArgv, index, arg);
+      args.head = readRefOptionValue(argv, index, arg);
       index += 1;
-    } else if (arg.startsWith("-")) {
-      throw new Error(`Unknown option: ${arg}`);
     } else {
       args.paths.push(normalizePath(arg));
     }
   }
-  args.paths.push(...explicitPaths);
   return args;
 }
 
@@ -91,9 +87,7 @@ function readBeforeAfter(args, filePath) {
   const refs = refsFor(args);
   const before = readBlob(refs.before, filePath);
   let after = readBlob(refs.after, filePath);
-  // The worktree overlay covers uncommitted edits; an explicit --head SHA is
-  // a request for SHA-exact comparison and must not read the checkout.
-  if (!args.staged && args.head === "HEAD" && existsSync(filePath)) {
+  if (!args.staged && existsSync(filePath)) {
     const worktree = readBlob("WORKTREE", filePath);
     if (worktree !== after) {
       after = worktree;
@@ -169,10 +163,5 @@ export function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {
-  try {
-    main();
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  }
+  main();
 }

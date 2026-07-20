@@ -1,7 +1,6 @@
 // Memory Core plugin module implements watch settle behavior.
 import fsSync from "node:fs";
 import path from "node:path";
-import { sleep as delay } from "openclaw/plugin-sdk/runtime-env";
 
 export type MemoryWatchEventStats = {
   isDirectory?: () => boolean;
@@ -45,6 +44,12 @@ function snapshotPath(filePath: string): WatchPathSnapshot | null {
   } catch {
     return null;
   }
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 export function recordMemoryWatchEventPath(

@@ -5,6 +5,7 @@ import path from "node:path";
 import { extractErrorCode } from "openclaw/plugin-sdk/error-runtime";
 import {
   clearMemoryCoreWorkspaceNamespace,
+  DREAMING_DAILY_INGESTION_NAMESPACE,
   DREAMING_SESSION_INGESTION_FILES_NAMESPACE,
   DREAMING_SESSION_INGESTION_SEEN_NAMESPACE,
   readMemoryCoreWorkspaceEntries,
@@ -212,11 +213,10 @@ export async function auditDreamingArtifacts(params: {
   // Fall back to SQLite plugin state when the legacy JSON file was archived by migration.
   if (!sessionIngestionExists) {
     try {
-      // Daily ingestion tracks memory/*.md independently; session repair must not
-      // report or clear that healthy bookkeeping when rebuilding the session corpus.
       const ingestionNamespaces = [
         DREAMING_SESSION_INGESTION_FILES_NAMESPACE,
         DREAMING_SESSION_INGESTION_SEEN_NAMESPACE,
+        DREAMING_DAILY_INGESTION_NAMESPACE,
       ] as const;
       for (const namespace of ingestionNamespaces) {
         const entries = await readMemoryCoreWorkspaceEntries({

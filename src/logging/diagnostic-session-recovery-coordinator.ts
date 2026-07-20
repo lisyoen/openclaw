@@ -27,7 +27,7 @@ export type RecoverStuckSession = (
   params: StuckSessionRecoveryRequest,
 ) => void | StuckSessionRecoveryOutcome | Promise<void | StuckSessionRecoveryOutcome>;
 
-type RequestStuckSessionRecoveryParams = {
+export type RequestStuckSessionRecoveryParams = {
   recover: RecoverStuckSession;
   request: StuckSessionRecoveryRequest;
   classification: SessionAttentionClassification;

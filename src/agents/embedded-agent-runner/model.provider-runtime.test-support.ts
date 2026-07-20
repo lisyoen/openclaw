@@ -1,9 +1,6 @@
 // Provider-runtime mock used by model resolution tests.
 import { lowercasePreservingWhitespace } from "@openclaw/normalization-core/string-coerce";
-
-type OpenRouterModelCapabilities = NonNullable<
-  ReturnType<typeof import("./openrouter-model-capabilities.js").getOpenRouterModelCapabilities>
->;
+import type { OpenRouterModelCapabilities } from "./openrouter-model-capabilities.js";
 
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
@@ -42,13 +39,7 @@ type DynamicModelContext = {
   provider: string;
   modelId: string;
   modelRegistry: ModelRegistryLike;
-  agentRuntimeId?: string;
-  authProfileMode?: "api_key" | "aws-sdk" | "oauth" | "token";
-  providerConfig?: {
-    api?: string | null;
-    auth?: "api-key" | "aws-sdk" | "oauth" | "token";
-    baseUrl?: string;
-  };
+  providerConfig?: { api?: string | null; baseUrl?: string };
 };
 
 type ResolvedModelLike = Record<string, unknown>;
@@ -303,24 +294,10 @@ function buildDynamicModel(
     }
     case "openai": {
       const isLegacyGpt54Alias = lower === "gpt-5.4-codex";
-      const isSparkModel = lower === "gpt-5.3-codex-spark";
       const exactModel = params.modelRegistry.find("openai", modelId) as ResolvedModelLike | null;
-      const explicitResponsesAuth =
-        params.authProfileMode === "api_key" ||
-        params.authProfileMode === "aws-sdk" ||
-        params.providerConfig?.auth === "api-key" ||
-        params.providerConfig?.auth === "aws-sdk";
-      const explicitCodexAuth =
-        params.authProfileMode === "oauth" ||
-        params.authProfileMode === "token" ||
-        params.providerConfig?.auth === "oauth" ||
-        params.providerConfig?.auth === "token";
       const providerConfigSelectsChatGpt =
-        !explicitResponsesAuth &&
-        (explicitCodexAuth ||
-          params.providerConfig?.api === "openai-chatgpt-responses" ||
-          isNativeOpenAICodexBaseUrl(params.providerConfig?.baseUrl) ||
-          params.agentRuntimeId === "codex");
+        params.providerConfig?.api === "openai-chatgpt-responses" ||
+        isNativeOpenAICodexBaseUrl(params.providerConfig?.baseUrl);
       if (
         lower === "gpt-5.5" &&
         (providerConfigSelectsChatGpt || isOpenAIChatGptModelTemplate(exactModel))
@@ -366,12 +343,11 @@ function buildDynamicModel(
             : lower === "gpt-5.3-codex-spark"
               ? findTemplate(params, "openai", ["gpt-5.4", "gpt-5.3-codex", "gpt-5.2-codex"])
               : findTemplate(params, "openai", ["gpt-5.4"]);
-      const templateSelectsChatGpt = !isSparkModel && isOpenAIChatGptModelTemplate(codexTemplate);
       if (
         isLegacyGpt54Alias ||
-        (lower.includes("-codex") && !isSparkModel) ||
+        lower.includes("-codex") ||
         providerConfigSelectsChatGpt ||
-        templateSelectsChatGpt
+        isOpenAIChatGptModelTemplate(codexTemplate)
       ) {
         const templateBaseUrl =
           typeof codexTemplate?.baseUrl === "string" ? codexTemplate.baseUrl : undefined;
@@ -717,13 +693,7 @@ export function createProviderRuntimeTestMock(options: ProviderRuntimeTestMockOp
       context: {
         modelId: string;
         modelRegistry: ModelRegistryLike;
-        agentRuntimeId?: string;
-        authProfileMode?: "api_key" | "aws-sdk" | "oauth" | "token";
-        providerConfig?: {
-          api?: string | null;
-          auth?: "api-key" | "aws-sdk" | "oauth" | "token";
-          baseUrl?: string;
-        };
+        providerConfig?: { api?: string | null; baseUrl?: string };
       };
     }) =>
       handledDynamicProviders.has(params.provider)
@@ -732,8 +702,6 @@ export function createProviderRuntimeTestMock(options: ProviderRuntimeTestMockOp
               provider: params.provider,
               modelId: params.context.modelId,
               modelRegistry: params.context.modelRegistry,
-              agentRuntimeId: params.context.agentRuntimeId,
-              authProfileMode: params.context.authProfileMode,
               providerConfig: params.context.providerConfig,
             },
             {
@@ -747,7 +715,7 @@ export function createProviderRuntimeTestMock(options: ProviderRuntimeTestMockOp
       context: { modelId: string };
     }) =>
       params.provider === "openai" &&
-      ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-pro", "gpt-5.3-codex-spark"].includes(
+      ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-pro"].includes(
         params.context.modelId.trim().toLowerCase(),
       ),
     prepareProviderDynamicModel: async (params: {
@@ -802,4 +770,3 @@ export function createProviderRuntimeTestMock(options: ProviderRuntimeTestMockOp
     }) => normalizeTransport(params),
   };
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

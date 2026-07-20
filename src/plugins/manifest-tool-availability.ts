@@ -11,8 +11,8 @@ import type {
 } from "./manifest.js";
 
 type ToolMetadata = NonNullable<PluginManifestRecord["toolMetadata"]>[string];
-type ManifestConfigAvailabilitySignal = PluginManifestCapabilityProviderConfigSignal;
-type ManifestAuthAvailabilitySignal = PluginManifestCapabilityProviderAuthSignal;
+export type ManifestConfigAvailabilitySignal = PluginManifestCapabilityProviderConfigSignal;
+export type ManifestAuthAvailabilitySignal = PluginManifestCapabilityProviderAuthSignal;
 
 function readPath(root: unknown, path: string | undefined): unknown {
   if (!path?.trim()) {
@@ -210,7 +210,11 @@ export function manifestPluginSetupProviderEnvVars(
   plugin: PluginManifestRecord,
   providerId: string,
 ): readonly string[] {
-  return plugin.setup?.providers?.find((provider) => provider.id === providerId)?.envVars ?? [];
+  const direct = plugin.setup?.providers?.find((provider) => provider.id === providerId)?.envVars;
+  if (direct && direct.length > 0) {
+    return direct;
+  }
+  return plugin.providerAuthEnvVars?.[providerId] ?? [];
 }
 
 export function hasNonEmptyManifestEnvCandidate(

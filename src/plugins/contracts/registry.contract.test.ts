@@ -4,12 +4,11 @@ import { uniqueSortedStrings } from "../../plugin-sdk/test-helpers/string-utils.
 import { loadPluginManifestRegistry, type PluginManifestRecord } from "../manifest-registry.js";
 import { resolveManifestContractPluginIds } from "../plugin-registry.js";
 import { BUNDLED_PLUGIN_CONTRACT_SNAPSHOTS } from "./inventory/bundled-capability-metadata.js";
-import { pluginRegistrationContractRegistry, providerContractLoadError } from "./registry.js";
-
-const ACTIVATION_SCOPED_WEB_SEARCH_PLUGIN_IDS = ["codex", "qa-lab"] as const;
-const ACTIVATION_SCOPED_WEB_SEARCH_PLUGIN_ID_SET = new Set<string>(
-  ACTIVATION_SCOPED_WEB_SEARCH_PLUGIN_IDS,
-);
+import {
+  pluginRegistrationContractRegistry,
+  providerContractLoadError,
+  providerContractPluginIds,
+} from "./registry.js";
 
 describe("plugin contract registry", () => {
   function expectUniqueIds(ids: readonly string[]) {
@@ -35,7 +34,6 @@ describe("plugin contract registry", () => {
             providers: entry.providerIds,
             contracts: {
               embeddingProviders: entry.embeddingProviderIds,
-              workerProviders: entry.workerProviderIds,
               speechProviders: entry.speechProviderIds,
               realtimeTranscriptionProviders: entry.realtimeTranscriptionProviderIds,
               realtimeVoiceProviders: entry.realtimeVoiceProviderIds,
@@ -77,10 +75,6 @@ describe("plugin contract registry", () => {
     {
       name: "does not duplicate bundled provider ids",
       ids: () => pluginRegistrationContractRegistry.flatMap((entry) => entry.providerIds),
-    },
-    {
-      name: "does not duplicate bundled worker provider ids",
-      ids: () => pluginRegistrationContractRegistry.flatMap((entry) => entry.workerProviderIds),
     },
     {
       name: "does not duplicate bundled web fetch provider ids",
@@ -129,13 +123,10 @@ describe("plugin contract registry", () => {
     expectUniqueIds(pluginRegistrationContractRegistry.flatMap((entry) => entry.speechProviderIds));
   });
 
-  it("covers every bundled worker provider plugin discovered from manifests", () => {
+  it("covers every bundled provider plugin discovered from manifests", () => {
     expectRegistryPluginIds({
-      actualPluginIds: pluginRegistrationContractRegistry
-        .filter((entry) => entry.workerProviderIds.length > 0)
-        .map((entry) => entry.pluginId),
-      predicate: (plugin) =>
-        plugin.origin === "bundled" && (plugin.contracts?.workerProviders?.length ?? 0) > 0,
+      actualPluginIds: providerContractPluginIds,
+      predicate: (plugin) => plugin.origin === "bundled" && plugin.providers.length > 0,
     });
   });
 
@@ -179,31 +170,16 @@ describe("plugin contract registry", () => {
       {
         provider: "github-copilot",
         method: "device",
-        appGuidedAuth: "device-code",
-        appGuidedSecret: true,
         choiceId: "github-copilot",
         choiceLabel: "GitHub Copilot",
         choiceHint: "Device login with your GitHub account",
-        assistantPriority: 1,
         groupId: "copilot",
         groupLabel: "Copilot",
-        groupHint: "GitHub, GitHub Enterprise + Local Proxy",
+        groupHint: "GitHub + local proxy",
         optionKey: "githubCopilotToken",
         cliFlag: "--github-copilot-token",
         cliOption: "--github-copilot-token <token>",
         cliDescription: "GitHub Copilot OAuth token",
-      },
-      {
-        provider: "github-copilot",
-        method: "device-enterprise",
-        appGuidedAuth: "device-code",
-        choiceId: "github-copilot-enterprise",
-        choiceLabel: "GitHub Copilot (Enterprise / data residency)",
-        choiceHint: "Device login against your GitHub Enterprise (*.ghe.com) tenant",
-        assistantPriority: 2,
-        groupId: "copilot",
-        groupLabel: "Copilot",
-        groupHint: "GitHub, GitHub Enterprise + Local Proxy",
       },
     ]);
   });
@@ -272,25 +248,15 @@ describe("plugin contract registry", () => {
     const bundledWebSearchPluginIds = resolveManifestContractPluginIds({
       contract: "webSearchProviders",
       origin: "bundled",
-    }).filter(
-      (pluginId) =>
-        snapshotPluginIds.has(pluginId) &&
-        !ACTIVATION_SCOPED_WEB_SEARCH_PLUGIN_ID_SET.has(pluginId),
-    );
-    const expectedPluginIds = uniqueSortedStrings([
-      ...bundledWebSearchPluginIds,
-      ...ACTIVATION_SCOPED_WEB_SEARCH_PLUGIN_IDS,
-    ]);
-    const actualPluginIds = uniqueSortedStrings(
-      pluginRegistrationContractRegistry
-        .filter((entry) => entry.webSearchProviderIds.length > 0)
-        .map((entry) => entry.pluginId),
-    );
+    }).filter((pluginId) => snapshotPluginIds.has(pluginId));
 
-    expect(actualPluginIds).toEqual(expectedPluginIds);
     expect(
-      actualPluginIds.filter((pluginId) => !bundledWebSearchPluginIds.includes(pluginId)),
-    ).toEqual([...ACTIVATION_SCOPED_WEB_SEARCH_PLUGIN_IDS]);
+      uniqueSortedStrings(
+        pluginRegistrationContractRegistry
+          .filter((entry) => entry.webSearchProviderIds.length > 0)
+          .map((entry) => entry.pluginId),
+      ),
+    ).toEqual(bundledWebSearchPluginIds);
   });
 
   it("covers every bundled migration provider plugin discovered from manifests", () => {

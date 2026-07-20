@@ -2,16 +2,6 @@
 // Streams JSONL transcript files into byte-offset indexes for history paging.
 import fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import {
-  parseSessionTranscriptTreeEntry,
-  scanSessionTranscriptTree,
-} from "../config/sessions/transcript-tree.js";
-import {
-  extractJsonNullableStringFieldPrefix,
-  extractJsonNumberFieldPrefix,
-  extractJsonStringFieldPrefix,
-  readNonBlankStringPreservingWhitespace,
-} from "./session-transcript-json.js";
 
 const TRANSCRIPT_INDEX_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_TRANSCRIPT_INDEX_CACHE_ENTRIES = 256;
@@ -35,9 +25,8 @@ type SessionTranscriptIndex = {
   mtimeMs: number;
   size: number;
   hasTreeEntries: boolean;
-  leafId?: string | null;
+  leafId?: string;
   entries: IndexedTranscriptEntry[];
-  allEntries: IndexedTranscriptEntry[];
 };
 
 type IndexedRawEntry = {
@@ -56,7 +45,6 @@ type CacheEntry = {
 
 type ReadSessionTranscriptIndexOptions = {
   cache?: "reuse" | "skip";
-  view?: "active" | "all";
 };
 
 const transcriptIndexCache = new Map<string, CacheEntry>();
@@ -68,6 +56,48 @@ const transcriptIndexBuilds = new Map<
     promise: Promise<SessionTranscriptIndex>;
   }
 >();
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractJsonStringFieldPrefix(prefix: string, field: string): string | undefined {
+  const match = new RegExp(`"${escapeRegExp(field)}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`).exec(prefix);
+  if (!match) {
+    return undefined;
+  }
+  try {
+    const decoded = JSON.parse(`"${match[1]}"`) as unknown;
+    return normalizeOptionalString(decoded);
+  } catch {
+    return undefined;
+  }
+}
+
+function extractJsonNullableStringFieldPrefix(
+  prefix: string,
+  field: string,
+): string | null | undefined {
+  if (new RegExp(`"${escapeRegExp(field)}"\\s*:\\s*null`).test(prefix)) {
+    return null;
+  }
+  return extractJsonStringFieldPrefix(prefix, field);
+}
+
+function extractJsonNumberFieldPrefix(prefix: string, field: string): number | undefined {
+  const match = new RegExp(
+    `"${escapeRegExp(field)}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)`,
+  ).exec(prefix);
+  if (!match) {
+    return undefined;
+  }
+  const decoded = Number(match[1]);
+  return Number.isFinite(decoded) ? decoded : undefined;
+}
 
 async function yieldTranscriptIndexScan(): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -92,11 +122,10 @@ function setCachedIndex(filePath: string, entry: CacheEntry): void {
   }
 }
 
-function selectTranscriptIndexView(
-  index: SessionTranscriptIndex,
-  view: ReadSessionTranscriptIndexOptions["view"],
-): SessionTranscriptIndex {
-  return view === "all" ? { ...index, entries: index.allEntries } : index;
+/** Clears transcript index caches and in-flight builds between tests. */
+export function clearSessionTranscriptIndexCache(): void {
+  transcriptIndexCache.clear();
+  transcriptIndexBuilds.clear();
 }
 
 function isIndexableTranscriptRecord(record: unknown): record is ParsedTranscriptRecord {
@@ -105,6 +134,10 @@ function isIndexableTranscriptRecord(record: unknown): record is ParsedTranscrip
 
 function isVisibleTranscriptRecord(record: ParsedTranscriptRecord): boolean {
   return Boolean(record.message) || record.type === "compaction";
+}
+
+function isTreeTranscriptRecord(record: ParsedTranscriptRecord): boolean {
+  return record.type !== "session" && typeof record.id === "string" && "parentId" in record;
 }
 
 function buildOversizedIndexedRawEntry(params: {
@@ -135,10 +168,9 @@ function buildOversizedIndexedRawEntry(params: {
       __openclaw: { truncated: true, reason: "oversized" },
     },
   };
-  const treeEntry = parseSessionTranscriptTreeEntry(record);
   return {
     ...(id ? { id } : {}),
-    ...(treeEntry ? { parentId: treeEntry.parentId } : parentId !== undefined ? { parentId } : {}),
+    ...(parentId !== undefined ? { parentId } : {}),
     offset: params.offset,
     byteLength: params.byteLength,
     record,
@@ -192,7 +224,7 @@ async function visitTranscriptJsonLines(
 
 function buildActiveTreeEntries(params: {
   byId: Map<string, IndexedRawEntry>;
-  leafId?: string | null;
+  leafId?: string;
 }): IndexedRawEntry[] {
   const out: IndexedRawEntry[] = [];
   const seen = new Set<string>();
@@ -236,6 +268,9 @@ async function buildSessionTranscriptIndex(
   stat: fs.Stats,
 ): Promise<SessionTranscriptIndex> {
   const rawEntries: IndexedRawEntry[] = [];
+  const byId = new Map<string, IndexedRawEntry>();
+  let hasTreeEntries = false;
+  let leafId: string | undefined;
 
   await visitTranscriptJsonLines(filePath, (line, offset, byteLength) => {
     if (!line.trim()) {
@@ -247,6 +282,13 @@ async function buildSessionTranscriptIndex(
         return;
       }
       rawEntries.push(rawEntry);
+      if (rawEntry.id) {
+        byId.set(rawEntry.id, rawEntry);
+        if (isTreeTranscriptRecord(rawEntry.record)) {
+          hasTreeEntries = true;
+          leafId = rawEntry.id;
+        }
+      }
       return;
     }
     let parsed: unknown;
@@ -258,47 +300,34 @@ async function buildSessionTranscriptIndex(
     if (!isIndexableTranscriptRecord(parsed)) {
       return;
     }
-    const id = readNonBlankStringPreservingWhitespace(parsed.id);
+    const id = normalizeOptionalString(parsed.id);
     const parentId =
-      parsed.parentId === null
-        ? null
-        : (readNonBlankStringPreservingWhitespace(parsed.parentId) ?? undefined);
-    const treeEntry = parseSessionTranscriptTreeEntry(parsed);
+      parsed.parentId === null ? null : (normalizeOptionalString(parsed.parentId) ?? undefined);
     const rawEntry: IndexedRawEntry = {
       ...(id ? { id } : {}),
-      ...(treeEntry
-        ? { parentId: treeEntry.parentId }
-        : parentId !== undefined
-          ? { parentId }
-          : {}),
+      ...(parentId !== undefined ? { parentId } : {}),
       offset,
       byteLength,
       record: parsed,
     };
     rawEntries.push(rawEntry);
+    if (id) {
+      byId.set(id, rawEntry);
+      if (isTreeTranscriptRecord(parsed)) {
+        hasTreeEntries = true;
+        leafId = id;
+      }
+    }
   });
 
-  const tree = scanSessionTranscriptTree(rawEntries.map((entry) => entry.record));
-  const rawByRecord = new Map(rawEntries.map((entry) => [entry.record, entry]));
-  const byId = new Map<string, IndexedRawEntry>();
-  for (const node of tree.nodes) {
-    const rawEntry = rawByRecord.get(node.entry);
-    if (rawEntry) {
-      rawEntry.parentId = node.parentId;
-      byId.set(node.id, rawEntry);
-    }
-  }
-  const activeRawEntries = tree.hasExplicitLeafUpdate
-    ? buildActiveTreeEntries({ byId, leafId: tree.leafId })
-    : rawEntries;
+  const activeRawEntries = hasTreeEntries ? buildActiveTreeEntries({ byId, leafId }) : rawEntries;
   return {
     filePath,
     mtimeMs: stat.mtimeMs,
     size: stat.size,
-    hasTreeEntries: tree.hasExplicitLeafUpdate,
-    ...(tree.hasExplicitLeafUpdate ? { leafId: tree.leafId } : {}),
+    hasTreeEntries,
+    ...(leafId ? { leafId } : {}),
     entries: toIndexedEntries(activeRawEntries),
-    allEntries: toIndexedEntries(rawEntries),
   };
 }
 
@@ -319,15 +348,15 @@ export async function readSessionTranscriptIndex(
     return null;
   }
   if (opts.cache === "skip") {
-    return selectTranscriptIndexView(await buildSessionTranscriptIndex(filePath, stat), opts.view);
+    return await buildSessionTranscriptIndex(filePath, stat);
   }
   const cached = transcriptIndexCache.get(filePath);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
-    return selectTranscriptIndexView(touchCachedIndex(filePath, cached), opts.view);
+    return touchCachedIndex(filePath, cached);
   }
   const inFlight = transcriptIndexBuilds.get(filePath);
   if (inFlight && inFlight.mtimeMs === stat.mtimeMs && inFlight.size === stat.size) {
-    return selectTranscriptIndexView(await inFlight.promise, opts.view);
+    return await inFlight.promise;
   }
   const promise = buildSessionTranscriptIndex(filePath, stat);
   transcriptIndexBuilds.set(filePath, {
@@ -346,5 +375,5 @@ export async function readSessionTranscriptIndex(
     size: stat.size,
     index,
   });
-  return selectTranscriptIndexView(index, opts.view);
+  return index;
 }

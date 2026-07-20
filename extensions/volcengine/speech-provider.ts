@@ -9,7 +9,6 @@ import type {
 import {
   asObject,
   parseSpeechDirectiveNumberOverride,
-  resolveSpeechProviderApiKey,
   trimToUndefined,
 } from "openclaw/plugin-sdk/speech-core";
 import { asFiniteNumberInRange } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -94,21 +93,11 @@ function normalizeVolcengineProviderConfig(
 }
 
 function resolveSeedSpeechApiKey(configApiKey?: string): string | undefined {
-  return resolveSpeechProviderApiKey(
-    configApiKey,
-    process.env.VOLCENGINE_TTS_API_KEY,
-    process.env.BYTEPLUS_SEED_SPEECH_API_KEY,
+  return (
+    configApiKey ??
+    trimToUndefined(process.env.VOLCENGINE_TTS_API_KEY) ??
+    trimToUndefined(process.env.BYTEPLUS_SEED_SPEECH_API_KEY)
   );
-}
-
-function resolveLegacyVolcengineCredentials(config: {
-  appId?: string;
-  token?: string;
-}): Pick<VolcengineTtsProviderConfig, "appId" | "token"> {
-  return {
-    appId: trimToUndefined(config.appId) ?? trimToUndefined(process.env.VOLCENGINE_TTS_APPID),
-    token: resolveSpeechProviderApiKey(config.token, process.env.VOLCENGINE_TTS_TOKEN),
-  };
 }
 
 function readProviderConfig(config: SpeechProviderConfig): VolcengineTtsProviderConfig {
@@ -198,15 +187,19 @@ export function buildVolcengineSpeechProvider(): SpeechProviderPlugin {
 
     isConfigured: ({ providerConfig }) => {
       const cfg = readProviderConfig(providerConfig);
-      const legacy = resolveLegacyVolcengineCredentials(cfg);
-      return Boolean(resolveSeedSpeechApiKey(cfg.apiKey) || (legacy.appId && legacy.token));
+      return Boolean(
+        resolveSeedSpeechApiKey(cfg.apiKey) ||
+        ((cfg.appId || process.env.VOLCENGINE_TTS_APPID) &&
+          (cfg.token || process.env.VOLCENGINE_TTS_TOKEN)),
+      );
     },
 
     synthesize: async (req) => {
       const cfg = readProviderConfig(req.providerConfig);
       const overrides = readVolcengineOverrides(req.providerOverrides);
       const apiKey = resolveSeedSpeechApiKey(cfg.apiKey);
-      const { appId, token } = resolveLegacyVolcengineCredentials(cfg);
+      const appId = cfg.appId || process.env.VOLCENGINE_TTS_APPID;
+      const token = cfg.token || process.env.VOLCENGINE_TTS_TOKEN;
 
       if (!apiKey && (!appId || !token)) {
         throw new Error(

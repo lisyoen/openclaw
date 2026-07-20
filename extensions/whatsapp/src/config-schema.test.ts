@@ -70,14 +70,6 @@ describe("whatsapp config schema", () => {
     });
   });
 
-  it("accepts the experimental call action opt-in", () => {
-    const res = expectWhatsAppConfigValid({ actions: { calls: true } });
-
-    if (res.success) {
-      expect(res.data.actions?.calls).toBe(true);
-    }
-  });
-
   it("keeps inherited account defaults unset at account scope", () => {
     const res = expectWhatsAppConfigValid({
       dmPolicy: "allowlist",

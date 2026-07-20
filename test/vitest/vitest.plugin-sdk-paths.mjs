@@ -52,6 +52,10 @@ export function isPluginSdkLightTarget(file) {
   return pluginSdkLightIncludePatternByFile.has(normalizeRepoPath(file));
 }
 
+export function isPluginSdkLightTestFile(file) {
+  return pluginSdkLightTestFiles.includes(normalizeRepoPath(file));
+}
+
 export function resolvePluginSdkLightIncludePattern(file) {
   return pluginSdkLightIncludePatternByFile.get(normalizeRepoPath(file)) ?? null;
 }

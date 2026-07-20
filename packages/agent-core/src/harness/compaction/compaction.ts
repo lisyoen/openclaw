@@ -7,7 +7,7 @@ import {
   type SimpleStreamOptions,
   type StreamFn,
   type Usage,
-} from "@openclaw/llm-core";
+} from "../../../../llm-core/src/index.js";
 import { resolveAgentReasoningOption } from "../../reasoning.js";
 import {
   type AgentCoreCompletionRuntimeDeps,
@@ -37,7 +37,6 @@ import {
   extractFileOpsFromMessage,
   type FileOperations,
   formatFileOperations,
-  getCompactionContentBlockText,
   serializeConversation,
 } from "./utils.js";
 
@@ -148,9 +147,6 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 
 /** Calculate total context tokens from provider usage. */
 export function calculateContextTokens(usage: Usage): number {
-  if (usage.contextUsage?.state === "available") {
-    return usage.contextUsage.totalTokens;
-  }
   return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 function getAssistantUsage(msg: AgentMessage): Usage | undefined {
@@ -159,8 +155,7 @@ function getAssistantUsage(msg: AgentMessage): Usage | undefined {
     if (
       assistantMsg.stopReason !== "aborted" &&
       assistantMsg.stopReason !== "error" &&
-      assistantMsg.usage &&
-      calculateContextTokens(assistantMsg.usage) > 0
+      assistantMsg.usage
     ) {
       return assistantMsg.usage;
     }
@@ -168,9 +163,10 @@ function getAssistantUsage(msg: AgentMessage): Usage | undefined {
   return undefined;
 }
 
-/** Return usage from the last valid assistant message in session entries. */
+/** Return usage from the last successful assistant message in session entries. */
 export function getLastAssistantUsage(entries: SessionTreeEntry[]): Usage | undefined {
-  for (const entry of entries.toReversed()) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
     if (entry.type === "message") {
       const usage = getAssistantUsage(entry.message);
       if (usage) {
@@ -187,7 +183,7 @@ export interface ContextUsageEstimate {
   tokens: number;
   /** Tokens reported by the most recent assistant usage block. */
   usageTokens: number;
-  /** Estimated tokens not covered by usable provider usage. */
+  /** Estimated tokens after the most recent assistant usage block. */
   trailingTokens: number;
   /** Index of the message that provided usage, or null when none exists. */
   lastUsageIndex: number | null;
@@ -197,12 +193,8 @@ function getLastAssistantUsageInfo(
   messages: AgentMessage[],
 ): { usage: Usage; index: number } | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages.at(i);
-    if (!message) {
-      continue;
-    }
-    const usage = getAssistantUsage(message);
-    if (usage && usage.contextUsage?.state !== "unavailable") {
+    const usage = getAssistantUsage(messages[i]);
+    if (usage) {
       return { usage, index: i };
     }
   }
@@ -228,8 +220,8 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 
   const usageTokens = calculateContextTokens(usageInfo.usage);
   let trailingTokens = 0;
-  for (const message of messages.slice(usageInfo.index + 1)) {
-    trailingTokens += estimateTokens(message);
+  for (let i = usageInfo.index + 1; i < messages.length; i++) {
+    trailingTokens += estimateTokens(messages[i]);
   }
 
   return {
@@ -252,22 +244,6 @@ export function shouldCompact(
   return contextTokens > contextWindow - settings.reserveTokens;
 }
 
-const IMAGE_BLOCK_CHARS = 4800;
-
-function countContentBlockChars(
-  content: Array<{ type: string; content?: unknown; text?: string }>,
-): number {
-  let chars = 0;
-  for (const block of content) {
-    if (block.type === "image") {
-      chars += IMAGE_BLOCK_CHARS;
-    } else {
-      chars += getCompactionContentBlockText(block).length;
-    }
-  }
-  return chars;
-}
-
 /** Estimate token count for one message using a conservative character heuristic. */
 export function estimateTokens(message: AgentMessage): number {
   let chars = 0;
@@ -281,7 +257,11 @@ export function estimateTokens(message: AgentMessage): number {
       if (typeof content === "string") {
         chars = content.length;
       } else if (Array.isArray(content)) {
-        chars = countContentBlockChars(content);
+        for (const block of content) {
+          if (block.type === "text" && block.text) {
+            chars += block.text.length;
+          }
+        }
       }
       return Math.ceil(chars / 4);
     }
@@ -303,7 +283,14 @@ export function estimateTokens(message: AgentMessage): number {
       if (typeof harnessMessage.content === "string") {
         chars = harnessMessage.content.length;
       } else {
-        chars = countContentBlockChars(harnessMessage.content);
+        for (const block of harnessMessage.content) {
+          if (block.type === "text" && block.text) {
+            chars += block.text.length;
+          }
+          if (block.type === "image") {
+            chars += 4800;
+          }
+        }
       }
       return Math.ceil(chars / 4);
     }
@@ -320,43 +307,6 @@ export function estimateTokens(message: AgentMessage): number {
 
   return 0;
 }
-function isCutPointMessage(message: AgentMessage): boolean {
-  switch (message.role) {
-    case "user":
-    case "assistant":
-    case "bashExecution":
-    case "custom":
-    case "branchSummary":
-    case "compactionSummary":
-      return true;
-    case "toolResult":
-      return false;
-  }
-
-  return false;
-}
-
-function isTurnStartMessage(message: AgentMessage): boolean {
-  switch (message.role) {
-    case "user":
-    case "bashExecution":
-    case "custom":
-    case "branchSummary":
-    case "compactionSummary":
-      return true;
-    case "assistant":
-    case "toolResult":
-      return false;
-  }
-
-  return false;
-}
-
-function isTurnStartEntry(entry: SessionTreeEntry): boolean {
-  const message = getMessageFromEntryForCompaction(entry);
-  return message ? isTurnStartMessage(message) : false;
-}
-
 function findValidCutPoints(
   entries: SessionTreeEntry[],
   startIndex: number,
@@ -365,11 +315,35 @@ function findValidCutPoints(
   const cutPoints: number[] = [];
   for (let i = startIndex; i < endIndex; i++) {
     const entry = entries[i];
-    if (!entry) {
-      continue;
+    switch (entry.type) {
+      case "message": {
+        const role = (entry.message as HarnessMessage).role;
+        switch (role) {
+          case "bashExecution":
+          case "custom":
+          case "branchSummary":
+          case "compactionSummary":
+          case "user":
+          case "assistant":
+            cutPoints.push(i);
+            break;
+          case "toolResult":
+            break;
+        }
+        break;
+      }
+      case "thinking_level_change":
+      case "model_change":
+      case "compaction":
+      case "branch_summary":
+      case "custom":
+      case "custom_message":
+      case "label":
+      case "session_info":
+      case "leaf":
+        break;
     }
-    const message = getMessageFromEntryForCompaction(entry);
-    if (message && isCutPointMessage(message)) {
+    if (entry.type === "branch_summary" || entry.type === "custom_message") {
       cutPoints.push(i);
     }
   }
@@ -384,18 +358,21 @@ export function findTurnStartIndex(
 ): number {
   for (let i = entryIndex; i >= startIndex; i--) {
     const entry = entries[i];
-    if (!entry) {
-      continue;
-    }
-    if (isTurnStartEntry(entry)) {
+    if (entry.type === "branch_summary" || entry.type === "custom_message") {
       return i;
+    }
+    if (entry.type === "message") {
+      const role = (entry.message as HarnessMessage).role;
+      if (role === "user" || role === "bashExecution") {
+        return i;
+      }
     }
   }
   return -1;
 }
 
 /** Cut point selected for compaction. */
-interface CutPointResult {
+export interface CutPointResult {
   /** Index of the first entry retained after compaction. */
   firstKeptEntryIndex: number;
   /** Index of the turn-start entry when the cut splits a turn, otherwise -1. */
@@ -417,29 +394,16 @@ export function findCutPoint(
     return { firstKeptEntryIndex: startIndex, turnStartIndex: -1, isSplitTurn: false };
   }
   let accumulatedTokens = 0;
-  const firstCutIndex = cutPoints.at(0);
-  if (firstCutIndex === undefined) {
-    return { firstKeptEntryIndex: startIndex, turnStartIndex: -1, isSplitTurn: false };
-  }
-  let cutIndex = firstCutIndex;
+  let cutIndex = cutPoints[0];
 
   for (let i = endIndex - 1; i >= startIndex; i--) {
     const entry = entries[i];
-    if (!entry) {
+    if (entry.type !== "message") {
       continue;
     }
-    const message = getMessageFromEntryForCompaction(entry);
-    if (!message) {
-      continue;
-    }
-    const messageTokens = estimateTokens(message);
+    const messageTokens = estimateTokens(entry.message);
     accumulatedTokens += messageTokens;
     if (accumulatedTokens >= keepRecentTokens) {
-      const lastCutIndex = cutPoints.at(-1);
-      if (lastCutIndex === undefined) {
-        throw new Error("compaction cut-point list became empty during selection");
-      }
-      cutIndex = lastCutIndex;
       for (const cutPoint of cutPoints) {
         if (cutPoint >= i) {
           cutIndex = cutPoint;
@@ -451,32 +415,26 @@ export function findCutPoint(
   }
   while (cutIndex > startIndex) {
     const prevEntry = entries[cutIndex - 1];
-    if (!prevEntry) {
-      break;
-    }
     if (prevEntry.type === "compaction") {
       break;
     }
-    if (getMessageFromEntryForCompaction(prevEntry)) {
+    if (prevEntry.type === "message") {
       break;
     }
     cutIndex--;
   }
   const cutEntry = entries[cutIndex];
-  if (!cutEntry) {
-    throw new Error("compaction cut point does not reference a session entry");
-  }
-  const startsTurn = isTurnStartEntry(cutEntry);
-  const turnStartIndex = startsTurn ? -1 : findTurnStartIndex(entries, cutIndex, startIndex);
+  const isUserMessage = cutEntry.type === "message" && cutEntry.message.role === "user";
+  const turnStartIndex = isUserMessage ? -1 : findTurnStartIndex(entries, cutIndex, startIndex);
 
   return {
     firstKeptEntryIndex: cutIndex,
     turnStartIndex,
-    isSplitTurn: !startsTurn && turnStartIndex !== -1,
+    isSplitTurn: !isUserMessage && turnStartIndex !== -1,
   };
 }
 
-export const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
+export const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
 
 Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
 
@@ -583,63 +541,6 @@ async function completeSummarization(
   return await resolveAgentCoreCompleteFn(runtime)(model, context, options);
 }
 
-/** Runs one summarization completion and maps abort/error stops to CompactionError. */
-async function runSummarizationCompletion(params: {
-  promptText: string;
-  model: Model;
-  maxTokens: number;
-  apiKey: string | undefined;
-  headers?: Record<string, string>;
-  signal?: AbortSignal;
-  thinkingLevel?: ThinkingLevel;
-  streamFn?: StreamFn;
-  runtime?: AgentCoreCompletionRuntimeDeps;
-  errorLabel: string;
-}): Promise<Result<string, CompactionError>> {
-  const summarizationMessages = [
-    {
-      role: "user" as const,
-      content: [{ type: "text" as const, text: params.promptText }],
-      timestamp: Date.now(),
-    },
-  ];
-
-  const response = await completeSummarization(
-    params.model,
-    { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-    createSummarizationOptions(
-      params.model,
-      params.maxTokens,
-      params.apiKey,
-      params.headers,
-      params.signal,
-      params.thinkingLevel,
-    ),
-    params.streamFn,
-    params.runtime,
-  );
-  if (response.stopReason === "aborted") {
-    return err(
-      new CompactionError("aborted", response.errorMessage || `${params.errorLabel} aborted`),
-    );
-  }
-  if (response.stopReason === "error") {
-    return err(
-      new CompactionError(
-        "summarization_failed",
-        `${params.errorLabel} failed: ${response.errorMessage || "Unknown error"}`,
-      ),
-    );
-  }
-
-  return ok(
-    response.content
-      .filter((c): c is { type: "text"; text: string } => c.type === "text")
-      .map((c) => c.text)
-      .join("\n"),
-  );
-}
-
 /** Generate or update a conversation summary for compaction. */
 export async function generateSummary(
   currentMessages: AgentMessage[],
@@ -670,18 +571,39 @@ export async function generateSummary(
   }
   promptText += basePrompt;
 
-  return await runSummarizationCompletion({
-    promptText,
+  const summarizationMessages = [
+    {
+      role: "user" as const,
+      content: [{ type: "text" as const, text: promptText }],
+      timestamp: Date.now(),
+    },
+  ];
+
+  const response = await completeSummarization(
     model,
-    maxTokens,
-    apiKey,
-    headers,
-    signal,
-    thinkingLevel,
+    { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+    createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel),
     streamFn,
     runtime,
-    errorLabel: "Summarization",
-  });
+  );
+  if (response.stopReason === "aborted") {
+    return err(new CompactionError("aborted", response.errorMessage || "Summarization aborted"));
+  }
+  if (response.stopReason === "error") {
+    return err(
+      new CompactionError(
+        "summarization_failed",
+        `Summarization failed: ${response.errorMessage || "Unknown error"}`,
+      ),
+    );
+  }
+
+  const textContent = response.content
+    .filter((c): c is { type: "text"; text: string } => c.type === "text")
+    .map((c) => c.text)
+    .join("\n");
+
+  return ok(textContent);
 }
 
 /** Prepared inputs for a compaction run. */
@@ -709,13 +631,13 @@ export function prepareCompaction(
   pathEntries: SessionTreeEntry[],
   settings: CompactionSettings,
 ): Result<CompactionPreparation | undefined, CompactionError> {
-  if (pathEntries.at(-1)?.type === "compaction" || pathEntries.length === 0) {
+  if (pathEntries.length === 0 || pathEntries[pathEntries.length - 1].type === "compaction") {
     return ok(undefined);
   }
 
   let prevCompactionIndex = -1;
   for (let i = pathEntries.length - 1; i >= 0; i--) {
-    if (pathEntries.at(i)?.type === "compaction") {
+    if (pathEntries[i].type === "compaction") {
       prevCompactionIndex = i;
       break;
     }
@@ -750,8 +672,7 @@ export function prepareCompaction(
   const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
   const messagesToSummarize: AgentMessage[] = [];
   for (let i = boundaryStart; i < historyEnd; i++) {
-    const entry = pathEntries.at(i);
-    const msg = entry ? getMessageFromEntryForCompaction(entry) : undefined;
+    const msg = getMessageFromEntryForCompaction(pathEntries[i]);
     if (msg) {
       messagesToSummarize.push(msg);
     }
@@ -759,15 +680,11 @@ export function prepareCompaction(
   const turnPrefixMessages: AgentMessage[] = [];
   if (cutPoint.isSplitTurn) {
     for (let i = cutPoint.turnStartIndex; i < cutPoint.firstKeptEntryIndex; i++) {
-      const entry = pathEntries.at(i);
-      const msg = entry ? getMessageFromEntryForCompaction(entry) : undefined;
+      const msg = getMessageFromEntryForCompaction(pathEntries[i]);
       if (msg) {
         turnPrefixMessages.push(msg);
       }
     }
-  }
-  if (messagesToSummarize.length === 0 && turnPrefixMessages.length === 0) {
-    return ok(undefined);
   }
   const fileOps = extractFileOperations(messagesToSummarize, pathEntries, prevCompactionIndex);
   if (cutPoint.isSplitTurn) {
@@ -840,9 +757,9 @@ export async function compact(
   let summary: string;
 
   if (isSplitTurn && turnPrefixMessages.length > 0) {
-    const historyResult =
+    const [historyResult, turnPrefixResult] = await Promise.all([
       messagesToSummarize.length > 0
-        ? await generateSummary(
+        ? generateSummary(
             messagesToSummarize,
             model,
             settings.reserveTokens,
@@ -855,21 +772,22 @@ export async function compact(
             streamFn,
             runtime,
           )
-        : ok<string, CompactionError>("No prior history.");
+        : Promise.resolve(ok<string, CompactionError>("No prior history.")),
+      generateTurnPrefixSummary(
+        turnPrefixMessages,
+        model,
+        settings.reserveTokens,
+        apiKey,
+        headers,
+        signal,
+        thinkingLevel,
+        streamFn,
+        runtime,
+      ),
+    ]);
     if (!historyResult.ok) {
       return err(historyResult.error);
     }
-    const turnPrefixResult = await generateTurnPrefixSummary(
-      turnPrefixMessages,
-      model,
-      settings.reserveTokens,
-      apiKey,
-      headers,
-      signal,
-      thinkingLevel,
-      streamFn,
-      runtime,
-    );
     if (!turnPrefixResult.ok) {
       return err(turnPrefixResult.error);
     }
@@ -922,17 +840,39 @@ async function generateTurnPrefixSummary(
   const llmMessages = convertToLlm(messages);
   const conversationText = serializeConversation(llmMessages);
   const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-  return await runSummarizationCompletion({
-    promptText,
+  const summarizationMessages = [
+    {
+      role: "user" as const,
+      content: [{ type: "text" as const, text: promptText }],
+      timestamp: Date.now(),
+    },
+  ];
+
+  const response = await completeSummarization(
     model,
-    maxTokens,
-    apiKey,
-    headers,
-    signal,
-    thinkingLevel,
+    { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+    createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel),
     streamFn,
     runtime,
-    errorLabel: "Turn prefix summarization",
-  });
+  );
+  if (response.stopReason === "aborted") {
+    return err(
+      new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"),
+    );
+  }
+  if (response.stopReason === "error") {
+    return err(
+      new CompactionError(
+        "summarization_failed",
+        `Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`,
+      ),
+    );
+  }
+
+  return ok(
+    response.content
+      .filter((c): c is { type: "text"; text: string } => c.type === "text")
+      .map((c) => c.text)
+      .join("\n"),
+  );
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

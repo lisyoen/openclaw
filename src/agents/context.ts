@@ -6,7 +6,6 @@ import { getRuntimeConfig } from "../config/config.js";
 import { projectConfigOntoRuntimeSourceSnapshot } from "../config/runtime-source-projection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { computeBackoff, type BackoffPolicy } from "../infra/backoff.js";
-import { resolveAgentDir, resolveDefaultAgentId } from "./agent-scope.js";
 import {
   lookupCachedContextTokens,
   lookupCachedContextWindow,
@@ -31,8 +30,6 @@ import { normalizeProviderId } from "./model-selection.js";
 export {
   ANTHROPIC_CONTEXT_1M_TOKENS,
   ANTHROPIC_FABLE_CONTEXT_TOKENS,
-  ANTHROPIC_MYTHOS_5_CONTEXT_TOKENS,
-  ANTHROPIC_SONNET_5_CONTEXT_TOKENS,
   ANTHROPIC_VERTEX_CONTEXT_1M_TOKENS,
 } from "./context-resolution.js";
 export { resetContextWindowCacheForTest } from "./context-runtime-state.js";
@@ -49,7 +46,9 @@ const CONFIG_LOAD_RETRY_POLICY: BackoffPolicy = {
   factor: 2,
   jitter: 0,
 };
-const loadPreparedModelCatalogRuntime = () => import("./prepared-model-catalog.js");
+const loadModelCatalogRuntime = () => import("./model-catalog.runtime.js");
+const loadStaticModelCatalogRuntime = () =>
+  import("./embedded-agent-runner/model.static-catalog.js");
 
 export function applyDiscoveredContextWindows(params: {
   cache: Map<string, number>;
@@ -185,7 +184,7 @@ function primeConfiguredContextWindows(): OpenClawConfig | undefined {
   }
 }
 
-export function ensureContextWindowCacheLoaded(cfgOverride?: OpenClawConfig): Promise<void> {
+export function ensureContextWindowCacheLoaded(): Promise<void> {
   const generation = CONTEXT_WINDOW_RUNTIME_STATE.generation;
   if (
     CONTEXT_WINDOW_RUNTIME_STATE.loadPromise &&
@@ -194,9 +193,7 @@ export function ensureContextWindowCacheLoaded(cfgOverride?: OpenClawConfig): Pr
     return CONTEXT_WINDOW_RUNTIME_STATE.loadPromise;
   }
 
-  const cfg = cfgOverride
-    ? primeConfiguredContextWindowsFromConfig(cfgOverride)
-    : primeConfiguredContextWindows();
+  const cfg = primeConfiguredContextWindows();
   if (!cfg) {
     return Promise.resolve();
   }
@@ -208,33 +205,26 @@ export function ensureContextWindowCacheLoaded(cfgOverride?: OpenClawConfig): Pr
         return;
       }
       try {
-        const { loadPreparedModelCatalogOwnerSnapshot } = await loadPreparedModelCatalogRuntime();
-        const defaultAgentId = resolveDefaultAgentId(cfg);
-        const catalogResult = await loadPreparedModelCatalogOwnerSnapshot({
-          config: cfg,
-          agentId: defaultAgentId,
-          agentDir: resolveAgentDir(cfg, defaultAgentId),
-          readOnly: true,
-        }).then(
-          (value) => ({ status: "fulfilled" as const, value }),
-          (reason: unknown) => ({ status: "rejected" as const, reason }),
-        );
+        // Read-only catalog loading overlays current config and manifest rows
+        // onto persisted discovery without rewriting models.json.
+        const [{ loadModelCatalog }, { loadBundledProviderStaticCatalogContextModels }] =
+          await Promise.all([loadModelCatalogRuntime(), loadStaticModelCatalogRuntime()]);
+        const [modelsResult, providerStaticModelsResult] = await Promise.allSettled([
+          loadModelCatalog({ config: cfg, readOnly: true }),
+          loadBundledProviderStaticCatalogContextModels({ cfg }),
+        ]);
         if (CONTEXT_WINDOW_RUNTIME_STATE.generation !== generation) {
           return;
         }
-        const models =
-          catalogResult.status === "fulfilled" ? catalogResult.value.modelCatalog.entries : [];
+        const models = modelsResult.status === "fulfilled" ? modelsResult.value : [];
         const providerStaticModels =
-          catalogResult.status === "fulfilled"
-            ? (catalogResult.value.modelCatalog.staticEntries ?? [])
-            : [];
+          providerStaticModelsResult.status === "fulfilled" ? providerStaticModelsResult.value : [];
         applyDiscoveredContextWindows({
           cache: stagedTokenCache,
           models: [...models, ...providerStaticModels],
         });
       } catch {
-        // Static and discovered rows belong to one atomic generation. If its owner fails, keep
-        // config overrides only instead of mixing in independently rediscovered static metadata.
+        // If model discovery fails, continue with config overrides only.
       }
 
       if (CONTEXT_WINDOW_RUNTIME_STATE.generation !== generation) {
@@ -250,38 +240,6 @@ export function ensureContextWindowCacheLoaded(cfgOverride?: OpenClawConfig): Pr
     });
   CONTEXT_WINDOW_RUNTIME_STATE.loadGeneration = generation;
   return CONTEXT_WINDOW_RUNTIME_STATE.loadPromise;
-}
-
-export async function waitForContextWindowCacheLoad(options?: {
-  timeoutMs?: number;
-}): Promise<"idle" | "loaded" | "timeout"> {
-  const promise = CONTEXT_WINDOW_RUNTIME_STATE.loadPromise;
-  if (
-    !promise ||
-    CONTEXT_WINDOW_RUNTIME_STATE.loadGeneration !== CONTEXT_WINDOW_RUNTIME_STATE.generation
-  ) {
-    return "idle";
-  }
-
-  const timeoutMs = Math.max(0, Math.trunc(options?.timeoutMs ?? 250));
-  if (timeoutMs === 0) {
-    return "timeout";
-  }
-
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise.then(() => "loaded" as const),
-      new Promise<"timeout">((resolve) => {
-        timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
-        (timeoutHandle as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
-      }),
-    ]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-  }
 }
 
 /** Replace cached model context metadata for the active runtime configuration. */

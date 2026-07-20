@@ -1,10 +1,10 @@
+import OpenClawKit
 import CoreGraphics
 import ImageIO
 import Testing
 import UniformTypeIdentifiers
-@testable import OpenClawKit
 
-struct JPEGTranscoderTests {
+@Suite struct JPEGTranscoderTests {
     private func makeSolidJPEG(width: Int, height: Int, orientation: Int? = nil) throws -> Data {
         let cs = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
@@ -54,7 +54,7 @@ struct JPEGTranscoderTests {
         let cs = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
 
-        return try data.withUnsafeMutableBytes { rawBuffer -> Data in
+        let out = try data.withUnsafeMutableBytes { rawBuffer -> Data in
             guard let base = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
                 throw NSError(domain: "JPEGTranscoderTests", code: 6)
             }
@@ -90,9 +90,11 @@ struct JPEGTranscoderTests {
             }
             return encoded as Data
         }
+
+        return out
     }
 
-    @Test func `downscales to max width px`() throws {
+    @Test func downscalesToMaxWidthPx() throws {
         let input = try makeSolidJPEG(width: 2000, height: 1000)
         let out = try JPEGTranscoder.transcodeToJPEG(imageData: input, maxWidthPx: 1600, quality: 0.9)
         #expect(out.widthPx == 1600)
@@ -100,14 +102,14 @@ struct JPEGTranscoderTests {
         #expect(out.data.count > 0)
     }
 
-    @Test func `does not upscale when smaller than max width px`() throws {
+    @Test func doesNotUpscaleWhenSmallerThanMaxWidthPx() throws {
         let input = try makeSolidJPEG(width: 800, height: 600)
         let out = try JPEGTranscoder.transcodeToJPEG(imageData: input, maxWidthPx: 1600, quality: 0.9)
         #expect(out.widthPx == 800)
         #expect(out.heightPx == 600)
     }
 
-    @Test func `normalizes orientation and uses oriented width for max width px`() throws {
+    @Test func normalizesOrientationAndUsesOrientedWidthForMaxWidthPx() throws {
         // Encode a landscape image but mark it rotated 90° (orientation 6). Oriented width becomes 1000.
         let input = try makeSolidJPEG(width: 2000, height: 1000, orientation: 6)
         let out = try JPEGTranscoder.transcodeToJPEG(imageData: input, maxWidthPx: 1600, quality: 0.9)
@@ -115,7 +117,7 @@ struct JPEGTranscoderTests {
         #expect(out.heightPx == 2000)
     }
 
-    @Test func `respects max bytes`() throws {
+    @Test func respectsMaxBytes() throws {
         let input = try makeNoiseJPEG(width: 1600, height: 1200)
         let out = try JPEGTranscoder.transcodeToJPEG(
             imageData: input,
@@ -123,23 +125,5 @@ struct JPEGTranscoderTests {
             quality: 0.95,
             maxBytes: 180_000)
         #expect(out.data.count <= 180_000)
-    }
-
-    @Test func `explicitly fails when size limit cannot be met`() throws {
-        let input = try makeSolidJPEG(width: 800, height: 600)
-
-        do {
-            _ = try JPEGTranscoder.transcodeToJPEG(
-                imageData: input,
-                maxWidthPx: 800,
-                quality: 0.9,
-                maxBytes: 1)
-            Issue.record("Expected a size-limit error")
-        } catch let JPEGTranscodeError.sizeLimitExceeded(maxBytes, actualBytes) {
-            #expect(maxBytes == 1)
-            #expect(actualBytes > maxBytes)
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
     }
 }

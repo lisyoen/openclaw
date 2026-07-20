@@ -1,7 +1,7 @@
 // Telegram plugin module implements bot message dispatch.agent behavior.
 export {
   findModelInCatalog,
-  loadPreparedModelCatalog,
+  loadModelCatalog,
   modelSupportsVision,
   resolveAgentDir,
   resolveDefaultModelForAgent,

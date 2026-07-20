@@ -7,6 +7,7 @@ import { resetLogger, setLoggerOverride } from "openclaw/plugin-sdk/runtime-env"
 import { afterEach, beforeEach, expect, vi } from "vitest";
 import {
   loadConfigMock,
+  readAllowFromStoreMock as pairingReadAllowFromStoreMock,
   resetPairingSecurityMocks,
   upsertPairingRequestMock as pairingUpsertPairingRequestMock,
 } from "./pairing-security.test-harness.js";
@@ -16,11 +17,11 @@ type AnyMockFn = any;
 
 export const DEFAULT_ACCOUNT_ID = "default";
 
-const DEFAULT_WEB_INBOX_CONFIG = {
+export const DEFAULT_WEB_INBOX_CONFIG = {
   channels: {
     whatsapp: {
       // Allow all in tests by default.
-      allowFrom: ["*"] as string[],
+      allowFrom: ["*"],
     },
   },
   messages: {
@@ -29,15 +30,15 @@ const DEFAULT_WEB_INBOX_CONFIG = {
   },
 } as const;
 export const mockLoadConfig: typeof loadConfigMock = loadConfigMock;
+export const readAllowFromStoreMock = pairingReadAllowFromStoreMock;
 export const upsertPairingRequestMock = pairingUpsertPairingRequestMock;
 
-type MockSock = {
+export type MockSock = {
   ev: EventEmitter;
   end: AnyMockFn;
   ws: { close: AnyMockFn };
   sendPresenceUpdate: AnyMockFn;
   sendMessage: AnyMockFn;
-  fetchAccountReachoutTimelock: AnyMockFn;
   readMessages: AnyMockFn;
   groupMetadata: AnyMockFn;
   groupFetchAllParticipating: AnyMockFn;
@@ -120,6 +121,10 @@ export function getRecordChannelActivityMock(): AnyMockFn {
   return channelActivityMocks.recordChannelActivity;
 }
 
+export function failNextWhatsAppPluginStateRegisterIfAbsent(error: Error) {
+  pluginRuntimeMocks.failNextRegisterIfAbsent(error);
+}
+
 vi.mock("openclaw/plugin-sdk/channel-activity-runtime", async () => {
   const actual = await vi.importActual<
     typeof import("openclaw/plugin-sdk/channel-activity-runtime")
@@ -181,12 +186,8 @@ const inboundRuntimeMocks = vi.hoisted(() => {
     return current;
   }
 
-  async function* fakeMediaStream() {
-    yield Buffer.from("fake-media-data");
-  }
-
   return {
-    downloadMediaMessage: vi.fn(() => fakeMediaStream()),
+    downloadMediaMessage: vi.fn().mockResolvedValue(Buffer.from("fake-media-data")),
     isJidGroup: vi.fn((jid: string | undefined | null) =>
       typeof jid === "string" ? jid.endsWith("@g.us") : false,
     ),
@@ -212,7 +213,6 @@ function createMockSock(): MockSock {
     ws: { close: vi.fn() },
     sendPresenceUpdate: createResolvedMock(),
     sendMessage: createResolvedMock(),
-    fetchAccountReachoutTimelock: vi.fn().mockResolvedValue({ isActive: false }),
     readMessages: createResolvedMock(),
     groupMetadata: vi.fn().mockImplementation(async (jid: string) => ({
       id: jid,

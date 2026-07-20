@@ -1,8 +1,5 @@
 // Defines view-model shapes for approval prompts and resolutions.
-import type {
-  MessagePresentationAction,
-  MessagePresentationButton,
-} from "../interactive/payload.js";
+import type { InteractiveReplyButton } from "../interactive/payload.js";
 import type { ChannelApprovalKind } from "./approval-types.js";
 import type { CommandExplanationSummary } from "./command-analysis/explain.js";
 import type {
@@ -19,9 +16,7 @@ export type ApprovalActionView = {
   kind?: "command" | "decision";
   decision: ExecApprovalDecision;
   label: string;
-  style: NonNullable<MessagePresentationButton["style"]>;
-  action?: MessagePresentationAction;
-  /** Copyable command fallback for non-interactive surfaces. */
+  style: NonNullable<InteractiveReplyButton["style"]>;
   command: string;
 };
 

@@ -1,7 +1,7 @@
 /**
  * Normalizes OpenAI Responses reasoning/tool-call history for safe replay.
  */
-import { sha256HexPrefix } from "../../infra/crypto-digest.js";
+import { createHash } from "node:crypto";
 import type { AgentMessage } from "../runtime/index.js";
 
 type OpenAIThinkingBlock = {
@@ -95,7 +95,7 @@ function isOpenAIToolCallType(type: unknown): boolean {
 }
 
 function shortOpenAIResponsesIdHash(id: string): string {
-  return sha256HexPrefix(id, 10);
+  return createHash("sha256").update(id).digest("hex").slice(0, 10);
 }
 
 function sanitizeOpenAIResponsesIdTail(value: string): string {
@@ -125,10 +125,7 @@ function normalizeOpenAIResponsesIdPart(params: {
 function normalizeOpenAIResponsesFunctionCallId(id: string): string {
   const { callId, itemId } = splitOpenAIFunctionCallPairing(id);
   const normalizedCallId = normalizeOpenAIResponsesIdPart({
-    // Hash the full pairing so repeated native ids sharing a `callId` (e.g.
-    // `functions.<tool>:<index>` reused across turns) don't collide into the
-    // same `call_*` id and break Responses replay.
-    value: itemId ? `${callId}|${itemId}` : callId,
+    value: callId,
     prefix: "call_",
     isValid: (value) => OPENAI_RESPONSES_CALL_ID_RE.test(value),
   });
@@ -156,20 +153,37 @@ function shouldNormalizeOpenAIResponsesToolCallId(id: string): boolean {
   return !OPENAI_RESPONSES_FUNCTION_CALL_ITEM_ID_RE.test(pairing.itemId);
 }
 
-function createOpenAIResponsesToolCallIdResolver(): (id: string) => string {
+function createOpenAIResponsesToolCallIdResolver(): {
+  resolveAssistantId: (id: string) => string;
+  resolveToolResultId: (id: string) => string;
+} {
   const rewrittenByOriginalId = new Map<string, string>();
 
-  return (id) => {
-    const rewritten = rewrittenByOriginalId.get(id);
-    if (rewritten) {
-      return rewritten;
-    }
-    if (!shouldNormalizeOpenAIResponsesToolCallId(id)) {
-      return id;
-    }
-    const normalized = normalizeOpenAIResponsesFunctionCallId(id);
-    rewrittenByOriginalId.set(id, normalized);
-    return normalized;
+  return {
+    resolveAssistantId(id: string): string {
+      const rewritten = rewrittenByOriginalId.get(id);
+      if (rewritten) {
+        return rewritten;
+      }
+      if (!shouldNormalizeOpenAIResponsesToolCallId(id)) {
+        return id;
+      }
+      const normalized = normalizeOpenAIResponsesFunctionCallId(id);
+      rewrittenByOriginalId.set(id, normalized);
+      return normalized;
+    },
+    resolveToolResultId(id: string): string {
+      const rewritten = rewrittenByOriginalId.get(id);
+      if (rewritten) {
+        return rewritten;
+      }
+      if (!shouldNormalizeOpenAIResponsesToolCallId(id)) {
+        return id;
+      }
+      const normalized = normalizeOpenAIResponsesFunctionCallId(id);
+      rewrittenByOriginalId.set(id, normalized);
+      return normalized;
+    },
   };
 }
 
@@ -182,7 +196,7 @@ function createOpenAIResponsesToolCallIdResolver(): (id: string) => string {
  */
 export function normalizeOpenAIResponsesToolCallIds(messages: AgentMessage[]): AgentMessage[] {
   let changed = false;
-  const resolveId = createOpenAIResponsesToolCallIdResolver();
+  const resolver = createOpenAIResponsesToolCallIdResolver();
   const rewrittenMessages: AgentMessage[] = [];
 
   for (const msg of messages) {
@@ -209,7 +223,7 @@ export function normalizeOpenAIResponsesToolCallIds(messages: AgentMessage[]): A
           return block;
         }
 
-        const nextId = resolveId(toolCallBlock.id);
+        const nextId = resolver.resolveAssistantId(toolCallBlock.id);
         if (nextId === toolCallBlock.id) {
           return block;
         }
@@ -237,7 +251,7 @@ export function normalizeOpenAIResponsesToolCallIds(messages: AgentMessage[]): A
       const updates: Record<string, string> = {};
 
       if (typeof toolResult.toolCallId === "string") {
-        const nextToolCallId = resolveId(toolResult.toolCallId);
+        const nextToolCallId = resolver.resolveToolResultId(toolResult.toolCallId);
         if (nextToolCallId !== toolResult.toolCallId) {
           updates.toolCallId = nextToolCallId;
           toolResultChanged = true;
@@ -245,7 +259,7 @@ export function normalizeOpenAIResponsesToolCallIds(messages: AgentMessage[]): A
       }
 
       if (typeof toolResult.toolUseId === "string") {
-        const nextToolUseId = resolveId(toolResult.toolUseId);
+        const nextToolUseId = resolver.resolveToolResultId(toolResult.toolUseId);
         if (nextToolUseId !== toolResult.toolUseId) {
           updates.toolUseId = nextToolUseId;
           toolResultChanged = true;
@@ -440,13 +454,10 @@ export function downgradeOpenAIReasoningBlocks(
     type AssistantContentBlock = (typeof assistantMsg.content)[number];
 
     const nextContent: AssistantContentBlock[] = [];
-    for (const [i, block] of assistantMsg.content.entries()) {
-      if (!block) {
-        changed = true;
-        continue;
-      }
-      if (typeof block !== "object") {
-        nextContent.push(block);
+    for (let i = 0; i < assistantMsg.content.length; i++) {
+      const block = assistantMsg.content[i];
+      if (!block || typeof block !== "object") {
+        nextContent.push(block as AssistantContentBlock);
         continue;
       }
       const record = block as OpenAIThinkingBlock;

@@ -24,8 +24,7 @@ import {
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveTargetsWithOptionalToken } from "openclaw/plugin-sdk/target-resolver-runtime";
 import {
-  listEnabledDiscordAccounts,
-  resolveDefaultDiscordAccountId,
+  listDiscordAccountIds,
   resolveDiscordAccount,
   resolveDiscordAccountAllowFrom,
   type ResolvedDiscordAccount,
@@ -61,9 +60,7 @@ import {
   loadDiscordSendModule,
   loadDiscordTargetResolverModule,
   loadDiscordThreadBindingsManagerModule,
-  probeDiscordStatusAccount,
 } from "./channel.loaders.js";
-import { openDiscordCommandDeployHashStore } from "./command-deploy-store.js";
 import { shouldSuppressLocalDiscordExecApprovalPrompt } from "./exec-approvals.js";
 import {
   resolveDiscordGroupRequireMention,
@@ -73,7 +70,6 @@ import {
   setThreadBindingIdleTimeoutBySessionKey,
   setThreadBindingMaxAgeBySessionKey,
 } from "./monitor/thread-bindings.session-updates.js";
-import { withAbortTimeout } from "./monitor/timeouts.js";
 import { looksLikeDiscordTargetId, normalizeDiscordMessagingTarget } from "./normalize.js";
 import { discordOutbound } from "./outbound-adapter.js";
 import { resolveDiscordOutboundSessionRoute } from "./outbound-session-route.js";
@@ -85,7 +81,6 @@ import { discordSetupAdapter } from "./setup-adapter.js";
 import { createDiscordPluginBase, discordConfigAdapter } from "./shared.js";
 import { collectDiscordStatusIssues } from "./status-issues.js";
 import { parseDiscordTarget } from "./target-parsing.js";
-import { defaultTopLevelPlacement } from "./thread-binding-api.js";
 
 const DISCORD_ACCOUNT_STARTUP_STAGGER_MS = 10_000;
 const discordMessageAdapter = createChannelMessageAdapterFromOutbound({
@@ -99,7 +94,7 @@ const discordMessageAdapter = createChannelMessageAdapterFromOutbound({
     },
     finalizer: {
       capabilities: {
-        finalEdit: false,
+        finalEdit: true,
         normalFallback: true,
         discardPending: true,
       },
@@ -225,28 +220,15 @@ const discordMessageActions = {
   },
 };
 
-function resolveDiscordStartupAccountIds(cfg: OpenClawConfig): string[] {
-  const startupAccountIds = listEnabledDiscordAccounts(cfg)
-    .filter(
-      (candidate) =>
-        resolveConfiguredFromCredentialStatuses(candidate) ??
-        Boolean(normalizeOptionalString(candidate.token)),
-    )
-    .map((candidate) => candidate.accountId);
-  const defaultAccountId = resolveDefaultDiscordAccountId(cfg);
-  // Promote only a gateway-eligible account; otherwise a disabled or unconfigured
-  // default would waste the immediate startup slot while a real bot waits.
-  if (!startupAccountIds.includes(defaultAccountId)) {
-    return startupAccountIds;
-  }
-  return [
-    defaultAccountId,
-    ...startupAccountIds.filter((candidateId) => candidateId !== defaultAccountId),
-  ];
-}
-
 function resolveDiscordStartupDelayMs(cfg: OpenClawConfig, accountId: string): number {
-  const startupAccountIds = resolveDiscordStartupAccountIds(cfg);
+  const startupAccountIds = listDiscordAccountIds(cfg).filter((candidateId) => {
+    const candidate = resolveDiscordAccount({ cfg, accountId: candidateId });
+    return (
+      candidate.enabled &&
+      (resolveConfiguredFromCredentialStatuses(candidate) ??
+        Boolean(normalizeOptionalString(candidate.token)))
+    );
+  });
   const startupIndex = startupAccountIds.findIndex((candidateId) => candidateId === accountId);
   return startupIndex <= 0 ? 0 : startupIndex * DISCORD_ACCOUNT_STARTUP_STAGGER_MS;
 }
@@ -332,8 +314,6 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
       },
       messaging: {
         targetPrefixes: ["discord"],
-        directTargetStyle: "user-prefixed",
-        targetIdComparison: "lowercase",
         normalizeTarget: normalizeDiscordMessagingTarget,
         resolveInboundConversation: ({
           from,
@@ -371,30 +351,18 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
           looksLikeId: looksLikeDiscordTargetId,
           hint: "<channelId|user:ID|channel:ID>",
           resolveTarget: async ({ cfg, accountId, input, normalized, preferredKind }) => {
-            const defaultKind =
-              preferredKind === "user" || normalized.startsWith("user:")
-                ? "user"
-                : preferredKind === "channel" ||
-                    preferredKind === "group" ||
-                    normalized.startsWith("channel:")
-                  ? "channel"
-                  : undefined;
             const resolved = await (
               await loadDiscordTargetResolverModule()
-            ).resolveDiscordTarget(input, { cfg, accountId }, defaultKind ? { defaultKind } : {});
+            ).resolveDiscordTarget(
+              input,
+              { cfg, accountId },
+              preferredKind === "user"
+                ? { defaultKind: "user" }
+                : preferredKind === "channel" || preferredKind === "group"
+                  ? { defaultKind: "channel" }
+                  : {},
+            );
             if (!resolved) {
-              return null;
-            }
-            // Shared directory lookup owns mutable names. Fallback may only return
-            // a canonical Discord snowflake, never an unresolved channel/user name.
-            if (!looksLikeDiscordTargetId(resolved.normalized)) {
-              return null;
-            }
-            if (
-              !looksLikeDiscordTargetId(input) &&
-              defaultKind === "channel" &&
-              resolved.kind === "user"
-            ) {
               return null;
             }
             return {
@@ -496,7 +464,7 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
       },
       conversationBindings: {
         supportsCurrentConversationBinding: true,
-        defaultTopLevelPlacement,
+        defaultTopLevelPlacement: "child",
         createManager: async ({ cfg, accountId }) =>
           (await loadDiscordThreadBindingsManagerModule()).createThreadBindingManager({
             cfg,
@@ -544,7 +512,9 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
         buildChannelSummary: ({ snapshot }) =>
           buildTokenChannelStatusSummary(snapshot, { includeMode: false }),
         probeAccount: async ({ account, timeoutMs }) =>
-          await probeDiscordStatusAccount({ token: account.token, timeoutMs }),
+          (await loadDiscordProbeRuntime()).probeDiscord(account.token, timeoutMs, {
+            includeApplication: true,
+          }),
         formatCapabilitiesProbe: ({ probe }) => {
           const discordProbe = probe as DiscordProbe | undefined;
           const lines = [];
@@ -559,7 +529,7 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
           }
           return lines;
         },
-        buildCapabilitiesDiagnostics: async ({ account, target, timeoutMs }) => {
+        buildCapabilitiesDiagnostics: async ({ account, target }) => {
           if (!target?.trim()) {
             return undefined;
           }
@@ -608,19 +578,12 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
             },
           };
           try {
-            const sendModule = await loadDiscordSendModule();
-            const perms = await withAbortTimeout({
-              timeoutMs,
-              createTimeoutError: () =>
-                new Error(`Capabilities diagnostic timed out after ${timeoutMs}ms`),
-              run: async (signal) =>
-                await sendModule.fetchChannelPermissionsDiscord(parsedTarget.id, {
-                  cfg: statusCfg,
-                  token,
-                  accountId: account.accountId ?? undefined,
-                  signal,
-                  timeoutMs,
-                }),
+            const perms = await (
+              await loadDiscordSendModule()
+            ).fetchChannelPermissionsDiscord(parsedTarget.id, {
+              cfg: statusCfg,
+              token,
+              accountId: account.accountId ?? undefined,
             });
             const requiredPermissions = resolveRequiredDiscordChannelPermissions(perms.channelType);
             const missingRequired = requiredPermissions.filter(
@@ -736,16 +699,6 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
             log: ctx.log,
           });
           ctx.log?.info(`[${account.accountId}] starting provider`);
-          let commandDeployHashStore;
-          try {
-            commandDeployHashStore = openDiscordCommandDeployHashStore(
-              getDiscordRuntime().state.openKeyedStore,
-            );
-          } catch (error) {
-            ctx.log?.warn?.(
-              `[${account.accountId}] Discord command deploy cache unavailable; continuing without persistence: ${formatErrorMessage(error)}`,
-            );
-          }
           return (await loadDiscordProviderRuntime()).monitorDiscordProvider({
             token,
             accountId: account.accountId,
@@ -756,7 +709,6 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
             mediaMaxMb: account.config.mediaMaxMb,
             historyLimit: account.config.historyLimit,
             setStatus: (patch) => ctx.setStatus({ accountId: account.accountId, ...patch }),
-            commandDeployHashStore,
           });
         },
       },
@@ -783,23 +735,6 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
         resolveReplyToMode: (account) => account.config.replyToMode,
         fallback: "off",
       },
-      buildToolContext: ({ context, hasRepliedRef }) => {
-        const currentMessagingTarget = normalizeOptionalString(context.To);
-        const currentChatType =
-          context.ChatType === "direct" ||
-          context.ChatType === "group" ||
-          context.ChatType === "channel"
-            ? context.ChatType
-            : undefined;
-        return {
-          currentChannelId:
-            normalizeOptionalString(context.NativeChannelId) ?? currentMessagingTarget,
-          currentChatType,
-          currentMessagingTarget,
-          currentMessageId: context.CurrentMessageId,
-          hasRepliedRef,
-        };
-      },
     },
     outbound: {
       ...discordOutbound,
@@ -814,4 +749,3 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount, DiscordProbe> 
         }),
     },
   });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

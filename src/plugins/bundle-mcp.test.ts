@@ -1,7 +1,6 @@
 // Verifies bundled MCP plugin metadata and package output.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { isRecord } from "../utils.js";
@@ -111,10 +110,7 @@ describe("loadEnabledBundleMcpConfig", () => {
           cfg: config,
         });
         const resolvedServerPath = await fs.realpath(serverPath);
-        const loadedServer = expectDefined(
-          loaded.config.mcpServers.bundleProbe,
-          "loaded.config.mcpServers.bundleProbe test invariant",
-        );
+        const loadedServer = loaded.config.mcpServers.bundleProbe;
         const loadedArgs = getServerArgs(loadedServer);
         const loadedServerPath = typeof loadedArgs?.[0] === "string" ? loadedArgs[0] : undefined;
         const resolvedPluginRoot = await fs.realpath(pluginRoot);

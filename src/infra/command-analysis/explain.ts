@@ -35,7 +35,9 @@ function riskLabel(risk: CommandRisk): string {
 }
 
 /** Summarizes parsed shell-command explanation data for display. */
-function summarizeCommandExplanation(explanation: CommandExplanation): CommandExplanationSummary {
+export function summarizeCommandExplanation(
+  explanation: CommandExplanation,
+): CommandExplanationSummary {
   const riskKinds = uniqueStrings(explanation.risks.map((risk) => risk.kind));
   const warningLines = explanation.risks.map((risk) => {
     const label = riskLabel(risk);
@@ -49,7 +51,7 @@ function summarizeCommandExplanation(explanation: CommandExplanation): CommandEx
   };
 }
 
-function summarizeCommandSegmentsForDisplay(
+export function summarizeCommandSegmentsForDisplay(
   segments: readonly ExecCommandSegment[],
 ): CommandExplanationSummary {
   const riskKinds: string[] = [];
@@ -80,30 +82,31 @@ function summarizeCommandSegmentsForDisplay(
   };
 }
 
-export async function resolveCommandAnalysisSummaryForDisplay(params: {
+export function resolveCommandAnalysisSummaryForDisplay(params: {
   host?: string | null;
   commandText: string;
   commandArgv?: string[];
   cwd?: string | null;
   sanitizeText?: (value: string) => string;
-}): Promise<CommandExplanationSummary | null> {
-  const summary =
+}): CommandExplanationSummary | null {
+  const analysis =
     params.host === "node"
-      ? (() => {
-          if (!Array.isArray(params.commandArgv) || params.commandArgv.length === 0) {
-            return null;
-          }
-          const analysis = analyzeCommandForPolicy({
+      ? Array.isArray(params.commandArgv) && params.commandArgv.length > 0
+        ? analyzeCommandForPolicy({
             source: "argv",
             argv: params.commandArgv,
             cwd: params.cwd ?? undefined,
-          });
-          return analysis.ok ? summarizeCommandSegmentsForDisplay(analysis.segments) : null;
-        })()
-      : (await explainCommandForDisplay(params.commandText))?.summary;
-  if (!summary) {
+          })
+        : null
+      : analyzeCommandForPolicy({
+          source: "shell",
+          command: params.commandText,
+          cwd: params.cwd ?? undefined,
+        });
+  if (!analysis?.ok) {
     return null;
   }
+  const summary = summarizeCommandSegmentsForDisplay(analysis.segments);
   const sanitizeText = params.sanitizeText;
   if (!sanitizeText) {
     return summary;
@@ -116,7 +119,7 @@ export async function resolveCommandAnalysisSummaryForDisplay(params: {
   };
 }
 
-async function explainCommandForDisplay(
+export async function explainCommandForDisplay(
   command: string,
 ): Promise<{ explanation: CommandExplanation; summary: CommandExplanationSummary } | null> {
   try {

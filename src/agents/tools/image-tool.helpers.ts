@@ -213,7 +213,7 @@ function resolveProviderlessConfiguredImageModelRef(params: {
     return ref;
   }
   if (matches.length === 1) {
-    return matches.at(0) ?? ref;
+    return matches[0];
   }
   throw new Error(
     `Ambiguous image model "${ref}". Configure a provider-prefixed ref such as ${matches

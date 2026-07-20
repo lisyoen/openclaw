@@ -10,10 +10,7 @@ vi.mock("../../../config/validation.js", () => ({
   validateConfigObjectWithPlugins: validationMocks.validateConfigObjectWithPlugins,
 }));
 
-const [{ maybeRepairInvalidPluginConfig }, { migrateLegacyConfig }] = await Promise.all([
-  import("./invalid-plugin-config.js"),
-  import("./legacy-config-migrate.js"),
-]);
+const { maybeRepairInvalidPluginConfig } = await import("./invalid-plugin-config.js");
 
 describe("doctor invalid plugin config repair", () => {
   beforeEach(() => {
@@ -148,48 +145,5 @@ describe("doctor invalid plugin config repair", () => {
     } as unknown as OpenClawConfig;
 
     expect(maybeRepairInvalidPluginConfig(cfg)).toEqual({ config: cfg, changes: [] });
-  });
-});
-
-describe("legacy migration with invalid plugin config", () => {
-  beforeEach(() => {
-    validationMocks.validateConfigObjectWithPlugins.mockReset();
-  });
-
-  it("keeps safe migrations when unrelated plugin validation issues remain (#76798)", () => {
-    validationMocks.validateConfigObjectWithPlugins.mockReturnValue({
-      ok: false,
-      warnings: [],
-      issues: [
-        {
-          path: "plugins.entries.brave.config.webSearch.mode",
-          message: "invalid config: must be equal to one of the allowed values",
-        },
-      ],
-    });
-
-    const result = migrateLegacyConfig({
-      agents: {
-        defaults: {
-          model: { primary: "openai/gpt-5.5" },
-          llm: { idleTimeoutSeconds: 120 },
-        },
-      },
-    });
-
-    expect(result).toEqual({
-      config: {
-        agents: {
-          defaults: {
-            model: { primary: "openai/gpt-5.5" },
-          },
-        },
-      },
-      changes: [
-        "Removed agents.defaults.llm; model idle timeout now follows models.providers.<id>.timeoutSeconds within the agent/run timeout ceiling.",
-        "Migration applied; other validation issues remain — run doctor to review.",
-      ],
-      partiallyValid: true,
-    });
   });
 });

@@ -8,7 +8,7 @@
 
 import crypto from "node:crypto";
 
-interface PendingUpload {
+export interface PendingUpload {
   id: string;
   buffer: Buffer;
   filename: string;
@@ -100,4 +100,22 @@ export function setPendingUploadActivityId(uploadId: string, activityId: string)
   if (entry) {
     entry.consentCardActivityId = activityId;
   }
+}
+
+/**
+ * Get the count of pending uploads (for monitoring/debugging).
+ */
+export function getPendingUploadCount(): number {
+  return pendingUploads.size;
+}
+
+/**
+ * Clear all pending uploads (for testing).
+ */
+export function clearPendingUploads(): void {
+  for (const timer of pendingUploadTimers.values()) {
+    clearTimeout(timer);
+  }
+  pendingUploadTimers.clear();
+  pendingUploads.clear();
 }

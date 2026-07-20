@@ -2,7 +2,7 @@
 import type { ThinkLevel } from "../../../auto-reply/thinking.js";
 
 /** Reasoning effort values accepted by OpenAI-compatible providers. */
-type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 /** Maps OpenClaw thinking levels onto provider reasoning-effort labels. */
 export function mapThinkingLevelToReasoningEffort(thinkingLevel: ThinkLevel): ReasoningEffort {
@@ -12,7 +12,7 @@ export function mapThinkingLevelToReasoningEffort(thinkingLevel: ThinkLevel): Re
   if (thinkingLevel === "adaptive") {
     return "medium";
   }
-  if (thinkingLevel === "max" || thinkingLevel === "ultra") {
+  if (thinkingLevel === "max") {
     return "xhigh";
   }
   return thinkingLevel;

@@ -1,22 +1,21 @@
 /**
- * Public SDK subpath for LLM streaming, model utils, and validation.
+ * Public SDK subpath for LLM provider registration, streaming, model utils, and validation.
  */
-export type { ApiProvider } from "@openclaw/ai";
 export {
-  calculateCost,
-  clampThinkingLevel,
   getApiProvider,
   getApiProviders,
-  getEnvApiKey,
-  parseStreamingJson,
-  sanitizeSurrogates,
-} from "@openclaw/ai/internal/runtime";
+  registerApiProvider,
+  unregisterApiProviders,
+  type ApiProvider,
+} from "../llm/api-registry.js";
+export { getEnvApiKey } from "../llm/env-api-keys.js";
+export { calculateCost, clampThinkingLevel } from "../llm/model-utils.js";
 export {
   adjustMaxTokensForThinking,
   buildBaseOptions,
   clampReasoning,
-} from "@openclaw/ai/internal/shared";
-export { transformMessages } from "@openclaw/ai/internal/shared";
+} from "../llm/providers/simple-options.js";
+export { transformMessages } from "../llm/providers/transform-messages.js";
 export { complete, completeSimple, stream, streamSimple } from "../llm/stream.js";
 export type {
   Api,
@@ -49,5 +48,7 @@ export {
   AssistantMessageEventStream,
   createAssistantMessageEventStream,
 } from "../../packages/llm-core/src/utils/event-stream.js";
+export { parseStreamingJson } from "../llm/utils/json-parse.js";
 export { createHttpProxyAgentsForTarget } from "../llm/utils/node-http-proxy.js";
+export { sanitizeSurrogates } from "../llm/utils/sanitize-unicode.js";
 export { validateToolArguments, validateToolCall } from "../../packages/llm-core/src/validation.js";

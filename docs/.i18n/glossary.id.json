@@ -78,13 +78,5 @@
   {
     "source": "Webhook",
     "target": "Webhook"
-  },
-  {
-    "source": "Pull request review flow",
-    "target": "Alur review pull request"
-  },
-  {
-    "source": "CI pipeline",
-    "target": "Pipeline CI"
   }
 ]

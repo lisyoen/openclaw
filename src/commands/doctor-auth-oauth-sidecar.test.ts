@@ -8,8 +8,7 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
-import { maybeRepairLegacyOAuthSidecarProfiles } from "./doctor-auth-oauth-sidecar.js";
-import { testing } from "./doctor-auth-oauth-sidecar.test-support.js";
+import { testing, maybeRepairLegacyOAuthSidecarProfiles } from "./doctor-auth-oauth-sidecar.js";
 import type { DoctorPrompter } from "./doctor-prompter.js";
 
 const states: OpenClawTestState[] = [];

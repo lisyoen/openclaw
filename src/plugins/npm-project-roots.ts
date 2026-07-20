@@ -2,11 +2,10 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { isNotFoundPathError } from "../infra/path-guards.js";
 import { resolvePluginNpmProjectsDir } from "./install-paths.js";
 
 function isMissing(error: unknown): boolean {
-  return isNotFoundPathError(error);
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
 }
 
 function sortPaths(paths: string[]): string[] {
@@ -32,7 +31,7 @@ export function listManagedPluginNpmProjectRootsSync(npmRoot: string): string[] 
 }
 
 /** Async variant of project-level managed npm root discovery. */
-async function listManagedPluginNpmProjectRoots(npmRoot: string): Promise<string[]> {
+export async function listManagedPluginNpmProjectRoots(npmRoot: string): Promise<string[]> {
   const projectsDir = resolvePluginNpmProjectsDir(npmRoot);
   try {
     return sortPaths(

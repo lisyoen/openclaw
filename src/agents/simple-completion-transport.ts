@@ -1,10 +1,10 @@
-import type { ApiRegistry } from "@openclaw/ai";
 /**
  * Simple completion transport preparation.
  *
  * Registers provider-specific stream functions and rewrites models that need OpenClaw-managed transport semantics.
  */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getApiProvider } from "../llm/api-registry.js";
 import type { Api, Model } from "../llm/types.js";
 import { wrapProviderSimpleCompletionStreamFn } from "../plugins/provider-runtime.js";
 import { createAnthropicVertexStreamFnForModel } from "./anthropic-vertex-stream.js";
@@ -26,7 +26,7 @@ function resolveAnthropicVertexSimpleApi(baseUrl?: string): Api {
   return `openclaw-anthropic-vertex-simple:${suffix}`;
 }
 
-export function normalizeCodexResponsesBaseUrlForOpenAISdk(baseUrl?: string): string {
+function normalizeCodexResponsesBaseUrlForOpenAISdk(baseUrl?: string): string {
   const normalized = baseUrl?.trim().replace(/\/+$/u, "") || "https://chatgpt.com/backend-api";
   try {
     const parsed = new URL(normalized);
@@ -65,15 +65,11 @@ function resolveProviderSimpleCompletionApi(model: Model): Api {
     .join(":")}`;
 }
 
-function applyProviderSimpleCompletionWrapper(
-  registry: ApiRegistry,
-  model: Model,
-  cfg?: OpenClawConfig,
-): Model {
+function applyProviderSimpleCompletionWrapper(model: Model, cfg?: OpenClawConfig): Model {
   if (model.api.startsWith(PROVIDER_SIMPLE_COMPLETION_API_PREFIX)) {
     return model;
   }
-  const sourceProvider = registry.getApiProvider(model.api);
+  const sourceProvider = getApiProvider(model.api);
   if (!sourceProvider) {
     return model;
   }
@@ -97,12 +93,11 @@ function applyProviderSimpleCompletionWrapper(
   }
 
   const api = resolveProviderSimpleCompletionApi(model);
-  ensureCustomApiRegistered(registry, api, streamFn);
+  ensureCustomApiRegistered(api, streamFn);
   return { ...model, api };
 }
 
 function prepareCodexSimpleTransportModel<TApi extends Api>(
-  registry: ApiRegistry,
   model: Model<TApi>,
   cfg?: OpenClawConfig,
 ): Model | undefined {
@@ -122,7 +117,7 @@ function prepareCodexSimpleTransportModel<TApi extends Api>(
     return undefined;
   }
 
-  ensureCustomApiRegistered(registry, api, streamFn);
+  ensureCustomApiRegistered(api, streamFn);
   return {
     ...transportModel,
     api,
@@ -130,46 +125,38 @@ function prepareCodexSimpleTransportModel<TApi extends Api>(
 }
 
 export function prepareModelForSimpleCompletion<TApi extends Api>(params: {
-  apiRegistry: ApiRegistry;
   model: Model<TApi>;
   cfg?: OpenClawConfig;
 }): Model {
-  const { apiRegistry, model, cfg } = params;
+  const { model, cfg } = params;
   // Only provider-owned custom APIs need runtime stream registration here.
-  if (
-    !apiRegistry.getApiProvider(model.api) &&
-    registerProviderStreamForModel({ model, cfg, apiRegistry })
-  ) {
-    return applyProviderSimpleCompletionWrapper(apiRegistry, model, cfg);
+  if (!getApiProvider(model.api) && registerProviderStreamForModel({ model, cfg })) {
+    return applyProviderSimpleCompletionWrapper(model, cfg);
   }
 
-  const codexTransportModel = prepareCodexSimpleTransportModel(apiRegistry, model, cfg);
+  const codexTransportModel = prepareCodexSimpleTransportModel(model, cfg);
   if (codexTransportModel) {
-    return applyProviderSimpleCompletionWrapper(apiRegistry, codexTransportModel, cfg);
+    return applyProviderSimpleCompletionWrapper(codexTransportModel, cfg);
   }
 
   const transportAwareModel = prepareTransportAwareSimpleModel(model, { cfg });
   if (transportAwareModel !== model) {
     const streamFn = buildTransportAwareSimpleStreamFn(model, { cfg });
     if (streamFn) {
-      ensureCustomApiRegistered(apiRegistry, transportAwareModel.api, streamFn);
-      return applyProviderSimpleCompletionWrapper(apiRegistry, transportAwareModel, cfg);
+      ensureCustomApiRegistered(transportAwareModel.api, streamFn);
+      return applyProviderSimpleCompletionWrapper(transportAwareModel, cfg);
     }
   }
 
   if (model.api === "google-generative-ai") {
-    return applyProviderSimpleCompletionWrapper(
-      apiRegistry,
-      prepareGoogleSimpleCompletionModel(apiRegistry, model),
-      cfg,
-    );
+    return applyProviderSimpleCompletionWrapper(prepareGoogleSimpleCompletionModel(model), cfg);
   }
 
   if (model.provider === "anthropic-vertex") {
     const api = resolveAnthropicVertexSimpleApi(model.baseUrl);
-    ensureCustomApiRegistered(apiRegistry, api, createAnthropicVertexStreamFnForModel(model));
-    return applyProviderSimpleCompletionWrapper(apiRegistry, { ...model, api }, cfg);
+    ensureCustomApiRegistered(api, createAnthropicVertexStreamFnForModel(model));
+    return applyProviderSimpleCompletionWrapper({ ...model, api }, cfg);
   }
 
-  return applyProviderSimpleCompletionWrapper(apiRegistry, model, cfg);
+  return applyProviderSimpleCompletionWrapper(model, cfg);
 }

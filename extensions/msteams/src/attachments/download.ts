@@ -4,17 +4,11 @@ import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
-import {
-  resolveMSTeamsRequestTimeoutMs,
-  type MSTeamsRequestDeadline,
-  withMSTeamsRequestDeadline,
-} from "../request-timeout.js";
 import { getMSTeamsRuntime } from "../runtime.js";
-import { resolveMSTeamsAdvertisedMedia } from "./html.js";
 import { downloadAndStoreMSTeamsRemoteMedia } from "./remote-media.js";
 import {
   extractInlineImageCandidates,
-  isAdvertisedFileAttachment,
+  inferPlaceholder,
   isDownloadableAttachment,
   isRecord,
   isUrlAllowed,
@@ -22,7 +16,6 @@ import {
   type MSTeamsAttachmentFetchPolicy,
   type MSTeamsAttachmentResolveFn,
   normalizeContentType,
-  resolveMSTeamsMediaKind,
   resolveMediaSsrfPolicy,
   resolveAttachmentFetchPolicy,
   resolveRequestUrl,
@@ -35,30 +28,12 @@ import type {
   MSTeamsInboundMedia,
 } from "./types.js";
 
-type DownloadCandidate =
-  | {
-      kind: "remote";
-      mediaKind: "image" | "document";
-      url: string;
-      fileHint?: string;
-      contentTypeHint?: string;
-      sourceId?: string;
-    }
-  | {
-      kind: "data";
-      mediaKind: "image";
-      data: Buffer;
-      contentType?: string;
-      sourceId?: string;
-    }
-  | { kind: "unavailable"; mediaKind: "image" | "document"; sourceId?: string };
-
-function withSourceId(
-  media: MSTeamsInboundMedia,
-  sourceId: string | undefined,
-): MSTeamsInboundMedia {
-  return sourceId ? { ...media, sourceId } : media;
-}
+type DownloadCandidate = {
+  url: string;
+  fileHint?: string;
+  contentTypeHint?: string;
+  placeholder: string;
+};
 
 function resolveDownloadCandidate(att: MSTeamsAttachmentLike): DownloadCandidate | null {
   const contentType = normalizeContentType(att.contentType);
@@ -79,12 +54,14 @@ function resolveDownloadCandidate(att: MSTeamsAttachmentLike): DownloadCandidate
 
     const fileHint = name || fileName || (uniqueId && fileType ? `${uniqueId}.${fileType}` : "");
     return {
-      kind: "remote",
-      mediaKind: resolveMSTeamsMediaKind({ contentType, fileName: fileHint, fileType }),
       url: downloadUrl,
       fileHint: fileHint || undefined,
       contentTypeHint: undefined,
-      sourceId: att.id?.trim() || undefined,
+      placeholder: inferPlaceholder({
+        contentType,
+        fileName: fileHint,
+        fileType,
+      }),
     };
   }
 
@@ -105,12 +82,10 @@ function resolveDownloadCandidate(att: MSTeamsAttachmentLike): DownloadCandidate
   const resolvedContentTypeHint = sharesUrl ? undefined : contentType;
 
   return {
-    kind: "remote",
-    mediaKind: resolveMSTeamsMediaKind({ contentType, fileName: name }),
     url: resolvedUrl,
     fileHint: name || undefined,
     contentTypeHint: resolvedContentTypeHint,
-    sourceId: att.id?.trim() || undefined,
+    placeholder: inferPlaceholder({ contentType, fileName: name }),
   };
 }
 
@@ -154,7 +129,6 @@ async function fetchWithAuthFallback(params: {
   requestInit?: RequestInit;
   resolveFn?: MSTeamsAttachmentResolveFn;
   policy: MSTeamsAttachmentFetchPolicy;
-  deadline?: MSTeamsRequestDeadline;
 }): Promise<Response> {
   const firstAttempt = await safeFetchWithPolicy({
     url: params.url,
@@ -163,7 +137,6 @@ async function fetchWithAuthFallback(params: {
     fetchFnSupportsDispatcher: params.fetchFnSupportsDispatcher,
     requestInit: params.requestInit,
     resolveFn: params.resolveFn,
-    timeoutMs: resolveMSTeamsRequestTimeoutMs(params.deadline),
   });
   if (firstAttempt.ok) {
     return firstAttempt;
@@ -171,7 +144,6 @@ async function fetchWithAuthFallback(params: {
   if (!params.tokenProvider) {
     return firstAttempt;
   }
-  const tokenProvider = params.tokenProvider;
   if (firstAttempt.status !== 401 && firstAttempt.status !== 403) {
     return firstAttempt;
   }
@@ -184,11 +156,7 @@ async function fetchWithAuthFallback(params: {
   const fetchFn = params.fetchFn ?? fetch;
   for (const scope of scopes) {
     try {
-      const token = await withMSTeamsRequestDeadline({
-        deadline: params.deadline,
-        label: "MS Teams attachment token",
-        work: () => tokenProvider.getAccessToken(scope),
-      });
+      const token = await params.tokenProvider.getAccessToken(scope);
       const authHeaders = new Headers(params.requestInit?.headers);
       authHeaders.set("Authorization", `Bearer ${token}`);
       const authAttempt = await safeFetchWithPolicy({
@@ -201,7 +169,6 @@ async function fetchWithAuthFallback(params: {
           headers: authHeaders,
         },
         resolveFn: params.resolveFn,
-        timeoutMs: resolveMSTeamsRequestTimeoutMs(params.deadline),
       });
       if (authAttempt.ok) {
         return authAttempt;
@@ -237,7 +204,6 @@ export async function downloadMSTeamsAttachments(params: {
   fetchFn?: typeof fetch;
   fetchFnSupportsDispatcher?: boolean;
   resolveFn?: MSTeamsAttachmentResolveFn;
-  deadline?: MSTeamsRequestDeadline;
   /** When true, embeds original filename in stored path for later extraction. */
   preserveFilenames?: boolean;
   /**
@@ -258,100 +224,72 @@ export async function downloadMSTeamsAttachments(params: {
   const allowHosts = policy.allowHosts;
   const ssrfPolicy = resolveMediaSsrfPolicy(allowHosts);
 
-  const candidates: DownloadCandidate[] = list
-    .filter(isAdvertisedFileAttachment)
-    .map((attachment) => {
-      const candidate = isDownloadableAttachment(attachment)
-        ? resolveDownloadCandidate(attachment)
-        : null;
-      return (
-        candidate ?? {
-          kind: "unavailable",
-          mediaKind: resolveMSTeamsMediaKind({
-            contentType: normalizeContentType(attachment.contentType),
-            fileName: attachment.name ?? undefined,
-          }),
-          sourceId: attachment.id?.trim() || undefined,
-        }
-      );
-    });
-  candidates.push(
-    ...extractInlineImageCandidates(list, {
-      maxInlineBytes: params.maxBytes,
-      maxInlineTotalBytes: params.maxBytes,
-    }).map((candidate): DownloadCandidate => {
-      if (candidate.kind === "data") {
-        return {
-          kind: "data",
-          mediaKind: "image",
-          data: candidate.data,
-          contentType: candidate.contentType,
-          sourceId: candidate.sourceId,
-        };
-      }
-      if (candidate.kind === "url") {
-        return {
-          kind: "remote",
-          mediaKind: "image",
-          url: candidate.url,
-          fileHint: candidate.fileHint,
-          contentTypeHint: candidate.contentType,
-          sourceId: candidate.sourceId,
-        };
-      }
-      return { kind: "unavailable", mediaKind: "image", sourceId: candidate.sourceId };
-    }),
-  );
-  const advertisedMedia = resolveMSTeamsAdvertisedMedia(list, {
+  // Download ANY downloadable attachment (not just images)
+  const downloadable = list.filter(isDownloadableAttachment);
+  const candidates: DownloadCandidate[] = downloadable
+    .map(resolveDownloadCandidate)
+    .filter(Boolean) as DownloadCandidate[];
+
+  const inlineCandidates = extractInlineImageCandidates(list, {
     maxInlineBytes: params.maxBytes,
     maxInlineTotalBytes: params.maxBytes,
   });
-  for (const advertised of advertisedMedia.slice(candidates.length)) {
-    candidates.push({
-      kind: "unavailable",
-      mediaKind: advertised.kind,
-      sourceId: advertised.sourceId,
-    });
+
+  const seenUrls = new Set<string>();
+  for (const inline of inlineCandidates) {
+    if (inline.kind === "url") {
+      if (!isUrlAllowed(inline.url, allowHosts)) {
+        continue;
+      }
+      if (seenUrls.has(inline.url)) {
+        continue;
+      }
+      seenUrls.add(inline.url);
+      candidates.push({
+        url: inline.url,
+        fileHint: inline.fileHint,
+        contentTypeHint: inline.contentType,
+        placeholder: inline.placeholder,
+      });
+    }
   }
-  if (candidates.length === 0) {
+  if (candidates.length === 0 && inlineCandidates.length === 0) {
     return [];
   }
 
   const out: MSTeamsInboundMedia[] = [];
-  for (const candidate of candidates) {
-    if (candidate.kind === "unavailable") {
-      out.push(withSourceId({ kind: candidate.mediaKind }, candidate.sourceId));
+  for (const inline of inlineCandidates) {
+    if (inline.kind !== "data") {
       continue;
     }
-    if (candidate.kind === "data") {
-      try {
-        const contentType = await resolveInlineDataImageMime(candidate);
-        if (!contentType) {
-          out.push(withSourceId({ kind: candidate.mediaKind }, candidate.sourceId));
-          continue;
-        }
-        const saved = await getMSTeamsRuntime().channel.media.saveMediaBuffer(
-          candidate.data,
-          contentType,
-          "inbound",
-          params.maxBytes,
-        );
-        out.push(
-          withSourceId(
-            { path: saved.path, contentType: saved.contentType, kind: "image" },
-            candidate.sourceId,
-          ),
-        );
-      } catch (err) {
-        out.push(withSourceId({ kind: candidate.mediaKind }, candidate.sourceId));
-        params.logger?.warn?.("msteams inline attachment decode failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
+    if (inline.data.byteLength > params.maxBytes) {
+      continue;
+    }
+    try {
+      const contentType = await resolveInlineDataImageMime(inline);
+      if (!contentType) {
+        continue;
       }
-      continue;
+      // Data inline candidates (base64 data URLs) don't have original filenames
+      const saved = await getMSTeamsRuntime().channel.media.saveMediaBuffer(
+        inline.data,
+        contentType,
+        "inbound",
+        params.maxBytes,
+      );
+      out.push({
+        path: saved.path,
+        contentType: saved.contentType,
+        placeholder: inferPlaceholder({ contentType: saved.contentType ?? contentType }),
+      });
+    } catch (err) {
+      params.logger?.warn?.("msteams inline attachment decode failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
+  }
+  for (const candidate of candidates) {
     if (!isUrlAllowed(candidate.url, allowHosts)) {
-      out.push(withSourceId({ kind: candidate.mediaKind }, candidate.sourceId));
       continue;
     }
     try {
@@ -360,7 +298,7 @@ export async function downloadMSTeamsAttachments(params: {
         filePathHint: candidate.fileHint ?? candidate.url,
         maxBytes: params.maxBytes,
         contentTypeHint: candidate.contentTypeHint,
-        kind: candidate.mediaKind,
+        placeholder: candidate.placeholder,
         preserveFilenames: params.preserveFilenames,
         ssrfPolicy,
         // `fetchImpl` below owns Teams auth fallback and enforces the
@@ -375,12 +313,10 @@ export async function downloadMSTeamsAttachments(params: {
             requestInit: init,
             resolveFn: params.resolveFn,
             policy,
-            deadline: params.deadline,
           }),
       });
-      out.push(withSourceId(media, candidate.sourceId));
+      out.push(media);
     } catch (err) {
-      out.push(withSourceId({ kind: candidate.mediaKind }, candidate.sourceId));
       const msg = err instanceof Error ? err.message : String(err);
       params.logger?.warn?.(
         `msteams attachment download failed host=${safeHostForLog(candidate.url)} error=${msg}`,

@@ -36,7 +36,7 @@ function formatDeliveryDetail(params: {
 }
 
 /** Builds the user-visible cron delivery preview for one job without sending anything. */
-async function resolveCronDeliveryPreview(params: {
+export async function resolveCronDeliveryPreview(params: {
   cfg: OpenClawConfig;
   defaultAgentId?: string;
   job: CronJob;

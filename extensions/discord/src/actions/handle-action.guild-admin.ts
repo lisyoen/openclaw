@@ -9,8 +9,6 @@ import {
 import type { ChannelMessageActionContext } from "openclaw/plugin-sdk/channel-contract";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { handleDiscordAction } from "../../action-runtime-api.js";
-import { isTrustedRequesterGuildAdminAction } from "../trusted-requester-actions.js";
-import type { DiscordMessagingActionOptions } from "./runtime.messaging.shared.js";
 import {
   isDiscordModerationAction,
   readDiscordModerationCommand,
@@ -28,24 +26,15 @@ type Ctx = Pick<
   | "cfg"
   | "accountId"
   | "requesterSenderId"
-  | "senderIsOwner"
   | "toolContext"
   | "mediaLocalRoots"
   | "mediaReadFile"
 >;
 
 function readDiscordRequesterSenderId(ctx: Ctx): string | undefined {
-  const currentProvider = normalizeOptionalString(ctx.toolContext?.currentChannelProvider);
-  if (currentProvider?.toLowerCase() === "discord") {
-    return normalizeOptionalString(ctx.requesterSenderId);
-  }
-  if (
-    isTrustedRequesterGuildAdminAction(ctx.action) &&
-    (currentProvider || ctx.senderIsOwner !== true)
-  ) {
-    throw new Error("Discord guild admin actions require a trusted Discord sender identity.");
-  }
-  return undefined;
+  return ctx.toolContext?.currentChannelProvider?.trim().toLowerCase() === "discord"
+    ? normalizeOptionalString(ctx.requesterSenderId)
+    : undefined;
 }
 
 function senderParam(senderUserId: string | undefined) {
@@ -55,9 +44,8 @@ function senderParam(senderUserId: string | undefined) {
 export async function tryHandleDiscordMessageActionGuildAdmin(params: {
   ctx: Ctx;
   resolveChannelId: () => string;
-  readPolicyOptions?: DiscordMessagingActionOptions;
 }): Promise<AgentToolResult<unknown> | undefined> {
-  const { ctx, resolveChannelId, readPolicyOptions } = params;
+  const { ctx, resolveChannelId } = params;
   const { action, params: actionParams, cfg } = ctx;
   const accountId = ctx.accountId ?? readStringParam(actionParams, "accountId");
   const senderUserId = readDiscordRequesterSenderId(ctx);
@@ -70,7 +58,6 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
     return await handleDiscordAction(
       { action: "memberInfo", accountId: accountId ?? undefined, guildId, userId },
       cfg,
-      readPolicyOptions,
     );
   }
 
@@ -81,7 +68,6 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
     return await handleDiscordAction(
       { action: "roleInfo", accountId: accountId ?? undefined, guildId },
       cfg,
-      readPolicyOptions,
     );
   }
 
@@ -92,7 +78,6 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
     return await handleDiscordAction(
       { action: "emojiList", accountId: accountId ?? undefined, guildId },
       cfg,
-      readPolicyOptions,
     );
   }
 
@@ -178,7 +163,6 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
     return await handleDiscordAction(
       { action: "channelInfo", accountId: accountId ?? undefined, channelId },
       cfg,
-      readPolicyOptions,
     );
   }
 
@@ -189,7 +173,6 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
     return await handleDiscordAction(
       { action: "channelList", accountId: accountId ?? undefined, guildId },
       cfg,
-      readPolicyOptions,
     );
   }
 
@@ -317,7 +300,6 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
     return await handleDiscordAction(
       { action: "voiceStatus", accountId: accountId ?? undefined, guildId, userId },
       cfg,
-      readPolicyOptions,
     );
   }
 
@@ -328,7 +310,6 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
     return await handleDiscordAction(
       { action: "eventList", accountId: accountId ?? undefined, guildId },
       cfg,
-      readPolicyOptions,
     );
   }
 
@@ -375,6 +356,7 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
         message: "deleteDays must be an integer from 0 to 7",
       }),
     });
+    const senderUserIdLocal = normalizeOptionalString(ctx.requesterSenderId);
     return await handleDiscordAction(
       {
         action: moderation.action,
@@ -385,7 +367,7 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
         until: moderation.until,
         reason: moderation.reason,
         deleteMessageDays: moderation.deleteMessageDays,
-        senderUserId,
+        senderUserId: senderUserIdLocal,
       },
       cfg,
     );
@@ -412,7 +394,6 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
         limit,
       },
       cfg,
-      readPolicyOptions,
     );
   }
 
@@ -446,38 +427,23 @@ export async function tryHandleDiscordMessageActionGuildAdmin(params: {
   }
 
   if (action === "search") {
-    const guildId = readStringParam(actionParams, "guildId");
-    const query =
-      readStringParam(actionParams, "query") ?? readStringParam(actionParams, "content");
-    if (!query) {
-      throw new Error("Discord search requires query text. Provide query or content.");
-    }
-    // Fall back to the current session channel when no explicit channelId,
-    // channelIds, or guildId is provided. This lets the runtime resolve
-    // guildId from the channel without broadening explicitly-filtered or
-    // explicitly guild-scoped searches.
-    const explicitChannelIds = readStringArrayParam(actionParams, "channelIds");
-    const channelId =
-      readStringParam(actionParams, "channelId") ??
-      (!guildId &&
-      !explicitChannelIds?.length &&
-      ctx.toolContext?.currentChannelProvider?.trim().toLowerCase() === "discord"
-        ? ctx.toolContext?.currentChannelId?.trim() || undefined
-        : undefined);
+    const guildId = readStringParam(actionParams, "guildId", {
+      required: true,
+    });
+    const query = readStringParam(actionParams, "query", { required: true });
     return await handleDiscordAction(
       {
         action: "searchMessages",
         accountId: accountId ?? undefined,
-        ...(guildId ? { guildId } : {}),
+        guildId,
         content: query,
-        channelId,
-        channelIds: explicitChannelIds,
+        channelId: readStringParam(actionParams, "channelId"),
+        channelIds: readStringArrayParam(actionParams, "channelIds"),
         authorId: readStringParam(actionParams, "authorId"),
         authorIds: readStringArrayParam(actionParams, "authorIds"),
         limit: readPositiveIntegerParam(actionParams, "limit"),
       },
       cfg,
-      readPolicyOptions,
     );
   }
 

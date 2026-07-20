@@ -1,5 +1,4 @@
 /** Context-pruning planner that trims old assistant/tool content under token pressure. */
-import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { ImageContent, TextContent, ToolResultMessage } from "../../../llm/types.js";
 import { CHARS_PER_TOKEN_ESTIMATE, estimateStringChars } from "../../../utils/cjk-chars.js";
 import { dropThinkingBlocks } from "../../embedded-agent-runner/thinking.js";
@@ -88,10 +87,7 @@ function takeHeadFromJoinedText(parts: string[], maxChars: number): string {
   }
   let remaining = maxChars;
   let out = "";
-  for (const [i, p] of parts.entries()) {
-    if (remaining <= 0) {
-      break;
-    }
+  for (let i = 0; i < parts.length && remaining > 0; i++) {
     if (i > 0) {
       out += "\n";
       remaining -= 1;
@@ -99,11 +95,12 @@ function takeHeadFromJoinedText(parts: string[], maxChars: number): string {
         break;
       }
     }
+    const p = parts[i];
     if (p.length <= remaining) {
       out += p;
       remaining -= p.length;
     } else {
-      out += sliceUtf16Safe(p, 0, remaining);
+      out += p.slice(0, remaining);
       remaining = 0;
     }
   }
@@ -116,18 +113,16 @@ function takeTailFromJoinedText(parts: string[], maxChars: number): string {
   }
   let remaining = maxChars;
   const out: string[] = [];
-  for (const [reverseIndex, p] of parts.toReversed().entries()) {
-    if (remaining <= 0) {
-      break;
-    }
+  for (let i = parts.length - 1; i >= 0 && remaining > 0; i--) {
+    const p = parts[i];
     if (p.length <= remaining) {
       out.push(p);
       remaining -= p.length;
     } else {
-      out.push(sliceUtf16Safe(p, -remaining));
+      out.push(p.slice(p.length - remaining));
       break;
     }
-    if (remaining > 0 && reverseIndex < parts.length - 1) {
+    if (remaining > 0 && i > 0) {
       out.push("\n");
       remaining -= 1;
     }

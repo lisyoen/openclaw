@@ -3,12 +3,12 @@
  */
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { resolveSenderCommandAuthorization } from "./command-auth.js";
 import {
   buildCommandsMessage,
   buildCommandsMessagePaginated,
   buildHelpMessage,
-} from "./command-status.js";
+  resolveSenderCommandAuthorization,
+} from "./command-auth.js";
 
 const baseCfg = {
   commands: { useAccessGroups: true },
@@ -39,7 +39,7 @@ async function resolveAuthorization(params: {
 }
 
 describe("plugin-sdk/command-auth", () => {
-  it("keeps command status builders on their focused subpath", () => {
+  it("keeps deprecated command status builders available for compatibility", () => {
     const cfg = { commands: { config: false, debug: false } } as unknown as OpenClawConfig;
 
     expect(buildHelpMessage(cfg)).toContain("/commands for full list");

@@ -1,7 +1,7 @@
 // Moonshot plugin entrypoint registers its OpenClaw integration.
 import { defineSingleProviderPluginEntry } from "openclaw/plugin-sdk/provider-entry";
 import { buildOpenAICompatibleReplayPolicy } from "openclaw/plugin-sdk/provider-model-shared";
-import { buildProviderStreamFamilyHooks } from "openclaw/plugin-sdk/provider-stream-family";
+import { MOONSHOT_THINKING_STREAM_HOOKS } from "openclaw/plugin-sdk/provider-stream-family";
 import { applyMoonshotNativeStreamingUsageCompat } from "./api.js";
 import { moonshotMediaUnderstandingProvider } from "./media-understanding-provider.js";
 import {
@@ -10,11 +10,11 @@ import {
   MOONSHOT_DEFAULT_MODEL_REF,
 } from "./onboard.js";
 import { buildMoonshotProvider } from "./provider-catalog.js";
-import { isMoonshotAlwaysThinkingModelId, resolveThinkingProfile } from "./provider-policy-api.js";
+import { KIMI_K2_7_CODE_MODEL_ID, resolveThinkingProfile } from "./provider-policy-api.js";
 import { createKimiWebSearchProvider } from "./src/kimi-web-search-provider.js";
 
 const PROVIDER_ID = "moonshot";
-const moonshotThinkingStreamHooks = buildProviderStreamFamilyHooks("moonshot-thinking");
+const moonshotThinkingStreamHooks = MOONSHOT_THINKING_STREAM_HOOKS;
 
 export default defineSingleProviderPluginEntry({
   id: PROVIDER_ID,
@@ -28,7 +28,7 @@ export default defineSingleProviderPluginEntry({
       {
         methodId: "api-key",
         label: "Kimi API key (.ai)",
-        hint: "Kimi API models · https://platform.kimi.ai/docs/pricing/chat",
+        hint: "Kimi K2.6 + Kimi",
         optionKey: "moonshotApiKey",
         flagName: "--moonshot-api-key",
         envVar: "MOONSHOT_API_KEY",
@@ -36,13 +36,13 @@ export default defineSingleProviderPluginEntry({
         defaultModel: MOONSHOT_DEFAULT_MODEL_REF,
         applyConfig: (cfg) => applyMoonshotConfig(cfg),
         wizard: {
-          groupLabel: "Moonshot AI (Kimi)",
+          groupLabel: "Moonshot AI (Kimi K2.6)",
         },
       },
       {
         methodId: "api-key-cn",
         label: "Kimi API key (.cn)",
-        hint: "Kimi API models · https://platform.kimi.ai/docs/pricing/chat",
+        hint: "Kimi K2.6 + Kimi",
         optionKey: "moonshotApiKey",
         flagName: "--moonshot-api-key",
         envVar: "MOONSHOT_API_KEY",
@@ -50,7 +50,7 @@ export default defineSingleProviderPluginEntry({
         defaultModel: MOONSHOT_DEFAULT_MODEL_REF,
         applyConfig: (cfg) => applyMoonshotConfigCn(cfg),
         wizard: {
-          groupLabel: "Moonshot AI (Kimi)",
+          groupLabel: "Moonshot AI (Kimi K2.6)",
         },
       },
     ],
@@ -70,11 +70,11 @@ export default defineSingleProviderPluginEntry({
       }),
     ...moonshotThinkingStreamHooks,
     wrapSimpleCompletionStreamFn: (ctx) =>
-      isMoonshotAlwaysThinkingModelId(ctx.modelId)
+      ctx.modelId.trim().toLowerCase() === KIMI_K2_7_CODE_MODEL_ID
         ? moonshotThinkingStreamHooks.wrapStreamFn?.(ctx)
         : ctx.streamFn,
     resolveThinkingProfile,
-    isModernModelRef: ({ modelId }) => isMoonshotAlwaysThinkingModelId(modelId),
+    isModernModelRef: ({ modelId }) => modelId.trim().toLowerCase() === KIMI_K2_7_CODE_MODEL_ID,
   },
   register(api) {
     api.registerMediaUnderstandingProvider(moonshotMediaUnderstandingProvider);

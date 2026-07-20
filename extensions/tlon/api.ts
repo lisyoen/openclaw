@@ -10,6 +10,7 @@ export {
   type RuntimeEnv,
   SsrFBlockedError,
   type SsrFPolicy,
+  ssrfPolicyFromAllowPrivateNetwork,
   ssrfPolicyFromDangerouslyAllowPrivateNetwork,
 } from "./runtime-api.js";
 export { tlonPlugin } from "./src/channel.js";

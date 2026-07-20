@@ -66,7 +66,7 @@ function pixVerseRegionNote(region: PixVerseApiRegion): string {
   return `PixVerse endpoint: ${label} (${PIXVERSE_BASE_URL_BY_REGION[region]})`;
 }
 
-function applyPixVerseProviderConfig(
+export function applyPixVerseProviderConfig(
   cfg: OpenClawConfig,
   region: PixVerseApiRegion,
   options?: { resetBaseUrl?: boolean },
@@ -94,7 +94,7 @@ function applyPixVerseProviderConfig(
   };
 }
 
-function applyPixVerseConfig(
+export function applyPixVerseConfig(
   cfg: OpenClawConfig,
   region: PixVerseApiRegion,
   options?: { resetBaseUrl?: boolean },

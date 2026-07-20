@@ -5,14 +5,10 @@ import { EventType, type MatrixActionClientOpts } from "./types.js";
 
 export async function getMatrixMemberInfo(
   userId: string,
-  opts: MatrixActionClientOpts & { roomId: string },
+  opts: MatrixActionClientOpts & { roomId?: string } = {},
 ) {
   return await withResolvedActionClient(opts, async (client) => {
-    const roomId = await resolveMatrixRoomId(client, opts.roomId);
-    const members = await client.getJoinedRoomMembers(roomId);
-    if (!members.includes(userId)) {
-      throw new Error(`User ${userId} is not a member of room ${roomId}`);
-    }
+    const roomId = opts.roomId ? await resolveMatrixRoomId(client, opts.roomId) : undefined;
     const profile = await client.getUserProfile(userId);
     // Membership and power levels are not included in profile calls; fetch state separately if needed.
     return {
@@ -24,7 +20,7 @@ export async function getMatrixMemberInfo(
       membership: null, // Would need separate room state query
       powerLevel: null, // Would need separate power levels state query
       displayName: profile?.displayname ?? null,
-      roomId,
+      roomId: roomId ?? null,
     };
   });
 }

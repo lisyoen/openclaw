@@ -18,7 +18,7 @@ vi.mock("../logger.js", () => ({
 }));
 
 let toToolDefinitions: typeof import("./agent-tool-definition-adapter.js").toToolDefinitions;
-let createBeforeToolCallBlockedError: typeof import("./agent-tools.before-tool-call.test-support.js").createBeforeToolCallBlockedError;
+let BeforeToolCallBlockedError: typeof import("./agent-tools.before-tool-call.js").BeforeToolCallBlockedError;
 let wrapToolParamValidation: typeof import("./agent-tools.params.js").wrapToolParamValidation;
 let REQUIRED_PARAM_GROUPS: typeof import("./agent-tools.params.js").REQUIRED_PARAM_GROUPS;
 let logError: typeof import("../logger.js").logError;
@@ -35,8 +35,7 @@ function firstLogErrorMessage(): unknown {
 describe("agent tool definition adapter logging", () => {
   beforeAll(async () => {
     ({ toToolDefinitions } = await import("./agent-tool-definition-adapter.js"));
-    ({ createBeforeToolCallBlockedError } =
-      await import("./agent-tools.before-tool-call.test-support.js"));
+    ({ BeforeToolCallBlockedError } = await import("./agent-tools.before-tool-call.js"));
     ({ wrapToolParamValidation, REQUIRED_PARAM_GROUPS } = await import("./agent-tools.params.js"));
     ({ logError } = await import("../logger.js"));
   });
@@ -88,7 +87,7 @@ describe("agent tool definition adapter logging", () => {
         command: Type.String(),
       }),
       execute: async () => {
-        throw createBeforeToolCallBlockedError("blocked by policy");
+        throw new BeforeToolCallBlockedError("blocked by policy");
       },
     } satisfies AgentTool;
     const [def] = toToolDefinitions([baseTool]);

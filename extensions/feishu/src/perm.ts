@@ -1,11 +1,14 @@
 // Feishu plugin module implements perm behavior.
 import type * as Lark from "@larksuiteoapi/node-sdk";
-import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import type { OpenClawPluginApi } from "../runtime-api.js";
 import { listEnabledFeishuAccounts } from "./accounts.js";
 import { FeishuPermSchema, type FeishuPermParams } from "./perm-schema.js";
 import { createFeishuToolClient, resolveAnyEnabledFeishuToolsConfig } from "./tool-account.js";
-import { toolExecutionErrorResult, unknownToolActionResult } from "./tool-result.js";
+import {
+  jsonToolResult,
+  toolExecutionErrorResult,
+  unknownToolActionResult,
+} from "./tool-result.js";
 
 type ListTokenType =
   | "doc"
@@ -142,17 +145,16 @@ export function registerFeishuPermTools(api: OpenClawPluginApi) {
               api,
               executeParams: p,
               defaultAccountId,
-              requiredTool: { family: "perm", label: "Perm" },
             });
             switch (p.action) {
               case "list":
-                return jsonResult(await listMembers(client, p.token, p.type));
+                return jsonToolResult(await listMembers(client, p.token, p.type));
               case "add":
-                return jsonResult(
+                return jsonToolResult(
                   await addMember(client, p.token, p.type, p.member_type, p.member_id, p.perm),
                 );
               case "remove":
-                return jsonResult(
+                return jsonToolResult(
                   await removeMember(client, p.token, p.type, p.member_type, p.member_id),
                 );
               default:

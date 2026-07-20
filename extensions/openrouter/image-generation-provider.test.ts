@@ -1,6 +1,9 @@
 // Openrouter tests cover image generation provider plugin behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildOpenRouterImageGenerationProvider } from "./image-generation-provider.js";
+import {
+  buildOpenRouterImageGenerationProvider,
+  extractOpenRouterImagesFromResponse,
+} from "./image-generation-provider.js";
 
 const {
   assertOkOrThrowHttpErrorMock,
@@ -28,8 +31,6 @@ vi.mock("openclaw/plugin-sdk/provider-auth-runtime", () => ({
 vi.mock("openclaw/plugin-sdk/provider-http", () => ({
   assertOkOrThrowHttpError: assertOkOrThrowHttpErrorMock,
   postJsonRequest: postJsonRequestMock,
-  // Pass-through: bounded-reader enforcement is tested via bounded-reader unit tests.
-  readProviderJsonResponse: async (response: { json(): Promise<unknown> }) => response.json(),
   resolveProviderHttpRequestConfig: resolveProviderHttpRequestConfigMock,
 }));
 
@@ -321,46 +322,31 @@ describe("openrouter image generation provider", () => {
     ).rejects.toThrow("OpenRouter image generation response malformed");
   });
 
-  it("extracts image fallbacks from string content and raw b64 parts", async () => {
+  it("extracts image fallbacks from string content and raw b64 parts", () => {
     const png = Buffer.from("png-inline").toString("base64");
     const raw = Buffer.from("raw-inline").toString("base64");
-    postJsonRequestMock.mockResolvedValue({
-      response: {
-        json: async () => ({
-          choices: [
-            {
-              message: {
-                content: `done data:image/png;base64,${png}`,
-              },
-            },
-            {
-              message: {
-                content: [{ b64_json: raw }],
-              },
-            },
-          ],
-        }),
-      },
-      release: vi.fn(async () => {}),
+    const images = extractOpenRouterImagesFromResponse({
+      choices: [
+        {
+          message: {
+            content: `done data:image/png;base64,${png}`,
+          },
+        },
+        {
+          message: {
+            content: [{ b64_json: raw }],
+          },
+        },
+      ],
     });
 
-    const result = await buildOpenRouterImageGenerationProvider().generateImage({
-      provider: "openrouter",
-      model: "google/gemini-3.1-flash-image-preview",
-      prompt: "draw image fallbacks",
-      cfg: {},
-    });
-
-    expect(result.images.map((image) => image.buffer.toString())).toEqual([
-      "png-inline",
-      "raw-inline",
-    ]);
+    expect(images.map((image) => image.buffer.toString())).toEqual(["png-inline", "raw-inline"]);
   });
 
-  it("rejects invalid raw image parts in strict extraction mode", async () => {
-    postJsonRequestMock.mockResolvedValue({
-      response: {
-        json: async () => ({
+  it("rejects invalid raw image parts in strict extraction mode", () => {
+    expect(() =>
+      extractOpenRouterImagesFromResponse(
+        {
           choices: [
             {
               message: {
@@ -368,18 +354,9 @@ describe("openrouter image generation provider", () => {
               },
             },
           ],
-        }),
-      },
-      release: vi.fn(async () => {}),
-    });
-
-    await expect(
-      buildOpenRouterImageGenerationProvider().generateImage({
-        provider: "openrouter",
-        model: "google/gemini-3.1-flash-image-preview",
-        prompt: "draw invalid fallback",
-        cfg: {},
-      }),
-    ).rejects.toThrow("OpenRouter image generation response malformed");
+        },
+        { malformedResponseError: "OpenRouter image generation response malformed" },
+      ),
+    ).toThrow("OpenRouter image generation response malformed");
   });
 });

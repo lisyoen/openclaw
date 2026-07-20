@@ -6,7 +6,7 @@ import {
 } from "./pw-tools-core.test-harness.js";
 
 installPwToolsCoreTestHooks();
-const mod = await import("./pw-tools-core.interactions.js");
+const mod = await import("./pw-tools-core.js");
 
 type EvaluateArg = unknown;
 

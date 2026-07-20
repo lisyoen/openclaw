@@ -3,18 +3,18 @@ package ai.openclaw.app.node
 import ai.openclaw.app.BuildConfig
 import ai.openclaw.app.CameraHudKind
 import ai.openclaw.app.gateway.GatewaySession
-import ai.openclaw.app.takeUtf16Safe
 import android.content.Context
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 internal const val CAMERA_CLIP_MAX_RAW_BYTES: Long = 18L * 1024L * 1024L
-private const val CAMERA_DEBUG_STACK_TRACE_MAX_CHARS = 2_000
 
 /**
  * Raw MP4 size guard before base64 encoding the clip into a node.invoke response.
@@ -27,8 +27,9 @@ internal fun isCameraClipWithinPayloadLimit(rawBytes: Long): Boolean = rawBytes 
 class CameraHandler(
   private val appContext: Context,
   private val camera: CameraCaptureManager,
-  private val setCameraAudioCaptureActive: (Boolean) -> Boolean,
+  private val externalAudioCaptureActive: MutableStateFlow<Boolean>,
   private val showCameraHud: (message: String, kind: CameraHudKind, autoHideMs: Long?) -> Unit,
+  private val triggerCameraFlash: () -> Unit,
   private val invokeErrorFromThrowable: (err: Throwable) -> Pair<String, String>,
 ) {
   /** Handles camera.list by exposing CameraX devices through gateway metadata. */
@@ -54,8 +55,6 @@ class CameraHandler(
           )
         }.toString()
       GatewaySession.InvokeResult.ok(payload)
-    } catch (err: CancellationException) {
-      throw err
     } catch (err: Throwable) {
       val (code, message) = invokeErrorFromThrowable(err)
       GatewaySession.InvokeResult.error(code = code, message = message)
@@ -76,17 +75,17 @@ class CameraHandler(
       camLog("starting, params=$paramsJson")
       camLog("calling showCameraHud")
       showCameraHud("Taking photo…", CameraHudKind.Photo, null)
+      camLog("calling triggerCameraFlash")
+      triggerCameraFlash()
       val res =
         try {
           camLog("calling camera.snap()")
           val r = camera.snap(paramsJson)
           camLog("success, payload size=${r.payloadJson.length}")
           r
-        } catch (err: CancellationException) {
-          throw err
         } catch (err: Throwable) {
           camLog("inner error: ${err::class.java.simpleName}: ${err.message}")
-          camLog("stack: ${err.stackTraceToString().takeUtf16Safe(CAMERA_DEBUG_STACK_TRACE_MAX_CHARS)}")
+          camLog("stack: ${err.stackTraceToString().take(2000)}")
           val (code, message) = invokeErrorFromThrowable(err)
           showCameraHud(message, CameraHudKind.Error, 2200)
           return GatewaySession.InvokeResult.error(code = code, message = message)
@@ -94,11 +93,9 @@ class CameraHandler(
       camLog("returning result")
       showCameraHud("Photo captured", CameraHudKind.Success, 1600)
       return GatewaySession.InvokeResult.ok(res.payloadJson)
-    } catch (err: CancellationException) {
-      throw err
     } catch (err: Throwable) {
       camLog("outer error: ${err::class.java.simpleName}: ${err.message}")
-      camLog("stack: ${err.stackTraceToString().takeUtf16Safe(CAMERA_DEBUG_STACK_TRACE_MAX_CHARS)}")
+      camLog("stack: ${err.stackTraceToString().take(2000)}")
       return GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = err.message ?: "camera snap failed")
     }
   }
@@ -114,13 +111,7 @@ class CameraHandler(
       android.util.Log.w("openclaw", "camera.clip: $msg")
     }
     val includeAudio = parseIncludeAudio(paramsJson) ?: true
-    val ownsAudioCapture = includeAudio && setCameraAudioCaptureActive(true)
-    if (includeAudio && !ownsAudioCapture) {
-      return GatewaySession.InvokeResult.error(
-        code = "MIC_BUSY",
-        message = "MIC_BUSY: another audio capture is active",
-      )
-    }
+    if (includeAudio) externalAudioCaptureActive.value = true
     try {
       clipLogFile?.writeText("") // clear
       clipLog("starting, params=$paramsJson includeAudio=$includeAudio")
@@ -132,11 +123,9 @@ class CameraHandler(
           val r = camera.clip(paramsJson)
           clipLog("success, file size=${r.file.length()}")
           r
-        } catch (err: CancellationException) {
-          throw err
         } catch (err: Throwable) {
           clipLog("inner error: ${err::class.java.simpleName}: ${err.message}")
-          clipLog("stack: ${err.stackTraceToString().takeUtf16Safe(CAMERA_DEBUG_STACK_TRACE_MAX_CHARS)}")
+          clipLog("stack: ${err.stackTraceToString().take(2000)}")
           val (code, message) = invokeErrorFromThrowable(err)
           showCameraHud(message, CameraHudKind.Error, 2400)
           return GatewaySession.InvokeResult.error(code = code, message = message)
@@ -168,17 +157,33 @@ class CameraHandler(
       return GatewaySession.InvokeResult.ok(
         """{"format":"mp4","base64":"$base64","durationMs":${filePayload.durationMs},"hasAudio":${filePayload.hasAudio}}""",
       )
-    } catch (err: CancellationException) {
-      throw err
     } catch (err: Throwable) {
       clipLog("outer error: ${err::class.java.simpleName}: ${err.message}")
-      clipLog("stack: ${err.stackTraceToString().takeUtf16Safe(CAMERA_DEBUG_STACK_TRACE_MAX_CHARS)}")
+      clipLog("stack: ${err.stackTraceToString().take(2000)}")
       return GatewaySession.InvokeResult.error(code = "UNAVAILABLE", message = err.message ?: "camera clip failed")
     } finally {
       // Prevent talk/transcription capture from competing with camera audio after every exit path.
-      if (ownsAudioCapture) setCameraAudioCaptureActive(false)
+      if (includeAudio) externalAudioCaptureActive.value = false
     }
   }
 
-  private fun parseIncludeAudio(paramsJson: String?): Boolean? = parseJsonBooleanFlag(parseJsonParamsObject(paramsJson), "includeAudio")
+  private fun parseIncludeAudio(paramsJson: String?): Boolean? {
+    if (paramsJson.isNullOrBlank()) return null
+    val root =
+      try {
+        Json.parseToJsonElement(paramsJson).asObjectOrNull()
+      } catch (_: Throwable) {
+        null
+      } ?: return null
+    val value =
+      (root["includeAudio"] as? JsonPrimitive)
+        ?.contentOrNull
+        ?.trim()
+        ?.lowercase()
+    return when (value) {
+      "true" -> true
+      "false" -> false
+      else -> null
+    }
+  }
 }

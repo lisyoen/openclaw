@@ -1,9 +1,11 @@
 // Covers provider-specific transcript turn validation and repair.
-
-import { expectDefined } from "@openclaw/normalization-core";
 import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import { describe, expect, it } from "vitest";
-import { validateAnthropicTurns, validateGeminiTurns } from "./embedded-agent-helpers.js";
+import {
+  mergeConsecutiveUserTurns,
+  validateAnthropicTurns,
+  validateGeminiTurns,
+} from "./embedded-agent-helpers.js";
 
 function asMessages(messages: unknown[]): AgentMessage[] {
   return messages as AgentMessage[];
@@ -282,7 +284,7 @@ describe("validateAnthropicTurns", () => {
     const result = validateAnthropicTurns(msgs) as Extract<AgentMessage, { role: "user" }>[];
 
     expect(result).toHaveLength(1);
-    const merged = expectDefined(result[0], "merged user message");
+    const merged = result[0];
     expect(merged.timestamp).toBe(2000);
     expect((merged as { attachments?: unknown[] }).attachments).toEqual([
       { type: "image", url: "new.png" },
@@ -313,7 +315,7 @@ describe("validateAnthropicTurns", () => {
     ]);
 
     const [merged] = validateAnthropicTurns(msgs) as Extract<AgentMessage, { role: "user" }>[];
-    expect(expectDefined(merged, "merged test invariant").content).toEqual([
+    expect(merged.content).toEqual([
       { type: "text", text: "first" },
       { type: "image", url: "img1" },
       { type: "image", url: "img2" },
@@ -430,7 +432,7 @@ describe("validateAnthropicTurns", () => {
   });
 });
 
-describe("validateAnthropicTurns consecutive user turns", () => {
+describe("mergeConsecutiveUserTurns", () => {
   it("keeps newest metadata while merging content", () => {
     const previous = {
       role: "user",
@@ -446,11 +448,7 @@ describe("validateAnthropicTurns consecutive user turns", () => {
       someCustomField: "keep-me",
     } as Extract<AgentMessage, { role: "user" }>;
 
-    const [merged] = validateAnthropicTurns([previous, current]);
-    expect(merged?.role).toBe("user");
-    if (merged?.role !== "user") {
-      throw new Error("expected merged user turn");
-    }
+    const merged = mergeConsecutiveUserTurns(previous, current);
 
     expect(merged.content).toEqual([
       { type: "text", text: "before" },
@@ -475,11 +473,7 @@ describe("validateAnthropicTurns consecutive user turns", () => {
       timestamp: 2000,
     } as Extract<AgentMessage, { role: "user" }>;
 
-    const [merged] = validateAnthropicTurns([previous, current]);
-    expect(merged?.role).toBe("user");
-    if (merged?.role !== "user") {
-      throw new Error("expected merged user turn");
-    }
+    const merged = mergeConsecutiveUserTurns(previous, current);
 
     expect(merged.content).toEqual([
       { type: "text", text: "before" },
@@ -498,11 +492,7 @@ describe("validateAnthropicTurns consecutive user turns", () => {
       content: [{ type: "text", text: "after" }],
     } as Extract<AgentMessage, { role: "user" }>;
 
-    const [merged] = validateAnthropicTurns([previous, current]);
-    expect(merged?.role).toBe("user");
-    if (merged?.role !== "user") {
-      throw new Error("expected merged user turn");
-    }
+    const merged = mergeConsecutiveUserTurns(previous, current);
 
     expect(merged.timestamp).toBe(1000);
   });

@@ -45,7 +45,7 @@ export class SessionWriteLockStaleError extends Error {
 }
 
 /** Returns whether an error is a session write-lock timeout. */
-function isSessionWriteLockTimeoutError(err: unknown): boolean {
+export function isSessionWriteLockTimeoutError(err: unknown): boolean {
   return (
     err instanceof SessionWriteLockTimeoutError ||
     Boolean(
@@ -57,7 +57,7 @@ function isSessionWriteLockTimeoutError(err: unknown): boolean {
 }
 
 /** Returns whether an error is a stale session write-lock failure. */
-function isSessionWriteLockStaleError(err: unknown): boolean {
+export function isSessionWriteLockStaleError(err: unknown): boolean {
   return (
     err instanceof SessionWriteLockStaleError ||
     Boolean(

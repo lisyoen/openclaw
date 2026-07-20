@@ -4,6 +4,7 @@ import {
   createDiscordSupplementalContextAccessChecker,
   buildDiscordGroupSystemPrompt,
   buildDiscordInboundAccessContext,
+  buildDiscordUntrustedContext,
 } from "./inbound-context.js";
 
 describe("Discord inbound context helpers", () => {
@@ -54,11 +55,10 @@ describe("Discord inbound context helpers", () => {
 
   it("keeps direct helper behavior consistent", () => {
     expect(buildDiscordGroupSystemPrompt({ allowed: true, systemPrompt: "  hi  " })).toBe("hi");
-    const untrustedContext = buildDiscordInboundAccessContext({
-      sender: { id: "user-1" },
+    const untrustedContext = buildDiscordUntrustedContext({
       isGuild: true,
       channelTopic: "topic",
-    }).untrustedContext;
+    });
     expect(untrustedContext).toEqual([
       {
         label: "Discord channel metadata",

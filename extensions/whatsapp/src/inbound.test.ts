@@ -1,7 +1,11 @@
 // Whatsapp tests cover inbound plugin behavior.
 import { describe, expect, it } from "vitest";
-import { extractContactContext, extractLocationData, extractText } from "./inbound.js";
-import { extractExternalAdReplyContext, extractMediaKind } from "./inbound/extract.js";
+import {
+  extractContactContext,
+  extractLocationData,
+  extractMediaPlaceholder,
+  extractText,
+} from "./inbound.js";
 
 describe("web inbound helpers", () => {
   it("prefers the main conversation body", () => {
@@ -230,57 +234,17 @@ describe("web inbound helpers", () => {
     expect(body).toBe("hello");
   });
 
-  it("returns structured kinds for media-only payloads", () => {
+  it("returns placeholders for media-only payloads", () => {
     expect(
-      extractMediaKind({
+      extractMediaPlaceholder({
         imageMessage: {},
       } as unknown as import("baileys").proto.IMessage),
-    ).toBe("image");
+    ).toBe("<media:image>");
     expect(
-      extractMediaKind({
+      extractMediaPlaceholder({
         audioMessage: {},
       } as unknown as import("baileys").proto.IMessage),
-    ).toBe("audio");
-  });
-
-  it("maps GIF playback and ordinary videos to the video kind", () => {
-    expect(
-      extractMediaKind({
-        videoMessage: { gifPlayback: true },
-      } as unknown as import("baileys").proto.IMessage),
-    ).toBe("video");
-    expect(
-      extractMediaKind({
-        videoMessage: { gifPlayback: false },
-      } as unknown as import("baileys").proto.IMessage),
-    ).toBe("video");
-    expect(
-      extractMediaKind({
-        videoMessage: {},
-      } as unknown as import("baileys").proto.IMessage),
-    ).toBe("video");
-  });
-
-  it("keeps externalAdReply metadata out of the media kind", () => {
-    const message = {
-      videoMessage: {
-        gifPlayback: true,
-        contextInfo: {
-          externalAdReply: {
-            title: "This Is Fine",
-            sourceUrl: "https://giphy.com/gifs/this-is-fine-3o7TK",
-            body: "A dog in a burning room",
-          },
-        },
-      },
-    } as unknown as import("baileys").proto.IMessage;
-
-    expect(extractMediaKind(message)).toBe("video");
-    expect(extractExternalAdReplyContext(message)).toEqual({
-      title: "This Is Fine",
-      sourceUrl: "https://giphy.com/gifs/this-is-fine-3o7TK",
-      body: "A dog in a burning room",
-    });
+    ).toBe("<media:audio>");
   });
 
   it("extracts WhatsApp location messages", () => {

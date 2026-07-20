@@ -120,21 +120,18 @@ describe("channel-streaming", () => {
     ).toBe(false);
   });
 
-  it("resolves flat delivery keys when no nested streaming config exists", () => {
-    // Bundled channel schemas are nested-only. Flat delivery keys remain
-    // compatibility fallbacks for external SDK plugins; mode-family aliases
-    // are doctor-only and stay unread.
+  it("falls back to legacy flat fields when the canonical object is absent", () => {
     const entry = {
       chunkMode: "newline",
       blockStreaming: true,
       nativeStreaming: true,
       blockStreamingCoalesce: { minChars: 120, maxChars: 240, idleMs: 500 },
       draftChunk: { minChars: 8, maxChars: 16, breakPreference: "newline" },
-    } as never;
+    } as const;
 
     expect(getChannelStreamingConfigObject(entry)).toBeUndefined();
     expect(resolveChannelStreamingChunkMode(entry)).toBe("newline");
-    expect(resolveChannelStreamingNativeTransport(entry)).toBeUndefined();
+    expect(resolveChannelStreamingNativeTransport(entry)).toBe(true);
     expect(resolveChannelStreamingBlockEnabled(entry)).toBe(true);
     expect(resolveChannelStreamingBlockCoalesce(entry)).toEqual({
       minChars: 120,
@@ -237,7 +234,7 @@ describe("channel-streaming", () => {
   });
 
   it("uses auto progress labels when no explicit label is configured", () => {
-    expect(DEFAULT_PROGRESS_DRAFT_LABELS).toEqual(["Working"]);
+    expect(DEFAULT_PROGRESS_DRAFT_LABELS[0]).toBe("Working");
     expect(resolveChannelProgressDraftLabel({ random: () => 0 })).toBe(
       DEFAULT_PROGRESS_DRAFT_LABELS[0],
     );
@@ -436,14 +433,6 @@ describe("channel-streaming", () => {
     ).toBe("✍️ Write: /tmp/demo/style.css");
     expect(
       formatChannelProgressDraftLine({
-        event: "item",
-        itemKind: "status",
-        title: "Fast",
-        summary: "💨Fast: auto-off(75s>=60s)",
-      }),
-    ).toBe("💨Fast: auto-off(75s>=60s)");
-    expect(
-      formatChannelProgressDraftLine({
         event: "patch",
         modified: ["/tmp/demo/index.html", "/tmp/demo/style.css"],
       }),
@@ -565,101 +554,33 @@ describe("channel-streaming", () => {
     ).toBe("🛠️ Exec\n• Checking the app-server stream");
   });
 
-  it("keeps public command progress ids while replacing by command correlation", () => {
+  it("preserves stable ids on named tool and command-output progress lines", () => {
     const toolLine = buildChannelProgressDraftLine({
       event: "tool",
-      itemId: "tool:call-1",
+      itemId: "tool:item-1",
       toolCallId: "call-1",
       name: "bash",
       phase: "start",
     });
     const commandLine = buildChannelProgressDraftLine({
       event: "command-output",
-      itemId: "tool:call-1-output",
+      itemId: "command:item-1",
       toolCallId: "call-1",
       name: "bash",
       phase: "end",
       exitCode: 0,
     });
-    const itemLine = buildChannelProgressDraftLine({
-      event: "item",
-      itemId: "tool:call-1",
-      toolCallId: "call-1",
-      itemKind: "command",
-      name: "bash",
-      phase: "update",
-      progressText: "install dependencies",
-    });
 
-    expect(toolLine).toMatchObject({ id: "tool:call-1", kind: "tool", toolName: "bash" });
-    expect(itemLine).toMatchObject({ id: "tool:call-1", kind: "item", toolName: "bash" });
+    expect(toolLine).toMatchObject({ id: "tool:item-1", kind: "tool", toolName: "bash" });
     expect(commandLine).toMatchObject({
-      id: "tool:call-1-output",
+      id: "command:item-1",
       kind: "command-output",
       status: "completed",
       toolName: "bash",
     });
-
-    if (!toolLine || !itemLine || !commandLine) {
-      throw new Error("expected command progress lines");
-    }
-    const updated = [itemLine, commandLine].reduce(
-      (lines, line) => mergeChannelProgressDraftLine(lines, line, { maxLines: 4 }),
-      mergeChannelProgressDraftLine([], toolLine, { maxLines: 4 }),
-    );
-
-    expect(updated).toHaveLength(1);
-    expect(updated[0]).toMatchObject({
-      id: "tool:call-1-output",
-      kind: "command-output",
-      detail: "install dependencies",
-      status: "completed",
-      text: "🛠️ install dependencies",
-    });
-    expect(
-      formatChannelProgressDraftText({
-        lines: updated,
-        entry: { streaming: { progress: { label: false } } },
-      }),
-    ).toBe("🛠️ install dependencies");
-
-    const recoveredItemLine = buildChannelProgressDraftLine({
-      event: "item",
-      itemId: "command-2",
-      itemKind: "command",
-      name: "bash",
-      phase: "end",
-      status: "failed",
-      progressText: "install dependencies failed",
-    });
-    const recoveredCommandLine = buildChannelProgressDraftLine({
-      event: "command-output",
-      itemId: "command-2",
-      toolCallId: "call-2",
-      name: "bash",
-      phase: "end",
-      exitCode: 0,
-    });
-    if (!recoveredItemLine || !recoveredCommandLine) {
-      throw new Error("expected recovered command progress lines");
-    }
-    const recoveredUpdated = mergeChannelProgressDraftLine(
-      [recoveredItemLine],
-      recoveredCommandLine,
-      { maxLines: 4 },
-    );
-    expect(recoveredUpdated).toMatchObject([
-      {
-        id: "command-2",
-        kind: "command-output",
-        status: "completed",
-        text: "🛠️ Bash",
-      },
-    ]);
-    expect(recoveredUpdated[0]).not.toHaveProperty("detail");
   });
 
-  it("starts progress drafts after five seconds", async () => {
+  it("starts progress drafts after five seconds or a second work event", async () => {
     vi.useFakeTimers();
     const onStart = vi.fn(async () => {});
     const gate = createChannelProgressDraftGate({ onStart });
@@ -675,22 +596,17 @@ describe("channel-streaming", () => {
     expect(gate.hasStarted).toBe(true);
   });
 
-  it("does not start progress drafts before the delay after two rapid work events", async () => {
+  it("starts progress drafts immediately on the second work event", async () => {
     vi.useFakeTimers();
     const onStart = vi.fn(async () => {});
     const gate = createChannelProgressDraftGate({ onStart });
 
-    await expect(gate.noteWork()).resolves.toBe(false);
-    await expect(gate.noteWork()).resolves.toBe(false);
+    await gate.noteWork();
+    await expect(gate.noteWork()).resolves.toBe(true);
 
-    expect(gate.workEvents).toBe(2);
-    expect(onStart).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(4_999);
-    expect(onStart).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(1);
     expect(onStart).toHaveBeenCalledTimes(1);
-    expect(gate.hasStarted).toBe(true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(onStart).toHaveBeenCalledTimes(1);
   });
 
   it("does not report started when delayed progress startup rejects", async () => {
@@ -710,7 +626,7 @@ describe("channel-streaming", () => {
     expect(gate.hasStarted).toBe(false);
     expect(onStartError).toHaveBeenCalledWith(error);
 
-    await expect(gate.startNow()).resolves.toBeUndefined();
+    await expect(gate.noteWork()).resolves.toBe(true);
 
     expect(onStart).toHaveBeenCalledTimes(2);
     expect(gate.hasStarted).toBe(true);
@@ -728,7 +644,7 @@ describe("channel-streaming", () => {
     const gate = createChannelProgressDraftGate({ onStart });
 
     await gate.noteWork();
-    const firstStart = gate.startNow();
+    const firstStart = gate.noteWork();
     const secondStart = gate.startNow();
     await Promise.resolve();
 
@@ -736,7 +652,7 @@ describe("channel-streaming", () => {
     expect(gate.hasStarted).toBe(true);
 
     resolveStart?.();
-    await expect(firstStart).resolves.toBeUndefined();
+    await expect(firstStart).resolves.toBe(true);
     await expect(secondStart).resolves.toBeUndefined();
 
     expect(onStart).toHaveBeenCalledTimes(1);
@@ -755,7 +671,7 @@ describe("channel-streaming", () => {
     const gate = createChannelProgressDraftGate({ onStart });
 
     await gate.noteWork();
-    const startResult = gate.startNow();
+    const startResult = gate.noteWork();
     await Promise.resolve();
 
     expect(onStart).toHaveBeenCalledTimes(1);
@@ -763,7 +679,7 @@ describe("channel-streaming", () => {
 
     resolveStart?.();
 
-    await expect(startResult).resolves.toBeUndefined();
+    await expect(startResult).resolves.toBe(false);
     expect(gate.hasStarted).toBe(false);
   });
 

@@ -2,7 +2,11 @@
 // Computes approved runtime surfaces and pending pairing upgrades on reconnect.
 import type { ConnectParams } from "../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { normalizeNodeApprovalSurfaceList } from "../infra/node-pairing-surface.js";
+import {
+  normalizeNodeApprovalSurfaceList,
+  sameNodeApprovalSurfaceSet,
+  sameNodePermissionSurface,
+} from "../infra/node-pairing-surface.js";
 import type {
   NodePairingPairedNode,
   NodePairingRequestInput,
@@ -10,13 +14,14 @@ import type {
 } from "../infra/node-pairing.js";
 import {
   normalizeDeclaredNodeCommands,
+  resolveNodeCommandAllowlist,
   resolveNodePairingCommandAllowlist,
 } from "./node-command-policy.js";
 
 // Node connect reconciliation turns declared caps/commands/permissions into the
 // effective runtime surface. New or upgraded surfaces create a pending pairing
 // request while already-approved surfaces are intersected with the declaration.
-type NodeConnectPairingReconcileResult = {
+export type NodeConnectPairingReconcileResult = {
   nodeId: string;
   declaredCaps: string[];
   effectiveCaps: string[];
@@ -82,15 +87,6 @@ function intersectPermissionSurface(params: {
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function hasPermissionUpgrade(params: {
-  approved: Record<string, boolean> | undefined;
-  declared: Record<string, boolean> | undefined;
-}): boolean {
-  return Object.entries(params.declared ?? {}).some(
-    ([key, declaredValue]) => declaredValue && params.approved?.[key] !== true,
-  );
-}
-
 function buildNodePairingRequestInput(params: {
   nodeId: string;
   connectParams: ConnectParams;
@@ -98,7 +94,6 @@ function buildNodePairingRequestInput(params: {
   commands: string[];
   permissions?: Record<string, boolean>;
   remoteIp?: string;
-  silent?: boolean;
 }): NodePairingRequestInput {
   return {
     nodeId: params.nodeId,
@@ -111,7 +106,6 @@ function buildNodePairingRequestInput(params: {
     commands: params.commands,
     permissions: params.permissions,
     remoteIp: params.remoteIp,
-    ...(params.silent ? { silent: true } : {}),
   };
 }
 
@@ -121,12 +115,6 @@ export async function reconcileNodePairingOnConnect(params: {
   connectParams: ConnectParams;
   pairedNode: NodePairingPairedNode | null;
   reportedClientIp?: string;
-  /**
-   * Marks the first-surface capability request silent when device pairing was
-   * approved non-interactively; approval UIs may then auto-approve it (macOS
-   * SSH trust probe) instead of prompting. Upgrade requests stay interactive.
-   */
-  initialSurfaceSilent?: boolean;
   requestPairing: (input: NodePairingRequestInput) => Promise<RequestNodePairingResult | null>;
 }): Promise<NodeConnectPairingReconcileResult> {
   const nodeId = params.connectParams.device?.id ?? params.connectParams.client.id;
@@ -155,7 +143,6 @@ export async function reconcileNodePairingOnConnect(params: {
         commands: declared,
         permissions: declaredPermissions,
         remoteIp: params.reportedClientIp,
-        silent: params.initialSurfaceSilent,
       }),
     );
     if (!pendingPairing) {
@@ -173,25 +160,22 @@ export async function reconcileNodePairingOnConnect(params: {
     };
   }
 
-  // Approved commands reconcile against the pairing allowlist: an approved
-  // dangerous surface awaiting arming (e.g. computer.act without an
-  // allowCommands entry) must not read as a pairing upgrade on every
-  // reconnect. Invoke-time policy still gates every call on the runtime
-  // allowlist, so keeping it effective here grants nothing by itself.
+  const runtimeAllowlist = resolveNodeCommandAllowlist(params.cfg, {
+    ...policyNode,
+    approvedCommands: params.pairedNode.commands,
+  });
   const approvedCommands = resolveApprovedReconnectCommands({
     pairedCommands: params.pairedNode.commands,
-    allowlist: pairingAllowlist,
+    allowlist: runtimeAllowlist,
   });
   const approvedCaps = normalizeNodeApprovalSurfaceList(params.pairedNode.caps);
   const approvedPermissions = normalizePermissionMap(params.pairedNode.permissions);
   const hasCommandUpgrade = declared.some((command) => !approvedCommands.includes(command));
-  const hasCapabilityUpgrade = declaredCaps.some(
-    (capability) => !approvedCaps.includes(capability),
+  const hasCapabilityChange = !sameNodeApprovalSurfaceSet(params.pairedNode.caps, declaredCaps);
+  const hasPermissionChange = !sameNodePermissionSurface(
+    params.pairedNode.permissions,
+    declaredPermissions,
   );
-  const permissionUpgrade = hasPermissionUpgrade({
-    approved: approvedPermissions,
-    declared: declaredPermissions,
-  });
   const effectiveApprovedDeclaredCaps = intersectApprovalSurfaceList({
     approved: approvedCaps,
     declared: declaredCaps,
@@ -205,16 +189,16 @@ export async function reconcileNodePairingOnConnect(params: {
     declared: declaredPermissions,
   });
 
-  // Availability and permission loss only narrow the live surface. Reapproval
-  // is required when a reconnect widens authority beyond the durable approval.
-  if (hasCommandUpgrade || hasCapabilityUpgrade || permissionUpgrade) {
+  // A reconnect may use only the intersection of old approval and new
+  // declaration until the upgraded caps/commands/permissions are approved.
+  if (hasCommandUpgrade || hasCapabilityChange || hasPermissionChange) {
     const pendingPairing = await params.requestPairing(
       buildNodePairingRequestInput({
         nodeId,
         connectParams: params.connectParams,
         caps: declaredCaps,
         commands: declared,
-        permissions: declaredPermissions ?? (permissionUpgrade ? {} : undefined),
+        permissions: declaredPermissions ?? (hasPermissionChange ? {} : undefined),
         remoteIp: params.reportedClientIp,
       }),
     );

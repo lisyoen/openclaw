@@ -359,7 +359,8 @@ describe("diagnostic memory", () => {
         }),
         expect.objectContaining({
           level: "WARN",
-          message: "critical memory pressure snapshot disabled",
+          message:
+            "critical memory pressure snapshot disabled: diagnostics.memoryPressureSnapshot=false",
           attributes: expect.objectContaining({
             subsystem: "gateway/diagnostics/memory",
           }),

@@ -3,7 +3,7 @@ import { type ParseError, parseTree, printParseErrorCode } from "jsonc-parser/li
 import type { Diagnostic } from "../ast.js";
 import type { JsoncAst, JsoncEntry, JsoncValue } from "./ast.js";
 
-const MAX_PARSE_DEPTH = 256;
+export const MAX_PARSE_DEPTH = 256;
 
 /**
  * Hard cap on jsonc input size. `parseTree` is iterative and stack-safe
@@ -19,11 +19,11 @@ const MAX_PARSE_DEPTH = 256;
  * by patching this constant — no SDK affordance because it isn't a
  * supported configuration.
  */
-const MAX_JSONC_INPUT_BYTES = 16 * 1024 * 1024;
+export const MAX_JSONC_INPUT_BYTES = 16 * 1024 * 1024;
 const JSONC_PARSE_INVALID_SYMBOL = 1;
 const JSONC_PARSE_END_OF_FILE_EXPECTED = 9;
 
-interface JsoncParseResult {
+export interface JsoncParseResult {
   readonly ast: JsoncAst;
   readonly diagnostics: readonly Diagnostic[];
 }
@@ -41,27 +41,26 @@ type JsoncParserNode = {
 };
 
 export function parseJsonc(raw: string): JsoncParseResult {
+  if (raw.trim().length === 0) {
+    return { ast: { kind: "jsonc", raw, root: null }, diagnostics: [] };
+  }
+
   // Pre-parse byte-length cap. Symmetric with the post-parse depth cap
   // at `nodeToJsoncValue`. Without this, `parseTree` would allocate the
   // full tree before our walker noticed; bounding at the source keeps
   // memory pressure proportional to input size.
-  const inputBytes = Buffer.byteLength(raw, "utf8");
-  if (inputBytes > MAX_JSONC_INPUT_BYTES) {
+  if (raw.length > MAX_JSONC_INPUT_BYTES) {
     return {
       ast: { kind: "jsonc", raw, root: null },
       diagnostics: [
         {
           line: 1,
-          message: `input exceeds MAX_JSONC_INPUT_BYTES (${MAX_JSONC_INPUT_BYTES} bytes; got ${inputBytes})`,
+          message: `input exceeds MAX_JSONC_INPUT_BYTES (${MAX_JSONC_INPUT_BYTES} bytes; got ${raw.length})`,
           severity: "error",
           code: "OC_JSONC_INPUT_TOO_LARGE",
         },
       ],
     };
-  }
-
-  if (raw.trim().length === 0) {
-    return { ast: { kind: "jsonc", raw, root: null }, diagnostics: [] };
   }
 
   const parseSource = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
@@ -186,3 +185,5 @@ function createLineMap(raw: string): LineMap {
     },
   };
 }
+
+export type { Diagnostic };

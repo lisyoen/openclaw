@@ -12,7 +12,6 @@ export {
   readSlackMessages,
   removeOwnSlackReactions,
   removeSlackReaction,
-  resolveSlackConversationName,
   sendSlackMessage,
   unpinSlackMessage,
 } from "./actions.js";

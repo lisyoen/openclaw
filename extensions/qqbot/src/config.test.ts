@@ -13,15 +13,7 @@ import {
   resolveQQBotAccount,
 } from "./bridge/config.js";
 import { qqbotSetupPlugin } from "./channel.setup.js";
-import { qqbotChannelConfigSchema } from "./config-schema.js";
-
-function requireRuntimeSchema() {
-  const runtimeSchema = qqbotChannelConfigSchema.runtime;
-  if (!runtimeSchema) {
-    throw new Error("expected QQBot runtime config schema");
-  }
-  return runtimeSchema;
-}
+import { QQBotConfigSchema } from "./config-schema.js";
 import { makeQqbotDefaultAccountConfig, makeQqbotSecretRefConfig } from "./qqbot-test-support.js";
 
 function requireQQBotSetup() {
@@ -32,15 +24,6 @@ function requireQQBotSetup() {
 }
 
 describe("qqbot config", () => {
-  it("rejects pairing because QQBot has no pairing flow", () => {
-    expect(requireRuntimeSchema().safeParse({ dmPolicy: "pairing" })).toMatchObject({
-      success: false,
-    });
-    expect(
-      requireRuntimeSchema().safeParse({ accounts: { work: { dmPolicy: "pairing" } } }),
-    ).toMatchObject({ success: false });
-  });
-
   it("accepts top-level speech overrides in the manifest schema", () => {
     const manifest = JSON.parse(
       fs.readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf-8"),
@@ -101,7 +84,7 @@ describe("qqbot config", () => {
   });
 
   it("accepts SecretRef-backed credentials in the runtime schema", () => {
-    const parsed = requireRuntimeSchema().safeParse({
+    const parsed = QQBotConfigSchema.safeParse({
       defaultAccount: "bot2",
       appId: "123456",
       clientSecret: {
@@ -135,7 +118,7 @@ describe("qqbot config", () => {
   });
 
   it("accepts account-level speech overrides as forward-compatible config", () => {
-    const parsed = requireRuntimeSchema().safeParse({
+    const parsed = QQBotConfigSchema.safeParse({
       accounts: {
         bot2: {
           appId: "654321",
@@ -150,11 +133,10 @@ describe("qqbot config", () => {
   });
 
   it("accepts canonical group tools config", () => {
-    const parsed = requireRuntimeSchema().safeParse({
+    const parsed = QQBotConfigSchema.safeParse({
       groups: {
         G1: {
           requireMention: true,
-          commandLevel: "safety",
           tools: { deny: ["*"] },
           toolsBySender: {
             "id:alice": { allow: ["read"] },
@@ -164,7 +146,7 @@ describe("qqbot config", () => {
       accounts: {
         bot2: {
           groups: {
-            G1: { commandLevel: "strict", tools: { allow: [] } },
+            G1: { tools: { allow: [] } },
           },
         },
       },
@@ -174,7 +156,7 @@ describe("qqbot config", () => {
   });
 
   it("rejects retired group toolPolicy config", () => {
-    const parsed = requireRuntimeSchema().safeParse({
+    const parsed = QQBotConfigSchema.safeParse({
       groups: {
         G1: {
           toolPolicy: "none",

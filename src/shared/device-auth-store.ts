@@ -9,7 +9,7 @@ import {
 export type { DeviceAuthEntry, DeviceAuthStore } from "./device-auth.js";
 
 /** Storage seam used by shared device-auth helpers and filesystem-backed infra wrappers. */
-type DeviceAuthStoreAdapter = {
+export type DeviceAuthStoreAdapter = {
   readStore: () => DeviceAuthStore | null;
   writeStore: (store: DeviceAuthStore) => void;
 };

@@ -9,7 +9,7 @@ import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/s
  */
 
 /** Accepted string literals for boolean parsing beyond actual booleans. */
-type BooleanParseOptions = {
+export type BooleanParseOptions = {
   /** Lowercase string values that should parse as true. */
   truthy?: string[];
   /** Lowercase string values that should parse as false. */

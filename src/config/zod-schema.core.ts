@@ -11,6 +11,7 @@ import {
 } from "../secrets/ref-contract.js";
 import type { ModelCompatConfig } from "./types.models.js";
 import { MODEL_APIS, MODEL_THINKING_FORMATS } from "./types.models.js";
+import type { MediaToolsConfig } from "./types.tools.js";
 import { createAllowDenyChannelRulesSchema } from "./zod-schema.allowdeny.js";
 import { sensitive } from "./zod-schema.sensitive.js";
 
@@ -189,20 +190,24 @@ export const SecretsConfigSchema = z
       })
       .strict()
       .optional(),
+    resolution: z
+      .object({
+        maxProviderConcurrency: z.number().int().positive().max(16).optional(),
+        maxRefsPerProvider: z.number().int().positive().max(4096).optional(),
+        maxBatchBytes: z
+          .number()
+          .int()
+          .positive()
+          .max(5 * 1024 * 1024)
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .optional();
 
-const LEGACY_OPENAI_CODEX_RESPONSES_API = "openai-codex-responses";
-const OPENAI_CHATGPT_RESPONSES_API =
-  "openai-chatgpt-responses" satisfies (typeof MODEL_APIS)[number];
-
-const ModelApiSchema = z.enum(MODEL_APIS, {
-  error: (issue) =>
-    issue.input === LEGACY_OPENAI_CODEX_RESPONSES_API
-      ? `"${LEGACY_OPENAI_CODEX_RESPONSES_API}" is a removed api id; use "${OPENAI_CHATGPT_RESPONSES_API}"`
-      : undefined,
-});
+const ModelApiSchema = z.enum(MODEL_APIS);
 
 const ModelCompatSchema = z
   .object({
@@ -210,7 +215,6 @@ const ModelCompatSchema = z
     supportsPromptCacheKey: z.boolean().optional(),
     supportsDeveloperRole: z.boolean().optional(),
     supportsReasoningEffort: z.boolean().optional(),
-    supportsTemperature: z.boolean().optional(),
     supportsUsageInStreaming: z.boolean().optional(),
     supportsTools: z.boolean().optional(),
     supportsStrictMode: z.boolean().optional(),
@@ -236,12 +240,17 @@ const ModelCompatSchema = z
   })
   .strict()
   .optional();
-type AssertAssignable<_Left extends _Right, _Right> = true;
-const modelCompatSchemaContract: [
-  AssertAssignable<z.infer<typeof ModelCompatSchema>, ModelCompatConfig | undefined>,
-  AssertAssignable<ModelCompatConfig | undefined, z.infer<typeof ModelCompatSchema>>,
-] = [] as never;
-void modelCompatSchemaContract;
+
+type AssertAssignable<_T extends U, U> = true;
+export type _ModelCompatSchemaAssignableToType = AssertAssignable<
+  z.infer<typeof ModelCompatSchema>,
+  ModelCompatConfig | undefined
+>;
+export type _ModelCompatTypeAssignableToSchema = AssertAssignable<
+  ModelCompatConfig | undefined,
+  z.infer<typeof ModelCompatSchema>
+>;
+
 const ConfiguredProviderRequestTlsSchema = z
   .object({
     ca: SecretInputSchema.optional().register(sensitive),
@@ -420,13 +429,10 @@ const BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS = new Set([
   "anthropic",
   "anthropic-vertex",
   "arcee",
-  "azure-openai-responses",
   "byteplus",
   "byteplus-plan",
   "cerebras",
   "chutes",
-  "claude-cli",
-  "clawrouter",
   "cloudflare-ai-gateway",
   "codex",
   "comfy",
@@ -437,9 +443,6 @@ const BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS = new Set([
   "fal",
   "fireworks",
   "github-copilot",
-  "gmi",
-  "gmi-cloud",
-  "gmicloud",
   "google",
   "google-antigravity",
   "google-gemini-cli",
@@ -451,35 +454,27 @@ const BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS = new Set([
   "kimi-coding",
   "litellm",
   "lmstudio",
-  "meta",
   "microsoft-foundry",
   "minimax",
   "minimax-portal",
   "mistral",
   "modelstudio",
   "moonshot",
-  "moonshot-ai",
-  "moonshotai",
   "nvidia",
-  "novita",
-  "novita-ai",
-  "novitaai",
   "ollama",
-  "ollama-cloud",
+  "openai",
   "openai",
   "opencode",
   "opencode-go",
   "openrouter",
   "qianfan",
   "qwen",
-  "qwen-token-plan",
   "qwencloud",
   "sglang",
   "stepfun",
   "stepfun-plan",
   "synthetic",
   "tencent-tokenhub",
-  "tencent-tokenplan",
   "together",
   "venice",
   "vercel-ai-gateway",
@@ -487,12 +482,9 @@ const BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS = new Set([
   "volcengine",
   "volcengine-plan",
   "vydra",
-  "x-ai",
   "xai",
   "xiaomi",
   "xiaomi-token-plan",
-  "z.ai",
-  "z-ai",
   "zai",
 ]);
 
@@ -581,7 +573,7 @@ export const VisibleRepliesSchema = z
     return value;
   });
 
-const MentionPatternsModeSchema = z.union([z.literal("allow"), z.literal("deny")]);
+export const MentionPatternsModeSchema = z.union([z.literal("allow"), z.literal("deny")]);
 
 export const MentionPatternsPolicySchema = z
   .object({
@@ -654,30 +646,15 @@ export const BlockStreamingCoalesceSchema = z
   })
   .strict();
 
-export const TextChunkModeSchema = z.enum(["length", "newline"]);
-
-export const ChannelStreamingBlockSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    coalesce: BlockStreamingCoalesceSchema.optional(),
-  })
-  .strict();
-
-/** Delivery-only nested streaming config for channels without preview modes. */
-export const ChannelDeliveryStreamingConfigSchema = z
-  .object({
-    chunkMode: TextChunkModeSchema.optional(),
-    block: ChannelStreamingBlockSchema.optional(),
-  })
-  .strict();
-
 export const ReplyRuntimeConfigSchemaShape = {
   historyLimit: z.number().int().min(0).optional(),
   dmHistoryLimit: z.number().int().min(0).optional(),
   contextVisibility: ContextVisibilityModeSchema.optional(),
   dms: z.record(z.string(), DmConfigSchema.optional()).optional(),
   textChunkLimit: z.number().int().positive().optional(),
-  streaming: ChannelDeliveryStreamingConfigSchema.optional(),
+  chunkMode: z.enum(["length", "newline"]).optional(),
+  blockStreaming: z.boolean().optional(),
+  blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
   responsePrefix: z.string().optional(),
   mediaMaxMb: z.number().positive().optional(),
 };
@@ -692,7 +669,7 @@ export const BlockStreamingChunkSchema = z
   })
   .strict();
 
-const MarkdownTableModeSchema = z.enum(["off", "bullets", "code", "block"]);
+export const MarkdownTableModeSchema = z.enum(["off", "bullets", "code", "block"]);
 
 export const MarkdownConfigSchema = z
   .object({
@@ -781,9 +758,23 @@ export const HumanDelaySchema = z
 
 const CliBackendWatchdogModeSchema = z
   .object({
+    noOutputTimeoutMs: z.number().int().min(1000).optional(),
     noOutputTimeoutRatio: z.number().min(0.05).max(0.95).optional(),
     minMs: z.number().int().min(1000).optional(),
     maxMs: z.number().int().min(1000).optional(),
+  })
+  .strict()
+  .optional();
+
+const CliBackendOutputLimitsSchema = z
+  .object({
+    maxTurnRawChars: z
+      .number()
+      .int()
+      .min(1024)
+      .max(64 * 1024 * 1024)
+      .optional(),
+    maxTurnLines: z.number().int().min(100).max(100_000).optional(),
   })
   .strict()
   .optional();
@@ -794,9 +785,7 @@ export const CliBackendSchema = z
     args: z.array(z.string()).optional(),
     output: z.union([z.literal("json"), z.literal("text"), z.literal("jsonl")]).optional(),
     resumeOutput: z.union([z.literal("json"), z.literal("text"), z.literal("jsonl")]).optional(),
-    jsonlDialect: z
-      .union([z.literal("claude-stream-json"), z.literal("gemini-stream-json")])
-      .optional(),
+    jsonlDialect: z.literal("claude-stream-json").optional(),
     liveSession: z.literal("claude-stdio").optional(),
     input: z.union([z.literal("arg"), z.literal("stdin")]).optional(),
     maxPromptArgChars: z.number().int().positive().optional(),
@@ -807,7 +796,6 @@ export const CliBackendSchema = z
     sessionArg: z.string().optional(),
     sessionArgs: z.array(z.string()).optional(),
     resumeArgs: z.array(z.string()).optional(),
-    forkArg: z.string().optional(),
     sessionMode: z
       .union([z.literal("always"), z.literal("existing"), z.literal("none")])
       .optional(),
@@ -827,6 +815,7 @@ export const CliBackendSchema = z
     reseedFromRawTranscriptWhenUncompacted: z.boolean().optional(),
     reliability: z
       .object({
+        outputLimits: CliBackendOutputLimitsSchema,
         watchdog: z
           .object({
             fresh: CliBackendWatchdogModeSchema,
@@ -840,33 +829,8 @@ export const CliBackendSchema = z
   })
   .strict();
 
-const normalizeAllowFrom = (values?: Array<string | number>): string[] =>
+export const normalizeAllowFrom = (values?: Array<string | number>): string[] =>
   normalizeStringEntries(values);
-
-/**
- * Closed set of sender-policy/allowFrom dependency violations. Both cases drop
- * every inbound DM at runtime, so callers surface them as config problems.
- */
-export type DmPolicyAllowFromViolation = "open_requires_wildcard" | "allowlist_requires_entries";
-
-/**
- * Canonical cross-field check for dmPolicy vs allowFrom. This is the single
- * source of truth shared by the Zod schema refinements and the CLI config
- * validator so the rule cannot drift between the two surfaces.
- */
-export const evaluateDmPolicyAllowFromDependency = (params: {
-  policy?: string;
-  allowFrom?: Array<string | number>;
-}): DmPolicyAllowFromViolation | null => {
-  const allow = normalizeAllowFrom(params.allowFrom);
-  if (params.policy === "open" && !allow.includes("*")) {
-    return "open_requires_wildcard";
-  }
-  if (params.policy === "allowlist" && allow.length === 0) {
-    return "allowlist_requires_entries";
-  }
-  return null;
-};
 
 export const requireOpenAllowFrom = (params: {
   policy?: string;
@@ -875,10 +839,11 @@ export const requireOpenAllowFrom = (params: {
   path: Array<string | number>;
   message: string;
 }) => {
-  if (
-    evaluateDmPolicyAllowFromDependency({ policy: params.policy, allowFrom: params.allowFrom }) !==
-    "open_requires_wildcard"
-  ) {
+  if (params.policy !== "open") {
+    return;
+  }
+  const allow = normalizeAllowFrom(params.allowFrom);
+  if (allow.includes("*")) {
     return;
   }
   params.ctx.addIssue({
@@ -900,10 +865,11 @@ export const requireAllowlistAllowFrom = (params: {
   path: Array<string | number>;
   message: string;
 }) => {
-  if (
-    evaluateDmPolicyAllowFromDependency({ policy: params.policy, allowFrom: params.allowFrom }) !==
-    "allowlist_requires_entries"
-  ) {
+  if (params.policy !== "allowlist") {
+    return;
+  }
+  const allow = normalizeAllowFrom(params.allowFrom);
+  if (allow.length > 0) {
     return;
   }
   params.ctx.addIssue({
@@ -914,6 +880,16 @@ export const requireAllowlistAllowFrom = (params: {
 };
 
 export const MSTeamsReplyStyleSchema = z.enum(["thread", "top-level"]);
+
+export const RetryConfigSchema = z
+  .object({
+    attempts: z.number().int().min(1).optional(),
+    minDelayMs: z.number().int().min(0).optional(),
+    maxDelayMs: z.number().int().min(0).optional(),
+    jitter: z.number().min(0).max(1).optional(),
+  })
+  .strict()
+  .optional();
 
 const QueueModeBySurfaceSchema = z
   .object({
@@ -939,6 +915,7 @@ export const QueueSchema = z
   .object({
     mode: QueueModeSchema.optional(),
     byChannel: QueueModeBySurfaceSchema,
+    debounceMs: z.number().int().nonnegative().optional(),
     debounceMsByChannel: DebounceMsBySurfaceSchema,
     cap: z.number().int().positive().optional(),
     drop: QueueDropSchema.optional(),
@@ -950,6 +927,23 @@ export const InboundDebounceSchema = z
   .object({
     debounceMs: z.number().int().nonnegative().optional(),
     byChannel: DebounceMsBySurfaceSchema,
+  })
+  .strict()
+  .optional();
+
+export const TranscribeAudioSchema = z
+  .object({
+    command: z.array(z.string()).superRefine((value, ctx) => {
+      const executable = value[0];
+      if (!isSafeExecutableValue(executable)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [0],
+          message: "expected safe executable name or path",
+        });
+      }
+    }),
+    timeoutSeconds: z.number().int().positive().optional(),
   })
   .strict()
   .optional();
@@ -977,6 +971,15 @@ const MediaUnderstandingAttachmentsSchema = z
   .strict()
   .optional();
 
+const DeepgramAudioSchema = z
+  .object({
+    detectLanguage: z.boolean().optional(),
+    punctuate: z.boolean().optional(),
+    smartFormat: z.boolean().optional(),
+  })
+  .strict()
+  .optional();
+
 const ProviderOptionValueSchema = z.union([z.string(), z.number(), z.boolean()]);
 const ProviderOptionsSchema = z
   .record(z.string(), z.record(z.string(), ProviderOptionValueSchema))
@@ -987,6 +990,7 @@ const MediaUnderstandingRuntimeFields = {
   timeoutSeconds: z.number().int().positive().optional(),
   language: z.string().optional(),
   providerOptions: ProviderOptionsSchema,
+  deepgram: DeepgramAudioSchema,
   baseUrl: z.string().optional(),
   headers: z.record(z.string(), z.string()).optional(),
   request: ConfiguredProviderRequestSchema,
@@ -1028,12 +1032,29 @@ export const ToolsMediaSchema = z
   .object({
     models: z.array(MediaUnderstandingModelSchema).optional(),
     concurrency: z.number().int().positive().optional(),
+    asyncCompletion: z
+      .object({
+        directSend: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     image: ToolsMediaUnderstandingSchema.optional(),
     audio: ToolsMediaUnderstandingSchema.optional(),
     video: ToolsMediaUnderstandingSchema.optional(),
   })
   .strict()
   .optional();
+
+type ToolsMediaConfigFromSchema = NonNullable<z.infer<typeof ToolsMediaSchema>>;
+export type _ToolsMediaAsyncCompletionSchemaAssignableToType = AssertAssignable<
+  ToolsMediaConfigFromSchema["asyncCompletion"],
+  MediaToolsConfig["asyncCompletion"]
+>;
+export type _ToolsMediaAsyncCompletionTypeAssignableToSchema = AssertAssignable<
+  MediaToolsConfig["asyncCompletion"],
+  ToolsMediaConfigFromSchema["asyncCompletion"]
+>;
+
 const LinkModelSchema = z
   .object({
     type: z.literal("cli").optional(),
@@ -1063,4 +1084,3 @@ export const ProviderCommandsSchema = z
   })
   .strict()
   .optional();
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

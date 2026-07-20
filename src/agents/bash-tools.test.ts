@@ -3,11 +3,13 @@
  * Exercises exec and process behavior through the shared exported tool factory.
  */
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { drainFormattedSystemEvents } from "../auto-reply/reply/session-system-events.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { requestHeartbeat, setHeartbeatWakeHandler } from "../infra/heartbeat-wake.js";
+import {
+  resetHeartbeatWakeStateForTests,
+  setHeartbeatWakeHandler,
+} from "../infra/heartbeat-wake.js";
 import { applyPathPrepend, findPathKey } from "../infra/path-prepend.js";
 import {
   peekSystemEventEntries,
@@ -21,11 +23,11 @@ import {
   getFinishedSession,
   markBackgrounded,
   markExited,
+  resetProcessRegistryForTests,
   type ProcessSession,
 } from "./bash-process-registry.js";
-import { resetProcessRegistryForTests } from "./bash-process-registry.test-support.js";
 import { createExecTool, createProcessTool } from "./bash-tools.js";
-import { getBashShellConfig, sanitizeBinaryOutput } from "./shell-utils.js";
+import { resolveShellFromPath, sanitizeBinaryOutput } from "./shell-utils.js";
 
 vi.mock("../infra/channel-summary.js", () => ({
   buildChannelSummary: vi.fn(async () => []),
@@ -78,6 +80,7 @@ vi.mock("../utils/delivery-context.js", () => ({
 }));
 
 vi.mock("./bash-tools.exec-approval-followup.js", () => ({
+  buildExecApprovalFollowupPrompt: (text: string) => text,
   sendExecApprovalFollowup: vi.fn(async () => false),
 }));
 
@@ -231,6 +234,7 @@ vi.mock("../process/supervisor/index.js", () => {
       },
       cancel: vi.fn(),
       cancelScope: vi.fn(),
+      reconcileOrphans: vi.fn(),
       getRecord: vi.fn(),
     }),
   };
@@ -239,7 +243,7 @@ vi.mock("../process/supervisor/index.js", () => {
 const isWin = process.platform === "win32";
 const defaultShell = isWin
   ? undefined
-  : process.env.OPENCLAW_TEST_SHELL || getBashShellConfig().shell;
+  : process.env.OPENCLAW_TEST_SHELL || resolveShellFromPath("bash") || process.env.SHELL || "sh";
 // PowerShell: Start-Sleep for delays, ; for command separation, $null for null device
 const shortDelayCmd = isWin ? "Start-Sleep -Milliseconds 4" : "sleep 0.004";
 const POLL_INTERVAL_MS = isWin ? 15 : 2;
@@ -302,6 +306,7 @@ const createNotifyOnExitExecTool = (overrides: Partial<ExecToolConfig> = {}) =>
     allowBackground: true,
     backgroundMs: 0,
     notifyOnExit: true,
+    notifyOnExitEmptySuccess: true,
     sessionKey: DEFAULT_NOTIFY_SESSION_KEY,
     ...overrides,
   });
@@ -522,26 +527,12 @@ type DisallowedElevationCase = LabeledCase & {
   expectedOutputIncludes?: string;
 };
 type NotifyNoopCase = LabeledCase & {
-  defaults?: Partial<ExecToolConfig>;
-  expectNotification: boolean;
+  notifyOnExitEmptySuccess: boolean;
 };
 const NOOP_NOTIFY_CASES: NotifyNoopCase[] = [
-  withLabel("default behavior skips no-op completion events", { expectNotification: false }),
-  withLabel("chat providers default no-op completion notifications on", {
-    defaults: { messageProvider: " Telegram " },
-    expectNotification: true,
-  }),
-  withLabel("explicit false keeps chat provider no-op completions silent", {
-    defaults: { messageProvider: "telegram", notifyOnExitEmptySuccess: false },
-    expectNotification: false,
-  }),
-  withLabel("generic providers keep no-op completions silent by default", {
-    defaults: { messageProvider: "generic" },
-    expectNotification: false,
-  }),
+  withLabel("default behavior skips no-op completion events", { notifyOnExitEmptySuccess: false }),
   withLabel("explicitly enabling no-op completion emits completion events", {
-    defaults: { notifyOnExitEmptySuccess: true },
-    expectNotification: true,
+    notifyOnExitEmptySuccess: true,
   }),
 ];
 const DISALLOWED_ELEVATION_CASES: DisallowedElevationCase[] = [
@@ -591,11 +582,11 @@ const LONG_LOG_EXPECTATION_CASES: LongLogExpectationCase[] = [
 ];
 const expectNotifyNoopEvents = (
   events: string[],
-  expectNotification: boolean,
+  notifyOnExitEmptySuccess: boolean,
   sessionId: string,
   label: string,
 ) => {
-  if (!expectNotification) {
+  if (!notifyOnExitEmptySuccess) {
     expect(events, label).toStrictEqual([]);
     return;
   }
@@ -691,13 +682,13 @@ const runLongLogExpectationCase = async ({
   expectTextContainsValues(snapshot.text, mustContain, true);
   expectTextContainsValues(snapshot.text, mustNotContain, false);
 };
-const runNotifyNoopCase = async ({ label, defaults, expectNotification }: NotifyNoopCase) => {
-  const tool = createNotifyOnExitExecTool(defaults);
+const runNotifyNoopCase = async ({ label, notifyOnExitEmptySuccess }: NotifyNoopCase) => {
+  const tool = createNotifyOnExitExecTool({ notifyOnExitEmptySuccess });
 
   const { sessionId, status } = await runBackgroundCommandToCompletion(tool, COMMAND_NOOP);
   expect(status).toBe(PROCESS_STATUS_COMPLETED);
   const events = peekSystemEvents(DEFAULT_NOTIFY_SESSION_KEY);
-  expectNotifyNoopEvents(events, expectNotification, sessionId, label);
+  expectNotifyNoopEvents(events, notifyOnExitEmptySuccess, sessionId, label);
 };
 
 describe("tool descriptions", () => {
@@ -706,21 +697,29 @@ describe("tool descriptions", () => {
     const processWithCron = createProcessTool({ hasCronTool: true });
 
     expect(execWithCron.description).toContain(
-      "automatic completion wake when enabled and output/failure occurs; otherwise process confirms completion",
-    );
-    expect(processWithCron.description).toContain("completion without auto-wake");
-    expect(processWithCron.description).toContain("write, send-keys, submit, paste, kill");
-    expect(execWithCron.description).toContain(
-      "No sleep/delay loops for reminders/follow-ups; use cron.",
+      "rely on automatic completion wake when it is enabled and the command emits output or fails; otherwise use process to confirm completion. Use process whenever you need logs, status, input, or intervention.",
     );
     expect(processWithCron.description).toContain(
-      "No polling as timer/reminder; scheduled follow-up uses cron.",
+      "completion confirmation when automatic completion wake is unavailable.",
+    );
+    expect(processWithCron.description).toContain(
+      "Use write/send-keys/submit/paste/kill for input or intervention.",
+    );
+    expect(execWithCron.description).toContain(
+      "Do not use exec sleep or delay loops for reminders or deferred follow-ups; use cron instead.",
+    );
+    expect(processWithCron.description).toContain(
+      "Do not use process polling to emulate timers or reminders; use cron for scheduled follow-ups.",
     );
     expect(execTool.description).not.toContain("use cron instead");
     expect(processTool.description).not.toContain("scheduled follow-ups");
-    expect(execTool.description).toContain("otherwise process confirms completion");
-    expect(processTool.description).toContain("completion without auto-wake");
-    expect(processTool.description).toContain("write, send-keys, submit, paste, kill");
+    expect(execTool.description).toContain("otherwise use process to confirm completion");
+    expect(processTool.description).toContain(
+      "completion confirmation when automatic completion wake is unavailable",
+    );
+    expect(processTool.description).toContain(
+      "Use write/send-keys/submit/paste/kill for input or intervention.",
+    );
   });
 });
 
@@ -817,25 +816,13 @@ describe("exec exit codes", () => {
 describe("exec notifyOnExit", () => {
   useCapturedEnv([...SHELL_ENV_KEYS], applyDefaultShellEnv);
 
-  async function drainPendingHeartbeatWakes(): Promise<void> {
-    const handler = vi.fn(async () => ({ status: "ran" as const, durationMs: 0 }));
-    const dispose = setHeartbeatWakeHandler(handler);
-    try {
-      requestHeartbeat({
-        source: "other",
-        intent: "immediate",
-        reason: "test-cleanup",
-        coalesceMs: 0,
-      });
-      await expect.poll(() => handler.mock.calls.length, NOTIFY_POLL_OPTIONS).toBeGreaterThan(0);
-    } finally {
-      dispose();
-    }
-  }
+  beforeEach(() => {
+    resetHeartbeatWakeStateForTests();
+  });
 
-  beforeEach(drainPendingHeartbeatWakes);
-
-  afterEach(drainPendingHeartbeatWakes);
+  afterEach(() => {
+    resetHeartbeatWakeStateForTests();
+  });
 
   it("enqueues a system event when a backgrounded exec exits", async () => {
     const tool = createNotifyOnExitExecTool();
@@ -916,9 +903,7 @@ describe("exec PATH handling", () => {
       expect(index).toBeGreaterThanOrEqual(0);
     }
     for (let i = 1; i < prependIndexes.length; i += 1) {
-      expect(prependIndexes[i]).toBeGreaterThan(
-        expectDefined(prependIndexes[i - 1], "prependIndexes[i - 1] test invariant"),
-      );
+      expect(prependIndexes[i]).toBeGreaterThan(prependIndexes[i - 1]);
     }
     const baseIndex = entries.indexOf(basePath);
     expect(baseIndex).toBeGreaterThanOrEqual(0);
@@ -983,7 +968,7 @@ describe("applyPathPrepend with case-insensitive PATH key", () => {
     const existingPath = existing.join(delim);
     const env: Record<string, string> = { Path: existingPath };
     applyPathPrepend(env, prepend);
-    const parts = expectDefined(env.Path, "env.Path test invariant").split(delim);
+    const parts = env.Path.split(delim);
     expect(parts[0]).toBe(prepend[0]);
     for (const entry of existing) {
       expect(parts).toContain(entry);
@@ -1083,20 +1068,23 @@ describe("exec backgrounded onUpdate suppression", () => {
   it(
     "suppresses onUpdate after abort signal fires",
     async () => {
+      const onUpdateSpy = vi.fn();
       const abortController = new AbortController();
-      const onUpdateSpy = vi.fn(() => abortController.abort());
       // Run a command that produces output over time.
       const command = joinCommands([
         shellEcho("before-abort"),
         shortDelayCmd,
         shellEcho("after-abort"),
       ]);
+      // Abort almost immediately so the signal fires while the command
+      // is still producing output.
+      setImmediate(() => abortController.abort());
       await execTool.execute(nextCallId(), { command }, abortController.signal, onUpdateSpy);
-      expect(onUpdateSpy).toHaveBeenCalledTimes(1);
+      const callsAtAbort = onUpdateSpy.mock.calls.length;
       // Allow a tick for any straggling stdout data events.
       await waitOneTurn();
       // After abort, no new onUpdate calls should have been made.
-      expect(onUpdateSpy).toHaveBeenCalledTimes(1);
+      expect(onUpdateSpy.mock.calls.length).toBe(callsAtAbort);
     },
     isWin ? 10_000 : 5_000,
   );

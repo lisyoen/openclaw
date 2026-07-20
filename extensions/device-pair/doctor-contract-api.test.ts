@@ -2,7 +2,6 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import {
   createPluginStateKeyedStoreForTests,
   resetPluginStateStoreForTests,
@@ -74,7 +73,7 @@ describe("device-pair doctor notify migration", () => {
       "utf8",
     );
 
-    const migration = expectDefined(stateMigrations[0], "device-pair state migration");
+    const migration = stateMigrations[0];
     await expect(migration.detectLegacyState(migrationParams())).resolves.toMatchObject({
       preview: [expect.stringContaining("Device Pair notify subscribers")],
     });
@@ -109,7 +108,7 @@ describe("device-pair doctor notify migration", () => {
       "utf8",
     );
 
-    const migration = expectDefined(stateMigrations[0], "device-pair state migration");
+    const migration = stateMigrations[0];
 
     await expect(migration.detectLegacyState(migrationParams())).resolves.toBeNull();
     await expect(migration.migrateLegacyState(migrationParams())).resolves.toEqual({

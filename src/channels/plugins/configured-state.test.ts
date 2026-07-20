@@ -11,26 +11,10 @@ const nodeRequire = createRequire(import.meta.url);
 describe("bundled channel configured-state metadata", () => {
   it("lists the shipped metadata-first configured-state channels", () => {
     expect(listBundledChannelIdsWithConfiguredState()).toEqual([
-      "clickclack",
       "discord",
-      "feishu",
-      "googlechat",
       "irc",
-      "line",
-      "matrix",
-      "mattermost",
-      "msteams",
-      "nextcloud-talk",
-      "nostr",
-      "qqbot",
-      "raft",
       "slack",
-      "sms",
-      "synology-chat",
       "telegram",
-      "twitch",
-      "zalo",
-      "zalouser",
     ]);
   });
 

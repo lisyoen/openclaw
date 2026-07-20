@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isXaiToolEnabled,
   resolveFallbackXaiAuth,
+  resolveFallbackXaiApiKey,
+  resolveXaiToolApiKey,
   resolveXaiToolApiKeyWithAuth,
 } from "./tool-auth-shared.js";
 
@@ -12,9 +14,9 @@ describe("xai tool auth helpers", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses plugin web search keys", () => {
+  it("prefers plugin web search keys over legacy grok keys", () => {
     expect(
-      resolveFallbackXaiAuth({
+      resolveFallbackXaiApiKey({
         plugins: {
           entries: {
             xai: {
@@ -26,11 +28,17 @@ describe("xai tool auth helpers", () => {
             },
           },
         },
+        tools: {
+          web: {
+            search: {
+              grok: {
+                apiKey: "legacy-key", // pragma: allowlist secret
+              },
+            },
+          },
+        },
       }),
-    ).toEqual({
-      apiKey: "plugin-key",
-      source: "plugins.entries.xai.config.webSearch.apiKey",
-    });
+    ).toBe("plugin-key");
   });
 
   it("returns source metadata and managed markers for fallback auth", () => {
@@ -52,13 +60,30 @@ describe("xai tool auth helpers", () => {
       apiKey: NON_ENV_SECRETREF_MARKER,
       source: "plugins.entries.xai.config.webSearch.apiKey",
     });
+
+    expect(
+      resolveFallbackXaiAuth({
+        tools: {
+          web: {
+            search: {
+              grok: {
+                apiKey: "legacy-key", // pragma: allowlist secret
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      apiKey: "legacy-key",
+      source: "tools.web.search.grok.apiKey",
+    });
   });
 
-  it("falls back to runtime, then source config, then env for tool auth", async () => {
+  it("falls back to runtime, then source config, then env for tool auth", () => {
     vi.stubEnv("XAI_API_KEY", "env-key");
 
-    await expect(
-      resolveXaiToolApiKeyWithAuth({
+    expect(
+      resolveXaiToolApiKey({
         runtimeConfig: {
           plugins: {
             entries: {
@@ -86,10 +111,10 @@ describe("xai tool auth helpers", () => {
           },
         },
       }),
-    ).resolves.toBe("runtime-key");
+    ).toBe("runtime-key");
 
-    await expect(
-      resolveXaiToolApiKeyWithAuth({
+    expect(
+      resolveXaiToolApiKey({
         sourceConfig: {
           plugins: {
             entries: {
@@ -104,9 +129,9 @@ describe("xai tool auth helpers", () => {
           },
         },
       }),
-    ).resolves.toBe("source-key");
+    ).toBe("source-key");
 
-    await expect(resolveXaiToolApiKeyWithAuth({})).resolves.toBe("env-key");
+    expect(resolveXaiToolApiKey({})).toBe("env-key");
   });
 
   it("honors explicit disabled flags before auth fallback", () => {
@@ -126,11 +151,11 @@ describe("xai tool auth helpers", () => {
     await expect(resolveXaiToolApiKeyWithAuth({ auth })).resolves.toBe("profile-key");
   });
 
-  it("does not use env fallback when a non-env SecretRef is configured but unavailable", async () => {
+  it("does not use env fallback when a non-env SecretRef is configured but unavailable", () => {
     vi.stubEnv("XAI_API_KEY", "env-key");
 
-    await expect(
-      resolveXaiToolApiKeyWithAuth({
+    expect(
+      resolveXaiToolApiKey({
         sourceConfig: {
           plugins: {
             entries: {
@@ -149,7 +174,7 @@ describe("xai tool auth helpers", () => {
           },
         },
       }),
-    ).resolves.toBeUndefined();
+    ).toBeUndefined();
   });
 
   it("does not bypass blocked explicit tool config with auth profiles", async () => {
@@ -180,11 +205,11 @@ describe("xai tool auth helpers", () => {
     await expect(resolveXaiToolApiKeyWithAuth({ sourceConfig, auth })).resolves.toBeUndefined();
   });
 
-  it("resolves env SecretRefs from source config when runtime snapshot is unavailable", async () => {
+  it("resolves env SecretRefs from source config when runtime snapshot is unavailable", () => {
     vi.stubEnv("XAI_API_KEY", "xai-secretref-key");
 
-    await expect(
-      resolveXaiToolApiKeyWithAuth({
+    expect(
+      resolveXaiToolApiKey({
         sourceConfig: {
           plugins: {
             entries: {
@@ -203,14 +228,14 @@ describe("xai tool auth helpers", () => {
           },
         },
       }),
-    ).resolves.toBe("xai-secretref-key");
+    ).toBe("xai-secretref-key");
   });
 
-  it("does not read arbitrary env SecretRef ids for xAI tool auth", async () => {
+  it("does not read arbitrary env SecretRef ids for xAI tool auth", () => {
     vi.stubEnv("UNRELATED_SECRET", "should-not-be-read");
 
-    await expect(
-      resolveXaiToolApiKeyWithAuth({
+    expect(
+      resolveXaiToolApiKey({
         sourceConfig: {
           plugins: {
             entries: {
@@ -229,14 +254,14 @@ describe("xai tool auth helpers", () => {
           },
         },
       }),
-    ).resolves.toBeUndefined();
+    ).toBeUndefined();
   });
 
-  it("does not resolve env SecretRefs when provider allowlist excludes XAI_API_KEY", async () => {
+  it("does not resolve env SecretRefs when provider allowlist excludes XAI_API_KEY", () => {
     vi.stubEnv("XAI_API_KEY", "xai-secretref-key");
 
-    await expect(
-      resolveXaiToolApiKeyWithAuth({
+    expect(
+      resolveXaiToolApiKey({
         sourceConfig: {
           secrets: {
             providers: {
@@ -263,14 +288,14 @@ describe("xai tool auth helpers", () => {
           },
         },
       }),
-    ).resolves.toBeUndefined();
+    ).toBeUndefined();
   });
 
-  it("does not resolve env SecretRefs when provider source is not env", async () => {
+  it("does not resolve env SecretRefs when provider source is not env", () => {
     vi.stubEnv("XAI_API_KEY", "xai-secretref-key");
 
-    await expect(
-      resolveXaiToolApiKeyWithAuth({
+    expect(
+      resolveXaiToolApiKey({
         sourceConfig: {
           secrets: {
             providers: {
@@ -297,6 +322,6 @@ describe("xai tool auth helpers", () => {
           },
         },
       }),
-    ).resolves.toBeUndefined();
+    ).toBeUndefined();
   });
 });

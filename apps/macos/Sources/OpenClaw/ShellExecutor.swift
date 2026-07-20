@@ -2,7 +2,7 @@ import Foundation
 import OpenClawIPC
 
 enum ShellExecutor {
-    struct ShellResult: Sendable {
+    struct ShellResult {
         var stdout: String
         var stderr: String
         var exitCode: Int?
@@ -11,79 +11,34 @@ enum ShellExecutor {
         var errorMessage: String?
     }
 
-    /// A background descendant may inherit stdout after its parent exits.
-    /// Seekable files let the parent result finish without waiting for that unrelated process.
-    private final class OutputFiles: @unchecked Sendable {
-        let stdout: FileHandle
-        let stderr: FileHandle
-        private let stdoutURL: URL
-        private let stderrURL: URL
-
-        init() throws {
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("openclaw-shell-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            self.stdoutURL = directory.appendingPathComponent("stdout")
-            self.stderrURL = directory.appendingPathComponent("stderr")
-            FileManager.default.createFile(atPath: self.stdoutURL.path, contents: nil)
-            FileManager.default.createFile(atPath: self.stderrURL.path, contents: nil)
-            self.stdout = try FileHandle(forWritingTo: self.stdoutURL)
-            self.stderr = try FileHandle(forWritingTo: self.stderrURL)
-        }
-
-        func readAndRemove() -> (stdout: String, stderr: String) {
-            try? self.stdout.close()
-            try? self.stderr.close()
-            let stdoutData = (try? Data(contentsOf: self.stdoutURL)) ?? Data()
-            let stderrData = (try? Data(contentsOf: self.stderrURL)) ?? Data()
-            try? FileManager.default.removeItem(at: self.stdoutURL.deletingLastPathComponent())
-            return (
-                String(bytes: stdoutData, encoding: .utf8) ?? "",
-                String(bytes: stderrData, encoding: .utf8) ?? "")
-        }
-    }
-
     private final class CompletionBox: @unchecked Sendable {
         private let lock = NSLock()
         private var finished = false
         private let continuation: CheckedContinuation<ShellResult, Never>
-        private let output: OutputFiles
 
-        init(continuation: CheckedContinuation<ShellResult, Never>, output: OutputFiles) {
+        init(continuation: CheckedContinuation<ShellResult, Never>) {
             self.continuation = continuation
-            self.output = output
         }
 
-        func finish(
-            status: Int?,
-            timedOut: Bool,
-            errorMessage: String?,
-            beforeCapture: (@Sendable () -> Void)? = nil)
-        {
+        func finish(_ result: ShellResult) {
             self.lock.lock()
-            guard !self.finished else {
-                self.lock.unlock()
-                return
-            }
+            defer { self.lock.unlock() }
+            guard !self.finished else { return }
             self.finished = true
-            self.lock.unlock()
-            beforeCapture?()
-            let captured = self.output.readAndRemove()
-            self.continuation.resume(returning: ShellResult(
-                stdout: captured.stdout,
-                stderr: captured.stderr,
-                exitCode: status,
-                timedOut: timedOut,
-                success: status == 0 && !timedOut && errorMessage == nil,
-                errorMessage: errorMessage ?? status.flatMap { $0 == 0 ? nil : "exit \($0)" }))
+            self.continuation.resume(returning: result)
         }
     }
 
-    private static func completedResult(status: Int, output: OutputFiles) -> ShellResult {
-        let captured = output.readAndRemove()
+    private static func completedResult(
+        status: Int,
+        outTask: Task<Data, Never>,
+        errTask: Task<Data, Never>) async -> ShellResult
+    {
+        let out = await outTask.value
+        let err = await errTask.value
         return ShellResult(
-            stdout: captured.stdout,
-            stderr: captured.stderr,
+            stdout: String(bytes: out, encoding: .utf8) ?? "",
+            stderr: String(bytes: err, encoding: .utf8) ?? "",
             exitCode: status,
             timedOut: false,
             success: status == 0,
@@ -109,55 +64,57 @@ enum ShellExecutor {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = command
-        if let cwd {
-            process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        }
-        if let env {
-            process.environment = env
-        }
+        if let cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
+        if let env { process.environment = env }
 
-        let output: OutputFiles
-        do {
-            output = try OutputFiles()
-        } catch {
-            return ShellResult(
-                stdout: "",
-                stderr: "",
-                exitCode: nil,
-                timedOut: false,
-                success: false,
-                errorMessage: "failed to capture output: \(error.localizedDescription)")
-        }
-        process.standardOutput = output.stdout
-        process.standardError = output.stderr
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        let outTask = Task { stdoutPipe.fileHandleForReading.readToEndSafely() }
+        let errTask = Task { stderrPipe.fileHandleForReading.readToEndSafely() }
 
         if let timeout, timeout > 0 {
             return await withCheckedContinuation { continuation in
-                let completion = CompletionBox(continuation: continuation, output: output)
+                let completion = CompletionBox(continuation: continuation)
 
                 process.terminationHandler = { terminatedProcess in
                     let status = Int(terminatedProcess.terminationStatus)
-                    completion.finish(status: status, timedOut: false, errorMessage: nil)
+                    Task {
+                        let result = await self.completedResult(
+                            status: status,
+                            outTask: outTask,
+                            errTask: errTask)
+                        completion.finish(result)
+                    }
                 }
 
                 do {
                     try process.run()
                 } catch {
                     completion.finish(
-                        status: nil,
-                        timedOut: false,
-                        errorMessage: "failed to start: \(error.localizedDescription)")
+                        ShellResult(
+                            stdout: "",
+                            stderr: "",
+                            exitCode: nil,
+                            timedOut: false,
+                            success: false,
+                            errorMessage: "failed to start: \(error.localizedDescription)"))
                     return
                 }
 
                 DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + timeout) {
                     guard process.isRunning else { return }
-                    // Claim timeout classification before SIGTERM can trigger the termination handler.
+                    process.terminate()
                     completion.finish(
-                        status: nil,
-                        timedOut: true,
-                        errorMessage: "timeout",
-                        beforeCapture: { process.terminate() })
+                        ShellResult(
+                            stdout: "",
+                            stderr: "",
+                            exitCode: nil,
+                            timedOut: true,
+                            success: false,
+                            errorMessage: "timeout"))
                 }
             }
         }
@@ -165,10 +122,9 @@ enum ShellExecutor {
         do {
             try process.run()
         } catch {
-            let captured = output.readAndRemove()
             return ShellResult(
-                stdout: captured.stdout,
-                stderr: captured.stderr,
+                stdout: "",
+                stderr: "",
                 exitCode: nil,
                 timedOut: false,
                 success: false,
@@ -176,7 +132,10 @@ enum ShellExecutor {
         }
 
         process.waitUntilExit()
-        return self.completedResult(status: Int(process.terminationStatus), output: output)
+        return await self.completedResult(
+            status: Int(process.terminationStatus),
+            outTask: outTask,
+            errTask: errTask)
     }
 
     static func run(command: [String], cwd: String?, env: [String: String]?, timeout: Double?) async -> Response {

@@ -23,7 +23,6 @@ function resolvePostCompactionIndexSyncMode(config?: OpenClawConfig): "off" | "a
 async function runPostCompactionSessionMemorySync(params: {
   config?: OpenClawConfig;
   sessionKey?: string;
-  sessionId?: string;
   agentId?: string;
   sessionFile: string;
 }): Promise<void> {
@@ -54,20 +53,9 @@ async function runPostCompactionSessionMemorySync(params: {
     if (!manager?.sync) {
       return;
     }
-    const sessionId = params.sessionId?.trim();
     await manager.sync({
       reason: "post-compaction",
-      ...(sessionId
-        ? {
-            sessions: [
-              {
-                agentId,
-                sessionId,
-                ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-              },
-            ],
-          }
-        : { archiveFiles: [sessionFile] }),
+      sessionFiles: [sessionFile],
     });
   } catch (err) {
     log.warn(`memory sync skipped (post-compaction): ${formatErrorMessage(err)}`);
@@ -77,7 +65,6 @@ async function runPostCompactionSessionMemorySync(params: {
 function syncPostCompactionSessionMemory(params: {
   config?: OpenClawConfig;
   sessionKey?: string;
-  sessionId?: string;
   agentId?: string;
   sessionFile: string;
   mode: "off" | "async" | "await";
@@ -89,7 +76,6 @@ function syncPostCompactionSessionMemory(params: {
   const syncTask = runPostCompactionSessionMemorySync({
     config: params.config,
     sessionKey: params.sessionKey,
-    sessionId: params.sessionId,
     agentId: params.agentId,
     sessionFile: params.sessionFile,
   });
@@ -105,7 +91,6 @@ function syncPostCompactionSessionMemory(params: {
 export async function runPostCompactionSideEffects(params: {
   config?: OpenClawConfig;
   sessionKey?: string;
-  sessionId?: string;
   agentId?: string;
   sessionFile: string;
 }): Promise<void> {
@@ -116,13 +101,11 @@ export async function runPostCompactionSideEffects(params: {
   emitSessionTranscriptUpdate({
     sessionFile,
     sessionKey: params.sessionKey,
-    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
     ...(params.agentId ? { agentId: params.agentId } : {}),
   });
   await syncPostCompactionSessionMemory({
     config: params.config,
     sessionKey: params.sessionKey,
-    sessionId: params.sessionId,
     agentId: params.agentId,
     sessionFile,
     mode: resolvePostCompactionIndexSyncMode(params.config),
@@ -130,7 +113,7 @@ export async function runPostCompactionSideEffects(params: {
 }
 
 /** Narrow adapter over the global hook runner methods used by compaction. */
-type CompactionHookRunner = {
+export type CompactionHookRunner = {
   hasHooks?: (hookName?: string) => boolean;
   runBeforeCompaction?: (
     metrics: { messageCount: number; tokenCount?: number; sessionFile?: string },
@@ -310,7 +293,6 @@ export async function runAfterCompactionHooks(params: {
   tokensAfter?: number;
   compactedCount: number;
   sessionFile: string;
-  previousSessionId?: string;
   summaryLength?: number;
   tokensBefore?: number;
   firstKeptEntryId?: string;
@@ -356,7 +338,6 @@ export async function runAfterCompactionHooks(params: {
           tokenCount: params.tokensAfter,
           compactedCount: params.compactedCount,
           sessionFile: params.sessionFile,
-          ...(params.previousSessionId ? { previousSessionId: params.previousSessionId } : {}),
         },
         {
           sessionId: params.sessionId,

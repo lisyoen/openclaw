@@ -1,13 +1,10 @@
 // Thread Ownership tests cover index plugin behavior.
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawPluginApi } from "./api.js";
 import register from "./index.js";
 
 describe("thread-ownership plugin", () => {
   const hooks: Record<string, Function> = {};
-  const requireHook = (name: string): Function =>
-    expectDefined(hooks[name], `thread-ownership ${name} hook registration`);
   const fetchMock = vi.fn() as unknown as typeof globalThis.fetch;
   let configFile: Record<string, unknown> = {};
   const originalSlackForwarderUrl = process.env.SLACK_FORWARDER_URL;
@@ -88,14 +85,14 @@ describe("thread-ownership plugin", () => {
     });
 
     async function sendSlackThreadMessage() {
-      return await requireHook("message_sending")(
+      return await hooks.message_sending(
         { content: "hello", replyToId: "1234.5678", metadata: { channelId: "C123" }, to: "C123" },
         { channelId: "slack", conversationId: "C123" },
       );
     }
 
     it("allows non-slack channels", async () => {
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         { content: "hello", replyToId: "1234.5678", metadata: { channelId: "C123" }, to: "C123" },
         { channelId: "discord", conversationId: "C123" },
       );
@@ -105,7 +102,7 @@ describe("thread-ownership plugin", () => {
     });
 
     it("allows top-level messages (no threadTs)", async () => {
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         { content: "hello", metadata: {}, to: "C123" },
         { channelId: "slack", conversationId: "C123" },
       );
@@ -115,7 +112,7 @@ describe("thread-ownership plugin", () => {
     });
 
     it("fails open when Slack thread routing has no canonical conversation id", async () => {
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         { content: "hello", replyToId: "1234.5678", metadata: {}, to: "" },
         { channelId: "slack", conversationId: "" },
       );
@@ -139,55 +136,12 @@ describe("thread-ownership plugin", () => {
       );
     });
 
-    it("uses the default forwarder URL when the env override is blank", async () => {
-      process.env.SLACK_FORWARDER_URL = "   ";
-      vi.mocked(globalThis.fetch).mockResolvedValue(
-        new Response(JSON.stringify({ owner: "test-agent" }), { status: 200 }),
-      );
-
-      const result = await sendSlackThreadMessage();
-
-      expect(result).toBeUndefined();
-      expectOwnershipFetchCall(
-        0,
-        "http://slack-forwarder:8750/api/v1/ownership/C123/1234.5678",
-        "test-agent",
-      );
-    });
-
-    it("keeps live plugin config ahead of the env override", async () => {
-      configFile = {
-        ...configFile,
-        plugins: {
-          entries: {
-            "thread-ownership": {
-              config: {
-                forwarderUrl: "http://config-forwarder:8750",
-              },
-            },
-          },
-        },
-      };
-      vi.mocked(globalThis.fetch).mockResolvedValue(
-        new Response(JSON.stringify({ owner: "test-agent" }), { status: 200 }),
-      );
-
-      const result = await sendSlackThreadMessage();
-
-      expect(result).toBeUndefined();
-      expectOwnershipFetchCall(
-        0,
-        "http://config-forwarder:8750/api/v1/ownership/C123/1234.5678",
-        "test-agent",
-      );
-    });
-
     it("prefers shared conversationId over non-canonical Slack target shapes", async () => {
       vi.mocked(globalThis.fetch).mockResolvedValue(
         new Response(JSON.stringify({ owner: "test-agent" }), { status: 200 }),
       );
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         {
           content: "hello",
           replyToId: "1234.5678",
@@ -209,7 +163,7 @@ describe("thread-ownership plugin", () => {
         new Response(JSON.stringify({ owner: "test-agent" }), { status: 200 }),
       );
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         {
           content: "hello",
           replyToId: "1234.5678",
@@ -233,7 +187,7 @@ describe("thread-ownership plugin", () => {
         new Response(JSON.stringify({ owner: "test-agent" }), { status: 200 }),
       );
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         {
           content: "hello",
           replyToId: "1234.5678",
@@ -266,7 +220,7 @@ describe("thread-ownership plugin", () => {
       };
       register.register(api as unknown as OpenClawPluginApi);
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         {
           content: "hello",
           replyToId: "1234.5678",
@@ -286,7 +240,7 @@ describe("thread-ownership plugin", () => {
         new Response(JSON.stringify({ owner: "test-agent" }), { status: 200 }),
       );
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         {
           content: "hello",
           replyToId: "1234.5678",
@@ -315,42 +269,6 @@ describe("thread-ownership plugin", () => {
       expect(infoMessage).toContain("cancelled send");
     });
 
-    it("cancels when the forwarder conflict JSON is malformed", async () => {
-      vi.mocked(globalThis.fetch).mockResolvedValue(new Response("{", { status: 409 }));
-
-      const result = await sendSlackThreadMessage();
-
-      expect(result).toEqual({ cancel: true });
-      const warningMessage = requireFirstLogMessage(
-        api.logger.warn,
-        "ownership conflict warning log",
-      );
-      expect(warningMessage).toContain("conflict body unreadable");
-      expect(warningMessage).toContain("malformed JSON response");
-      const infoMessage = requireFirstLogMessage(api.logger.info, "ownership cancel info log");
-      expect(infoMessage).toContain("cancelled send");
-      expect(infoMessage).toContain("owned by unknown");
-    });
-
-    it("cancels when the forwarder conflict JSON exceeds the bounded read limit", async () => {
-      vi.mocked(globalThis.fetch).mockResolvedValue(
-        new Response(JSON.stringify({ owner: "x".repeat(70 * 1024) }), { status: 409 }),
-      );
-
-      const result = await sendSlackThreadMessage();
-
-      expect(result).toEqual({ cancel: true });
-      const warningMessage = requireFirstLogMessage(
-        api.logger.warn,
-        "ownership conflict warning log",
-      );
-      expect(warningMessage).toContain("conflict body unreadable");
-      expect(warningMessage).toContain("JSON response exceeds 65536 bytes");
-      const infoMessage = requireFirstLogMessage(api.logger.info, "ownership cancel info log");
-      expect(infoMessage).toContain("cancelled send");
-      expect(infoMessage).toContain("owned by unknown");
-    });
-
     it("fails open on network error", async () => {
       vi.mocked(globalThis.fetch).mockRejectedValue(new Error("ECONNREFUSED"));
 
@@ -369,7 +287,7 @@ describe("thread-ownership plugin", () => {
 
     it("tracks @-mentions and skips ownership check for mentioned threads", async () => {
       // Simulate receiving a message that @-mentions the agent.
-      await requireHook("message_received")(
+      await hooks.message_received(
         {
           content: "Hey @TestBot help me",
           threadId: "9999.0001",
@@ -379,7 +297,7 @@ describe("thread-ownership plugin", () => {
       );
 
       // Now send in the same thread -- should skip the ownership HTTP call.
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         { content: "Sure!", replyToId: "9999.0001", metadata: { channelId: "C456" }, to: "C456" },
         { channelId: "slack", conversationId: "C456" },
       );
@@ -389,7 +307,7 @@ describe("thread-ownership plugin", () => {
     });
 
     it("tracks mentions under the shared conversationId when inbound metadata is non-canonical", async () => {
-      await requireHook("message_received")(
+      await hooks.message_received(
         {
           content: "Hey @TestBot help me",
           threadId: "9999.0002",
@@ -398,7 +316,7 @@ describe("thread-ownership plugin", () => {
         { channelId: "slack", conversationId: "C456" },
       );
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         {
           content: "Sure!",
           replyToId: "9999.0002",
@@ -412,7 +330,7 @@ describe("thread-ownership plugin", () => {
     });
 
     it("canonicalizes inbound non-canonical metadata without shared conversation context", async () => {
-      await requireHook("message_received")(
+      await hooks.message_received(
         {
           content: "Hey @TestBot help me",
           threadId: "9999.0003",
@@ -421,7 +339,7 @@ describe("thread-ownership plugin", () => {
         { channelId: "slack", conversationId: "" },
       );
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         {
           content: "Sure!",
           replyToId: "9999.0003",
@@ -436,7 +354,7 @@ describe("thread-ownership plugin", () => {
 
     it("ignores @-mentions on non-slack channels", async () => {
       // Use a unique thread key so module-level state from other tests doesn't interfere.
-      await requireHook("message_received")(
+      await hooks.message_received(
         { content: "Hey @TestBot", threadId: "7777.0001", metadata: { channelId: "C999" } },
         { channelId: "discord", conversationId: "C999" },
       );
@@ -446,7 +364,7 @@ describe("thread-ownership plugin", () => {
         new Response(JSON.stringify({ owner: "test-agent" }), { status: 200 }),
       );
 
-      await requireHook("message_sending")(
+      await hooks.message_sending(
         { content: "Sure!", replyToId: "7777.0001", metadata: { channelId: "C999" }, to: "C999" },
         { channelId: "slack", conversationId: "C999" },
       );
@@ -455,7 +373,7 @@ describe("thread-ownership plugin", () => {
     });
 
     it("tracks bot user ID mentions via <@U999> syntax", async () => {
-      await requireHook("message_received")(
+      await hooks.message_received(
         {
           content: "Hey <@U999> help",
           threadId: "8888.0001",
@@ -464,7 +382,7 @@ describe("thread-ownership plugin", () => {
         { channelId: "slack", conversationId: "C789" },
       );
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         { content: "On it!", replyToId: "8888.0001", metadata: { channelId: "C789" }, to: "C789" },
         { channelId: "slack", conversationId: "C789" },
       );
@@ -474,7 +392,7 @@ describe("thread-ownership plugin", () => {
     });
 
     it("tracks agent-name mentions case-insensitively", async () => {
-      await requireHook("message_received")(
+      await hooks.message_received(
         {
           content: "hey @testbot help",
           threadId: "8888.0002",
@@ -483,7 +401,7 @@ describe("thread-ownership plugin", () => {
         { channelId: "slack", conversationId: "C789" },
       );
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         { content: "On it!", replyToId: "8888.0002", metadata: { channelId: "C789" }, to: "C789" },
         { channelId: "slack", conversationId: "C789" },
       );
@@ -503,7 +421,7 @@ describe("thread-ownership plugin", () => {
         new Response(JSON.stringify({ owner: "live-agent" }), { status: 200 }),
       );
 
-      await requireHook("message_sending")(
+      await hooks.message_sending(
         { content: "On it!", replyToId: "8888.0005", metadata: { channelId: "C789" }, to: "C789" },
         { channelId: "slack", conversationId: "C789" },
       );
@@ -523,7 +441,7 @@ describe("thread-ownership plugin", () => {
         },
       };
 
-      await requireHook("message_received")(
+      await hooks.message_received(
         {
           content: "hey @LiveBot help",
           threadId: "8888.0006",
@@ -532,7 +450,7 @@ describe("thread-ownership plugin", () => {
         { channelId: "slack", conversationId: "C789" },
       );
 
-      const result = await requireHook("message_sending")(
+      const result = await hooks.message_sending(
         { content: "On it!", replyToId: "8888.0006", metadata: { channelId: "C789" }, to: "C789" },
         { channelId: "slack", conversationId: "C789" },
       );
@@ -542,7 +460,7 @@ describe("thread-ownership plugin", () => {
     });
 
     it("does not treat superset handles as agent-name mentions", async () => {
-      await requireHook("message_received")(
+      await hooks.message_received(
         {
           content: "hey @testbot2 help",
           threadId: "8888.0003",
@@ -555,7 +473,7 @@ describe("thread-ownership plugin", () => {
         new Response(JSON.stringify({ owner: "test-agent" }), { status: 200 }),
       );
 
-      await requireHook("message_sending")(
+      await hooks.message_sending(
         { content: "On it!", replyToId: "8888.0003", metadata: { channelId: "C789" }, to: "C789" },
         { channelId: "slack", conversationId: "C789" },
       );
@@ -564,7 +482,7 @@ describe("thread-ownership plugin", () => {
     });
 
     it("does not treat email-like text as an agent-name mention", async () => {
-      await requireHook("message_received")(
+      await hooks.message_received(
         {
           content: "send mail to foo@testbot.com",
           threadId: "8888.0004",
@@ -577,7 +495,7 @@ describe("thread-ownership plugin", () => {
         new Response(JSON.stringify({ owner: "test-agent" }), { status: 200 }),
       );
 
-      await requireHook("message_sending")(
+      await hooks.message_sending(
         { content: "On it!", replyToId: "8888.0004", metadata: { channelId: "C789" }, to: "C789" },
         { channelId: "slack", conversationId: "C789" },
       );

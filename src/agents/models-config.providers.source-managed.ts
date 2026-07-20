@@ -1,4 +1,3 @@
-import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 /**
  * Enforces source-managed provider secret ownership rules.
  */
@@ -10,7 +9,6 @@ import {
   resolveNonEnvSecretRefHeaderValueMarker,
   resolveEnvSecretRefHeaderValueMarker,
 } from "./model-auth-markers.js";
-import { normalizeProviderMapKeys } from "./models-config.providers.keys.js";
 import type { ProviderConfig, SecretDefaults } from "./models-config.providers.secrets.js";
 
 /**
@@ -27,12 +25,15 @@ function normalizeSourceProviderLookup(
   if (!providers) {
     return {};
   }
-  const validProviders = Object.fromEntries(
-    Object.entries(providers).filter(([, provider]) => isRecord(provider)),
-  ) as Record<string, ProviderConfig>;
-  // Use the merge boundary's collision rule so a case alias cannot displace the
-  // canonical SecretRef owner and expose its resolved runtime value to models.json.
-  return normalizeProviderMapKeys(validProviders);
+  const out: Record<string, ProviderConfig> = {};
+  for (const [key, provider] of Object.entries(providers)) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey || !isRecord(provider)) {
+      continue;
+    }
+    out[normalizedKey] = provider;
+  }
+  return out;
 }
 
 function resolveSourceManagedApiKeyMarker(params: {
@@ -99,8 +100,7 @@ export function enforceSourceManagedProviderSecrets(params: {
     if (!isRecord(provider)) {
       continue;
     }
-    const canonicalProviderKey = normalizeProviderId(providerKey);
-    const sourceProvider = sourceProvidersByKey[canonicalProviderKey];
+    const sourceProvider = sourceProvidersByKey[providerKey.trim()];
     if (!sourceProvider) {
       continue;
     }
@@ -112,7 +112,7 @@ export function enforceSourceManagedProviderSecrets(params: {
       sourceSecretDefaults: params.sourceSecretDefaults,
     });
     if (sourceApiKeyMarker) {
-      params.secretRefManagedProviders?.add(canonicalProviderKey);
+      params.secretRefManagedProviders?.add(providerKey.trim());
       if (nextProvider.apiKey !== sourceApiKeyMarker) {
         providerMutated = true;
         nextProvider = {

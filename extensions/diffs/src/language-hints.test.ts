@@ -2,36 +2,22 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vitest";
 import {
+  filterSupportedLanguageHints,
   normalizeDiffViewerPayloadLanguages,
-  normalizeSupportedLanguageHint,
 } from "./language-hints.js";
 
-async function normalizeHints(values: readonly string[], options = {}) {
-  return await Promise.all(values.map((value) => normalizeSupportedLanguageHint(value, options)));
-}
-
-describe("normalizeSupportedLanguageHint", () => {
+describe("filterSupportedLanguageHints", () => {
   it("keeps supported languages", async () => {
-    await expect(normalizeHints(["typescript", "cpp", "text"])).resolves.toEqual([
+    await expect(filterSupportedLanguageHints(["typescript", "cpp", "text"])).resolves.toEqual([
       "typescript",
       "cpp",
       "text",
     ]);
   });
 
-  it("normalizes language hint casing", async () => {
-    await expect(normalizeHints(["Python", "TypeScript"])).resolves.toEqual([
-      "python",
-      "typescript",
-    ]);
-    await expect(
-      normalizeSupportedLanguageHint("AbAp", { languagePackAvailable: true }),
-    ).resolves.toBe("abap");
-  });
-
   it("normalizes common aliases to base viewer languages", async () => {
     await expect(
-      normalizeHints(["ts", "c++", "c#", "bash", "dockerfile", "rb", "kt", "ps1"]),
+      filterSupportedLanguageHints(["ts", "c++", "c#", "bash", "dockerfile", "rb", "kt", "ps1"]),
     ).resolves.toEqual([
       "typescript",
       "cpp",
@@ -46,7 +32,17 @@ describe("normalizeSupportedLanguageHint", () => {
 
   it("keeps mainstream languages in the base viewer without the language pack", async () => {
     await expect(
-      normalizeHints(["ruby", "swift", "kotlin", "r", "dart", "lua", "powershell", "xml", "toml"]),
+      filterSupportedLanguageHints([
+        "ruby",
+        "swift",
+        "kotlin",
+        "r",
+        "dart",
+        "lua",
+        "powershell",
+        "xml",
+        "toml",
+      ]),
     ).resolves.toEqual([
       "ruby",
       "swift",
@@ -61,24 +57,23 @@ describe("normalizeSupportedLanguageHint", () => {
   });
 
   it("drops uncommon languages without the language pack", async () => {
-    await expect(normalizeSupportedLanguageHint("abap")).resolves.toBeUndefined();
+    await expect(filterSupportedLanguageHints(["abap"])).resolves.toEqual(["text"]);
   });
 
   it("keeps uncommon languages when the language pack is available", async () => {
     await expect(
-      normalizeSupportedLanguageHint("abap", { languagePackAvailable: true }),
-    ).resolves.toBe("abap");
+      filterSupportedLanguageHints(["abap"], { languagePackAvailable: true }),
+    ).resolves.toEqual(["abap"]);
   });
 
-  it("drops invalid languages", async () => {
-    await expect(normalizeSupportedLanguageHint("not-a-real-language")).resolves.toBeUndefined();
+  it("drops invalid languages and falls back to text", async () => {
+    await expect(filterSupportedLanguageHints(["not-a-real-language"])).resolves.toEqual(["text"]);
   });
 
   it("keeps valid languages when invalid hints are mixed in", async () => {
-    await expect(normalizeHints(["typescript", "not-a-real-language"])).resolves.toEqual([
-      "typescript",
-      undefined,
-    ]);
+    await expect(
+      filterSupportedLanguageHints(["typescript", "not-a-real-language"]),
+    ).resolves.toEqual(["typescript"]);
   });
 });
 

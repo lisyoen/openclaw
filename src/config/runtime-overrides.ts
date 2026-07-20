@@ -1,8 +1,7 @@
-import { err, ok, type Result } from "@openclaw/normalization-core/result";
-import { isBlockedObjectKey } from "../infra/prototype-keys.js";
 // Applies runtime-only config overrides without mutating persisted config.
 import { isPlainObject } from "../utils.js";
 import { parseConfigPath, setConfigValueAtPath, unsetConfigValueAtPath } from "./config-paths.js";
+import { isBlockedObjectKey } from "./prototype-keys.js";
 import type { OpenClawConfig } from "./types.js";
 
 type OverrideTree = Record<string, unknown>;
@@ -57,23 +56,37 @@ export function resetConfigOverrides(): void {
 }
 
 /** Set one runtime override at a parsed config path after sanitizing object values. */
-export function setConfigOverride(pathRaw: string, value: unknown): Result<string[], string> {
+export function setConfigOverride(
+  pathRaw: string,
+  value: unknown,
+): {
+  ok: boolean;
+  error?: string;
+} {
   const parsed = parseConfigPath(pathRaw);
-  if (!parsed.ok) {
-    return err(parsed.error);
+  if (!parsed.ok || !parsed.path) {
+    return { ok: false, error: parsed.error ?? "Invalid path." };
   }
   setConfigValueAtPath(overrides, parsed.path, sanitizeOverrideValue(value));
-  return ok(parsed.path);
+  return { ok: true };
 }
 
 /** Remove one runtime override path and report whether an override was present. */
-export function unsetConfigOverride(pathRaw: string): Result<boolean, string> {
+export function unsetConfigOverride(pathRaw: string): {
+  ok: boolean;
+  removed: boolean;
+  error?: string;
+} {
   const parsed = parseConfigPath(pathRaw);
-  if (!parsed.ok) {
-    return err(parsed.error);
+  if (!parsed.ok || !parsed.path) {
+    return {
+      ok: false,
+      removed: false,
+      error: parsed.error ?? "Invalid path.",
+    };
   }
   const removed = unsetConfigValueAtPath(overrides, parsed.path);
-  return ok(removed);
+  return { ok: true, removed };
 }
 
 /** Merge the current runtime overrides over a loaded config without mutating the input config. */
@@ -82,13 +95,4 @@ export function applyConfigOverrides(cfg: OpenClawConfig): OpenClawConfig {
     return cfg;
   }
   return mergeOverrides(cfg, overrides) as OpenClawConfig;
-}
-
-/** Capture an immutable applier for the process-local overrides active at this instant. */
-export function captureConfigOverrideApplier(): (cfg: OpenClawConfig) => OpenClawConfig {
-  const capturedOverrides = structuredClone(overrides);
-  if (Object.keys(capturedOverrides).length === 0) {
-    return (cfg) => cfg;
-  }
-  return (cfg) => mergeOverrides(cfg, capturedOverrides) as OpenClawConfig;
 }

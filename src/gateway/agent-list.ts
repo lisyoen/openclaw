@@ -8,7 +8,6 @@ import { resolveStateDir } from "../config/paths.js";
 import type { SessionScope } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId, normalizeMainKey } from "../routing/session-key.js";
-import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
 
 type GatewayAgentListRow = {
   id: string;
@@ -23,13 +22,13 @@ function listExistingAgentIdsFromDisk(): string[] {
     return entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => normalizeAgentId(entry.name))
-      .filter((id) => id && !isReservedSystemAgentId(id));
+      .filter(Boolean);
   } catch {
     return [];
   }
 }
 
-export function listGatewayAgentIds(cfg: OpenClawConfig): string[] {
+function listConfiguredAgentIds(cfg: OpenClawConfig): string[] {
   const ids = new Set<string>();
   const defaultId = normalizeAgentId(resolveDefaultAgentId(cfg));
   ids.add(defaultId);
@@ -80,7 +79,9 @@ export function listGatewayAgentsBasic(cfg: OpenClawConfig): {
       .filter(Boolean),
   );
   const allowedIds = explicitIds.size > 0 ? new Set([...explicitIds, defaultId]) : null;
-  let agentIds = listGatewayAgentIds(cfg).filter((id) => (allowedIds ? allowedIds.has(id) : true));
+  let agentIds = listConfiguredAgentIds(cfg).filter((id) =>
+    allowedIds ? allowedIds.has(id) : true,
+  );
   if (mainKey && !agentIds.includes(mainKey) && (!allowedIds || allowedIds.has(mainKey))) {
     agentIds = [...agentIds, mainKey];
   }

@@ -12,14 +12,17 @@ import { readCachedTelegramBotInfo, writeCachedTelegramBotInfo } from "./bot-inf
 import type { TelegramBotInfo } from "./bot-info.js";
 import { telegramPlugin } from "./channel.js";
 import type { TelegramMonitorFn } from "./monitor.types.js";
-import { acquireTelegramPollingLease } from "./polling-lease.js";
-import { setTelegramRuntime } from "./runtime.js";
 import {
-  clearTelegramRuntimeForTest as clearTelegramRuntime,
-  resetTelegramPollingLeasesForTest as resetTelegramPollingLeasesForTests,
-} from "./runtime.test-support.js";
+  acquireTelegramPollingLease,
+  resetTelegramPollingLeasesForTests,
+} from "./polling-lease.js";
+import { clearTelegramRuntime, setTelegramRuntime } from "./runtime.js";
+import type { TelegramProbeFn } from "./runtime.types.js";
 import type { TelegramRuntime } from "./runtime.types.js";
-import { withTelegramStartupProbeSlot } from "./startup-probe-limiter.js";
+import {
+  resetTelegramStartupProbeLimiterForTests,
+  withTelegramStartupProbeSlot,
+} from "./startup-probe-limiter.js";
 
 const probeTelegram = vi.fn();
 const monitorTelegramProvider = vi.fn();
@@ -35,7 +38,6 @@ const startupBotInfo: TelegramBotInfo = {
   can_read_all_group_messages: false,
   can_manage_bots: false,
   supports_inline_queries: false,
-  supports_join_request_queries: false,
   can_connect_to_business: false,
   has_main_web_app: false,
   has_topics_enabled: false,
@@ -137,9 +139,7 @@ function installTelegramRuntime() {
     channel: {
       ...runtime.channel,
       telegram: {
-        probeTelegram: probeTelegram as NonNullable<
-          NonNullable<TelegramRuntime["channel"]["telegram"]>["probeTelegram"]
-        >,
+        probeTelegram: probeTelegram as TelegramProbeFn,
         monitorTelegramProvider: monitorTelegramProvider as TelegramMonitorFn,
         sendMessageTelegram,
       },
@@ -257,12 +257,14 @@ async function releaseStartupProbeControls(releaseProbe: Array<() => void>) {
 
 beforeEach(() => {
   vi.useRealTimers();
+  resetTelegramStartupProbeLimiterForTests();
 });
 
 afterEach(async () => {
   vi.useRealTimers();
   clearTelegramRuntime();
   resetTelegramPollingLeasesForTests();
+  resetTelegramStartupProbeLimiterForTests();
   probeTelegram.mockReset();
   monitorTelegramProvider.mockReset();
   sendMessageTelegram.mockReset();
@@ -332,11 +334,10 @@ describe("telegramPlugin gateway startup", () => {
     });
     monitorTelegramProvider.mockResolvedValue(undefined);
 
-    const { ctx, task } = startTelegramAccount();
+    const { task } = startTelegramAccount();
 
     await expect(task).resolves.toBeUndefined();
     expect(probeTelegram).toHaveBeenCalledWith("123456:bad-token", 15_000, {
-      abortSignal: ctx.abortSignal,
       accountId: "default",
       proxyUrl: undefined,
       network: undefined,
@@ -552,7 +553,7 @@ describe("telegramPlugin gateway startup", () => {
     ).resolves.toBeNull();
   });
 
-  it("uses the built-in startup probe timeout", async () => {
+  it("honors higher per-account timeoutSeconds for startup probe", async () => {
     installTelegramRuntime();
     probeTelegram.mockResolvedValue({
       ok: true,
@@ -562,11 +563,10 @@ describe("telegramPlugin gateway startup", () => {
     });
     monitorTelegramProvider.mockResolvedValue(undefined);
 
-    const { ctx, task } = startTelegramAccount("ops", { timeoutSeconds: 60 });
+    const { task } = startTelegramAccount("ops", { timeoutSeconds: 60 });
 
     await expect(task).resolves.toBeUndefined();
-    expect(probeTelegram).toHaveBeenCalledWith("123456:bad-token", 15_000, {
-      abortSignal: ctx.abortSignal,
+    expect(probeTelegram).toHaveBeenCalledWith("123456:bad-token", 60_000, {
       accountId: "ops",
       proxyUrl: undefined,
       network: undefined,

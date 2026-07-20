@@ -1,4 +1,5 @@
 // Discord plugin module implements components registry behavior.
+import { resolveGlobalMap } from "openclaw/plugin-sdk/global-singleton";
 import {
   asDateTimestampMs,
   isFutureDateTimestampMs,
@@ -6,10 +7,6 @@ import {
   resolveExpiresAtMsFromDurationMs,
 } from "openclaw/plugin-sdk/number-runtime";
 import { uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
-import {
-  discordComponentRegistryState,
-  type DiscordRegistryStore,
-} from "./components-registry-state.js";
 import type { DiscordComponentEntry, DiscordModalEntry } from "./components.js";
 import { getOptionalDiscordRuntime } from "./runtime.js";
 
@@ -18,17 +15,41 @@ const PERSISTENT_COMPONENT_NAMESPACE = "discord.components";
 const PERSISTENT_MODAL_NAMESPACE = "discord.modals";
 const PERSISTENT_COMPONENT_MAX_ENTRIES = 500;
 const PERSISTENT_MODAL_MAX_ENTRIES = 500;
+const DISCORD_COMPONENT_ENTRIES_KEY = Symbol.for("openclaw.discord.componentEntries");
+const DISCORD_MODAL_ENTRIES_KEY = Symbol.for("openclaw.discord.modalEntries");
+
 type PersistedDiscordRegistryEntry<T extends { id: string }> = {
   version: 1;
   entry: T;
 };
 
+type DiscordPersistentStore<T> = {
+  register(key: string, value: T, opts?: { ttlMs?: number }): Promise<void>;
+  lookup(key: string): Promise<T | undefined>;
+  consume(key: string): Promise<T | undefined>;
+  delete(key: string): Promise<boolean>;
+};
+
+type DiscordRegistryStore<T extends { id: string }> = DiscordPersistentStore<
+  PersistedDiscordRegistryEntry<T>
+>;
+
+let componentEntries: Map<string, DiscordComponentEntry> | undefined;
+let modalEntries: Map<string, DiscordModalEntry> | undefined;
+let persistentComponentStore: DiscordRegistryStore<DiscordComponentEntry> | undefined;
+let persistentModalStore: DiscordRegistryStore<DiscordModalEntry> | undefined;
+let persistentRegistryDisabled = false;
+
 function getComponentEntries(): Map<string, DiscordComponentEntry> {
-  return discordComponentRegistryState.componentEntries;
+  componentEntries ??= resolveGlobalMap<string, DiscordComponentEntry>(
+    DISCORD_COMPONENT_ENTRIES_KEY,
+  );
+  return componentEntries;
 }
 
 function getModalEntries(): Map<string, DiscordModalEntry> {
-  return discordComponentRegistryState.modalEntries;
+  modalEntries ??= resolveGlobalMap<string, DiscordModalEntry>(DISCORD_MODAL_ENTRIES_KEY);
+  return modalEntries;
 }
 
 function reportPersistentComponentRegistryError(error: unknown): void {
@@ -90,32 +111,32 @@ function formatRegistryErrorValue(value: unknown): string {
 }
 
 function disablePersistentComponentRegistry(error: unknown): void {
-  discordComponentRegistryState.persistentRegistryDisabled = true;
-  discordComponentRegistryState.persistentComponentStore = undefined;
-  discordComponentRegistryState.persistentModalStore = undefined;
+  persistentRegistryDisabled = true;
+  persistentComponentStore = undefined;
+  persistentModalStore = undefined;
   reportPersistentComponentRegistryError(error);
 }
 
 function getPersistentComponentStore(): DiscordRegistryStore<DiscordComponentEntry> | undefined {
-  if (discordComponentRegistryState.persistentRegistryDisabled) {
+  if (persistentRegistryDisabled) {
     return undefined;
   }
-  if (discordComponentRegistryState.persistentComponentStore) {
-    return discordComponentRegistryState.persistentComponentStore;
+  if (persistentComponentStore) {
+    return persistentComponentStore;
   }
   const runtime = getOptionalDiscordRuntime();
   if (!runtime) {
     return undefined;
   }
   try {
-    discordComponentRegistryState.persistentComponentStore = runtime.state.openKeyedStore<
+    persistentComponentStore = runtime.state.openKeyedStore<
       PersistedDiscordRegistryEntry<DiscordComponentEntry>
     >({
       namespace: PERSISTENT_COMPONENT_NAMESPACE,
       maxEntries: PERSISTENT_COMPONENT_MAX_ENTRIES,
       defaultTtlMs: DEFAULT_COMPONENT_TTL_MS,
     });
-    return discordComponentRegistryState.persistentComponentStore;
+    return persistentComponentStore;
   } catch (error) {
     disablePersistentComponentRegistry(error);
     return undefined;
@@ -123,25 +144,25 @@ function getPersistentComponentStore(): DiscordRegistryStore<DiscordComponentEnt
 }
 
 function getPersistentModalStore(): DiscordRegistryStore<DiscordModalEntry> | undefined {
-  if (discordComponentRegistryState.persistentRegistryDisabled) {
+  if (persistentRegistryDisabled) {
     return undefined;
   }
-  if (discordComponentRegistryState.persistentModalStore) {
-    return discordComponentRegistryState.persistentModalStore;
+  if (persistentModalStore) {
+    return persistentModalStore;
   }
   const runtime = getOptionalDiscordRuntime();
   if (!runtime) {
     return undefined;
   }
   try {
-    discordComponentRegistryState.persistentModalStore = runtime.state.openKeyedStore<
+    persistentModalStore = runtime.state.openKeyedStore<
       PersistedDiscordRegistryEntry<DiscordModalEntry>
     >({
       namespace: PERSISTENT_MODAL_NAMESPACE,
       maxEntries: PERSISTENT_MODAL_MAX_ENTRIES,
       defaultTtlMs: DEFAULT_COMPONENT_TTL_MS,
     });
-    return discordComponentRegistryState.persistentModalStore;
+    return persistentModalStore;
   } catch (error) {
     disablePersistentComponentRegistry(error);
     return undefined;
@@ -349,7 +370,7 @@ export function registerDiscordComponentEntries(params: {
   });
 }
 
-function resolveDiscordComponentEntry(params: {
+export function resolveDiscordComponentEntry(params: {
   id: string;
   consume?: boolean;
 }): DiscordComponentEntry | null {
@@ -381,7 +402,7 @@ export async function resolveDiscordComponentEntryWithPersistence(params: {
   return persisted;
 }
 
-function resolveDiscordModalEntry(params: {
+export function resolveDiscordModalEntry(params: {
   id: string;
   consume?: boolean;
 }): DiscordModalEntry | null {
@@ -403,4 +424,12 @@ export async function resolveDiscordModalEntryWithPersistence(params: {
     ...params,
     openStore: getPersistentModalStore,
   });
+}
+
+export function clearDiscordComponentEntries(): void {
+  getComponentEntries().clear();
+  getModalEntries().clear();
+  persistentComponentStore = undefined;
+  persistentModalStore = undefined;
+  persistentRegistryDisabled = false;
 }

@@ -3,17 +3,6 @@ package ai.openclaw.app
 import java.time.Instant
 import java.time.ZoneId
 
-private val nativeChannelNotificationPackages =
-  setOf(
-    "com.discord",
-    "com.whatsapp",
-    "com.whatsapp.w4b",
-    "org.telegram.messenger",
-    "org.telegram.messenger.web",
-    "org.thunderdog.challegram",
-    "org.thoughtcrime.securesms",
-  )
-
 /** Package-filter mode used before notification events are forwarded to the gateway. */
 enum class NotificationPackageFilterMode(
   val rawValue: String,
@@ -38,22 +27,12 @@ internal data class NotificationForwardingPolicy(
   val quietEnd: String,
   val maxEventsPerMinute: Int,
   val sessionKey: String?,
-  val selfPackageName: String = "",
 )
 
 /** Applies the operator-configured package allow/block list after trimming input. */
 internal fun NotificationForwardingPolicy.allowsPackage(packageName: String): Boolean {
   val normalized = packageName.trim()
   if (normalized.isEmpty()) {
-    return false
-  }
-  val self = selfPackageName.trim()
-  if (self.isNotEmpty() && normalized == self) {
-    return false
-  }
-  // Native channel sessions own these messages. Forwarding their notifications creates an
-  // unbound duplicate that can be answered from the wrong conversation.
-  if (normalized in nativeChannelNotificationPackages) {
     return false
   }
   return when (mode) {

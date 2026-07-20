@@ -12,6 +12,11 @@
       "import": "./dist/runtime-api.mjs",
       "default": "./dist/runtime-api.mjs"
     },
+    "./api": {
+      "types": "./dist/api.d.mts",
+      "import": "./dist/api.mjs",
+      "default": "./dist/api.mjs"
+    },
     "./runtime-api": {
       "types": "./dist/runtime-api.d.mts",
       "import": "./dist/runtime-api.mjs",
@@ -29,6 +34,6 @@
     }
   },
   "dependencies": {
-    "openclaw": "workspace:*"
+    "openclaw": "2026.5.28"
   }
 }

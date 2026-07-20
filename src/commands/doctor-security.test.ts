@@ -1,9 +1,9 @@
 // Doctor security tests cover security audit checks, config findings, and repair output.
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { withTempDir } from "../test-helpers/temp-dir.js";
 
 const note = vi.hoisted(() => vi.fn());
 const pluginRegistry = vi.hoisted(() => ({ list: [] as unknown[] }));
@@ -20,16 +20,6 @@ vi.mock("../channels/plugins/read-only.js", () => ({
 vi.mock("../channels/read-only-account-inspect.js", () => ({
   inspectReadOnlyChannelAccount: vi.fn(async () => null),
 }));
-
-// These doctor assertions cover core secret fields. Registry integration tests
-// own plugin-derived targets, so avoid compiling every bundled plugin here.
-vi.mock("../secrets/target-registry-data.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../secrets/target-registry-data.js")>();
-  return {
-    ...actual,
-    getSecretTargetRegistry: actual.getCoreSecretTargetRegistry,
-  };
-});
 
 import { noteSecurityWarnings } from "./doctor-security.js";
 
@@ -82,15 +72,14 @@ describe("noteSecurityWarnings gateway exposure", () => {
     file: Record<string, unknown>,
     run: () => Promise<void>,
   ): Promise<void> {
-    await withTempDir({ prefix: "openclaw-doctor-security-" }, async (home) => {
-      process.env.HOME = home;
-      await fs.mkdir(path.join(home, ".openclaw"), { recursive: true });
-      await fs.writeFile(
-        path.join(home, ".openclaw", "exec-approvals.json"),
-        JSON.stringify(file, null, 2),
-      );
-      await run();
-    });
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-doctor-security-"));
+    process.env.HOME = home;
+    await fs.mkdir(path.join(home, ".openclaw"), { recursive: true });
+    await fs.writeFile(
+      path.join(home, ".openclaw", "exec-approvals.json"),
+      JSON.stringify(file, null, 2),
+    );
+    await run();
   }
 
   async function expectAgentExecHostPolicyWarning(agentKey: "*" | "runner") {
@@ -144,7 +133,6 @@ describe("noteSecurityWarnings gateway exposure", () => {
     expect(message).toContain("without authentication");
     expect(message).toContain("Safer remote access");
     expect(message).toContain("ssh -N -L 18789:127.0.0.1:18789");
-    expect(message).toContain("openclaw security audit --deep");
   });
 
   it("uses env token to avoid critical warning", async () => {
@@ -248,13 +236,17 @@ describe("noteSecurityWarnings gateway exposure", () => {
   it("skips warning for loopback bind", async () => {
     const cfg = { gateway: { bind: "loopback" } } as OpenClawConfig;
     await noteSecurityWarnings(cfg);
-    expect(note).not.toHaveBeenCalled();
+    const message = lastMessage();
+    expect(message).toContain("No channel security warnings detected");
+    expect(message).not.toContain("Gateway bound");
   });
 
   it("treats unset bind as loopback for host-side doctor checks", async () => {
     const cfg = { gateway: {} } as OpenClawConfig;
     await noteSecurityWarnings(cfg);
-    expect(note).not.toHaveBeenCalled();
+    const message = lastMessage();
+    expect(message).toContain("No channel security warnings detected");
+    expect(message).not.toContain("Gateway bound");
   });
 
   it("shows explicit dmScope config command for multi-user DMs", async () => {
@@ -511,7 +503,9 @@ describe("noteSecurityWarnings gateway exposure", () => {
       },
     );
 
-    expect(note).not.toHaveBeenCalled();
+    const message = lastMessage();
+    expect(message).toContain("No channel security warnings detected");
+    expect(message).not.toContain('security="deny"');
   });
 
   it("does not invent an on-miss host ask policy when exec-approvals defaults.ask is unset", async () => {
@@ -531,7 +525,9 @@ describe("noteSecurityWarnings gateway exposure", () => {
       },
     );
 
-    expect(note).not.toHaveBeenCalled();
+    const message = lastMessage();
+    expect(message).toContain("No channel security warnings detected");
+    expect(message).not.toContain('ask="on-miss"');
   });
 
   it("warns when a per-agent exec policy is broader than the matching host agent policy", async () => {
@@ -572,7 +568,7 @@ describe("noteSecurityWarnings gateway exposure", () => {
     expect(message).toContain('agents.runner.ask="always"');
   });
 
-  it("fails closed on malformed persisted host policy instead of attributing partial fields", async () => {
+  it("ignores malformed host policy fields when attributing doctor conflicts", async () => {
     await withExecApprovalsFile(
       {
         version: 1,
@@ -589,7 +585,6 @@ describe("noteSecurityWarnings gateway exposure", () => {
         await noteSecurityWarnings({
           tools: {
             exec: {
-              security: "full",
               ask: "off",
             },
           },
@@ -602,8 +597,7 @@ describe("noteSecurityWarnings gateway exposure", () => {
 
     const message = lastMessage();
     expect(message).toContain("agents.list.runner.tools.exec is broader than the host exec policy");
-    expect(message).toContain('defaults.security="deny"');
-    expect(message).not.toContain('defaults.ask="always"');
+    expect(message).toContain('defaults.ask="always"');
     expect(message).not.toContain('agents.runner.ask="foo"');
   });
 

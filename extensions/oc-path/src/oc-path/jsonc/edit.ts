@@ -14,9 +14,8 @@ import type { JsoncAst, JsoncValue } from "./ast.js";
 import { parseJsonc } from "./parse.js";
 
 type JsoncEditPath = Array<string | number>;
-type JsoncEditTarget = { readonly path: JsoncEditPath; readonly value: JsoncValue };
 
-type JsoncEditResult =
+export type JsoncEditResult =
   | { readonly ok: true; readonly ast: JsoncAst }
   | { readonly ok: false; readonly reason: "unresolved" | "no-root" };
 
@@ -25,54 +24,15 @@ export function setJsoncOcPath(ast: JsoncAst, path: OcPath, newValue: JsoncValue
     return { ok: false, reason: "no-root" };
   }
 
-  const target = resolveEditTarget(ast.root, pathSegments(path));
-  if (target === null) {
+  const segments = resolveEditSegments(ast.root, pathSegments(path));
+  if (segments === null) {
     return { ok: false, reason: "unresolved" };
   }
-  guardSentinel(newValue, `oc://${path.file}/${target.path.join("/")}`);
-  return applyJsoncEdit(ast, target.path, newValue, false);
-}
+  guardSentinel(newValue, `oc://${path.file}/${segments.join("/")}`);
 
-export function insertJsoncOcPath(
-  ast: JsoncAst,
-  parentPath: OcPath,
-  indexOrKey: number | string,
-  newValue: JsoncValue,
-): JsoncEditResult {
-  if (ast.root === null) {
-    return { ok: false, reason: "no-root" };
-  }
-
-  const target = resolveEditTarget(ast.root, pathSegments(parentPath));
-  if (target === null) {
-    return { ok: false, reason: "unresolved" };
-  }
-  if (typeof indexOrKey === "string") {
-    if (
-      target.value.kind !== "object" ||
-      target.value.entries.some((entry) => entry.key === indexOrKey)
-    ) {
-      return { ok: false, reason: "unresolved" };
-    }
-  } else if (target.value.kind !== "array") {
-    return { ok: false, reason: "unresolved" };
-  }
-
-  const segment = typeof indexOrKey === "number" && indexOrKey < 0 ? -1 : indexOrKey;
-  const editPath = [...target.path, segment];
-  guardSentinel(newValue, `oc://${parentPath.file}/${editPath.join("/")}`);
-  return applyJsoncEdit(ast, editPath, newValue, typeof segment === "number");
-}
-
-function applyJsoncEdit(
-  ast: JsoncAst,
-  path: JsoncEditPath,
-  newValue: JsoncValue,
-  isArrayInsertion: boolean,
-): JsoncEditResult {
-  const edits = modify(ast.raw, path, jsoncValueToJson(newValue), {
+  const edits = modify(ast.raw, segments, jsoncValueToJson(newValue), {
     formattingOptions: { insertSpaces: true, tabSize: 2 },
-    isArrayInsertion,
+    isArrayInsertion: false,
   });
   if (edits.length === 0) {
     return { ok: false, reason: "unresolved" };
@@ -118,7 +78,7 @@ function pathSegments(path: OcPath): string[] {
   return out;
 }
 
-function resolveEditTarget(root: JsoncValue, segments: readonly string[]): JsoncEditTarget | null {
+function resolveEditSegments(root: JsoncValue, segments: readonly string[]): JsoncEditPath | null {
   const out: JsoncEditPath = [];
   let current: JsoncValue = root;
   for (let segment of segments) {
@@ -151,7 +111,7 @@ function resolveEditTarget(root: JsoncValue, segments: readonly string[]): Jsonc
     }
     return null;
   }
-  return { path: out, value: current };
+  return out;
 }
 
 function positionalForJsonc(node: JsoncValue, segment: string): string | null {

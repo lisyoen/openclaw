@@ -103,9 +103,9 @@ private struct IPadWorkboardCompactRowsPreview: View {
     private var previewHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Phone queue")
-                .font(OpenClawType.headline)
+                .font(.headline)
             Text("Tap for detail, swipe or long-press for card actions.")
-                .font(OpenClawType.caption)
+                .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -161,9 +161,9 @@ private struct IPadSkillWorkshopCompactRowsPreview: View {
     private var previewHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Phone proposals")
-                .font(OpenClawType.headline)
+                .font(.headline)
             Text("Tap for detail, swipe or long-press for proposal actions.")
-                .font(OpenClawType.caption)
+                .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -194,9 +194,7 @@ private struct IPadActivityStatesPreview: View {
             trailing: "open",
             color: OpenClawBrand.ok,
             progress: nil,
-            route: .chat("main"),
-            isUnread: false,
-            isPinned: false),
+            route: .chat("main")),
         CommandCenterTab.WorkItem(
             id: "preview-ipad-audit",
             icon: "bubble.left.and.text.bubble.right",
@@ -206,9 +204,7 @@ private struct IPadActivityStatesPreview: View {
             trailing: "open",
             color: OpenClawBrand.accent,
             progress: nil,
-            route: .chat("ipad-audit"),
-            isUnread: true,
-            isPinned: true),
+            route: .chat("ipad-audit")),
     ]
 
     var body: some View {
@@ -281,7 +277,7 @@ private struct IPadActivityStatesPreview: View {
 
     private func previewHeader(_ title: String) -> some View {
         Text(title)
-            .font(OpenClawType.captionSemiBold)
+            .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
     }
@@ -303,8 +299,8 @@ private struct IPadActivityStatesPreview: View {
                     action: {})
                 ProStatusRow(
                     icon: gatewayValue == "online" ? "network" : "wifi.slash",
-                    title: .localized(gatewayTitle),
-                    detail: .localized(gatewayDetail),
+                    title: gatewayTitle,
+                    detail: gatewayDetail,
                     value: gatewayValue,
                     color: gatewayColor,
                     actionTitle: gatewayValue == "online" ? nil : "Settings",
@@ -322,8 +318,8 @@ private struct IPadActivityStatesPreview: View {
                     Divider().padding(.leading, 58)
                     ProStatusRow(
                         icon: row.icon,
-                        title: .localized(row.title),
-                        detail: .localized(row.detail),
+                        title: row.title,
+                        detail: row.detail,
                         value: row.state,
                         color: row.color,
                         actionTitle: "Open",
@@ -333,8 +329,8 @@ private struct IPadActivityStatesPreview: View {
                     Divider().padding(.leading, 58)
                     ProStatusRow(
                         icon: row.icon,
-                        title: .localized(row.title),
-                        detail: .localized(row.detail),
+                        title: row.title,
+                        detail: row.detail,
                         value: row.value,
                         color: row.color,
                         actionTitle: nil,
@@ -427,7 +423,7 @@ private struct IPadWorkboardStatesPreview: View {
 
     private func previewHeader(_ title: String) -> some View {
         Text(title)
-            .font(OpenClawType.captionSemiBold)
+            .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
     }
@@ -529,7 +525,7 @@ private struct IPadSkillWorkshopStatesPreview: View {
 
     private func previewHeader(_ title: String) -> some View {
         Text(title)
-            .font(OpenClawType.subheadSemiBold)
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
     }
 
@@ -597,9 +593,9 @@ private struct IPadSkillWorkshopKanbanPreview: View {
     private var previewHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("iPad kanban")
-                .font(OpenClawType.headline)
+                .font(.headline)
             Text("Wide layout with populated, empty, held, and custom proposal lanes.")
-                .font(OpenClawType.caption)
+                .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, OpenClawProMetric.pagePadding)
@@ -661,11 +657,13 @@ private enum IPadSkillWorkshopPreviewFixtures {
         return IPadSkillProposal(
             entry: IPadSkillProposalManifestEntry(
                 id: id,
+                kind: "skill",
                 status: status,
                 title: title,
                 description: description,
                 skillName: title,
                 skillKey: id,
+                createdAt: updatedAt,
                 updatedAt: updatedAt,
                 scanState: "complete"),
             previous: nil)

@@ -21,7 +21,7 @@ type ProviderErrorPattern = {
  * `isContextOverflowError()` in errors.ts. Called from `isContextOverflowError()`
  * to catch provider-specific wording that the generic regex misses.
  */
-const PROVIDER_CONTEXT_OVERFLOW_PATTERNS: readonly RegExp[] = [
+export const PROVIDER_CONTEXT_OVERFLOW_PATTERNS: readonly RegExp[] = [
   // AWS Bedrock validation / stream errors use provider-specific wording.
   /\binput token count exceeds the maximum number of input tokens\b/i,
   /\binput is too long for this model\b/i,
@@ -51,7 +51,7 @@ const PROVIDER_CONTEXT_OVERFLOW_PATTERNS: readonly RegExp[] = [
  * These handle cases where the generic classifiers in failover-matches.ts
  * produce wrong results for specific providers.
  */
-const PROVIDER_SPECIFIC_PATTERNS: readonly ProviderErrorPattern[] = [
+export const PROVIDER_SPECIFIC_PATTERNS: readonly ProviderErrorPattern[] = [
   {
     test: /\bthrottlingexception\b/i,
     reason: "rate_limit",
@@ -123,7 +123,7 @@ function looksLikeProviderContextOverflowCandidate(errorMessage: string): boolea
   );
 }
 
-type ProviderSpecificErrorContext = {
+export type ProviderSpecificErrorContext = {
   provider?: string;
   modelId?: string;
   errorMessage: string;

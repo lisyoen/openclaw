@@ -1,65 +1,28 @@
 // Fetches and normalizes Z.ai provider usage records.
-import { asFiniteNumber } from "@openclaw/normalization-core/number-coercion";
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   buildUsageHttpErrorSnapshot,
-  discardUsageResponseBody,
   fetchJson,
-  parseUsageResetAt,
   readUsageJson,
 } from "./provider-usage.fetch.shared.js";
 import { clampPercent, PROVIDER_LABELS } from "./provider-usage.shared.js";
 import type { ProviderUsageSnapshot, UsageWindow } from "./provider-usage.types.js";
 
-type NormalizedZaiLimit = {
-  type?: string;
-  percentage?: number;
-  unit?: number;
-  number?: number;
-  nextResetTime?: string;
-};
-
-type NormalizedZaiUsage =
-  | { ok: false; message?: string }
-  | {
-      ok: true;
-      plan?: string;
-      limits: NormalizedZaiLimit[];
-    };
-
-function normalizeZaiUsage(value: unknown): NormalizedZaiUsage | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-  const message = normalizeOptionalString(value.msg);
-  if (value.success !== true || asFiniteNumber(value.code) !== 200) {
-    return { ok: false, message };
-  }
-
-  const data = isRecord(value.data) ? value.data : {};
-  const rawLimits = Array.isArray(data.limits) ? data.limits : [];
-
-  const limits: NormalizedZaiLimit[] = [];
-  for (const rawLimit of rawLimits) {
-    if (!isRecord(rawLimit)) {
-      continue;
-    }
-    limits.push({
-      type: normalizeOptionalString(rawLimit.type),
-      percentage: asFiniteNumber(rawLimit.percentage),
-      unit: asFiniteNumber(rawLimit.unit),
-      number: asFiniteNumber(rawLimit.number),
-      nextResetTime: normalizeOptionalString(rawLimit.nextResetTime),
-    });
-  }
-
-  return {
-    ok: true,
-    plan: normalizeOptionalString(data.planName) ?? normalizeOptionalString(data.plan),
-    limits,
+type ZaiUsageResponse = {
+  success?: boolean;
+  code?: number;
+  msg?: string;
+  data?: {
+    planName?: string;
+    plan?: string;
+    limits?: Array<{
+      type?: string;
+      percentage?: number;
+      unit?: number;
+      number?: number;
+      nextResetTime?: string;
+    }>;
   };
-}
+};
 
 export async function fetchZaiUsage(
   apiKey: string,
@@ -80,7 +43,6 @@ export async function fetchZaiUsage(
   );
 
   if (!res.ok) {
-    await discardUsageResponseBody(res);
     return buildUsageHttpErrorSnapshot({
       provider: "zai",
       status: res.status,
@@ -91,26 +53,29 @@ export async function fetchZaiUsage(
   if (!parsed.ok) {
     return parsed.snapshot;
   }
-  const usage = normalizeZaiUsage(parsed.data);
-  if (!usage || !usage.ok) {
+  const data = parsed.data as ZaiUsageResponse;
+  if (!data.success || data.code !== 200) {
+    const errorMessage = typeof data.msg === "string" ? data.msg.trim() : "";
     return {
       provider: "zai",
       displayName: PROVIDER_LABELS.zai,
       windows: [],
-      error: usage?.message || "API error",
+      error: errorMessage || "API error",
     };
   }
 
   const windows: UsageWindow[] = [];
-  for (const limit of usage.limits) {
-    const percent = clampPercent(limit.percentage ?? 0);
-    const nextReset = parseUsageResetAt(limit.nextResetTime);
+  const limits = data.data?.limits || [];
+
+  for (const limit of limits) {
+    const percent = clampPercent(limit.percentage || 0);
+    const nextReset = limit.nextResetTime ? new Date(limit.nextResetTime).getTime() : undefined;
     let windowLabel = "Limit";
-    if (limit.unit === 1 && limit.number !== undefined) {
+    if (limit.unit === 1) {
       windowLabel = `${limit.number}d`;
-    } else if (limit.unit === 3 && limit.number !== undefined) {
+    } else if (limit.unit === 3) {
       windowLabel = `${limit.number}h`;
-    } else if (limit.unit === 5 && limit.number !== undefined) {
+    } else if (limit.unit === 5) {
       windowLabel = `${limit.number}m`;
     }
 
@@ -129,10 +94,11 @@ export async function fetchZaiUsage(
     }
   }
 
+  const planName = data.data?.planName || data.data?.plan || undefined;
   return {
     provider: "zai",
     displayName: PROVIDER_LABELS.zai,
     windows,
-    plan: usage.plan,
+    plan: planName,
   };
 }

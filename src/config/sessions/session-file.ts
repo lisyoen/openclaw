@@ -1,10 +1,10 @@
-// Session file persistence syncs active session transcript markers into store metadata.
-import { normalizeAgentId } from "../../routing/session-key.js";
-import { upsertSessionEntry } from "./session-accessor.js";
-import { formatSqliteSessionFileMarker } from "./sqlite-marker.js";
+// Session file persistence resolves transcript paths and syncs store metadata.
+import { resolveSessionFilePath } from "./paths.js";
+import type { ResolvedSessionMaintenanceConfig } from "./store-maintenance.js";
+import { updateSessionStore } from "./store.js";
 import type { SessionEntry } from "./types.js";
 
-/** Resolves the active SQLite transcript marker and persists it into the session store when needed. */
+/** Resolves a transcript file path and persists it into the session store when needed. */
 export async function resolveAndPersistSessionFile(params: {
   sessionId: string;
   sessionKey: string;
@@ -12,15 +12,29 @@ export async function resolveAndPersistSessionFile(params: {
   storePath: string;
   sessionEntry?: SessionEntry;
   agentId?: string;
+  sessionsDir?: string;
+  fallbackSessionFile?: string;
+  activeSessionKey?: string;
+  maintenanceConfig?: ResolvedSessionMaintenanceConfig;
 }): Promise<{ sessionFile: string; sessionEntry: SessionEntry }> {
   const { sessionId, sessionKey, sessionStore, storePath } = params;
   const now = Date.now();
   const baseEntry = params.sessionEntry ??
     sessionStore[sessionKey] ?? { sessionId, updatedAt: now, sessionStartedAt: now };
-  const sessionFile = formatSqliteSessionFileMarker({
-    agentId: normalizeAgentId(params.agentId),
-    sessionId,
-    storePath,
+  const shouldReusePersistedSessionFile = baseEntry.sessionId === sessionId;
+  const fallbackSessionFile = params.fallbackSessionFile?.trim();
+  // A reset/fork should not reuse the previous transcript path unless the fallback explicitly
+  // points at the intended file for the new session id.
+  const entryForResolve = !shouldReusePersistedSessionFile
+    ? fallbackSessionFile
+      ? { ...baseEntry, sessionFile: fallbackSessionFile }
+      : { ...baseEntry, sessionFile: undefined }
+    : !baseEntry.sessionFile && fallbackSessionFile
+      ? { ...baseEntry, sessionFile: fallbackSessionFile }
+      : baseEntry;
+  const sessionFile = resolveSessionFilePath(sessionId, entryForResolve, {
+    agentId: params.agentId,
+    sessionsDir: params.sessionsDir,
   });
   const persistedEntry: SessionEntry = {
     ...baseEntry,
@@ -31,7 +45,21 @@ export async function resolveAndPersistSessionFile(params: {
   };
   if (baseEntry.sessionId !== sessionId || baseEntry.sessionFile !== sessionFile) {
     sessionStore[sessionKey] = persistedEntry;
-    await upsertSessionEntry({ storePath, sessionKey }, persistedEntry);
+    await updateSessionStore(
+      storePath,
+      (store) => {
+        store[sessionKey] = {
+          ...store[sessionKey],
+          ...persistedEntry,
+        };
+      },
+      params.activeSessionKey || params.maintenanceConfig
+        ? {
+            ...(params.activeSessionKey ? { activeSessionKey: params.activeSessionKey } : {}),
+            ...(params.maintenanceConfig ? { maintenanceConfig: params.maintenanceConfig } : {}),
+          }
+        : undefined,
+    );
     return { sessionFile, sessionEntry: persistedEntry };
   }
   sessionStore[sessionKey] = persistedEntry;

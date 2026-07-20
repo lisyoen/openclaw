@@ -9,7 +9,7 @@ title: "Vydra"
 The bundled Vydra plugin adds:
 
 - Image generation via `vydra/grok-imagine`
-- Video generation via `vydra/veo3` (text-to-video) and `vydra/kling` (image-to-video)
+- Video generation via `vydra/veo3` and `vydra/kling`
 - Speech synthesis via Vydra's ElevenLabs-backed TTS route
 
 OpenClaw uses the same `VYDRA_API_KEY` for all three capabilities.
@@ -25,7 +25,7 @@ OpenClaw uses the same `VYDRA_API_KEY` for all three capabilities.
 | Base URL        | `https://www.vydra.ai/api/v1` (use the `www` host)                        |
 
 <Warning>
-Use `https://www.vydra.ai/api/v1` as the base URL. Vydra's apex host (`https://vydra.ai/api/v1`) currently redirects to `www`. Some HTTP clients drop `Authorization` on that cross-host redirect, which turns a valid API key into a misleading auth failure. The bundled plugin normalizes any configured `vydra.ai` base URL to `www.vydra.ai` to avoid that.
+  Use `https://www.vydra.ai/api/v1` as the base URL. Vydra's apex host (`https://vydra.ai/api/v1`) currently redirects to `www`. Some HTTP clients drop `Authorization` on that cross-host redirect, which turns a valid API key into a misleading auth failure. The bundled plugin uses the `www` base URL directly to avoid that.
 </Warning>
 
 ## Setup
@@ -52,7 +52,7 @@ Use `https://www.vydra.ai/api/v1` as the base URL. Vydra's apex host (`https://v
 
 <AccordionGroup>
   <Accordion title="Image generation">
-    Default and only bundled image model:
+    Default image model:
 
     - `vydra/grok-imagine`
 
@@ -70,7 +70,7 @@ Use `https://www.vydra.ai/api/v1` as the base URL. Vydra's apex host (`https://v
     }
     ```
 
-    Bundled support is text-to-image only, at most one image per request. Vydra's hosted edit routes expect remote image URLs, and the bundled plugin does not add a Vydra-specific upload bridge.
+    Current bundled support is text-to-image only. Vydra's hosted edit routes expect remote image URLs, and OpenClaw does not add a Vydra-specific upload bridge in the bundled plugin yet.
 
     <Note>
     See [Image Generation](/tools/image-generation) for shared tool parameters, provider selection, and failover behavior.
@@ -81,8 +81,8 @@ Use `https://www.vydra.ai/api/v1` as the base URL. Vydra's apex host (`https://v
   <Accordion title="Video generation">
     Registered video models:
 
-    - `vydra/veo3` for text-to-video (rejects image reference inputs)
-    - `vydra/kling` for image-to-video (requires exactly one remote image URL)
+    - `vydra/veo3` for text-to-video
+    - `vydra/kling` for image-to-video
 
     Set Vydra as the default video provider:
 
@@ -100,8 +100,9 @@ Use `https://www.vydra.ai/api/v1` as the base URL. Vydra's apex host (`https://v
 
     Notes:
 
-    - `vydra/kling` rejects local file uploads up front; only a remote image URL reference works.
-    - Vydra's `kling` HTTP route has been inconsistent about whether it requires `image_url` or `video_url`; the bundled provider sends the same remote image URL in both fields.
+    - `vydra/veo3` is bundled as text-to-video only.
+    - `vydra/kling` currently requires a remote image URL reference. Local file uploads are rejected up front.
+    - Vydra's current `kling` HTTP route has been inconsistent about whether it requires `image_url` or `video_url`; the bundled provider maps the same remote image URL into both fields.
     - The bundled plugin stays conservative and does not forward undocumented style knobs such as aspect ratio, resolution, watermark, or generated audio.
 
     <Note>
@@ -119,7 +120,7 @@ Use `https://www.vydra.ai/api/v1` as the base URL. Vydra's apex host (`https://v
     pnpm test:live -- extensions/vydra/vydra.live.test.ts
     ```
 
-    The bundled Vydra live file covers:
+    The bundled Vydra live file now covers:
 
     - `vydra/veo3` text-to-video
     - `vydra/kling` image-to-video using a remote image URL
@@ -143,7 +144,7 @@ Use `https://www.vydra.ai/api/v1` as the base URL. Vydra's apex host (`https://v
           providers: {
             vydra: {
               apiKey: "${VYDRA_API_KEY}",
-              voiceId: "21m00Tcm4TlvDq8ikWAM",
+              speakerVoiceId: "21m00Tcm4TlvDq8ikWAM",
             },
           },
         },
@@ -154,9 +155,9 @@ Use `https://www.vydra.ai/api/v1` as the base URL. Vydra's apex host (`https://v
     Defaults:
 
     - Model: `elevenlabs/tts`
-    - Voice id: `21m00Tcm4TlvDq8ikWAM` ("Rachel")
+    - Voice id: `21m00Tcm4TlvDq8ikWAM`
 
-    The bundled plugin exposes this one known-good default voice and returns MP3 audio files.
+    The bundled plugin currently exposes one known-good default voice and returns MP3 audio files.
 
   </Accordion>
 </AccordionGroup>

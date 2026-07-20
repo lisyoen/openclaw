@@ -2,7 +2,7 @@
 // blocks that the control UI can render without unsafe file exposure.
 import path from "node:path";
 import { estimateBase64DecodedBytes } from "@openclaw/media-core/base64";
-import { isAudioFileName, mimeTypeFromFilePath } from "@openclaw/media-core/mime";
+import { isAudioFileName } from "@openclaw/media-core/mime";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import { openLocalFileSafely } from "../../infra/fs-safe.js";
@@ -26,10 +26,23 @@ const ALLOWED_WEBCHAT_DATA_IMAGE_MEDIA_TYPES = new Set([
   "image/webp",
 ]);
 
+const MIME_BY_EXT: Record<string, string> = {
+  ".aac": "audio/aac",
+  ".m4a": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".oga": "audio/ogg",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/opus",
+  ".wav": "audio/wav",
+  ".webm": "audio/webm",
+};
+
 type WebchatAudioEmbeddingOptions = {
   localRoots?: readonly string[];
   onLocalAudioAccessDenied?: (err: LocalMediaAccessError) => void;
 };
+
+type WebchatAssistantMediaOptions = WebchatAudioEmbeddingOptions;
 
 type LocalAudioContentBlock = {
   path: string;
@@ -141,7 +154,8 @@ async function resolveReplyMediaAudioEmbedding(
 }
 
 function mimeTypeForPath(filePath: string): string {
-  return mimeTypeFromFilePath(filePath) ?? "audio/mpeg";
+  const ext = normalizeLowercaseStringOrEmpty(path.extname(filePath));
+  return MIME_BY_EXT[ext] ?? "audio/mpeg";
 }
 
 function isBase64DataPayload(value: string): boolean {
@@ -239,7 +253,7 @@ export async function buildWebchatAudioContentBlocksFromReplyPayloads(
 
 export async function buildWebchatAssistantMessageFromReplyPayloads(
   payloads: ReplyPayload[],
-  options?: WebchatAudioEmbeddingOptions,
+  options?: WebchatAssistantMediaOptions,
 ): Promise<{ content: Array<Record<string, unknown>>; transcriptText: string } | null> {
   const content: Array<Record<string, unknown>> = [];
   const transcriptTextParts: string[] = [];

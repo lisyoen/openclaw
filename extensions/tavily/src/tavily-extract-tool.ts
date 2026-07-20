@@ -3,7 +3,6 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-runtime";
 import {
   jsonResult,
   readPositiveIntegerParam,
-  readStringArrayParam,
   readStringParam,
 } from "openclaw/plugin-sdk/provider-web-search";
 import { Type } from "typebox";
@@ -50,7 +49,9 @@ export function createTavilyExtractTool(api: OpenClawPluginApi, ctx?: TavilyTool
       "Extract clean content from one or more URLs using Tavily. Handles JS-rendered pages. Supports query-focused chunking.",
     parameters: TavilyExtractToolSchema,
     execute: async (_toolCallId: string, rawParams: Record<string, unknown>) => {
-      const urls = readStringArrayParam(rawParams, "urls") ?? [];
+      const urls = Array.isArray(rawParams.urls)
+        ? (rawParams.urls as string[]).filter(Boolean)
+        : [];
       if (urls.length === 0) {
         throw new Error("tavily_extract requires at least one URL.");
       }

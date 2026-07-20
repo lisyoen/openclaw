@@ -10,6 +10,11 @@ import {
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { getRuntimeConfig } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import {
+  DEFAULT_LIVE_MUSIC_MODELS,
+  collectProviderApiKeys,
+  encodePngRgba,
+  fillPixel,
+  getShellEnvAppliedKeys,
   isAuthErrorMessage,
   isBillingErrorMessage,
   isLiveProfileKeyModeEnabled,
@@ -19,18 +24,12 @@ import {
   isServerErrorMessage,
   isTimeoutErrorMessage,
   isTruthyEnvValue,
-} from "openclaw/plugin-sdk/test-live";
-import { collectProviderApiKeys, getShellEnvAppliedKeys } from "openclaw/plugin-sdk/test-live-auth";
-import {
-  DEFAULT_LIVE_MUSIC_MODELS,
-  encodePngRgba,
-  fillPixel,
   parseCsvFilter,
   parseProviderModelMap,
   redactLiveApiKey,
   resolveConfiguredLiveMusicModels,
   resolveLiveMusicAuthStore,
-} from "openclaw/plugin-sdk/test-media-generation";
+} from "openclaw/plugin-sdk/test-env";
 import { describe, expect, it } from "vitest";
 import falPlugin from "./fal/index.js";
 import googlePlugin from "./google/index.js";

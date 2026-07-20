@@ -13,9 +13,6 @@ export type MessagingToolSend = {
   threadSuppressed?: boolean;
   text?: string;
   mediaUrls?: string[];
-  hasRichContent?: true;
-  /** Present only when Codex classified this current-source delivery intent. */
-  sourceReplyFinal?: boolean;
 };
 
 export type MessagingToolSourceReplyPayload = Pick<
@@ -29,6 +26,4 @@ export type MessagingToolSourceReplyPayload = Pick<
   | "text"
 > & {
   idempotencyKey?: string;
-  /** Present only when Codex classified this current-source delivery intent. */
-  sourceReplyFinal?: boolean;
 };

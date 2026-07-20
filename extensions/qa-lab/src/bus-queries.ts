@@ -1,6 +1,5 @@
 // Qa Lab plugin module implements bus queries behavior.
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { parseQaTarget } from "./qa-bus-protocol.js";
 import type {
   QaBusAttachment,
   QaBusConversation,
@@ -10,7 +9,6 @@ import type {
   QaBusPollResult,
   QaBusReadMessageInput,
   QaBusSearchMessagesInput,
-  QaBusSnapshotConversation,
   QaBusStateSnapshot,
   QaBusThread,
   QaBusToolCall,
@@ -27,10 +25,34 @@ export function normalizeConversationFromTarget(target: string): {
   conversation: QaBusConversation;
   threadId?: string;
 } {
-  const parsed = parseQaTarget(target);
+  const trimmed = target.trim();
+  if (trimmed.startsWith("thread:")) {
+    const rest = trimmed.slice("thread:".length);
+    const slash = rest.indexOf("/");
+    if (slash > 0) {
+      return {
+        conversation: { id: rest.slice(0, slash), kind: "channel" },
+        threadId: rest.slice(slash + 1),
+      };
+    }
+  }
+  if (trimmed.startsWith("channel:")) {
+    return {
+      conversation: { id: trimmed.slice("channel:".length), kind: "channel" },
+    };
+  }
+  if (trimmed.startsWith("group:")) {
+    return {
+      conversation: { id: trimmed.slice("group:".length), kind: "group" },
+    };
+  }
+  if (trimmed.startsWith("dm:")) {
+    return {
+      conversation: { id: trimmed.slice("dm:".length), kind: "direct" },
+    };
+  }
   return {
-    conversation: { id: parsed.conversationId, kind: parsed.chatType },
-    ...(parsed.threadId !== undefined ? { threadId: parsed.threadId } : {}),
+    conversation: { id: trimmed, kind: "direct" },
   };
 }
 
@@ -39,7 +61,6 @@ export function cloneMessage(message: QaBusMessage): QaBusMessage {
     ...message,
     conversation: { ...message.conversation },
     attachments: (message.attachments ?? []).map((attachment) => cloneAttachment(attachment)),
-    ...(message.nativeCommand ? { nativeCommand: { ...message.nativeCommand } } : {}),
     toolCalls: message.toolCalls?.map((toolCall) => cloneToolCall(toolCall)),
     reactions: message.reactions.map((reaction) => ({ ...reaction })),
   };
@@ -72,7 +93,7 @@ export function cloneEvent(event: QaBusEvent): QaBusEvent {
 
 export function buildQaBusSnapshot(params: {
   cursor: number;
-  conversations: Map<string, QaBusSnapshotConversation>;
+  conversations: Map<string, QaBusConversation>;
   threads: Map<string, QaBusThread>;
   messages: Map<string, QaBusMessage>;
   events: QaBusEvent[];
@@ -88,22 +109,14 @@ export function buildQaBusSnapshot(params: {
   };
 }
 
-export function requireQaBusMessageForAccount(params: {
-  messages: Map<string, QaBusMessage>;
-  input: Pick<QaBusReadMessageInput, "accountId" | "messageId">;
-}): QaBusMessage {
-  const message = params.messages.get(params.input.messageId);
-  if (!message || message.accountId !== normalizeAccountId(params.input.accountId)) {
-    throw new Error(`qa-bus message not found: ${params.input.messageId}`);
-  }
-  return message;
-}
-
 export function readQaBusMessage(params: {
   messages: Map<string, QaBusMessage>;
   input: QaBusReadMessageInput;
 }) {
-  const message = requireQaBusMessageForAccount(params);
+  const message = params.messages.get(params.input.messageId);
+  if (!message) {
+    throw new Error(`qa-bus message not found: ${params.input.messageId}`);
+  }
   return cloneMessage(message);
 }
 
@@ -117,19 +130,10 @@ export function searchQaBusMessages(params: {
   return Array.from(params.messages.values())
     .filter((message) => message.accountId === accountId)
     .filter((message) =>
-      params.input.conversationId !== undefined
-        ? message.conversation.id === params.input.conversationId
-        : true,
+      params.input.conversationId ? message.conversation.id === params.input.conversationId : true,
     )
     .filter((message) =>
-      params.input.conversationKind
-        ? message.conversation.kind === params.input.conversationKind
-        : true,
-    )
-    .filter((message) =>
-      params.input.threadId !== undefined
-        ? (message.threadId ?? null) === params.input.threadId
-        : true,
+      params.input.threadId ? message.threadId === params.input.threadId : true,
     )
     .filter((message) => {
       if (!query) {
@@ -176,15 +180,12 @@ export function pollQaBusEvents(params: {
     requestedCursor: params.input?.cursor,
   });
   const limit = Math.max(1, Math.min(params.input?.limit ?? 100, 500));
-  const matchingEvents = params.events.filter(
-    (event) => event.accountId === accountId && event.cursor > effectiveStartCursor,
-  );
-  const page = matchingEvents.slice(0, limit);
-  // A limited page may advance only through events it returns. Jumping to the
-  // bus-wide cursor would make every remaining account event unreachable.
-  const nextCursor = matchingEvents.length > page.length ? page.at(-1)?.cursor : params.cursor;
+  const matches = params.events
+    .filter((event) => event.accountId === accountId && event.cursor > effectiveStartCursor)
+    .slice(0, limit)
+    .map((event) => cloneEvent(event));
   return {
-    cursor: nextCursor ?? params.cursor,
-    events: page.map((event) => cloneEvent(event)),
+    cursor: params.cursor,
+    events: matches,
   };
 }

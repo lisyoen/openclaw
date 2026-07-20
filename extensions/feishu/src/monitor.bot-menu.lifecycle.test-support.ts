@@ -25,6 +25,7 @@ const {
   createEventDispatcherMock,
   createFeishuReplyDispatcherMock,
   dispatchReplyFromConfigMock,
+  finalizeInboundContextMock,
   resolveAgentRouteMock,
   resolveBoundConversationMock,
   sendCardFeishuMock,
@@ -112,8 +113,11 @@ describe("Feishu bot-menu lifecycle", () => {
       replyText: "menu reply once",
     });
 
+    withReplyDispatcherMock.mockImplementation(async ({ run }) => await run());
+
     installFeishuLifecycleReplyRuntime({
       resolveAgentRouteMock,
+      finalizeInboundContextMock,
       dispatchReplyFromConfigMock,
       withReplyDispatcherMock,
       storePath: "/tmp/feishu-bot-menu-sessions.json",
@@ -177,14 +181,13 @@ describe("Feishu bot-menu lifecycle", () => {
         replyToMessageId: undefined,
       }),
     );
-    expect(dispatchReplyFromConfigMock).toHaveBeenCalledWith(
+    expect(finalizeInboundContextMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        ctx: expect.objectContaining({
-          AccountId: "acct-menu",
-          SessionKey: "agent:bound-agent:feishu:direct:ou_user1",
-          MessageSid: "bot-menu:quick-actions:1700000000001",
-        }),
+        AccountId: "acct-menu",
+        SessionKey: "agent:bound-agent:feishu:direct:ou_user1",
+        MessageSid: "bot-menu:quick-actions:1700000000001",
       }),
+      undefined,
     );
     expect(touchBindingMock).toHaveBeenCalledWith("binding-menu");
 

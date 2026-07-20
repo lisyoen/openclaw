@@ -41,13 +41,7 @@ export function normalizeSignalAccountInput(value: string | null | undefined): s
   if (!trimmed) {
     return null;
   }
-  const phoneInput = trimmed.replace(/^signal:/i, "").trim();
-  // Setup accepts formatting punctuation, but embedded or duplicate pluses are invalid input.
-  const plusCount = phoneInput.match(/\+/g)?.length ?? 0;
-  if (plusCount > 1 || (plusCount === 1 && !phoneInput.startsWith("+"))) {
-    return null;
-  }
-  const normalized = normalizeE164(phoneInput);
+  const normalized = normalizeE164(trimmed);
   const digits = normalized.slice(1);
   if (!DIGITS_ONLY.test(digits)) {
     return null;
@@ -62,7 +56,7 @@ function isUuidLike(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-function parseSignalAllowFromEntries(raw: string): { entries: string[]; error?: string } {
+export function parseSignalAllowFromEntries(raw: string): { entries: string[]; error?: string } {
   return parseSetupEntriesAllowingWildcard(raw, (entry) => {
     if (normalizeLowercaseStringOrEmpty(entry).startsWith("uuid:")) {
       const id = entry.slice("uuid:".length).trim();
@@ -199,6 +193,10 @@ export function createSignalCliPathTextInput(
     resolvePath: ({ cfg, accountId, credentialValues }) =>
       resolveSignalCliPath({ cfg, accountId, credentialValues }),
     shouldPrompt,
+    helpTitle: "Signal",
+    helpLines: [
+      "signal-cli not found. Install it, then rerun this step or set channels.signal.cliPath.",
+    ],
   });
 }
 

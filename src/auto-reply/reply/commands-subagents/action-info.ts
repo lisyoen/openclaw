@@ -4,7 +4,7 @@ import { subagentRuns } from "../../../agents/subagent-registry-memory.js";
 import { countPendingDescendantRunsFromRuns } from "../../../agents/subagent-registry-queries.js";
 import { getSubagentRunsSnapshotForRead } from "../../../agents/subagent-registry-state.js";
 import { resolveStorePath } from "../../../config/sessions/paths.js";
-import { loadSessionEntry } from "../../../config/sessions/session-accessor.js";
+import { loadSessionStore } from "../../../config/sessions/store-load.js";
 import { formatTimeAgo } from "../../../infra/format-time/format-relative.ts";
 import { parseAgentSessionKey } from "../../../routing/session-key.js";
 import { formatDurationCompact } from "../../../shared/subagents-format.js";
@@ -47,13 +47,8 @@ function loadSubagentSessionEntry(params: SubagentsCommandContext["params"], chi
   const storePath = resolveStorePath(params.cfg.session?.store, {
     agentId: parsed?.agentId,
   });
-  return {
-    entry: loadSessionEntry({
-      storePath,
-      sessionKey: childKey,
-      clone: false,
-    }),
-  };
+  const store = loadSessionStore(storePath);
+  return { entry: store[childKey] };
 }
 
 export function handleSubagentsInfoAction(ctx: SubagentsCommandContext): CommandHandlerResult {

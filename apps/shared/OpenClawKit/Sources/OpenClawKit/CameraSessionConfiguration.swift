@@ -1,7 +1,6 @@
 import AVFoundation
 import CoreMedia
 
-#if !os(watchOS)
 public enum CameraSessionConfigurationError: LocalizedError {
     case addCameraInputFailed
     case addPhotoOutputFailed
@@ -25,8 +24,8 @@ public enum CameraSessionConfigurationError: LocalizedError {
     }
 }
 
-enum CameraSessionConfiguration {
-    static func addCameraInput(session: AVCaptureSession, camera: AVCaptureDevice) throws {
+public enum CameraSessionConfiguration {
+    public static func addCameraInput(session: AVCaptureSession, camera: AVCaptureDevice) throws {
         let input = try AVCaptureDeviceInput(device: camera)
         guard session.canAddInput(input) else {
             throw CameraSessionConfigurationError.addCameraInputFailed
@@ -34,7 +33,7 @@ enum CameraSessionConfiguration {
         session.addInput(input)
     }
 
-    static func addPhotoOutput(session: AVCaptureSession) throws -> AVCapturePhotoOutput {
+    public static func addPhotoOutput(session: AVCaptureSession) throws -> AVCapturePhotoOutput {
         let output = AVCapturePhotoOutput()
         guard session.canAddOutput(output) else {
             throw CameraSessionConfigurationError.addPhotoOutputFailed
@@ -44,7 +43,7 @@ enum CameraSessionConfiguration {
         return output
     }
 
-    static func addMovieOutput(
+    public static func addMovieOutput(
         session: AVCaptureSession,
         includeAudio: Bool,
         durationMs: Int) throws -> AVCaptureMovieFileOutput
@@ -69,4 +68,3 @@ enum CameraSessionConfiguration {
         return output
     }
 }
-#endif

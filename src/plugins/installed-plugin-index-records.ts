@@ -87,18 +87,12 @@ export function withPluginInstallRecords(
 }
 
 /** Returns config with legacy plugin install records removed. */
-export function withoutPluginInstallRecords(
-  config: OpenClawConfig,
-  options: { preserveEmptyPlugins?: boolean } = {},
-): OpenClawConfig {
+export function withoutPluginInstallRecords(config: OpenClawConfig): OpenClawConfig {
   if (!config.plugins?.installs) {
     return config;
   }
   const { installs: _installs, ...plugins } = config.plugins;
   if (Object.keys(plugins).length === 0) {
-    if (options.preserveEmptyPlugins) {
-      return { ...config, plugins: {} };
-    }
     const { plugins: _plugins, ...rest } = config;
     return rest;
   }

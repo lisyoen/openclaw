@@ -25,6 +25,13 @@ export const ANTHROPIC_MESSAGES_API = "anthropic-messages";
 export const COGNITIVE_SERVICES_RESOURCE = "https://cognitiveservices.azure.com";
 export const FOUNDRY_ANTHROPIC_SCOPE = "https://ai.azure.com/.default";
 export const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
+export const MAI_IMAGE_MODELS = [
+  "MAI-Image-2.5-Flash",
+  "MAI-Image-2.5",
+  "MAI-Image-2e",
+  "MAI-Image-2",
+] as const;
+export const MAI_DEFAULT_IMAGE_MODEL = "MAI-Image-2.5";
 
 export interface AzAccount {
   name: string;
@@ -144,7 +151,7 @@ function normalizeFoundryModelName(value?: string | null): string | undefined {
   return trimmed || undefined;
 }
 
-function isAnthropicFoundryDeployment(modelName?: string | null): boolean {
+export function isAnthropicFoundryDeployment(modelName?: string | null): boolean {
   const normalized = normalizeFoundryModelName(modelName);
   return normalized ? normalized.startsWith("claude") : false;
 }
@@ -182,12 +189,12 @@ export function isFoundryMaiImageModel(value?: string | null): boolean {
   );
 }
 
-function supportsFoundryReasoningContent(value?: string | null): boolean {
+export function supportsFoundryReasoningContent(value?: string | null): boolean {
   const normalized = normalizeFoundryModelName(value);
   return normalized === "mai-ds-r1" || normalized === "mai-thinking-1";
 }
 
-function supportsFoundryImageInput(value?: string | null): boolean {
+export function supportsFoundryImageInput(value?: string | null): boolean {
   const normalized = normalizeFoundryModelName(value);
   if (!normalized) {
     return false;
@@ -267,7 +274,7 @@ export function requiresFoundryMaxCompletionTokens(value?: string | null): boole
   );
 }
 
-function supportsFoundryReasoningEffort(value?: string | null): boolean {
+export function supportsFoundryReasoningEffort(value?: string | null): boolean {
   const normalized = normalizeFoundryModelName(value);
   if (
     !normalized ||
@@ -282,18 +289,6 @@ function supportsFoundryReasoningEffort(value?: string | null): boolean {
     normalized.startsWith("o3") ||
     normalized.startsWith("o4")
   );
-}
-
-if (process.env.VITEST === "true") {
-  const key = Symbol.for("openclaw.microsoftFoundryTestApi");
-  const api = (Reflect.get(globalThis, key) as Record<string, unknown> | undefined) ?? {};
-  Reflect.set(globalThis, key, {
-    ...api,
-    isAnthropicFoundryDeployment,
-    supportsFoundryImageInput,
-    supportsFoundryReasoningContent,
-    supportsFoundryReasoningEffort,
-  });
 }
 
 function resolveFoundryReasoningEfforts(value?: string | null): string[] | undefined {
@@ -409,16 +404,11 @@ export function buildFoundryProviderBaseUrl(
 }
 
 export function extractFoundryEndpoint(baseUrl: string | null | undefined): string | undefined {
-  const trimmed = normalizeOptionalString(baseUrl);
-  if (!trimmed) {
+  if (!baseUrl) {
     return undefined;
   }
   try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      return undefined;
-    }
-    return normalizeFoundryEndpoint(trimmed) || undefined;
+    return normalizeFoundryEndpoint(baseUrl);
   } catch {
     return undefined;
   }
@@ -784,4 +774,3 @@ export function resolveFoundryTargetProfileId(config: FoundryConfigShape): strin
     (configuredProfileEntries.length === 1 ? configuredProfileEntries[0]?.[0] : undefined)
   );
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

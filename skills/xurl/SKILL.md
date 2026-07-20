@@ -18,7 +18,7 @@ metadata:
             },
             {
               "id": "npm",
-              "kind": "node",
+              "kind": "npm",
               "package": "@xdevplatform/xurl",
               "bins": ["xurl"],
               "label": "Install xurl (npm)",

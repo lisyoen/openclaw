@@ -3,26 +3,26 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 
 export type CommandTurnKind = "native" | "text-slash" | "normal";
 /** Transport-level source labels carried through auto-reply dispatch. */
-type CommandTurnSource = "native" | "text" | "message";
+export type CommandTurnSource = "native" | "text" | "message";
 
 type BaseCommandTurnContext = {
   commandName?: string;
   body?: string;
 };
 
-type NativeCommandTurnContext = BaseCommandTurnContext & {
+export type NativeCommandTurnContext = BaseCommandTurnContext & {
   kind: "native";
   source: "native";
   authorized: boolean;
 };
 
-type TextSlashCommandTurnContext = BaseCommandTurnContext & {
+export type TextSlashCommandTurnContext = BaseCommandTurnContext & {
   kind: "text-slash";
   source: "text";
   authorized: boolean;
 };
 
-type NormalCommandTurnContext = BaseCommandTurnContext & {
+export type NormalCommandTurnContext = BaseCommandTurnContext & {
   kind: "normal";
   source: "message";
   authorized: false;
@@ -82,7 +82,7 @@ function normalizeCommandTurnSource(value: unknown): CommandTurnSource | undefin
 }
 
 /** Maps source metadata back to the closed turn kind used by command checks. */
-function commandTurnSourceToKind(source: CommandTurnSource): CommandTurnKind {
+export function commandTurnSourceToKind(source: CommandTurnSource): CommandTurnKind {
   if (source === "native") {
     return "native";
   }

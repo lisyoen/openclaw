@@ -17,19 +17,13 @@ export function resolveIsNixMode(env: NodeJS.ProcessEnv = process.env): boolean 
   return env.OPENCLAW_NIX_MODE === "1";
 }
 
-export let isNixMode = resolveIsNixMode();
+export const isNixMode = resolveIsNixMode();
 
 // Support the remaining legacy pre-rebrand state dir.
 const LEGACY_STATE_DIRNAMES = [".clawdbot"] as const;
 const NEW_STATE_DIRNAME = ".openclaw";
 const CONFIG_FILENAME = "openclaw.json";
 const LEGACY_CONFIG_FILENAMES = ["clawdbot.json"] as const;
-
-/** True when the root CLI selected a non-default isolated profile. */
-export function isNamedProfile(env: NodeJS.ProcessEnv = process.env): boolean {
-  const profile = env.OPENCLAW_PROFILE?.trim();
-  return Boolean(profile && profile.toLowerCase() !== "default");
-}
 
 function resolveDefaultHomeDir(): string {
   return resolveRequiredHomeDir(process.env, os.homedir);
@@ -46,6 +40,10 @@ function legacyStateDirs(homedir: () => string = resolveDefaultHomeDir): string[
 
 function newStateDir(homedir: () => string = resolveDefaultHomeDir): string {
   return path.join(homedir(), NEW_STATE_DIRNAME);
+}
+
+export function resolveLegacyStateDir(homedir: () => string = resolveDefaultHomeDir): string {
+  return legacyStateDirs(homedir)[0] ?? newStateDir(homedir);
 }
 
 export function resolveLegacyStateDirs(homedir: () => string = resolveDefaultHomeDir): string[] {
@@ -148,7 +146,7 @@ export function resolveIncludeRoots(
   return roots;
 }
 
-export let STATE_DIR = resolveStateDir();
+export const STATE_DIR = resolveStateDir();
 
 /**
  * Config file path (JSON or JSON5).
@@ -231,24 +229,7 @@ export function resolveConfigPath(
   return path.join(stateDir, CONFIG_FILENAME);
 }
 
-export let CONFIG_PATH = resolveConfigPathCandidate();
-
-/**
- * Re-pins process-stable runtime paths after an early startup selector changes the environment.
- *
- * Gateway startup must call this before importing runtime modules that derive their own constants
- * from these live bindings, otherwise one process can split reads and writes across two targets.
- */
-export function pinRuntimePaths(env: NodeJS.ProcessEnv = process.env): {
-  configPath: string;
-  stateDir: string;
-} {
-  normalizeStateDirEnv(env);
-  isNixMode = resolveIsNixMode(env);
-  STATE_DIR = resolveStateDir(env);
-  CONFIG_PATH = resolveConfigPathCandidate(env);
-  return { configPath: CONFIG_PATH, stateDir: STATE_DIR };
-}
+export const CONFIG_PATH = resolveConfigPathCandidate();
 
 /**
  * Resolve default config path candidates across default locations.
@@ -291,15 +272,6 @@ export function resolveGatewayLockDir(tmpdir: () => string = os.tmpdir): string 
   const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
   const suffix = uid != null ? `openclaw-${uid}` : "openclaw";
   return path.join(base, suffix);
-}
-
-/**
- * Queue-owned copies of outbound attachments that have not been delivered yet,
- * held outside the media store so its TTL sweep cannot reclaim an attachment a
- * durable row still has to send.
- */
-export function resolveDeliveryQueueMediaDir(stateDir?: string): string {
-  return path.join(stateDir ?? resolveStateDir(), "delivery-queue-media");
 }
 
 const OAUTH_FILENAME = "oauth.json";

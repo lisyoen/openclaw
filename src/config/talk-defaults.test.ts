@@ -5,14 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { FIELD_HELP } from "./schema.help.js";
-import { describeTalkSilenceTimeoutDefaults } from "./talk-defaults.js";
+import {
+  describeTalkSilenceTimeoutDefaults,
+  TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM,
+} from "./talk-defaults.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const EXPECTED_TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM = {
-  macos: 700,
-  android: 700,
-  ios: 900,
-} as const;
 
 function readRepoFile(relativePath: string): string {
   try {
@@ -33,13 +31,10 @@ function readRepoFile(relativePath: string): string {
 describe("talk silence timeout defaults", () => {
   it("keeps help text and docs aligned with the policy", () => {
     const defaultsDescription = describeTalkSilenceTimeoutDefaults();
-    const talkDocDefaults =
-      `\`${EXPECTED_TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM.macos}\` ms macOS/Android, ` +
-      `\`${EXPECTED_TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM.ios}\` ms iOS`;
 
     expect(FIELD_HELP["talk.silenceTimeoutMs"]).toContain(defaultsDescription);
     expect(readRepoFile("docs/gateway/config-agents.md")).toContain(defaultsDescription);
-    expect(readRepoFile("docs/nodes/talk.md")).toContain(talkDocDefaults);
+    expect(readRepoFile("docs/nodes/talk.md")).toContain(defaultsDescription);
   });
 
   it("matches the Apple and Android runtime constants", () => {
@@ -50,13 +45,13 @@ describe("talk silence timeout defaults", () => {
     );
 
     expect(macDefaults).toContain(
-      `static let silenceTimeoutMs = ${EXPECTED_TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM.macos}`,
+      `static let silenceTimeoutMs = ${TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM.macos}`,
     );
     expect(iosDefaults).toContain(
-      `static let silenceTimeoutMs = ${EXPECTED_TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM.ios}`,
+      `static let silenceTimeoutMs = ${TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM.ios}`,
     );
     expect(androidDefaults).toContain(
-      `const val defaultSilenceTimeoutMs = ${EXPECTED_TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM.android}L`,
+      `const val defaultSilenceTimeoutMs = ${TALK_SILENCE_TIMEOUT_MS_BY_PLATFORM.android}L`,
     );
   });
 });

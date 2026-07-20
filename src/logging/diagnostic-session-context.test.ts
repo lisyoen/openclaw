@@ -10,6 +10,8 @@ import {
 import {
   formatCronSessionDiagnosticFields,
   formatStoppedCronSessionDiagnosticFields,
+  parseCronRunSessionKey,
+  readLastAssistantFromSessionFile,
   resolveCronSessionDiagnosticContext,
 } from "./diagnostic-session-context.js";
 
@@ -37,11 +39,11 @@ describe("diagnostic session context", () => {
   });
 
   it("parses cron run session keys", () => {
-    expect(
-      resolveCronSessionDiagnosticContext({
-        sessionKey: "agent:clawblocker:cron:job-123:run:run-456",
-      }),
-    ).toMatchObject({ agentId: "clawblocker", cronJobId: "job-123", cronRunId: "run-456" });
+    expect(parseCronRunSessionKey("agent:clawblocker:cron:job-123:run:run-456")).toEqual({
+      agentId: "clawblocker",
+      cronJobId: "job-123",
+      cronRunId: "run-456",
+    });
   });
 
   it("formats cron job and last assistant context for stalled session logs", async () => {
@@ -91,34 +93,17 @@ describe("diagnostic session context", () => {
   });
 
   it("reads the latest assistant message from a transcript tail", () => {
-    const filePath = path.join(tempDir!, "agents", "clawblocker", "sessions", "run-456.jsonl");
+    const filePath = path.join(tempDir!, "session.jsonl");
     writeJsonl(filePath, [
       { message: { role: "assistant", content: "older" } },
       { message: { role: "user", content: "later user" } },
       { message: { role: "assistant", content: "newer" } },
     ]);
 
-    expect(
-      resolveCronSessionDiagnosticContext({
-        sessionKey: "agent:clawblocker:cron:job-123:run:run-456",
-      }).lastAssistant,
-    ).toBe("newer");
-  });
-
-  it("keeps bounded quoted fields UTF-16 safe", () => {
-    const prefix = "a".repeat(136);
-
-    expect(
-      formatCronSessionDiagnosticFields({ cronJobName: `${prefix}😀${"b".repeat(140)}` }),
-    ).toBe(`cronJob="${prefix}..."`);
+    expect(readLastAssistantFromSessionFile(filePath)).toBe("newer");
   });
 
   it("ignores missing transcript tail files", () => {
-    expect(
-      resolveCronSessionDiagnosticContext({
-        sessionKey: "agent:clawblocker:cron:job-123:run:run-456",
-        activeSessionId: "missing",
-      }).lastAssistant,
-    ).toBeUndefined();
+    expect(readLastAssistantFromSessionFile(path.join(tempDir!, "missing.jsonl"))).toBeUndefined();
   });
 });

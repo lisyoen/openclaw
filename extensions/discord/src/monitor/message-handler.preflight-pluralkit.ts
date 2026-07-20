@@ -20,7 +20,6 @@ export async function resolveDiscordPreflightPluralKitInfo(params: {
     const info = await fetchPluralKitMessageInfo({
       messageId: params.message.id,
       config: params.config,
-      signal: params.abortSignal,
     });
     return isPreflightAborted(params.abortSignal) ? null : info;
   } catch (err) {

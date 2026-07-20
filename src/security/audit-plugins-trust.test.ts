@@ -7,13 +7,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
 import { writePersistedInstalledPluginIndex } from "../plugins/installed-plugin-index-store.js";
 import type { InstalledPluginIndex } from "../plugins/installed-plugin-index.js";
-import {
-  captureEnv,
-  createPathResolutionEnv,
-  deleteTestEnvValue,
-  setTestEnvValue,
-  withEnvAsync,
-} from "../test-utils/env.js";
+import { createPathResolutionEnv, withEnvAsync } from "../test-utils/env.js";
 
 type CollectPluginsTrustFindings =
   typeof import("./audit-plugins-trust.js").collectPluginsTrustFindings;
@@ -155,7 +149,7 @@ vi.mock("../agents/tool-policy.js", () => ({
     profile === "coding" || profile === "minimal" ? {} : undefined,
 }));
 
-vi.mock("../agents/sandbox-tool-policy.js", () => ({
+vi.mock("./audit-tool-policy.js", () => ({
   pickSandboxToolPolicy: () => undefined,
 }));
 
@@ -495,7 +489,8 @@ describe("security audit extension tool reachability findings", () => {
     "OPENCLAW_STATE_DIR",
     "OPENCLAW_BUNDLED_PLUGINS_DIR",
   ] as const;
-  let pathResolutionEnvSnapshot: ReturnType<typeof captureEnv> | undefined;
+  const previousPathResolutionEnv: Partial<Record<(typeof pathResolutionEnvKeys)[number], string>> =
+    {};
 
   const runSharedExtensionsAudit = async (config: OpenClawConfig) => {
     return await collectPluginsTrustFindingsForTest({
@@ -510,13 +505,13 @@ describe("security audit extension tool reachability findings", () => {
     fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-security-extensions-"));
     isolatedHome = path.join(fixtureRoot, "home");
     const isolatedEnv = createPathResolutionEnv(isolatedHome, { OPENCLAW_HOME: isolatedHome });
-    pathResolutionEnvSnapshot = captureEnv([...pathResolutionEnvKeys]);
     for (const key of pathResolutionEnvKeys) {
+      previousPathResolutionEnv[key] = process.env[key];
       const value = isolatedEnv[key];
       if (value === undefined) {
-        deleteTestEnvValue(key);
+        delete process.env[key];
       } else {
-        setTestEnvValue(key, value);
+        process.env[key] = value;
       }
     }
     homedirSpy = vitestModule.vi
@@ -532,7 +527,14 @@ describe("security audit extension tool reachability findings", () => {
 
   afterAll(async () => {
     homedirSpy?.mockRestore();
-    pathResolutionEnvSnapshot?.restore();
+    for (const key of pathResolutionEnvKeys) {
+      const value = previousPathResolutionEnv[key];
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
     if (fixtureRoot) {
       await fs.rm(fixtureRoot, { recursive: true, force: true }).catch(() => undefined);
     }

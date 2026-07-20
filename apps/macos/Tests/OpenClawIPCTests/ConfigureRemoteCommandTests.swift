@@ -9,37 +9,46 @@ struct ConfigureRemoteCommandTests {
             .appendingPathComponent("openclaw-configure-remote-\(UUID().uuidString).json")
         defer { try? FileManager().removeItem(at: configURL) }
 
-        let defaultSuites = [
-            "ConfigureRemoteCommandTests.release.\(UUID().uuidString)",
-            "ConfigureRemoteCommandTests.debug.\(UUID().uuidString)",
+        let defaultSuites = ["ai.openclaw.mac", "ai.openclaw.mac.debug"]
+        let keys = [
+            "openclaw.connectionMode",
+            "openclaw.remoteTarget",
+            "openclaw.onboardingSeen",
+            "openclaw.onboardingVersion",
+            "openclaw.remoteCliPath",
         ]
         let defaultsBySuite = defaultSuites.compactMap { suite in
             UserDefaults(suiteName: suite).map { (suite, $0) }
         }
+        let previousDefaults = Dictionary(uniqueKeysWithValues: defaultsBySuite.map { suite, defaults in
+            (suite, Dictionary(uniqueKeysWithValues: keys.map { ($0, defaults.object(forKey: $0)) }))
+        })
         defer {
-            for (suite, _) in defaultsBySuite {
-                UserDefaults.standard.removePersistentDomain(forName: suite)
+            for (suite, defaults) in defaultsBySuite {
+                for (key, value) in previousDefaults[suite] ?? [:] {
+                    if let value {
+                        defaults.set(value, forKey: key)
+                    } else {
+                        defaults.removeObject(forKey: key)
+                    }
+                }
             }
         }
 
         try await TestIsolation.withIsolatedState(env: ["OPENCLAW_CONFIG_PATH": configURL.path]) {
-            let output = try configureRemote(
-                .init(
-                    sshTarget: "alice@gateway.example",
-                    localPort: 19089,
-                    remotePort: 18789,
-                    sshHostKeyPolicy: "openssh",
-                    token: "test-token", // pragma: allowlist secret
-                    password: nil,
-                    identity: nil,
-                    projectRoot: nil,
-                    cliPath: "/opt/homebrew/bin/openclaw"),
-                defaultsSuites: defaultSuites)
+            let output = try configureRemote(.init(
+                sshTarget: "alice@gateway.example",
+                localPort: 19089,
+                remotePort: 18789,
+                token: "test-token", // pragma: allowlist secret
+                password: nil,
+                identity: nil,
+                projectRoot: nil,
+                cliPath: "/opt/homebrew/bin/openclaw"))
 
             #expect(output.status == "ok")
             #expect(output.localUrl == "ws://127.0.0.1:19089")
             #expect(output.remotePort == 18789)
-            #expect(output.sshHostKeyPolicy == "openssh")
 
             let data = try Data(contentsOf: configURL)
             let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -51,7 +60,6 @@ struct ConfigureRemoteCommandTests {
             #expect(remote["url"] as? String == "ws://127.0.0.1:19089")
             #expect(remote["remotePort"] as? Int == 18789)
             #expect(remote["sshTarget"] as? String == "alice@gateway.example")
-            #expect(remote["sshHostKeyPolicy"] as? String == "openssh")
             #expect(remote["token"] as? String == "test-token") // pragma: allowlist secret
 
             for (_, defaults) in defaultsBySuite {
@@ -73,8 +81,6 @@ struct ConfigureRemoteCommandTests {
                 "remote": [
                     "token": "keep-token", // pragma: allowlist secret
                     "sshIdentity": "/tmp/id",
-                    "sshHostKeyPolicy": "openssh",
-                    "sshTarget": "alice@gateway.example",
                 ],
             ],
         ]
@@ -83,7 +89,7 @@ struct ConfigureRemoteCommandTests {
         try initialData.write(to: configURL)
 
         try await TestIsolation.withIsolatedState(env: ["OPENCLAW_CONFIG_PATH": configURL.path]) {
-            try configureRemote(.init(sshTarget: "alice@gateway.example"), defaultsSuites: [])
+            try configureRemote(.init(sshTarget: "alice@gateway.example"))
 
             let data = try Data(contentsOf: configURL)
             let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -91,35 +97,6 @@ struct ConfigureRemoteCommandTests {
             let remote = try #require(gateway["remote"] as? [String: Any])
             #expect(remote["token"] as? String == "keep-token") // pragma: allowlist secret
             #expect(remote["sshIdentity"] as? String == "/tmp/id")
-            #expect(remote["sshHostKeyPolicy"] as? String == "openssh")
-        }
-    }
-
-    @Test @MainActor func `configure remote defaults SSH host key policy to strict`() async throws {
-        let configURL = FileManager().temporaryDirectory
-            .appendingPathComponent("openclaw-configure-remote-strict-\(UUID().uuidString).json")
-        defer { try? FileManager().removeItem(at: configURL) }
-
-        let initial: [String: Any] = [
-            "gateway": [
-                "remote": [
-                    "sshHostKeyPolicy": "openssh",
-                    "sshTarget": "old-gateway-alias",
-                ],
-            ],
-        ]
-        let initialData = try JSONSerialization.data(withJSONObject: initial, options: [.prettyPrinted])
-        try initialData.write(to: configURL)
-
-        try await TestIsolation.withIsolatedState(env: ["OPENCLAW_CONFIG_PATH": configURL.path]) {
-            let output = try configureRemote(.init(sshTarget: "gateway-alias"), defaultsSuites: [])
-
-            #expect(output.sshHostKeyPolicy == "strict")
-            let data = try Data(contentsOf: configURL)
-            let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            let gateway = try #require(root["gateway"] as? [String: Any])
-            let remote = try #require(gateway["remote"] as? [String: Any])
-            #expect(remote["sshHostKeyPolicy"] as? String == "strict")
         }
     }
 
@@ -129,20 +106,6 @@ struct ConfigureRemoteCommandTests {
         }
         #expect(throws: Error.self) {
             _ = try ConfigureRemoteOptions.parse(["--ssh-target", "alice@gateway.example", "--local-port", "nope"])
-        }
-    }
-
-    @Test func `configure remote validates SSH host key policy`() throws {
-        #expect(ConfigureRemoteOptions().sshHostKeyPolicy == nil)
-        #expect(try ConfigureRemoteOptions.parse([
-            "--ssh-target", "gateway-alias",
-            "--ssh-host-key-policy", "openssh",
-        ]).sshHostKeyPolicy == "openssh")
-        #expect(throws: Error.self) {
-            _ = try ConfigureRemoteOptions.parse([
-                "--ssh-target", "gateway-alias",
-                "--ssh-host-key-policy", "accept-new",
-            ])
         }
     }
 
@@ -163,25 +126,47 @@ struct ConfigureRemoteCommandTests {
         let initial: [String: Any] = [
             "gateway": [
                 "port": 19089,
-                "remote": ["sshHostKeyPolicy": "openssh"],
             ],
         ]
         let initialData = try JSONSerialization.data(withJSONObject: initial, options: [.prettyPrinted])
         try FileManager().createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try initialData.write(to: configURL)
 
+        let defaultSuites = ["ai.openclaw.mac", "ai.openclaw.mac.debug"]
+        let keys = [
+            "openclaw.connectionMode",
+            "openclaw.remoteTarget",
+            "openclaw.onboardingSeen",
+            "openclaw.onboardingVersion",
+            "openclaw.remoteCliPath",
+        ]
+        let defaultsBySuite = defaultSuites.compactMap { suite in
+            UserDefaults(suiteName: suite).map { (suite, $0) }
+        }
+        let previousDefaults = Dictionary(uniqueKeysWithValues: defaultsBySuite.map { suite, defaults in
+            (suite, Dictionary(uniqueKeysWithValues: keys.map { ($0, defaults.object(forKey: $0)) }))
+        })
+        defer {
+            for (suite, defaults) in defaultsBySuite {
+                for (key, value) in previousDefaults[suite] ?? [:] {
+                    if let value {
+                        defaults.set(value, forKey: key)
+                    } else {
+                        defaults.removeObject(forKey: key)
+                    }
+                }
+            }
+        }
+
         try await TestIsolation.withIsolatedState(env: ["OPENCLAW_CONFIG_PATH": configURL.path]) {
-            let output = try configureRemote(
-                .init(
-                    directUrl: "ws://192.168.0.202:18789",
-                    token: "test-token"), // pragma: allowlist secret
-                defaultsSuites: [])
+            let output = try configureRemote(.init(
+                directUrl: "ws://192.168.0.202:18789",
+                token: "test-token")) // pragma: allowlist secret
 
             #expect(output.transport == "direct")
             #expect(output.remoteUrl == "ws://192.168.0.202:18789")
             #expect(output.localUrl == nil)
             #expect(output.sshTarget == nil)
-            #expect(output.sshHostKeyPolicy == nil)
 
             let data = try Data(contentsOf: configURL)
             let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -193,12 +178,11 @@ struct ConfigureRemoteCommandTests {
             #expect(remote["url"] as? String == "ws://192.168.0.202:18789")
             #expect(remote["remotePort"] == nil)
             #expect(remote["sshTarget"] == nil)
-            #expect(remote["sshHostKeyPolicy"] == nil)
             #expect(remote["token"] as? String == "test-token") // pragma: allowlist secret
         }
     }
 
-    @Test @MainActor func `configure remote rejects plaintext public prefix bypass`() async {
+    @Test @MainActor func `configure remote rejects plaintext public prefix bypass`() async throws {
         let configURL = FileManager().temporaryDirectory
             .appendingPathComponent("openclaw-configure-direct-reject-\(UUID().uuidString).json")
         defer { try? FileManager().removeItem(at: configURL) }

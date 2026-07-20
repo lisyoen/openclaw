@@ -4,11 +4,9 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import {
   ErrorCodes,
   errorShape,
-} from "../../../packages/gateway-protocol/src/schema/error-codes.js";
-import {
   formatValidationErrors,
-  type ValidationError,
-} from "../../../packages/gateway-protocol/src/validation-errors.js";
+} from "../../../packages/gateway-protocol/src/index.js";
+import type { ValidationError } from "../../../packages/gateway-protocol/src/index.js";
 export { safeParseJson } from "../server-json.js";
 import { formatForLog } from "../ws-log.js";
 import type { RespondFn } from "./types.js";

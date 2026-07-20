@@ -16,8 +16,8 @@ OpenClaw Slack channel plugin for channels, DMs, commands, and app events.
 
 ## Surface
 
-channels: `slack`; skills
+channels: slack
 
 ## Related docs
 
-- [Slack](/channels/slack)
+- [slack](/channels/slack)

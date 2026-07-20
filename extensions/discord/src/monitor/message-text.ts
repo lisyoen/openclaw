@@ -11,7 +11,7 @@ import {
   resolveDiscordSnapshotStickers,
   type DiscordSnapshotMessage,
 } from "./message-forwarded.js";
-import { formatDiscordMediaText } from "./message-media.js";
+import { buildDiscordMediaPlaceholder } from "./message-media.js";
 
 export function resolveDiscordEmbedText(
   embed?: { title?: string | null; description?: string | null } | null,
@@ -35,6 +35,10 @@ export function resolveDiscordMessageText(
   const componentText = extractDiscordComponentsV2Text(resolveDiscordMessageComponents(message));
   const rawText =
     normalizeOptionalString(message.content) ||
+    buildDiscordMediaPlaceholder({
+      attachments: message.attachments ?? undefined,
+      stickers: resolveDiscordMessageStickers(message),
+    }) ||
     embedText ||
     componentText ||
     normalizeOptionalString(options?.fallbackText) ||
@@ -51,19 +55,6 @@ export function resolveDiscordMessageText(
     return forwardedText;
   }
   return `${baseText}\n${forwardedText}`;
-}
-
-/** Adds native media text only for history surfaces that cannot carry structured facts. */
-export function resolveDiscordMessageHistoryText(
-  message: Message,
-  options?: { fallbackText?: string; includeForwarded?: boolean },
-): string {
-  const text = resolveDiscordMessageText(message, options);
-  const mediaText = formatDiscordMediaText({
-    attachments: message.attachments ?? undefined,
-    stickers: resolveDiscordMessageStickers(message),
-  });
-  return [text, mediaText].filter(Boolean).join("\n");
 }
 
 function resolveDiscordMentions(text: string, message: Message): string {
@@ -91,7 +82,7 @@ function resolveDiscordForwardedMessagesText(message: Message): string {
   if (!referencedForward) {
     return "";
   }
-  const referencedText = resolveDiscordMessageHistoryText(referencedForward);
+  const referencedText = resolveDiscordMessageText(referencedForward);
   if (!referencedText) {
     return "";
   }
@@ -171,12 +162,11 @@ function buildDiscordForwardedMessageBlock(
 
 function resolveDiscordSnapshotMessageText(snapshot: DiscordSnapshotMessage): string {
   const content = normalizeOptionalString(snapshot.content) ?? "";
-  const attachmentText = formatDiscordMediaText({
+  const attachmentText = buildDiscordMediaPlaceholder({
     attachments: snapshot.attachments ?? undefined,
     stickers: resolveDiscordSnapshotStickers(snapshot),
   });
   const embedText = resolveDiscordEmbedText(snapshot.embeds?.[0]);
   const componentText = extractDiscordComponentsV2Text(snapshot.components);
-  const text = content || embedText || componentText;
-  return [text, attachmentText].filter(Boolean).join("\n");
+  return content || attachmentText || embedText || componentText || "";
 }

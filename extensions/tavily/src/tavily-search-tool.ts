@@ -3,7 +3,6 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-runtime";
 import {
   jsonResult,
   readPositiveIntegerParam,
-  readStringArrayParam,
   readStringParam,
 } from "openclaw/plugin-sdk/provider-web-search";
 import { Type } from "typebox";
@@ -66,8 +65,12 @@ export function createTavilySearchTool(api: OpenClawPluginApi, ctx?: TavilyToolC
       });
       const includeAnswer = rawParams.include_answer === true;
       const timeRange = readStringParam(rawParams, "time_range") || undefined;
-      const includeDomains = readStringArrayParam(rawParams, "include_domains");
-      const excludeDomains = readStringArrayParam(rawParams, "exclude_domains");
+      const includeDomains = Array.isArray(rawParams.include_domains)
+        ? (rawParams.include_domains as string[]).filter(Boolean)
+        : undefined;
+      const excludeDomains = Array.isArray(rawParams.exclude_domains)
+        ? (rawParams.exclude_domains as string[]).filter(Boolean)
+        : undefined;
 
       return jsonResult(
         await runTavilySearch({
@@ -78,8 +81,8 @@ export function createTavilySearchTool(api: OpenClawPluginApi, ctx?: TavilyToolC
           maxResults,
           includeAnswer,
           timeRange,
-          includeDomains,
-          excludeDomains,
+          includeDomains: includeDomains?.length ? includeDomains : undefined,
+          excludeDomains: excludeDomains?.length ? excludeDomains : undefined,
         }),
       );
     },

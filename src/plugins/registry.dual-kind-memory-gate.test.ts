@@ -7,14 +7,14 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { clearMemoryEmbeddingProviders } from "./memory-embedding-providers.js";
 import {
-  clearMemoryPluginState,
+  resetMemoryPluginState,
   getMemoryCapabilityRegistration,
   getMemoryRuntime,
-} from "./memory-state.test-fixtures.js";
-import { createPluginRecord } from "./status.test-fixtures.js";
+} from "./memory-state.js";
+import { createPluginRecord } from "./status.test-helpers.js";
 
 afterEach(() => {
-  clearMemoryPluginState();
+  resetMemoryPluginState();
   clearMemoryEmbeddingProviders();
 });
 
@@ -48,7 +48,7 @@ describe("dual-kind memory registration gate", () => {
       name: "Dual Plugin",
       kind: ["memory", "context-engine"],
       register(api) {
-        api.registerMemoryCapability({ runtime: createStubMemoryRuntime() });
+        api.registerMemoryRuntime(createStubMemoryRuntime());
       },
     });
 
@@ -59,7 +59,7 @@ describe("dual-kind memory registration gate", () => {
         level: "warn",
         source: "/virtual/dual-plugin/index.ts",
         message:
-          "dual-kind plugin not selected for memory slot; skipping memory capability registration",
+          "dual-kind plugin not selected for memory slot; skipping memory runtime registration",
       },
     ]);
   });
@@ -77,7 +77,7 @@ describe("dual-kind memory registration gate", () => {
         memorySlotSelected: true,
       }),
       register(api) {
-        api.registerMemoryCapability({ runtime: createStubMemoryRuntime() });
+        api.registerMemoryRuntime(createStubMemoryRuntime());
       },
     });
 
@@ -101,7 +101,7 @@ describe("dual-kind memory registration gate", () => {
       name: "Memory Only",
       kind: "memory",
       register(api) {
-        api.registerMemoryCapability({ runtime: createStubMemoryRuntime() });
+        api.registerMemoryRuntime(createStubMemoryRuntime());
       },
     });
 

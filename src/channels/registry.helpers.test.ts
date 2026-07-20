@@ -1,6 +1,4 @@
 // Registry helper tests cover channel registry fixtures and lookup helpers.
-
-import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import {
@@ -123,12 +121,7 @@ describe("channel registry helpers", () => {
     expect(normalizeAnyChannelId("a")).toBeNull();
     expect(normalizeAnyChannelIdLight("a")).toBeNull();
 
-    registry.channels.push(
-      expectDefined(
-        createRegistryWithRegisteredChannel("alpha", ["a"]).channels[0],
-        'createRegistryWithRegisteredChannel("alpha", ["a"]).channels[0] test invariant',
-      ),
-    );
+    registry.channels.push(createRegistryWithRegisteredChannel("alpha", ["a"]).channels[0]);
 
     expect(normalizeAnyChannelId("a")).toBe("alpha");
     expect(normalizeAnyChannelIdLight("a")).toBe("alpha");

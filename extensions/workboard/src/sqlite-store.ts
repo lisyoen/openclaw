@@ -1,6 +1,15 @@
+// Workboard plugin module implements sqlite store behavior.
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+import type {
+  PersistedWorkboardAttachment,
+  PersistedWorkboardBoard,
+  PersistedWorkboardCard,
+  PersistedWorkboardNotificationSubscription,
+  WorkboardKeyedStore,
+} from "./persistence-types.js";
 import type {
   WorkboardArtifact,
   WorkboardAttachment,
@@ -15,31 +24,21 @@ import type {
   WorkboardProof,
   WorkboardRunAttempt,
   WorkboardWorkerLog,
-} from "@openclaw/workboard-contract";
-import {
-  configureSqliteConnectionPragmas,
-  migrateSqliteSchemaToStrict,
-} from "openclaw/plugin-sdk/plugin-state-runtime";
-import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
-import type {
-  PersistedWorkboardAttachment,
-  PersistedWorkboardBoard,
-  PersistedWorkboardCard,
-  PersistedWorkboardNotificationSubscription,
-  WorkboardKeyedStore,
-} from "./persistence-types.js";
+} from "./types.js";
+
 const WORKBOARD_DB_RELATIVE_PATH = ["plugins", "workboard", "workboard.sqlite"] as const;
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 2;
 const WORKBOARD_SQLITE_BUSY_TIMEOUT_MS = 5000;
 const WORKBOARD_SQLITE_DIR_MODE = 0o700;
 const WORKBOARD_SQLITE_FILE_MODE = 0o600;
+
 type Row = Record<string, unknown>;
-type WorkboardSqliteStores = {
+
+export type WorkboardSqliteStores = {
   cards: WorkboardKeyedStore;
   boards: WorkboardKeyedStore<PersistedWorkboardBoard>;
   subscriptions: WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>;
   attachments: WorkboardKeyedStore<PersistedWorkboardAttachment>;
-  dataVersion: () => number;
   close: () => void;
 };
 
@@ -135,11 +134,13 @@ function ensureColumn(db: DatabaseSync, tableName: string, columnName: string, d
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${definition}`);
 }
 
-const WORKBOARD_SCHEMA_SQL = `
+function ensureWorkboardSchema(db: DatabaseSync): void {
+  db.exec(`
+    PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS workboard_schema_migrations (
       id TEXT PRIMARY KEY,
       applied_at INTEGER NOT NULL
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_boards (
       id TEXT PRIMARY KEY,
@@ -152,7 +153,7 @@ const WORKBOARD_SCHEMA_SQL = `
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       archived_at INTEGER
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_cards (
       id TEXT PRIMARY KEY,
@@ -188,7 +189,7 @@ const WORKBOARD_SCHEMA_SQL = `
       stale_json TEXT,
       lifecycle_status_source_updated_at INTEGER,
       failure_count INTEGER
-    ) STRICT;
+    );
     CREATE INDEX IF NOT EXISTS workboard_cards_board_status_idx
       ON workboard_cards(board_id, status, position);
     CREATE INDEX IF NOT EXISTS workboard_cards_session_idx
@@ -199,7 +200,7 @@ const WORKBOARD_SCHEMA_SQL = `
       ordinal INTEGER NOT NULL,
       label TEXT NOT NULL,
       PRIMARY KEY(card_id, ordinal)
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_card_events (
       id TEXT PRIMARY KEY,
@@ -211,7 +212,7 @@ const WORKBOARD_SCHEMA_SQL = `
       to_status TEXT,
       session_key TEXT,
       run_id TEXT
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_card_attempts (
       id TEXT PRIMARY KEY,
@@ -226,7 +227,7 @@ const WORKBOARD_SCHEMA_SQL = `
       session_key TEXT,
       run_id TEXT,
       error TEXT
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_card_comments (
       id TEXT PRIMARY KEY,
@@ -235,7 +236,7 @@ const WORKBOARD_SCHEMA_SQL = `
       body TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_card_links (
       id TEXT PRIMARY KEY,
@@ -246,7 +247,7 @@ const WORKBOARD_SCHEMA_SQL = `
       title TEXT,
       url TEXT,
       created_at INTEGER NOT NULL
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_card_proof (
       id TEXT PRIMARY KEY,
@@ -258,7 +259,7 @@ const WORKBOARD_SCHEMA_SQL = `
       url TEXT,
       note TEXT,
       created_at INTEGER NOT NULL
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_card_artifacts (
       id TEXT PRIMARY KEY,
@@ -269,7 +270,7 @@ const WORKBOARD_SCHEMA_SQL = `
       path TEXT,
       mime_type TEXT,
       created_at INTEGER NOT NULL
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_card_diagnostics (
       card_id TEXT NOT NULL REFERENCES workboard_cards(id) ON DELETE CASCADE,
@@ -283,7 +284,7 @@ const WORKBOARD_SCHEMA_SQL = `
       count INTEGER NOT NULL,
       actions_json TEXT NOT NULL,
       PRIMARY KEY(card_id, ordinal)
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_card_notifications (
       id TEXT PRIMARY KEY,
@@ -295,7 +296,7 @@ const WORKBOARD_SCHEMA_SQL = `
       sequence INTEGER,
       session_key TEXT,
       run_id TEXT
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_worker_logs (
       id TEXT PRIMARY KEY,
@@ -306,14 +307,14 @@ const WORKBOARD_SCHEMA_SQL = `
       created_at INTEGER NOT NULL,
       session_key TEXT,
       run_id TEXT
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_worker_protocol (
       card_id TEXT PRIMARY KEY REFERENCES workboard_cards(id) ON DELETE CASCADE,
       state TEXT NOT NULL,
       updated_at INTEGER NOT NULL,
       detail TEXT
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_card_attachments (
       id TEXT PRIMARY KEY,
@@ -324,14 +325,14 @@ const WORKBOARD_SCHEMA_SQL = `
       mime_type TEXT,
       note TEXT,
       created_at INTEGER NOT NULL
-    ) STRICT;
+    );
     CREATE INDEX IF NOT EXISTS workboard_card_attachments_card_idx
       ON workboard_card_attachments(card_id, ordinal);
 
     CREATE TABLE IF NOT EXISTS workboard_attachment_blobs (
       attachment_id TEXT PRIMARY KEY,
       content BLOB NOT NULL
-    ) STRICT;
+    );
 
     CREATE TABLE IF NOT EXISTS workboard_notification_subscriptions (
       id TEXT PRIMARY KEY,
@@ -347,29 +348,26 @@ const WORKBOARD_SCHEMA_SQL = `
       delivered_event_ids_json TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
-    ) STRICT;
-  `;
-
-function ensureWorkboardSchema(db: DatabaseSync): void {
-  db.exec(WORKBOARD_SCHEMA_SQL);
+    );
+  `);
   ensureColumn(
     db,
     "workboard_cards",
     "lifecycle_status_source_updated_at",
     "lifecycle_status_source_updated_at INTEGER",
   );
-  const migrationId = `schema-${SCHEMA_VERSION}`;
-  const current = db
-    .prepare("SELECT 1 AS found FROM workboard_schema_migrations WHERE id = ?")
-    .get(migrationId);
-  if (!current) {
-    migrateSqliteSchemaToStrict(db, WORKBOARD_SCHEMA_SQL, {
-      databaseLabel: "workboard database",
-    });
-    db.prepare(
-      "INSERT OR IGNORE INTO workboard_schema_migrations (id, applied_at) VALUES (?, ?)",
-    ).run(migrationId, Date.now());
-  }
+  db.prepare(
+    "INSERT OR IGNORE INTO workboard_schema_migrations (id, applied_at) VALUES (?, ?)",
+  ).run(`schema-${SCHEMA_VERSION}`, Date.now());
+}
+
+function configureWorkboardDatabase(db: DatabaseSync): void {
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
+    PRAGMA busy_timeout = ${WORKBOARD_SQLITE_BUSY_TIMEOUT_MS};
+    PRAGMA foreign_keys = ON;
+  `);
 }
 
 function chmodIfExists(targetPath: string, mode: number): void {
@@ -387,40 +385,19 @@ function hardenWorkboardDatabaseFiles(dbPath: string): void {
   chmodIfExists(dbPath, WORKBOARD_SQLITE_FILE_MODE);
   chmodIfExists(`${dbPath}-wal`, WORKBOARD_SQLITE_FILE_MODE);
   chmodIfExists(`${dbPath}-shm`, WORKBOARD_SQLITE_FILE_MODE);
-  chmodIfExists(`${dbPath}-journal`, WORKBOARD_SQLITE_FILE_MODE);
 }
 
-function createDatabase(dbPath: string): {
-  db: DatabaseSync;
-  maintenance: ReturnType<typeof configureSqliteConnectionPragmas>;
-} {
+function createDatabase(dbPath: string): DatabaseSync {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: WORKBOARD_SQLITE_DIR_MODE });
   chmodIfExists(path.dirname(dbPath), WORKBOARD_SQLITE_DIR_MODE);
   if (!fs.existsSync(dbPath)) {
     fs.closeSync(fs.openSync(dbPath, "a", WORKBOARD_SQLITE_FILE_MODE));
   }
   const db = new DatabaseSync(dbPath);
-  let maintenance: ReturnType<typeof configureSqliteConnectionPragmas> | undefined;
-  try {
-    maintenance = configureSqliteConnectionPragmas(db, {
-      busyTimeoutMs: WORKBOARD_SQLITE_BUSY_TIMEOUT_MS,
-      checkpointIntervalMs: 0,
-      databaseLabel: "workboard database",
-      databasePath: dbPath,
-      foreignKeys: true,
-      synchronous: "NORMAL",
-    });
-    ensureWorkboardSchema(db);
-    hardenWorkboardDatabaseFiles(dbPath);
-    return { db, maintenance };
-  } catch (error) {
-    try {
-      maintenance?.close();
-    } finally {
-      db.close();
-    }
-    throw error;
-  }
+  configureWorkboardDatabase(db);
+  ensureWorkboardSchema(db);
+  hardenWorkboardDatabaseFiles(dbPath);
+  return db;
 }
 
 function childRows(db: DatabaseSync, table: string, cardId: string): Row[] {
@@ -472,12 +449,10 @@ function readExecution(row: Row): WorkboardExecution | undefined {
   return {
     id,
     kind: "agent-session",
+    engine: requiredString(row, "execution_engine") as WorkboardExecution["engine"],
     mode: requiredString(row, "execution_mode") as WorkboardExecution["mode"],
     status: requiredString(row, "execution_status") as WorkboardExecution["status"],
-    ...(stringValue(row, "execution_engine")
-      ? { engine: stringValue(row, "execution_engine") }
-      : {}),
-    ...(stringValue(row, "execution_model") ? { model: stringValue(row, "execution_model") } : {}),
+    model: requiredString(row, "execution_model"),
     ...(stringValue(row, "execution_session_key")
       ? { sessionKey: stringValue(row, "execution_session_key") }
       : {}),
@@ -1426,21 +1401,12 @@ export function createWorkboardSqliteStores(
     env?: NodeJS.ProcessEnv;
   } = {},
 ): WorkboardSqliteStores {
-  const { db, maintenance } = createDatabase(
-    options.dbPath ?? resolveWorkboardSqlitePath(options.env),
-  );
+  const db = createDatabase(options.dbPath ?? resolveWorkboardSqlitePath(options.env));
   return {
     cards: new WorkboardSqliteCardStore(db),
     boards: new WorkboardSqliteBoardStore(db),
     subscriptions: new WorkboardSqliteSubscriptionStore(db),
     attachments: new WorkboardSqliteAttachmentStore(db),
-    // This connection-local primitive changes only after another connection commits.
-    dataVersion: () =>
-      requiredNumber(db.prepare("PRAGMA data_version").get() as Row, "data_version"),
-    close: () => {
-      maintenance.close();
-      db.close();
-    },
+    close: () => db.close(),
   };
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

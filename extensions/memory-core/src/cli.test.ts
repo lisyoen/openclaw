@@ -10,12 +10,15 @@ import {
   spyRuntimeLogs,
 } from "openclaw/plugin-sdk/test-fixtures";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { readShortTermRecallEntries, recordShortTermRecalls } from "./short-term-promotion.js";
 import {
   configureMemoryCoreDreamingStateForTests,
   resetMemoryCoreDreamingStateForTests,
-  shortTermTestState as shortTermTesting,
-} from "./test-helpers.js";
+} from "./dreaming-state.js";
+import {
+  readShortTermRecallEntries,
+  recordShortTermRecalls,
+  testing as shortTermTesting,
+} from "./short-term-promotion.js";
 
 const getMemorySearchManager = vi.hoisted(() => vi.fn());
 const getRuntimeConfig = vi.hoisted(() => vi.fn(() => ({})));
@@ -39,43 +42,31 @@ async function expectPathMissing(targetPath: string): Promise<void> {
 }
 
 vi.mock("./cli.host.runtime.js", async () => {
-  const [
-    {
-      defaultRuntime,
-      formatErrorMessage,
-      setVerbose,
-      shortenHomeInString,
-      shortenHomePath,
-      theme,
-      withManager,
-      withProgress,
-      withProgressTotals,
-    },
-    { resolveSessionTranscriptsDirForAgent, resolveStateDir },
-    { listMemoryFiles, normalizeExtraMemoryPaths },
-  ] = await Promise.all([
+  const [runtimeCli, runtimeCore, runtimeFiles] = await Promise.all([
     import("openclaw/plugin-sdk/memory-core-host-runtime-cli"),
     import("openclaw/plugin-sdk/memory-core-host-runtime-core"),
     import("openclaw/plugin-sdk/memory-core-host-runtime-files"),
   ]);
   return {
-    defaultRuntime,
-    formatErrorMessage,
+    colorize: runtimeCli.colorize,
+    defaultRuntime: runtimeCli.defaultRuntime,
+    formatErrorMessage: runtimeCli.formatErrorMessage,
     getMemorySearchManager,
-    listMemoryFiles,
+    isRich: runtimeCli.isRich,
+    listMemoryFiles: runtimeFiles.listMemoryFiles,
     getRuntimeConfig,
-    normalizeExtraMemoryPaths,
+    normalizeExtraMemoryPaths: runtimeFiles.normalizeExtraMemoryPaths,
     resolveCommandSecretRefsViaGateway,
     resolveDefaultAgentId,
-    resolveSessionTranscriptsDirForAgent,
-    resolveStateDir,
-    setVerbose,
-    shortenHomeInString,
-    shortenHomePath,
-    theme,
-    withManager,
-    withProgress,
-    withProgressTotals,
+    resolveSessionTranscriptsDirForAgent: runtimeCore.resolveSessionTranscriptsDirForAgent,
+    resolveStateDir: runtimeCore.resolveStateDir,
+    setVerbose: runtimeCli.setVerbose,
+    shortenHomeInString: runtimeCli.shortenHomeInString,
+    shortenHomePath: runtimeCli.shortenHomePath,
+    theme: runtimeCli.theme,
+    withManager: runtimeCli.withManager,
+    withProgress: runtimeCli.withProgress,
+    withProgressTotals: runtimeCli.withProgressTotals,
   };
 });
 
@@ -92,14 +83,8 @@ let qmdCaseId = 0;
 beforeAll(async () => {
   await configureMemoryCoreDreamingStateForTests();
   ({ registerMemoryCli } = await import("./cli.js"));
-  const {
-    defaultRuntime: loadedDefaultRuntime,
-    isVerbose: loadedIsVerbose,
-    setVerbose: loadedSetVerbose,
-  } = await import("openclaw/plugin-sdk/memory-core-host-runtime-cli");
-  defaultRuntime = loadedDefaultRuntime;
-  isVerbose = loadedIsVerbose;
-  setVerbose = loadedSetVerbose;
+  ({ defaultRuntime, isVerbose, setVerbose } =
+    await import("openclaw/plugin-sdk/memory-core-host-runtime-cli"));
   fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "memory-cli-fixtures-"));
   workspaceFixtureRoot = path.join(fixtureRoot, "workspace");
   qmdFixtureRoot = path.join(fixtureRoot, "qmd");
@@ -231,13 +216,10 @@ describe("memory cli", () => {
     expect(loggedOutput(spy)).not.toContain(expected);
   }
 
-  async function runMemoryCli(
-    args: string[],
-    hostOptions?: Parameters<typeof registerMemoryCli>[1],
-  ) {
+  async function runMemoryCli(args: string[]) {
     const program = new Command();
     program.name("test");
-    registerMemoryCli(program, hostOptions);
+    registerMemoryCli(program);
     await program.parseAsync(["memory", ...args], { from: "user" });
   }
 
@@ -490,14 +472,6 @@ describe("memory cli", () => {
           provider: "auto",
           requestedProvider: "auto",
           vector: { enabled: true },
-          custom: {
-            llamaCppRuntime: {
-              engine: "llama.cpp",
-              state: "ready",
-              backend: "metal",
-              buildType: "prebuilt",
-            },
-          },
         }),
       close,
     });
@@ -509,7 +483,6 @@ describe("memory cli", () => {
     expect(probeEmbeddingAvailability).not.toHaveBeenCalled();
     expectLogged(log, "Provider: auto");
     expectLogged(log, "Vector store: unknown");
-    expectNotLogged(log, "llama.cpp:");
     expect(close).toHaveBeenCalled();
   });
 
@@ -616,35 +589,7 @@ describe("memory cli", () => {
       probeVectorStoreAvailability,
       probeVectorAvailability,
       probeEmbeddingAvailability,
-      status: () =>
-        makeMemoryStatus({
-          files: 1,
-          chunks: 1,
-          custom: {
-            llamaCppRuntime: {
-              engine: "llama.cpp",
-              state: "ready",
-              backend: "metal",
-              buildType: "prebuilt",
-              deviceNames: ["Apple M4 Max"],
-              memory: {
-                totalBytes: 64 * 1024 ** 3,
-                usedBytes: 8 * 1024 ** 3,
-                freeBytes: 56 * 1024 ** 3,
-                unifiedBytes: 64 * 1024 ** 3,
-                observedAtMs: Date.parse("2026-07-10T12:00:00.000Z"),
-              },
-              offload: {
-                supported: true,
-                offloadedLayers: 20,
-                totalLayers: 24,
-              },
-              context: {
-                requestedSize: 4096,
-              },
-            },
-          },
-        }),
+      status: () => makeMemoryStatus({ files: 1, chunks: 1 }),
       close,
     });
 
@@ -655,14 +600,6 @@ describe("memory cli", () => {
     expect(probeVectorAvailability).toHaveBeenCalled();
     expect(probeEmbeddingAvailability).toHaveBeenCalled();
     expectLogged(log, "Embeddings: ready");
-    expectLogged(log, "llama.cpp: metal (prebuilt)");
-    expectLogged(log, "Devices: Apple M4 Max");
-    expectLogged(
-      log,
-      "VRAM snapshot: 8.0 GB used · 56 GB free · 64 GB total · 64 GB unified (2026-07-10T12:00:00.000Z)",
-    );
-    expectLogged(log, "GPU offload: 20/24 layers");
-    expectLogged(log, "Requested context: 4096 tokens");
     expect(close).toHaveBeenCalled();
   });
 
@@ -740,42 +677,6 @@ describe("memory cli", () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it("does not report qmd lexical search mode as embedding unavailable", async () => {
-    const close = vi.fn(async () => {});
-    const probeVectorStoreAvailability = vi.fn(async () => true);
-    const probeVectorAvailability = vi.fn(async () => false);
-    const probeEmbeddingAvailability = vi.fn(async () => ({ ok: true, checked: false }));
-    mockManager({
-      probeVectorStoreAvailability,
-      probeVectorAvailability,
-      probeEmbeddingAvailability,
-      status: () =>
-        makeMemoryStatus({
-          backend: "qmd",
-          provider: "qmd",
-          model: "qmd",
-          requestedProvider: "qmd",
-          vector: {
-            enabled: false,
-            semanticAvailable: false,
-            available: false,
-          },
-        }),
-      close,
-    });
-
-    const log = spyRuntimeLogs(defaultRuntime);
-    await runMemoryCli(["status", "--deep"]);
-
-    expect(probeVectorStoreAvailability).not.toHaveBeenCalled();
-    expect(probeVectorAvailability).toHaveBeenCalled();
-    expect(probeEmbeddingAvailability).toHaveBeenCalled();
-    expectLogged(log, "Vector: disabled");
-    expectLogged(log, "Embeddings: skipped");
-    expectNotLogged(log, "Embeddings error:");
-    expect(close).toHaveBeenCalled();
-  });
-
   it("prints recall-store audit details during status", async () => {
     await withTempWorkspace(async (workspaceDir) => {
       await recordShortTermRecalls({
@@ -807,206 +708,6 @@ describe("memory cli", () => {
       expectLogged(log, "Dreaming: off");
       expect(close).toHaveBeenCalled();
     });
-  });
-
-  it("reports light-only dreaming as active during status", async () => {
-    getRuntimeConfig.mockReturnValue({
-      plugins: {
-        entries: {
-          "memory-core": {
-            config: {
-              dreaming: {
-                enabled: true,
-                frequency: "5 * * * *",
-                timezone: "UTC",
-                phases: {
-                  light: {
-                    enabled: true,
-                    limit: 4,
-                    lookbackDays: 2,
-                  },
-                  deep: {
-                    enabled: false,
-                  },
-                  rem: {
-                    enabled: false,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    const close = vi.fn(async () => {});
-    mockManager({
-      probeVectorAvailability: vi.fn(async () => true),
-      status: () => makeMemoryStatus(),
-      close,
-    });
-
-    const log = spyRuntimeLogs(defaultRuntime);
-    await runMemoryCli(["status"]);
-
-    expectLogged(log, "Dreaming: light=5 * * * * (UTC) · limit=4 · lookbackDays=2");
-    expect(close).toHaveBeenCalled();
-  });
-
-  it("reports rem-only dreaming as active during status", async () => {
-    getRuntimeConfig.mockReturnValue({
-      plugins: {
-        entries: {
-          "memory-core": {
-            config: {
-              dreaming: {
-                enabled: true,
-                frequency: "0 6 * * 0",
-                timezone: "UTC",
-                phases: {
-                  light: {
-                    enabled: false,
-                  },
-                  deep: {
-                    enabled: false,
-                  },
-                  rem: {
-                    enabled: true,
-                    limit: 3,
-                    lookbackDays: 9,
-                    minPatternStrength: 0.81,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    const close = vi.fn(async () => {});
-    mockManager({
-      probeVectorAvailability: vi.fn(async () => true),
-      status: () => makeMemoryStatus(),
-      close,
-    });
-
-    const log = spyRuntimeLogs(defaultRuntime);
-    await runMemoryCli(["status"]);
-
-    expectLogged(
-      log,
-      "Dreaming: rem=0 6 * * 0 (UTC) · limit=3 · lookbackDays=9 · minPatternStrength=0.81",
-    );
-    expect(close).toHaveBeenCalled();
-  });
-
-  it("labels deep dreaming when multiple phases are active during status", async () => {
-    getRuntimeConfig.mockReturnValue({
-      plugins: {
-        entries: {
-          "memory-core": {
-            config: {
-              dreaming: {
-                enabled: true,
-                frequency: "15 2 * * *",
-                timezone: "UTC",
-                phases: {
-                  light: {
-                    enabled: true,
-                    limit: 5,
-                    lookbackDays: 1,
-                  },
-                  deep: {
-                    enabled: true,
-                    limit: 7,
-                    minScore: 0.72,
-                    minRecallCount: 4,
-                    minUniqueQueries: 2,
-                    recencyHalfLifeDays: 10,
-                    maxAgeDays: 45,
-                    maxPromotedSnippetTokens: 512,
-                  },
-                  rem: {
-                    enabled: true,
-                    limit: 2,
-                    lookbackDays: 14,
-                    minPatternStrength: 0.67,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    const close = vi.fn(async () => {});
-    mockManager({
-      probeVectorAvailability: vi.fn(async () => true),
-      status: () => makeMemoryStatus(),
-      close,
-    });
-
-    const log = spyRuntimeLogs(defaultRuntime);
-    await runMemoryCli(["status"]);
-
-    expectLogged(log, "Dreaming: light=15 2 * * * (UTC) · limit=5 · lookbackDays=1");
-    expectLogged(log, "rem=15 2 * * * (UTC) · limit=2 · lookbackDays=14 · minPatternStrength=0.67");
-    expectLogged(log, "deep=15 2 * * * (UTC) · limit=7 · minScore=0.72");
-    expectLogged(log, "minRecallCount=4");
-    expectLogged(log, "maxPromotedSnippetTokens=512");
-    expect(close).toHaveBeenCalled();
-  });
-
-  it("preserves deep dreaming diagnostics during status", async () => {
-    getRuntimeConfig.mockReturnValue({
-      plugins: {
-        entries: {
-          "memory-core": {
-            config: {
-              dreaming: {
-                enabled: true,
-                frequency: "0 4 * * *",
-                timezone: "UTC",
-                phases: {
-                  light: {
-                    enabled: false,
-                  },
-                  deep: {
-                    enabled: true,
-                    limit: 6,
-                    minScore: 0.88,
-                    minRecallCount: 5,
-                    minUniqueQueries: 3,
-                    recencyHalfLifeDays: 12,
-                    maxAgeDays: 30,
-                    maxPromotedSnippetTokens: 640,
-                  },
-                  rem: {
-                    enabled: false,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    const close = vi.fn(async () => {});
-    mockManager({
-      probeVectorAvailability: vi.fn(async () => true),
-      status: () => makeMemoryStatus(),
-      close,
-    });
-
-    const log = spyRuntimeLogs(defaultRuntime);
-    await runMemoryCli(["status"]);
-
-    expectLogged(log, "Dreaming: 0 4 * * * (UTC) · limit=6 · minScore=0.88");
-    expectLogged(log, "minRecallCount=5");
-    expectLogged(log, "minUniqueQueries=3");
-    expectLogged(log, "recencyHalfLifeDays=12");
-    expectLogged(log, "maxAgeDays=30");
-    expectLogged(log, "maxPromotedSnippetTokens=640");
-    expect(close).toHaveBeenCalled();
   });
 
   it("repairs invalid recall metadata and stale locks with status --fix", async () => {
@@ -1460,36 +1161,6 @@ describe("memory cli", () => {
     });
     expect(log).toHaveBeenCalledWith("No matches.");
     expect(close).toHaveBeenCalled();
-  });
-
-  it("passes the host local-service hook to CLI memory managers", async () => {
-    const close = vi.fn(async () => {});
-    mockManager({ search: vi.fn(async () => []), close });
-    const acquireLocalService = vi.fn(async () => undefined);
-
-    await runMemoryCli(["search", "hello"], { acquireLocalService });
-
-    expect(getMemorySearchManager).toHaveBeenCalledWith({
-      cfg: {},
-      agentId: "main",
-      purpose: "cli",
-      acquireLocalService,
-    });
-  });
-
-  it("passes the host SQLite lease hook to CLI memory managers", async () => {
-    const close = vi.fn(async () => {});
-    mockManager({ search: vi.fn(async () => []), close });
-    const withLease = vi.fn();
-
-    await runMemoryCli(["search", "hello"], { withLease });
-
-    expect(getMemorySearchManager).toHaveBeenCalledWith({
-      cfg: {},
-      agentId: "main",
-      purpose: "cli",
-      withLease,
-    });
   });
 
   it("accepts --query for memory search", async () => {
@@ -2435,7 +2106,7 @@ describe("memory cli", () => {
         lastRecalledAt: "<now>",
         queryHashes: ["<hash>"],
         recallDays: ["<today>"],
-        conceptTags: ["backup", "backups", "glacier", "s3"],
+        conceptTags: ["backup", "backups", "glacier"],
       });
       expect(close).toHaveBeenCalled();
     });
@@ -2487,4 +2158,3 @@ describe("memory cli", () => {
     });
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
