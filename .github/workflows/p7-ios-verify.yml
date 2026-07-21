@@ -34,8 +34,25 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version && xcrun simctl list devices available | head -20
 
-      - name: Install tools (XcodeGen, SwiftFormat, SwiftLint)
-        run: brew install xcodegen swiftformat swiftlint
+      - name: Install tools (XcodeGen)
+        run: brew install xcodegen
+
+      - name: Strip lint phases (P7 검증은 컴파일·테스트만 — 사용자 WIP 트리 스타일 미게이팅)
+        run: |
+          pip3 install --quiet pyyaml || true
+          python3 - <<'PY'
+          import yaml
+          f = 'project.yml'
+          d = yaml.safe_load(open(f))
+          for name, t in (d.get('targets') or {}).items():
+              pbs = t.get('preBuildScripts')
+              if not pbs: continue
+              kept = [x for x in pbs if not any(k in (x.get('name') or '') for k in ('SwiftFormat', 'SwiftLint'))]
+              if kept: t['preBuildScripts'] = kept
+              else: t.pop('preBuildScripts', None)
+          yaml.safe_dump(d, open(f, 'w'), sort_keys=False, allow_unicode=True)
+          print('lint phases stripped')
+          PY
 
       - name: Generate project
         run: xcodegen generate
