@@ -62,14 +62,19 @@ jobs:
 
       - name: iOS unit tests (simulator, unsigned)
         run: |
-          set -o pipefail
+          set +e
           xcodebuild test \
             -project OpenClaw.xcodeproj \
             -scheme OpenClaw \
             -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
-            | tail -200
+            > xcodebuild-test.log 2>&1
+          RC=$?
+          echo "== 요약 =="; tail -30 xcodebuild-test.log
+          echo "== 실패 테스트 =="
+          grep -E '✘|recorded an issue|Expectation failed|Test .* failed' xcodebuild-test.log | head -80
+          exit $RC
 
       - name: Simulator unsigned build (Release config off, Debug)
         run: |
@@ -86,5 +91,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: p7-ios-test-results
-          path: apps/ios/TestResults.xcresult
+          path: |
+            apps/ios/TestResults.xcresult
+            apps/ios/xcodebuild-test.log
           retention-days: 7
