@@ -68,7 +68,8 @@ jobs:
             -scheme OpenClaw \
             -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
             -resultBundlePath TestResults.xcresult \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= \
             > xcodebuild-test.log 2>&1
           RC=$?
           echo "== 요약 =="; tail -30 xcodebuild-test.log
