@@ -152,3 +152,4 @@ WatchExtension/Sources/WatchInboxView.swift
 ../shared/OpenClawKit/Sources/OpenClawKit/TalkDirective.swift
 ../swabble/Sources/SwabbleKit/WakeWordGate.swift
 Sources/Voice/TalkBackgroundPolicy.swift
+Sources/Voice/TalkResultRecovery.swift
