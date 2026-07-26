@@ -1,0 +1,33 @@
+name: p7-swiftformat-fix
+
+# P7 잔여 정리: apps/ios SwiftFormat autocorrect 를 CI(macos)에서 1회 실행해 커밋한다.
+# 수동 트리거 전용 — p7-tnative 브랜치에만 push 한다.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  autocorrect:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: p7-tnative
+      - name: Install SwiftFormat
+        run: brew install swiftformat
+      - name: Run autocorrect (apps/ios)
+        run: swiftformat apps/ios
+      - name: Commit and push if changed
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "style: SwiftFormat autocorrect (P7 cleanup)"
+            git push origin HEAD:p7-tnative
+          else
+            echo "no formatting changes"
+          fi

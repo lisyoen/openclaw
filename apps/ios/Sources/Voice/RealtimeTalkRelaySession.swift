@@ -98,9 +98,24 @@ final class RealtimeTalkRelaySession {
         let idempotencyKey: String?
     }
 
-    private struct ChatCompletionResult {
+    private struct ChatCompletionResult: Sendable {
         let text: String?
         let failed: Bool
+    }
+
+    private struct RecoveredChatCompletion: Sendable {
+        let result: ChatCompletionResult
+        let channel: TalkRecoveryChannel
+    }
+
+    private struct ChatHistoryPullMessage: Decodable {
+        let role: String?
+        let idempotencyKey: String?
+        let content: AnyCodable?
+    }
+
+    private struct ChatHistoryPullResponse: Decodable {
+        let messages: [ChatHistoryPullMessage]?
     }
 
     private enum StartupWaitResult {
@@ -117,6 +132,10 @@ final class RealtimeTalkRelaySession {
     private nonisolated static let bargeInCooldownMs: Double = 900
     private nonisolated static let minOutputBeforeBargeInMs: Double = 250
     private nonisolated static let startupReadyTimeoutSeconds = 12
+    private nonisolated static let chatResultPullIntervalSeconds = 12
+
+    /// P7-b: push/pull 회수 조정자 — 소비 1회 마킹으로 중복 낭독 차단.
+    private var resultRecovery = TalkResultRecovery()
 
     private let gateway: GatewayNodeSession
     private let options: Options
@@ -552,14 +571,27 @@ final class RealtimeTalkRelaySession {
                     NSLocalizedDescriptionKey: "Realtime tool call did not return a run id",
                 ])
             }
-            let completion = await self.waitForChatCompletion(
+            self.resultRecovery.beginConsult(taskId: runId)
+            let recovered = await self.waitForChatCompletion(
                 runId: runId,
                 stream: completionStream,
                 timeoutSeconds: 120)
-            let result: [String: Any] = completion.failed
-                ? ["error": "OpenClaw tool call failed"]
-                : ["text": completion.text ?? "OpenClaw finished with no text."]
-            try await self.submitToolResult(callId: callId, result: result)
+            let action = self.resultRecovery.resultArrived(
+                taskId: runId,
+                state: recovered.result.failed ? "error" : "final",
+                text: recovered.result.text,
+                via: recovered.channel)
+            switch action {
+            case .speak(_, let text):
+                try await self.submitToolResult(callId: callId, result: ["text": text])
+            case .fail(_, let state):
+                let result: [String: Any] = state == "final"
+                    ? ["text": "OpenClaw finished with no text."]
+                    : ["error": "OpenClaw tool call failed"]
+                try await self.submitToolResult(callId: callId, result: result)
+            case .drop:
+                break // 소비 완료된 결과 — 중복 낭독 금지 (P7-b)
+            }
             self.onStatus("Listening (Realtime)")
         } catch {
             try? await self.submitToolResult(callId: callId, result: [
@@ -614,14 +646,12 @@ final class RealtimeTalkRelaySession {
     private func waitForChatCompletion(
         runId: String,
         stream: AsyncStream<EventFrame>,
-        timeoutSeconds: Int) async -> ChatCompletionResult
+        timeoutSeconds: Int) async -> RecoveredChatCompletion
     {
-        await withTaskGroup(of: ChatCompletionResult.self) { group in
+        await withTaskGroup(of: RecoveredChatCompletion?.self) { group in
             group.addTask {
                 for await event in stream {
-                    if Task.isCancelled {
-                        return ChatCompletionResult(text: nil, failed: true)
-                    }
+                    if Task.isCancelled { return nil }
                     guard event.event == "chat",
                           let payload = event.payload,
                           let chatEvent = try? GatewayPayloadDecoding.decode(
@@ -630,24 +660,89 @@ final class RealtimeTalkRelaySession {
                           chatEvent.runId == runId
                     else { continue }
                     if chatEvent.state == "final" {
-                        return ChatCompletionResult(
-                            text: OpenClawChatEventText.assistantText(from: chatEvent),
-                            failed: false)
+                        return RecoveredChatCompletion(
+                            result: ChatCompletionResult(
+                                text: OpenClawChatEventText.assistantText(from: chatEvent),
+                                failed: false),
+                            channel: .push)
                     }
                     if chatEvent.state == "aborted" || chatEvent.state == "error" {
-                        return ChatCompletionResult(text: nil, failed: true)
+                        return RecoveredChatCompletion(
+                            result: ChatCompletionResult(text: nil, failed: true),
+                            channel: .push)
                     }
                 }
-                return ChatCompletionResult(text: nil, failed: true)
+                return nil
             }
+            // P7-b pull 폴백: 스트림 단절·순단·이벤트 유실 시에도 동일 runId 재조회로 회수한다.
+            // 새 요청은 절대 만들지 않는다 (중복 실행 0, 기획서 v8 계약).
             group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds) * 1_000_000_000)
-                return ChatCompletionResult(text: nil, failed: true)
+                var elapsedSeconds = 0
+                while elapsedSeconds < timeoutSeconds {
+                    let step = min(Self.chatResultPullIntervalSeconds, timeoutSeconds - elapsedSeconds)
+                    try? await Task.sleep(nanoseconds: UInt64(max(1, step)) * 1_000_000_000)
+                    elapsedSeconds += step
+                    if Task.isCancelled { return nil }
+                    if let pulled = await self.pullChatResult(runId: runId) {
+                        return RecoveredChatCompletion(result: pulled, channel: .pull)
+                    }
+                }
+                return RecoveredChatCompletion(
+                    result: ChatCompletionResult(text: nil, failed: true),
+                    channel: .pull)
             }
-            let result = await group.next() ?? ChatCompletionResult(text: nil, failed: true)
+            var winner: RecoveredChatCompletion?
+            while winner == nil, let next = await group.next() {
+                // 스트림이 매칭 없이 끝난 경우(nil)에는 pull 태스크가 계속 회수를 시도한다.
+                if let next { winner = next }
+            }
             group.cancelAll()
-            return result
+            return winner ?? RecoveredChatCompletion(
+                result: ChatCompletionResult(text: nil, failed: true),
+                channel: .pull)
         }
+    }
+
+    /// P7-b pull 경로: 게이트웨이 세션 히스토리에서 동일 runId(idempotencyKey)의 assistant
+    /// 응답을 재조회한다. 결과가 아직 없으면 nil (새 요청은 절대 만들지 않는다).
+    private func pullChatResult(runId: String) async -> ChatCompletionResult? {
+        let payload: [String: Any] = [
+            "sessionKey": self.options.sessionKey,
+            "limit": 100,
+        ]
+        guard let history = try? await self.requestJSON(
+            method: "chat.history",
+            payload: payload,
+            decodeAs: ChatHistoryPullResponse.self,
+            timeoutSeconds: 10)
+        else { return nil }
+        guard let match = (history.messages ?? []).last(where: { message in
+            message.role?.lowercased() == "assistant" && message.idempotencyKey == runId
+        }) else { return nil }
+        return ChatCompletionResult(
+            text: Self.assistantText(fromHistoryContent: match.content),
+            failed: false)
+    }
+
+    private nonisolated static func assistantText(fromHistoryContent content: AnyCodable?) -> String? {
+        guard let content else { return nil }
+        if let direct = content.stringValue {
+            let trimmed = direct.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        guard let blocks = content.foundationValue as? [Any] else { return nil }
+        let joined = blocks
+            .compactMap { block -> String? in
+                guard let dict = block as? [String: Any],
+                      (dict["type"] as? String) == "text",
+                      let text = (dict["text"] as? String)?
+                          .trimmingCharacters(in: .whitespacesAndNewlines),
+                      !text.isEmpty
+                else { return nil }
+                return text
+            }
+            .joined(separator: "\n")
+        return joined.isEmpty ? nil : joined
     }
 
     private func requestJSON<T: Decodable>(

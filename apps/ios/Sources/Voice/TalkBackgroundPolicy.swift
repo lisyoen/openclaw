@@ -87,6 +87,11 @@ enum TalkFlowState: Equatable {
             return .consulting(taskId: nil)
         }
         if s.contains("speaking") { return .speaking }
+        if s.contains("reconnect") {
+            if case .consulting(let taskId) = current { return .reconnecting(taskId: taskId) }
+            if case .reconnecting = current { return current }
+            return .reconnecting(taskId: nil)
+        }
         if s == "ready" { return .idle }
         return current
     }
