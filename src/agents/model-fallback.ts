@@ -1349,6 +1349,44 @@ export async function runWithModelFallback<T>(
       }
     }
 
+    // Quota-gated fallback: providers listed in OPENCLAW_QUOTA_GATED_FALLBACK_PROVIDERS
+    // (e.g. a pay-per-token provider kept as a last resort) are attempted only after an
+    // earlier candidate in this run failed or was skipped for rate_limit/billing, i.e. the
+    // subscription usage limit is exhausted. Other failures (bad model id, format errors)
+    // surface instead of silently moving to the paid provider.
+    if (
+      !isPrimary &&
+      isQuotaGatedFallbackProvider(candidate.provider) &&
+      !attempts.some((attempt) => attempt.reason === "rate_limit" || attempt.reason === "billing")
+    ) {
+      const gateReason: FailoverReason = attempts[attempts.length - 1]?.reason ?? "unknown";
+      const error = `Skipping ${candidate.provider}/${candidate.model}: quota-gated fallback is used only after a usage-limit (rate_limit/billing) failure`;
+      attempts.push({
+        provider: candidate.provider,
+        model: candidate.model,
+        error,
+        reason: gateReason,
+      });
+      await observeDecision({
+        decision: "skip_candidate",
+        runId: params.runId,
+        sessionId: params.sessionId,
+        lane: params.lane,
+        requestedProvider: params.provider,
+        requestedModel: params.model,
+        candidate,
+        attempt: i + 1,
+        total: candidates.length,
+        reason: gateReason,
+        error,
+        nextCandidate: candidates[i + 1],
+        isPrimary,
+        requestedModelMatched: requestedModel,
+        fallbackConfigured: hasFallbackCandidates,
+      });
+      continue;
+    }
+
     let runOptions: ModelFallbackRunOptions | undefined;
     let attemptedDuringCooldown = false;
     let transientProbeProviderForAttempt: string | null = null;
@@ -1783,4 +1821,16 @@ function toLintErrorObject(value: unknown, fallbackMessage: string): Error {
     Object.assign(error, value);
   }
   return error;
+}
+
+function isQuotaGatedFallbackProvider(provider: string | undefined): boolean {
+  const raw = process.env.OPENCLAW_QUOTA_GATED_FALLBACK_PROVIDERS ?? "";
+  const normalized = (provider ?? "").trim().toLowerCase();
+  return (
+    normalized.length > 0 &&
+    raw
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .includes(normalized)
+  );
 }

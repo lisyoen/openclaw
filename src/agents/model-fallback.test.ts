@@ -3139,3 +3139,70 @@ describe("runWithImageModelFallback", () => {
     ]);
   });
 });
+
+describe("quota-gated fallback providers", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const makeQuotaGatedCfg = () =>
+    makeCfg({
+      agents: {
+        defaults: {
+          model: {
+            primary: "openai/gpt-5.4",
+            fallbacks: ["openrouter/anthropic/claude-sonnet-4-6"],
+          },
+        },
+      },
+    });
+
+  it("does not move to a quota-gated provider after a non-quota failure", async () => {
+    vi.stubEnv("OPENCLAW_QUOTA_GATED_FALLBACK_PROVIDERS", "openrouter");
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(
+          new Error(
+            '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-5.4\' model is not supported when using Codex with a ChatGPT account."}}',
+          ),
+          { status: 400 },
+        ),
+      )
+      .mockResolvedValue("paid-fallback-answer");
+
+    await captureRejection(
+      runWithModelFallback({
+        cfg: makeQuotaGatedCfg(),
+        provider: "openai",
+        model: "gpt-5.4",
+        runId: "run-quota-gate-1",
+        sessionId: "session:quota-gate-1",
+        run,
+      }),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves to a quota-gated provider after a usage-limit failure", async () => {
+    vi.stubEnv("OPENCLAW_QUOTA_GATED_FALLBACK_PROVIDERS", "openrouter");
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("You've hit your usage limit. Try again later."), { status: 429 }),
+      )
+      .mockResolvedValue("paid-fallback-answer");
+
+    const result = await runWithModelFallback({
+      cfg: makeQuotaGatedCfg(),
+      provider: "openai",
+      model: "gpt-5.4",
+      runId: "run-quota-gate-2",
+      sessionId: "session:quota-gate-2",
+      run,
+    });
+    expect(result.result).toBe("paid-fallback-answer");
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1]?.[0]).toBe("openrouter");
+  });
+});

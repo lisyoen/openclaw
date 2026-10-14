@@ -9,6 +9,11 @@ export LUNA_INTERNAL_TOKEN=MTgXLfJB05pM030r3GAUOsy7rPtyxAqN
 export OPENCLAW_TOOL_LOOP_GUARD_ENABLED=1
 export OPENCLAW_TOOL_LOOP_GUARD_WINDOW=4
 
+# 종량제 fallback 게이트 (2026-10-15, 사용자 지시).
+# 아래 provider 는 GPT 구독 사용 한도 소진(rate_limit/billing) 실패 뒤에만 fallback 으로 시도한다.
+# 모델 오류 등 다른 실패로는 OpenRouter 로 넘어가지 않는다. (src/agents/model-fallback.ts)
+export OPENCLAW_QUOTA_GATED_FALLBACK_PROVIDERS=openrouter
+
 # P2.14 환각 가드 활성화 (2026-05-20, gemma-memory follow-up).
 # 5/20 ClaudeU TDLib 검증 결과 황선아·정유진 케이스 환각 재발 → 코드 가드 도입.
 # 조건 AND 4건 (gemma + 인명 패턴 + tool_use 0 + 거짓 도구 보고 키워드) 만족 시
