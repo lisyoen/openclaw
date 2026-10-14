@@ -1,7 +1,10 @@
 #!/bin/bash
 # luna-memory plugin agent_end hook 이 /internal/dump-user-md 호출 시 쓰는 내부 토큰.
-# luna-memory-service/.env 의 LUNA_INTERNAL_TOKEN 과 동일 값이어야 함.
-export LUNA_INTERNAL_TOKEN=MTgXLfJB05pM030r3GAUOsy7rPtyxAqN
+# LUNA_INTERNAL_TOKEN 등 비밀값은 레포 밖 파일에서 읽는다 (공개 레포 노출 방지, 2026-10-15).
+# luna-memory-service/.env, luna-followup-scheduler/.env 의 LUNA_INTERNAL_TOKEN 과 같은 값이어야 함.
+if [ -f "$HOME/.config/openclaw/secrets.env" ]; then
+  . "$HOME/.config/openclaw/secrets.env"
+fi
 
 # P2.12 도구 호출 반복 폭주 차단 활성화 (2026-05-19, gemma-memory follow-up).
 # tool-loop-detection.ts 가 기본 enabled:false 라 명시 활성화 필요.
